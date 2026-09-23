@@ -7,9 +7,14 @@ concepts and exact interoperability for supported repository formats and operati
 
 ## Status
 
-This project is at the initial scaffold stage. No Git functionality is implemented yet, and there is
-no usable Git API or command-line application. The current library contains only a placeholder
-function and test.
+The library derives SHA-1 blob identities, encodes blobs, and reads and writes loose blobs in an
+explicitly selected object directory. Reads validate object contents; writes publish complete
+objects without replacing existing files. The API is experimental.
+
+See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
+filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
+dependencies. SHA-256, other object types, packs, repository discovery, and a CLI are not
+implemented.
 
 ## Design Goals
 
