@@ -42,11 +42,11 @@ is currently no CLI or asset directory.
 
 Install formatting prerequisites with `rustup toolchain install nightly --component rustfmt` and
 `cargo install just` if needed. Nightly is required for the unstable options in `rustfmt.toml`.
-Install rumdl with `cargo install rumdl --locked`. Follow `rumdl.toml`: reflow Markdown prose to
-100-character lines and align table columns and separators; tables may exceed the prose limit. Use
-four-space indentation, `snake_case` functions/modules, and `UpperCamelCase` types. Prefer reader
-locality, cohesive types, explicit side effects, and small meaningful functions. Document public
-contracts and include Rustdoc usage examples.
+Install rumdl with `cargo install rumdl --locked`. Follow `.config/rumdl.toml`: reflow Markdown
+prose to 100-character lines and align table columns and separators; tables may exceed the prose
+limit. Use four-space indentation, `snake_case` functions/modules, and `UpperCamelCase` types.
+Prefer reader locality, cohesive types, explicit side effects, and small meaningful functions.
+Document public contracts and include Rustdoc usage examples.
 
 Use Rust's built-in test framework with descriptive names such as `rejects_truncated_object`. Test
 supported behavior against Git, including malformed inputs and byte-level round trips where
