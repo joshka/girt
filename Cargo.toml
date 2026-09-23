@@ -5,7 +5,6 @@ edition = "2024"
 authors = ["Josh McKinney"]
 description = "An incremental, idiomatic Rust implementation of Git"
 license = "MIT OR Apache-2.0"
-readme = "README.md"
 keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
 
@@ -22,3 +21,7 @@ rstest = { version = "0.27.0", default-features = false }
 [[bench]]
 name = "blobs"
 harness = false
+
+[[example]]
+name = "loose_blob"
+doc-scrape-examples = true

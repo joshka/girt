@@ -68,6 +68,10 @@
   applicable. Generate fixtures independently. No numerical coverage threshold is established.
 - For implementation requests, finish the authorized change, update affected docs, and fix failures
   caused by the change before handing it back. Report any remaining blockers.
+- Keep Cargo and toolchain output warning-free. Address warnings promptly during the work that
+  exposes them, including non-fatal manifest and documentation-build warnings. Fix the cause rather
+  than suppressing output; if a warning cannot be resolved within scope, report the blocker and a
+  concrete follow-up instead of treating it as routine background noise.
 - Use [Development Checks](CONTRIBUTING.md#development-checks) to select validation for the change.
   After checks pass, broaden or repeat them only when further edits, failures, or unresolved
   concerns justify it.

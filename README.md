@@ -29,6 +29,9 @@ Compatibility will be established through format specifications, independently g
 and tests against Git's observable behavior. All implementation, documentation, and tests must be
 original; do not copy, translate, or adapt copyrightable expression from Git source code.
 
+Run `cargo run --example loose_blob` for a complete write/read operation in a disposable object
+store. The temporary directory is removed when the example exits normally.
+
 ## Development
 
 The crate uses Rust 2024. Build and run the current tests with:
