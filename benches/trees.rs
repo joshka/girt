@@ -10,6 +10,7 @@ fn trees(criterion: &mut Criterion) {
     group.sample_size(30);
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(2));
+
     for count in [16, 1024] {
         let modes = [
             EntryMode::Blob,
@@ -27,14 +28,18 @@ fn trees(criterion: &mut Criterion) {
             .collect();
         let tree = Tree::new(entries).unwrap();
         let payload = tree.encode();
+
         group.throughput(Throughput::Bytes(payload.len() as u64));
+
         group.bench_function(BenchmarkId::new("parse", count), |b| {
             b.iter(|| Tree::parse(black_box(&payload)).unwrap());
         });
+
         group.bench_function(BenchmarkId::new("encode", count), |b| {
             b.iter(|| black_box(&tree).encode());
         });
     }
+
     group.finish();
 }
 

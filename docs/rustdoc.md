@@ -14,6 +14,12 @@ require crate-wide passes.
   Explain surprising private helpers, ordering, and representations when they affect maintenance.
 - Trace construction, mutation, and failure paths before claiming an invariant.
 
+## Comment Spacing
+
+- Follow every Markdown heading with one empty doc-comment line before its content.
+- Use one empty doc-comment line between sections or paragraphs; avoid consecutive empty doc-comment
+  lines. This keeps source spacing consistent with the rendered document.
+
 ## Caller Contracts
 
 - Begin with what the item does or represents. Give readers arriving from search or IDE hovers

@@ -29,7 +29,6 @@ use crate::{ObjectFormat, ObjectId};
 /// # Ok::<(), girt::Error>(())
 /// ```
 ///
-///
 /// # Supported storage
 ///
 /// Only SHA-1 loose blobs are supported. SHA-256 and other object types are rejected. Packs and

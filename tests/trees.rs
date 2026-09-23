@@ -16,6 +16,7 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
             command.env_remove(key);
         }
     }
+
     let mut child = command
         .current_dir(directory)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -26,13 +27,16 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         .stderr(Stdio::piped())
         .spawn()
         .expect("Git is required for interoperability tests");
+
     child.stdin.take().unwrap().write_all(input).unwrap();
     let output = child.wait_with_output().unwrap();
+
     assert!(
         output.status.success(),
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+
     output.stdout
 }
 
@@ -102,12 +106,16 @@ fn interoperates_with_git_in_both_directions(
         &["init", "--bare", "--object-format=sha1", "--template=", "."],
         b"",
     );
+
     let tree = Tree::new(entries).unwrap();
     let id = tree.id().to_string();
+
     let git_id = git(root.path(), &["mktree", "-z", "--missing"], &listing);
     assert_eq!(std::str::from_utf8(&git_id).unwrap().trim(), id);
+
     let git_payload = git(root.path(), &["cat-file", "tree", &id], b"");
     assert_eq!(tree.encode(), git_payload);
+
     let parsed = Tree::parse(&git_payload).unwrap();
     assert_eq!(parsed.entries(), tree.entries());
     assert_eq!(parsed.validate(), Ok(()));
@@ -121,6 +129,7 @@ fn interoperates_with_git_in_both_directions(
         &tree.encode(),
     );
     assert_eq!(imported, git_id);
+
     let read_listing = git(root.path(), &["ls-tree", "-z", &id], b"");
     let reconstructed = git(root.path(), &["mktree", "-z", "--missing"], &read_listing);
     assert_eq!(reconstructed, git_id);
@@ -141,6 +150,7 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
         &["init", "--bare", "--object-format=sha1", "--template=", "."],
         b"",
     );
+
     let payload = [first, &[0x81; 20], second, &[0x82; 20]].concat();
     let tree = Tree::parse(&payload).unwrap();
     let expected = git(
@@ -148,6 +158,7 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
         &["hash-object", "--literally", "-t", "tree", "--stdin"],
         &payload,
     );
+
     assert_eq!(tree.encode(), payload);
     assert_eq!(
         tree.id().to_string(),

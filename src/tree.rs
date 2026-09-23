@@ -42,11 +42,14 @@ use crate::ObjectId;
 ///     name: b"hello.txt".to_vec(),
 ///     id: ObjectId::for_blob(b"hello\n"),
 /// }])?;
+///
 /// let payload = tree.encode();
 /// let parsed = Tree::parse(&payload)?;
+///
 /// // Require valid names and ordering when accepting a payload from another source.
 /// // This check is redundant for the unchanged encoding of Tree::new above.
 /// parsed.validate()?;
+///
 /// assert_eq!(parsed.entries()[0].name, b"hello.txt");
 /// assert_eq!(parsed.id(), tree.id());
 /// # Ok::<(), girt::TreeError>(())
@@ -60,6 +63,7 @@ impl Tree {
     /// Consumes entries, validates them, and sorts them into Git's tree order.
     ///
     /// # Errors
+    ///
     /// Returns [`TreeError::InvalidName`] for empty names, NUL, `/`, `.` or `..`, and
     /// [`TreeError::DuplicateName`] for repeated byte-identical names, regardless of mode.
     /// Names such as `.git` and platform-specific aliases are not checked: this is structural
@@ -79,11 +83,13 @@ impl Tree {
     /// round-trips exactly.
     ///
     /// # Errors
+    ///
     /// Returns an error for a missing mode/name delimiter, unsupported or malformed mode spelling,
     /// or fewer than 20 bytes for an entry's SHA-1 ID. Input must be a SHA-1 payload; no
     /// hash-format autodetection is possible from these bytes.
     pub fn parse(mut payload: &[u8]) -> Result<Self, TreeError> {
         let mut entries = Vec::new();
+
         while !payload.is_empty() {
             let space = payload
                 .iter()
@@ -91,15 +97,18 @@ impl Tree {
                 .ok_or(TreeError::MissingModeDelimiter)?;
             let mode = EntryMode::parse(&payload[..space])?;
             payload = &payload[space + 1..];
+
             let nul = payload
                 .iter()
                 .position(|&byte| byte == 0)
                 .ok_or(TreeError::MissingNameDelimiter)?;
             let name = &payload[..nul];
             payload = &payload[nul + 1..];
+
             let raw_id = payload.get(..20).ok_or(TreeError::TruncatedObjectId)?;
             let mut id = [0; 20];
             id.copy_from_slice(raw_id);
+
             entries.push(TreeEntry {
                 mode,
                 name: name.to_vec(),
@@ -107,6 +116,7 @@ impl Tree {
             });
             payload = &payload[20..];
         }
+
         Ok(Self { entries })
     }
 
@@ -124,10 +134,12 @@ impl Tree {
     /// safety.
     ///
     /// # Errors
+    ///
     /// Returns the name errors documented by [`Tree::new`], or [`TreeError::Unsorted`] if entries
     /// are out of Git order. The same object-reference and checkout-safety exclusions apply.
     pub fn validate(&self) -> Result<(), TreeError> {
         validate_names(&self.entries)?;
+
         if self
             .entries
             .windows(2)
@@ -135,6 +147,7 @@ impl Tree {
         {
             return Err(TreeError::Unsorted);
         }
+
         Ok(())
     }
 
@@ -144,6 +157,7 @@ impl Tree {
     /// names even when [`Tree::validate`] would fail; never silently repairs an existing object.
     pub fn encode(&self) -> Vec<u8> {
         let mut payload = Vec::new();
+
         for entry in &self.entries {
             payload.extend_from_slice(entry.mode.bytes());
             payload.push(b' ');
@@ -151,6 +165,7 @@ impl Tree {
             payload.push(0);
             payload.extend_from_slice(entry.id.as_bytes());
         }
+
         payload
     }
 
@@ -169,8 +184,10 @@ impl Tree {
 pub struct TreeEntry {
     /// The entry's Git type and executable status.
     pub mode: EntryMode,
+
     /// A single path component as bytes, without text conversion.
     pub name: Vec<u8>,
+
     /// Referenced blob, tree, or commit identity; existence and type are not checked.
     pub id: ObjectId,
 }
@@ -192,6 +209,7 @@ impl TreeEntry {
             .iter()
             .copied()
             .chain(std::iter::once(other.mode.terminator()));
+
         left.cmp(right)
     }
 }
@@ -266,6 +284,7 @@ pub enum TreeError {
 
 fn validate_names(entries: &[TreeEntry]) -> Result<(), TreeError> {
     let mut names = HashSet::with_capacity(entries.len());
+
     for entry in entries {
         let name = entry.name.as_slice();
         if name.is_empty()
@@ -276,11 +295,13 @@ fn validate_names(entries: &[TreeEntry]) -> Result<(), TreeError> {
         {
             return Err(TreeError::InvalidName);
         }
+
         // Duplicate file/tree names need not be adjacent in Git order (a, a.c, a/).
         if !names.insert(name) {
             return Err(TreeError::DuplicateName);
         }
     }
+
     Ok(())
 }
 
@@ -306,6 +327,7 @@ mod tests {
     #[test]
     fn empty_tree_has_git_identity() {
         let tree = Tree::new(vec![]).unwrap();
+
         assert_eq!(tree.encode(), b"");
         assert_eq!(Tree::parse(b"").unwrap(), tree);
         assert_eq!(tree.validate(), Ok(()));
@@ -324,6 +346,7 @@ mod tests {
     fn preserves_supported_modes(#[case] mode: EntryMode, #[case] prefix: &[u8]) {
         let expected = record(prefix);
         let tree = Tree::new(vec![entry(mode, b"a")]).unwrap();
+
         assert_eq!(tree.encode(), expected);
         assert_eq!(
             Tree::parse(&expected).unwrap().entries(),
@@ -338,6 +361,7 @@ mod tests {
     fn preserves_name_bytes(#[case] name: &[u8]) {
         let expected = [b"100644 ".as_slice(), name, b"\0", &[0x81; 20]].concat();
         let tree = Tree::new(vec![entry(EntryMode::Blob, name)]).unwrap();
+
         assert_eq!(tree.encode(), expected);
         assert_eq!(Tree::parse(&expected).unwrap().entries()[0].name, name);
     }
@@ -358,6 +382,7 @@ mod tests {
     ) {
         let left = entry(left_mode, left_name);
         let right = entry(right_mode, right_name);
+
         assert_eq!(left.git_cmp(&right), Ordering::Less);
         assert_eq!(right.git_cmp(&left), Ordering::Greater);
     }
@@ -375,6 +400,7 @@ mod tests {
             .iter()
             .map(|entry| entry.name.as_slice())
             .collect();
+
         assert_eq!(names, [b"a.c".as_slice(), b"a", b"a0"]);
         assert_eq!(tree.validate(), Ok(()));
     }
@@ -400,6 +426,7 @@ mod tests {
     fn parses_invalid_names_without_repair(#[case] prefix: &[u8]) {
         let payload = record(prefix);
         let tree = Tree::parse(&payload).unwrap();
+
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::InvalidName));
     }
@@ -408,9 +435,12 @@ mod tests {
     fn preserves_unsorted_input_until_explicit_reconstruction() {
         let payload = [record(b"40000 a\0"), record(b"100644 a.c\0")].concat();
         let tree = Tree::parse(&payload).unwrap();
+
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::Unsorted));
+
         let rebuilt = Tree::new(tree.entries().to_vec()).unwrap();
+
         assert_eq!(rebuilt.entries()[0].name, b"a.c");
         assert_ne!(rebuilt.id(), tree.id());
     }
@@ -421,6 +451,7 @@ mod tests {
     fn detects_duplicate_names_even_when_nonadjacent(#[case] last: &[u8]) {
         let payload = [record(b"100644 a\0"), record(b"100644 a.c\0"), record(last)].concat();
         let tree = Tree::parse(&payload).unwrap();
+
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::DuplicateName));
         assert_eq!(
@@ -456,6 +487,7 @@ mod tests {
     #[test]
     fn rejects_trailing_partial_entry() {
         let payload = [record(b"100644 a\0"), b"100644 b\0short".to_vec()].concat();
+
         assert_eq!(Tree::parse(&payload), Err(TreeError::TruncatedObjectId));
     }
 }
