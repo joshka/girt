@@ -10,6 +10,14 @@
 - Report unsupported cases explicitly.
 - Build narrow, usable increments; avoid speculative abstractions or configuration complexity.
 
+## Maintaining These Guidelines
+
+- When maintainer feedback establishes a reusable rule, capture it in `AGENTS.md` or the relevant
+  linked convention document as part of the work. Do not rely on conversation history alone.
+- Record the general rule and its rationale; keep task-specific decisions in the change or API docs.
+- Update existing guidance when possible, and keep `AGENTS.md` as the entry point to detailed
+  guides.
+
 ## Independent Implementation and Licensing
 
 - Target dual MIT/Apache-2.0 licensing. Write original code, documentation, and tests.
@@ -22,6 +30,8 @@
 ## Project Structure and Module Organization
 
 - Add modules under `src/` around coherent Git concepts.
+- For Rust design, implementation, and review, load and apply
+  [Rust Conventions](docs/rust-conventions.md).
 - Keep unit tests beside the implementation; use `tests/` for integration tests and
   `tests/fixtures/` for original compatibility fixtures.
 
