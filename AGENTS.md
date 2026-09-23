@@ -2,11 +2,11 @@
 
 ## Purpose and Architecture
 
-`girt` is an incremental, idiomatic Rust Git library intended for consumers such as jj.
-Model Git's concepts directly: objects, trees, commits, references, the index, and repositories.
-Supported features must preserve Git's formats and semantics exactly; reproducing CLI behavior or
-another library's API is not the goal. Report unsupported cases explicitly.
-Build narrow, usable increments and avoid speculative abstractions or configuration complexity.
+`girt` is an incremental, idiomatic Rust Git library intended for consumers such as jj. Model Git's
+concepts directly: objects, trees, commits, references, the index, and repositories. Supported
+features must preserve Git's formats and semantics exactly; reproducing CLI behavior or another
+library's API is not the goal. Report unsupported cases explicitly. Build narrow, usable increments
+and avoid speculative abstractions or configuration complexity.
 
 ## Independent Implementation and Licensing
 
@@ -25,28 +25,34 @@ The repository currently contains one Rust 2024 library crate:
 - `target/`: generated build output, ignored by version control.
 
 Add modules under `src/` around coherent Git concepts. Keep unit tests beside the implementation;
-add `tests/` for integration tests and `tests/fixtures/` for original compatibility fixtures.
-There is currently no CLI or asset directory.
+add `tests/` for integration tests and `tests/fixtures/` for original compatibility fixtures. There
+is currently no CLI or asset directory.
 
 ## Build, Test, and Development Commands
 
 - `cargo build`: compile the library.
 - `cargo test`: run unit, integration, and documentation tests.
-- `cargo fmt --check`: check standard Rust formatting.
+- `just fmt`: format Rust with nightly rustfmt and Markdown with rumdl.
+- `just fmt-check`: check formatting without changing files.
+- `just fmt-md` / `just fmt-md-check`: format or check Markdown only.
 - `cargo clippy --all-targets -- -D warnings`: check lint warnings.
 - `cargo doc --no-deps`: generate API documentation.
 
 ## Coding Style and Testing
 
-Use rustfmt, four-space indentation, `snake_case` functions/modules, and `UpperCamelCase` types.
-Prefer reader locality, cohesive types, explicit side effects, and small meaningful functions.
-Document public contracts and include Rustdoc usage examples.
+Install formatting prerequisites with `rustup toolchain install nightly --component rustfmt` and
+`cargo install just` if needed. Nightly is required for the unstable options in `rustfmt.toml`.
+Install rumdl with `cargo install rumdl --locked`. Follow `rumdl.toml`: reflow Markdown prose to
+100-character lines and align table columns and separators; tables may exceed the prose limit. Use
+four-space indentation, `snake_case` functions/modules, and `UpperCamelCase` types. Prefer reader
+locality, cohesive types, explicit side effects, and small meaningful functions. Document public
+contracts and include Rustdoc usage examples.
 
-Use Rust's built-in test framework with descriptive names such as `rejects_truncated_object`.
-Test supported behavior against Git, including malformed inputs and byte-level round trips where
+Use Rust's built-in test framework with descriptive names such as `rejects_truncated_object`. Test
+supported behavior against Git, including malformed inputs and byte-level round trips where
 applicable. Generate fixtures independently. No numerical coverage threshold is established.
 
 ## Pull Request Guidelines
 
-PRs should explain the problem, supported behavior, compatibility evidence, validation commands,
-and limitations. Link relevant issues and identify dependency or public API changes.
+PRs should explain the problem, supported behavior, compatibility evidence, validation commands, and
+limitations. Link relevant issues and identify dependency or public API changes.
