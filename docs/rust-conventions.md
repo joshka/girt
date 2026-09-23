@@ -31,3 +31,12 @@ maintainability and testing guidance.
   when the storage implementation does not support it.
 - Do not introduce an extensible format registry or speculative configuration framework to represent
   a small closed choice.
+
+## Unit Tests
+
+- Cover new behavior and API contracts with focused unit tests beside the implementation, including
+  rejected inputs and promised absence of side effects.
+- Use integration tests for behavior across components and Git interoperability; do not rely on them
+  alone for independently testable local behavior.
+- Assert observable behavior and invariants rather than reproduce implementation steps or test
+  derived traits. Keep cases focused on meaningful regressions.

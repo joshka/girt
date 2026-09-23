@@ -2,6 +2,7 @@
 //!
 //! # Library contents
 //!
+//! - [`ObjectFormat`]: recognized Git object hash formats.
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
 //! - [`encode_blob`]: uncompressed Git blob encoding.
 //! - [`LooseObjects`]: loose blob reads and writes, with a usage example and storage assumptions.
@@ -15,4 +16,4 @@ mod loose;
 mod object;
 
 pub use loose::{Error, LooseObjects};
-pub use object::{ObjectId, ParseObjectIdError, encode_blob};
+pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};

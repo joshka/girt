@@ -6,8 +6,8 @@ use flate2::write::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use tempfile::NamedTempFile;
 
-use crate::ObjectId;
 use crate::object::blob_header;
+use crate::{ObjectFormat, ObjectId};
 
 /// Reads and writes loose blobs beneath an explicitly selected SHA-1 object directory.
 ///
@@ -17,11 +17,11 @@ use crate::object::blob_header;
 /// # Example
 ///
 /// ```
-/// use girt::{LooseObjects, ObjectId};
+/// use girt::{LooseObjects, ObjectFormat, ObjectId};
 ///
 /// // A disposable object directory; no repository discovery or Git executable is needed.
 /// let directory = tempfile::tempdir()?;
-/// let objects = LooseObjects::new(directory.path(), "sha1")?;
+/// let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1)?;
 /// let bytes = b"hello\0Git\xff";
 /// let id = objects.write_blob(bytes)?;
 /// assert_eq!(id, ObjectId::for_blob(bytes));
@@ -51,15 +51,15 @@ pub struct LooseObjects {
 impl LooseObjects {
     /// Selects an object directory without accessing or creating it.
     ///
-    /// `object_format` must be `sha1`, as determined by the caller. A directory alone carries no
-    /// object-format metadata; passing `sha1` does not validate repository configuration.
+    /// The caller supplies the known object format. A directory alone carries no object-format
+    /// metadata; passing [`ObjectFormat::Sha1`] does not validate repository configuration.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedFormat`] for any other format, including `sha256`.
-    pub fn new(directory: impl Into<PathBuf>, object_format: &str) -> Result<Self, Error> {
-        if object_format != "sha1" {
-            return Err(Error::UnsupportedFormat(object_format.to_owned()));
+    /// Returns [`Error::UnsupportedFormat`] for [`ObjectFormat::Sha256`].
+    pub fn new(directory: impl Into<PathBuf>, object_format: ObjectFormat) -> Result<Self, Error> {
+        if object_format != ObjectFormat::Sha1 {
+            return Err(Error::UnsupportedFormat(object_format));
         }
         Ok(Self {
             directory: directory.into(),
@@ -157,8 +157,8 @@ impl LooseObjects {
 pub enum Error {
     /// A filesystem operation failed. Missing loose objects use [`std::io::ErrorKind::NotFound`].
     Io(std::io::Error),
-    /// The caller selected an object format other than `sha1`.
-    UnsupportedFormat(String),
+    /// The caller selected a recognized object format that loose storage does not support.
+    UnsupportedFormat(ObjectFormat),
     /// A loose object names a type other than `blob`.
     UnsupportedObjectType,
     /// The zlib stream, header, length, or requested identity is invalid.
@@ -227,5 +227,36 @@ fn decompress(file: File, limit: usize) -> Result<Vec<u8>, Error> {
         if consumed == 0 && produced == 0 {
             return Err(Error::Corrupt("incomplete zlib stream"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_sha1_without_creating_the_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("objects");
+        let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
+
+        let id = ObjectId::for_blob(b"");
+        assert!(matches!(objects.read_blob(id, 0), Err(Error::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound));
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn rejects_sha256_without_creating_the_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("objects");
+        let error = LooseObjects::new(&directory, ObjectFormat::Sha256).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::UnsupportedFormat(ObjectFormat::Sha256)
+        ));
+        assert_eq!(error.to_string(), "unsupported object format: sha256");
+        assert!(!directory.exists());
     }
 }

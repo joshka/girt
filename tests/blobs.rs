@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use girt::{Error, LooseObjects, ObjectId};
+use girt::{Error, LooseObjects, ObjectFormat, ObjectId};
 
 fn object_path(directory: &Path, id: ObjectId) -> std::path::PathBuf {
     let hex = id.to_string();
@@ -63,7 +63,7 @@ fn interoperates_with_git_in_both_directions() {
         b"",
     );
     let directory = root.path().join("objects");
-    let objects = LooseObjects::new(&directory, "sha1").unwrap();
+    let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
     let binary: Vec<u8> = (0..=255).cycle().take(16384).collect();
     for bytes in [b"".as_slice(), b"girt original fixture\n", &binary] {
         let expected = git(root.path(), &["hash-object", "--stdin"], bytes);
@@ -88,10 +88,10 @@ fn interoperates_with_git_in_both_directions() {
 fn rejects_missing_unsupported_and_oversized_objects() {
     let root = tempfile::tempdir().unwrap();
     assert!(matches!(
-        LooseObjects::new(root.path(), "sha256"),
-        Err(Error::UnsupportedFormat(_))
+        LooseObjects::new(root.path(), ObjectFormat::Sha256),
+        Err(Error::UnsupportedFormat(ObjectFormat::Sha256))
     ));
-    let objects = LooseObjects::new(root.path(), "sha1").unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"missing");
     assert!(matches!(objects.read_blob(id, 10), Err(Error::Io(error))
         if error.kind() == std::io::ErrorKind::NotFound));
@@ -109,7 +109,7 @@ fn rejects_missing_unsupported_and_oversized_objects() {
 #[test]
 fn rejects_malformed_headers_lengths_and_identities() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), "sha1").unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"abc");
     for encoded in [
         b"blob 3".as_slice(),
@@ -133,7 +133,7 @@ fn rejects_malformed_headers_lengths_and_identities() {
 #[test]
 fn rejects_truncated_corrupt_and_trailing_zlib_data() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), "sha1").unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"abc");
     let encoded = compressed(&girt::encode_blob(b"abc"));
     for length in 0..encoded.len() {
@@ -155,7 +155,7 @@ fn rejects_truncated_corrupt_and_trailing_zlib_data() {
 #[test]
 fn duplicate_and_concurrent_writes_preserve_existing_objects() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), "sha1").unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let bytes = b"concurrent original fixture";
     let id = ObjectId::for_blob(bytes);
     std::thread::scope(|scope| {
@@ -178,7 +178,7 @@ fn duplicate_and_concurrent_writes_preserve_existing_objects() {
 #[test]
 fn failed_publication_leaves_no_temporary_file() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), "sha1").unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"blocked");
     let path = object_path(root.path(), id);
     fs::create_dir_all(&path).unwrap();

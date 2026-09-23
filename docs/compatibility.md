@@ -1,8 +1,9 @@
 # Blob Compatibility Evidence
 
 The first slice supports canonical SHA-1 blobs in loose storage. The caller supplies an object
-directory and its known `sha1` format. The library rejects other format names; it does not read
-repository configuration. Crate Rustdoc owns the API examples and complete limitations.
+directory and its known `ObjectFormat::Sha1` format. The library rejects `ObjectFormat::Sha256`; it
+does not read repository configuration. Crate Rustdoc owns the API examples and complete
+limitations.
 
 ## References and Provenance
 

@@ -3,6 +3,27 @@ use std::str::FromStr;
 
 use sha1::{Digest, Sha1};
 
+/// The hash format used by a Git object database.
+///
+/// Recognizing a format does not imply storage support: [`crate::LooseObjects`] and [`ObjectId`]
+/// currently support only SHA-1.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ObjectFormat {
+    /// Git's SHA-1 object format, with 20-byte identities.
+    Sha1,
+    /// Git's SHA-256 object format, with 32-byte identities; currently unsupported by girt.
+    Sha256,
+}
+
+impl fmt::Display for ObjectFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Sha1 => "sha1",
+            Self::Sha256 => "sha256",
+        })
+    }
+}
+
 /// A 20-byte SHA-1 Git object identity, independent of object existence or type.
 ///
 /// Parsing accepts exactly 40 ASCII hexadecimal digits, in either case; display uses lowercase.
@@ -100,6 +121,12 @@ pub(crate) fn blob_header(length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn displays_git_object_format_names() {
+        assert_eq!(ObjectFormat::Sha1.to_string(), "sha1");
+        assert_eq!(ObjectFormat::Sha256.to_string(), "sha256");
+    }
 
     #[test]
     fn parses_only_full_sha1_identifiers() {
