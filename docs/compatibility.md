@@ -1,4 +1,4 @@
-# Blob Compatibility Evidence
+# Git Compatibility Evidence
 
 The first slice supports canonical SHA-1 blobs in loose storage. The caller supplies an object
 directory and its known `ObjectFormat::Sha1` format. The library rejects `ObjectFormat::Sha256`; it
@@ -90,3 +90,45 @@ packages offer MIT, Apache-2.0, or Zlib terms, including platform-specific depen
 `unicode-ident` also requires Unicode-3.0 terms. `simd-adler32` and `generic-array` use MIT;
 `zlib-rs` uses Zlib. License alternatives in transitive packages do not require selecting LGPL. This
 records package metadata, not an independent legal audit.
+
+## In-Memory SHA-1 Trees
+
+`Tree` supports the five standard entry modes: regular blob (`100644`), executable blob (`100755`),
+symlink (`120000`), subtree (`40000`), and gitlink (`160000`). Payload names are byte strings and
+IDs are 20 raw SHA-1 bytes. `Tree::new` rejects empty names, NUL, slash, dot, dot-dot, and
+byte-identical duplicates, then sorts entries in Git order. Directories compare as though their name
+ends in `/`; other entries, including gitlinks, compare with a NUL terminator.
+
+`Tree::parse` preserves entry order, duplicate names, and invalid path components. It accepts only
+the exact mode spellings above; zero-padded and historical permission modes are explicitly
+unsupported. Accepted payloads re-encode byte-for-byte, and identity hashes those unchanged bytes
+with the canonical tree object header. `Tree::validate` checks names, duplicates, and ordering
+without modifying the object. It is not a complete `git fsck` check: `.git`, platform aliases,
+all-zero IDs, referenced object existence, and referenced object types are not checked.
+
+The references are [Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects),
+[`git mktree`](https://git-scm.com/docs/git-mktree), and the diagnostic categories in
+[`git fsck`](https://git-scm.com/docs/git-fsck). Ordering and encoded bytes are independently
+checked through Git commands, without consulting or adapting Git implementation code.
+
+`src/tree.rs` tests literal encodings for every supported mode, empty-tree identity, byte names,
+file/directory prefixes, nonadjacent duplicate file/tree names, invalid names, malformed and
+unsupported modes, missing delimiters, and truncated IDs. `tests/trees.rs` generates original
+fixtures at runtime, including whitespace and non-UTF-8 names. No fixture files are vendored.
+
+Both-direction interoperability tests run in disposable bare SHA-1 repositories with inherited
+`GIT_*` overrides removed and system/global configuration disabled. `git mktree -z --missing`
+constructs trees from independently specified, unsorted listings; `git cat-file tree` supplies
+Git-produced payloads for girt to parse and compare byte-for-byte. The tests then remove the Git
+object and import girt's payload with `git hash-object -w -t tree --stdin`. `git ls-tree -z` and
+`git mktree` reconstruct the same identity. Empty and mixed-mode trees use this complete sequence.
+Synthetic referenced IDs intentionally avoid requiring commits or loose-tree storage in girt.
+Additional tests compare preserved unsorted, duplicate-name, and invalid-name identities with
+`git hash-object --literally`.
+
+Validated with Git 2.55.0 on macOS arm64. Other platforms have not been exercised. The tree API
+performs no filesystem operations and makes no checkout-safety guarantee. It allocates owned entries
+and encoded buffers proportional to input size; callers bound input size before parsing. There is no
+separate resource-limit, partial-write, cleanup, or concurrency contract in this in-memory slice.
+SHA-256 trees, filesystem traversal, the index, checkout, commits, references, packs, and loose-tree
+storage remain outside scope. No dependencies were added.

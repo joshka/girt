@@ -9,12 +9,14 @@ concepts and exact interoperability for supported repository formats and operati
 
 The library derives SHA-1 blob identities, encodes blobs, and reads and writes loose blobs in an
 explicitly selected object directory. Reads validate object contents; writes publish complete
-objects without replacing existing files. The API is experimental.
+objects without replacing existing files. In-memory SHA-1 trees support byte-preserving names,
+standard entry modes, payload parsing and encoding, Git ordering, and identity. Parsing preserves
+supported noncanonical trees; construction validates names and duplicates. The API is experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, other object types, packs, repository discovery, and a CLI are not
-implemented.
+dependencies. SHA-256, loose-tree storage, commits, tags, packs, repository discovery, and a CLI are
+not implemented.
 
 ## Design Goals
 
@@ -30,7 +32,8 @@ and tests against Git's observable behavior. All implementation, documentation, 
 original; do not copy, translate, or adapt copyrightable expression from Git source code.
 
 Run `cargo run --example loose_blob` for a complete write/read operation in a disposable object
-store. The temporary directory is removed when the example exits normally.
+store. The temporary directory is removed when the example exits normally. Run
+`cargo run --example tree` to build, encode, and parse an in-memory tree.
 
 ## Development
 

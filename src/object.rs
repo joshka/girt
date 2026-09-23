@@ -43,8 +43,12 @@ impl ObjectId {
     /// );
     /// ```
     pub fn for_blob(bytes: &[u8]) -> Self {
+        Self::for_object("blob", bytes)
+    }
+
+    pub(crate) fn for_object(kind: &str, bytes: &[u8]) -> Self {
         let mut hash = Sha1::new();
-        hash.update(blob_header(bytes.len()));
+        hash.update(format!("{kind} {}\0", bytes.len()));
         hash.update(bytes);
         Self(hash.finalize().into())
     }

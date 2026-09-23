@@ -87,3 +87,20 @@ implemented. Keep these distinctions visible in the completion report.
   results.
 - The baseline remains limited to SHA-1 loose blobs on the exercised macOS platform. No new Git
   capability or numerical performance threshold is implied by completion.
+
+## In-Memory Tree Completion
+
+- Structural parsing and construction are separate: exact supported payloads round-trip even when
+  name or ordering validation fails. Unit tests cover empty trees, five modes, byte names, prefix
+  ordering, duplicates, malformed modes, missing delimiters, and truncated IDs.
+- `examples/tree.rs` and the `Tree` doctest demonstrate construction, encoding, parsing, validation,
+  and identity through the public API.
+- [Compatibility evidence](compatibility.md#in-memory-sha-1-trees) records exact byte and identity
+  agreement with Git, Git-produced input, Git consumption of girt output, and noncanonical cases.
+- The parsing/encoding [benchmark](benchmarks.md#in-memory-tree-baseline) measures owned operations
+  on representative small and large trees. No numerical acceptance threshold is established.
+- Filesystem failures, partial writes, cleanup, and concurrency tests are inapplicable: these tree
+  operations have no external side effects. Memory grows with the caller-supplied payload; the API
+  does not promise a configurable allocation limit.
+- The supported boundary is in-memory SHA-1 trees on the exercised macOS platform. This does not
+  establish loose-tree storage, checkout safety, or complete `git fsck` validation.

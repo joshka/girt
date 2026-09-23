@@ -22,6 +22,9 @@ require crate-wide passes.
   effects. Include public fields and enum variants.
 - Distinguish accepted input, validated properties, and preserved representation. Where relevant,
   specify byte/encoding handling, normalization, round-trip guarantees, and unsupported Git formats.
+- When parsing and validation are separate, explain why and when callers need each operation. Show
+  what parse success guarantees, what remains unchecked, and what callers retain after a validation
+  failure. Examples should identify redundant checks rather than imply they are required.
 - Explain feature, platform, compatibility, and API-stability constraints when relevant.
 - Document failure conditions, partial changes, and recovery under `# Errors`, panic conditions
   under `# Panics`, and unsafe caller obligations under `# Safety`, where applicable.

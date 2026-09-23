@@ -25,3 +25,11 @@ harness = false
 [[example]]
 name = "loose_blob"
 doc-scrape-examples = true
+
+[[bench]]
+name = "trees"
+harness = false
+
+[[example]]
+name = "tree"
+doc-scrape-examples = true

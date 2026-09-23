@@ -107,3 +107,34 @@ PYTHON
 - Measurements do not establish memory bounds, collision resistance, power-loss durability, or
   performance on other platforms. Functional tests and documented contracts remain separate
   evidence.
+
+## In-Memory Tree Baseline
+
+Run `cargo bench --bench trees` with the checked-in lockfile and default optimized bench profile.
+`just bench` runs both blob and tree harnesses. The tree harness uses Criterion with 30 samples, a
+one-second warmup, and a two-second target measurement duration per workload. Fixtures are
+constructed outside the measured operation: 16 or 1,024 entries, cycling through the five supported
+modes, with names `entry-000000` onward and fixed raw object IDs.
+
+Parsing measures `Tree::parse` including owned entry/name allocation and destruction. Encoding
+measures `Tree::encode` including returned-buffer allocation and destruction. Construction, sorting,
+validation, and identity hashing are not timed. All input is already in memory; no filesystem
+operations or cache-eviction claims apply. These are initial baselines without numerical performance
+gates, not comparisons with another implementation.
+
+Measured on 2026-09-23 on Apple M2 Max, macOS 26.6.2 (25G83), arm64, with rustc 1.98.1 (`48a229cea`)
+and Cargo 1.98.1 (`797e8a9bc`). Command:
+`cargo bench --bench trees > /tmp/girt-trees-benchmark.log 2>&1`. This normal desktop session had
+uncontrolled background activity; repeat on the same machine before interpreting small changes.
+
+The [source manifest](benchmarks/tree-baseline.sha256) identifies the measured library and harness
+at revision `189a130956647216a6b37a0292b0f5410c5b53a8`, before later documentation edits. From that
+revision, verify with `shasum -a 256 -c docs/benchmarks/tree-baseline.sha256`. The
+[CSV](benchmarks/tree-baseline.csv) retains Criterion median estimates and 95% confidence intervals
+from `target/criterion/trees/{parse,encode}/{16,1024}/new/estimates.json`. Medians below are sampled
+operation-time estimates, not individual-operation latency percentiles.
+
+| Entries | Payload bytes | Parse median (µs) | Encode median (µs) |
+| ------- | ------------- | ----------------- | ------------------ |
+| 16      | 637           | 0.696             | 0.500              |
+| 1,024   | 40,755        | 34.807            | 11.059             |
