@@ -71,6 +71,9 @@
 - Use [Development Checks](CONTRIBUTING.md#development-checks) to select validation for the change.
   After checks pass, broaden or repeat them only when further edits, failures, or unresolved
   concerns justify it.
+- Apply [Testing and Completion Criteria](docs/testing.md) when planning and implementing a
+  capability. Include concrete acceptance criteria in implementation tasks and report the evidence
+  at completion.
 
 ## Pull Request Guidelines
 

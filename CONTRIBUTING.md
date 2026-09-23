@@ -45,6 +45,10 @@ columns and separators stay aligned, even when a table must be wider.
 
 ## Implementation and Tests
 
+Use [Testing and Completion Criteria](docs/testing.md) to define acceptance evidence for each
+capability before implementation. Include its concrete checklist in the task description. Unit
+tests, integration tests, and benchmarks should address the change's contracts and risks.
+
 Organize modules under `src/` around coherent Git concepts. Prefer readable control flow, explicit
 side effects, and types that protect meaningful invariants. Document public API contracts and add
 Rustdoc examples when an API becomes usable.
