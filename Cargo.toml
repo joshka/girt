@@ -2,5 +2,11 @@
 name = "girt"
 version = "0.1.0"
 edition = "2024"
+authors = ["Josh McKinney"]
+description = "An incremental, idiomatic Rust implementation of Git"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["git", "version-control", "repository"]
+categories = ["development-tools"]
 
 [dependencies]
