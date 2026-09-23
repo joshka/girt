@@ -19,7 +19,12 @@ toolchain.
 
 ## Development Checks
 
-Run these checks before submitting a contribution:
+For Markdown-only changes, run `just fmt-md-check` (rumdl). Use `just fmt-md` to fix formatting. For
+Rustdoc-only changes, run the checks applicable to the change in
+[Rustdoc Standard](docs/rustdoc.md#examples-and-validation). Corrections that preserve meaning,
+links, and examples need prose review, but no Rust tests or documentation builds.
+
+For Rust implementation changes, run these checks before submitting a contribution:
 
 ```sh
 just fmt
@@ -38,6 +43,10 @@ columns and separators stay aligned, even when a table must be wider.
 Organize modules under `src/` around coherent Git concepts. Prefer readable control flow, explicit
 side effects, and types that protect meaningful invariants. Document public API contracts and add
 Rustdoc examples when an API becomes usable.
+
+Follow [Documentation Standard](docs/documentation.md) when writing prose and
+[Rustdoc Standard](docs/rustdoc.md) for API contracts and examples. Both apply when documenting
+implementation changes.
 
 Keep unit tests beside the implementation. Add integration tests under `tests/` and independently
 generated fixtures under `tests/fixtures/` as needed. Name tests after behavior, such as
