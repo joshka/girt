@@ -152,49 +152,27 @@ impl LooseObjects {
 }
 
 /// A failure to read or publish a loose blob.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// A filesystem operation failed. Missing loose objects use [`std::io::ErrorKind::NotFound`].
-    Io(std::io::Error),
+    #[error("loose object I/O: {0}")]
+    Io(#[from] std::io::Error),
     /// The caller selected a recognized object format that loose storage does not support.
+    #[error("unsupported object format: {0}")]
     UnsupportedFormat(ObjectFormat),
     /// A loose object names a type other than `blob`.
+    #[error("only blob objects are supported")]
     UnsupportedObjectType,
     /// The zlib stream, header, length, or requested identity is invalid.
+    #[error("corrupt loose object: {0}")]
     Corrupt(&'static str),
     /// Decompressed content exceeds the caller's maximum blob size.
+    #[error("blob exceeds the size limit")]
     TooLarge,
     /// An existing valid object has the same identity but different content.
+    #[error("existing object has different content")]
     ConflictingObject,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "loose object I/O: {error}"),
-            Self::UnsupportedFormat(format) => write!(f, "unsupported object format: {format}"),
-            Self::UnsupportedObjectType => f.write_str("only blob objects are supported"),
-            Self::Corrupt(reason) => write!(f, "corrupt loose object: {reason}"),
-            Self::TooLarge => f.write_str("blob exceeds the size limit"),
-            Self::ConflictingObject => f.write_str("existing object has different content"),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
-    }
 }
 
 // Use the low-level inflater to require StreamEnd explicitly. A Read wrapper alone can accept EOF

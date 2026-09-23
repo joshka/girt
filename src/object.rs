@@ -86,16 +86,9 @@ impl FromStr for ObjectId {
 }
 
 /// An identifier was not exactly 40 ASCII hexadecimal digits.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("expected a 40-digit SHA-1 object identifier")]
 pub struct ParseObjectIdError;
-
-impl fmt::Display for ParseObjectIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("expected a 40-digit SHA-1 object identifier")
-    }
-}
-
-impl std::error::Error for ParseObjectIdError {}
 
 /// Encodes a blob as `blob <decimal byte length>\0` followed by its unchanged bytes.
 ///

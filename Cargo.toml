@@ -13,6 +13,7 @@ categories = ["development-tools"]
 flate2 = "1"
 sha1 = "0.10"
 tempfile = "3"
+thiserror = "2"
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

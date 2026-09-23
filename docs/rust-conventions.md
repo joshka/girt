@@ -32,6 +32,13 @@ maintainability and testing guidance.
 - Do not introduce an extensible format registry or speculative configuration framework to represent
   a small closed choice.
 
+## Errors
+
+- Use `thiserror` to derive library error implementations. Keep concrete error types and variants
+  owned by their domain modules.
+- Preserve underlying causes with `#[source]` or `#[from]` where appropriate so callers can inspect
+  failures without parsing display text.
+
 ## Unit Tests
 
 - Cover new behavior and API contracts with focused unit tests beside the implementation, including

@@ -75,10 +75,10 @@ Performance commands, cache conditions, results, and limitations are recorded in
 
 ## Dependencies
 
-Runtime dependencies are `sha1` for hashing, `flate2` for zlib, and `tempfile` for exclusive
-temporary files and disposable test directories. All three declare `MIT OR Apache-2.0`. Requirements
-permit compatible releases within their selected release series; the lockfile records tested
-versions.
+Runtime dependencies are `sha1` for hashing, `flate2` for zlib, `tempfile` for exclusive temporary
+files and disposable test directories, and `thiserror` for error derivation. All four declare
+`MIT OR Apache-2.0`. Requirements permit compatible releases within their selected release series;
+the lockfile records tested versions.
 
 `rstest` provides test parameterization and Criterion provides benchmark sampling and analysis. Both
 are development-only dependencies with MIT/Apache-2.0 license alternatives.

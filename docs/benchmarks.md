@@ -37,9 +37,11 @@
 ## Recorded Environment
 
 - Date: 2026-09-23.
+- Measured revision: `3f46f0e0b07135e14a735e4aba49d9e2ea27751b`. Later source changes are not
+  represented by these timings.
 - Source identity: [SHA-256 manifest](benchmarks/blob-baseline.sha256) records the measured harness,
-  library sources, Cargo manifest, and lockfile. Verify from the repository root with
-  `shasum -a 256 -c docs/benchmarks/blob-baseline.sha256`.
+  library sources, Cargo manifest, and lockfile. Verify from the measured revision's repository root
+  with `shasum -a 256 -c docs/benchmarks/blob-baseline.sha256`.
 - Host: Apple M2 Max, 96 GiB RAM, `aarch64-apple-darwin`.
 - OS: macOS 26.6.2, build 25G83.
 - Toolchain: rustc 1.98.1 (`48a229cea`, LLVM 22.1.8); Cargo 1.98.1 (`797e8a9bc`).
