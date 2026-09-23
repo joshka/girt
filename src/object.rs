@@ -117,8 +117,9 @@ mod tests {
 
     use super::*;
 
-    // Expected identities were independently checked with Python hashlib and Git 2.55.0.
-    // See docs/compatibility.md for the reproduction command.
+    /// Checks exact headers at decimal-length transitions and preservation of all byte values.
+    /// Literal identities were independently verified with Python and Git; provenance is in
+    /// docs/compatibility.md.
     #[rstest]
     #[case::nine_bytes(vec![b'x'; 9], b"blob 9\0", "aab1169962b9fd16c9465117c12cad0ffd8bffac")]
     #[case::ten_bytes(vec![b'x'; 10], b"blob 10\0", "72035e10b5524757f990eb198acfce358b268c12")]
@@ -136,6 +137,7 @@ mod tests {
         assert_eq!(ObjectId::for_blob(&bytes).to_string(), expected_id);
     }
 
+    /// Keeps format display names compatible with the names used in Git configuration.
     #[rstest]
     #[case::sha1(ObjectFormat::Sha1, "sha1")]
     #[case::sha256(ObjectFormat::Sha256, "sha256")]
@@ -143,6 +145,7 @@ mod tests {
         assert_eq!(format.to_string(), expected);
     }
 
+    /// Accepts either hexadecimal case as the same full SHA-1 identity.
     #[rstest]
     #[case::lowercase("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")]
     #[case::uppercase("E69DE29BB2D1D6434B8B29AE775AD8C2E48C5391")]
@@ -151,12 +154,14 @@ mod tests {
         assert_eq!(value.parse(), Ok(id));
     }
 
+    /// Checks that raw-byte construction and access preserve all identity bytes.
     #[test]
     fn preserves_raw_identity_bytes() {
         let id = ObjectId::for_blob(b"");
         assert_eq!(ObjectId::from_bytes(*id.as_bytes()), id);
     }
 
+    /// Rejects abbreviated, SHA-256, non-hexadecimal, and non-ASCII identity strings.
     #[rstest]
     #[case::abbreviated("abc".to_owned())]
     #[case::sha256("0".repeat(64))]

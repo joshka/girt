@@ -41,6 +41,14 @@ maintainability and testing guidance.
 
 ## Unit Tests
 
+- Keep unit and integration test bodies simple: setup, the operation, and direct assertions.
+- Avoid `if`, `match`, `for`, and `while` in test bodies when they select scenarios or expected
+  results. Prefer named `rstest` cases with explicit inputs and expectations.
+- Put reusable fixture construction in small, named helpers. Keep logic that is intrinsic to the
+  behavior being tested, such as coordinating concurrent writers, explicit and minimal; do not move
+  scenario-selection logic into helpers merely to hide it.
+- Add succinct purpose comments to tests and fixture helpers when their intent is not clear from the
+  name. Explain the behavior, boundary, or failure being checked rather than narrating test steps.
 - Cover new behavior and API contracts with focused unit tests beside the implementation, including
   rejected inputs and promised absence of side effects.
 - Use integration tests for behavior across components and Git interoperability; do not rely on them

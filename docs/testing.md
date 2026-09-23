@@ -28,14 +28,14 @@ needed. Generate fixtures independently and isolate filesystem tests from the wo
 global configuration. Follow [Rust Conventions](rust-conventions.md#unit-tests) and the
 [Rustdoc Standard](rustdoc.md#examples-and-validation) for local tests and executable examples.
 
-## Parameterized Unit Tests
+## Parameterized Tests
 
-Use `rstest` with named `#[case::name(...)]` inputs for parameterized unit tests. Each case should
-run independently and identify the behavior or boundary in its name. Keep test bodies to setup, the
-operation, and direct assertions; avoid loops over cases or branches that select expected results.
-Supply expected values as case parameters instead. Simple fixture construction is fine, but do not
-reimplement the algorithm under test to calculate expectations. Keep ordinary `#[test]` functions
-for single scenarios that do not need parameters.
+Use `rstest` with named `#[case::name(...)]` inputs for parameterized unit and integration tests.
+Each case should run independently and identify the behavior or boundary in its name. Keep test
+bodies to setup, the operation, and direct assertions; avoid loops over cases or branches that
+select expected results. Supply expected values as case parameters instead. Simple fixture
+construction is fine, but do not reimplement the algorithm under test to calculate expectations.
+Keep ordinary `#[test]` functions for single scenarios that do not need parameters.
 
 ## Performance Evidence
 

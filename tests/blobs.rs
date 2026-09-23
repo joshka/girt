@@ -8,25 +8,29 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use girt::{Error, LooseObjects, ObjectFormat, ObjectId};
 
+/// Maps an identity to its loose-object path so tests can inspect or replace the stored file.
 fn object_path(directory: &Path, id: ObjectId) -> std::path::PathBuf {
     let hex = id.to_string();
     directory.join(&hex[..2]).join(&hex[2..])
 }
 
+/// Wraps supplied bytes in valid zlib, allowing tests to isolate malformed object contents.
 fn compressed(bytes: &[u8]) -> Vec<u8> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(bytes).unwrap();
     encoder.finish().unwrap()
 }
 
+/// Writes fixture bytes directly, bypassing the validation performed by the public writer.
 fn install(directory: &Path, id: ObjectId, bytes: &[u8]) {
     let path = object_path(directory, id);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();
 }
 
-// Remove inherited Git overrides and disable user/system config and templates. Commands operate
-// only in the test's disposable directory, with no changes to global configuration.
+/// Runs Git in the disposable repository with supplied stdin and returns stdout.
+/// Inherited Git overrides and user/system configuration are disabled; initialization disables
+/// templates explicitly at the call site.
 fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
@@ -54,6 +58,8 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
     output.stdout
 }
 
+/// Checks empty, text, and binary blobs against Git's identities and readers in both directions.
+/// Removing girt's file before Git writes ensures the final read exercises Git-produced storage.
 #[test]
 fn interoperates_with_git_in_both_directions() {
     let root = tempfile::tempdir().unwrap();
@@ -84,6 +90,8 @@ fn interoperates_with_git_in_both_directions() {
     }
 }
 
+/// Distinguishes missing files, unsupported formats/types, and caller size-limit failures.
+/// Both a highly compressed large blob and a blob one byte over the limit must be rejected.
 #[test]
 fn rejects_missing_unsupported_and_oversized_objects() {
     let root = tempfile::tempdir().unwrap();
@@ -106,6 +114,9 @@ fn rejects_missing_unsupported_and_oversized_objects() {
     ));
 }
 
+/// Rejects invalid object contents even when their zlib wrapper is valid.
+/// Cases cover header syntax, noncanonical or mismatched lengths, and content stored under the
+/// wrong ID.
 #[test]
 fn rejects_malformed_headers_lengths_and_identities() {
     let root = tempfile::tempdir().unwrap();
@@ -130,6 +141,9 @@ fn rejects_malformed_headers_lengths_and_identities() {
     }
 }
 
+/// Requires exactly one complete zlib stream with a valid checksum.
+/// Every truncation is rejected, including cuts after the payload but before the trailer is
+/// complete.
 #[test]
 fn rejects_truncated_corrupt_and_trailing_zlib_data() {
     let root = tempfile::tempdir().unwrap();
@@ -152,6 +166,8 @@ fn rejects_truncated_corrupt_and_trailing_zlib_data() {
     }
 }
 
+/// Checks that concurrent identical writes converge and a later duplicate preserves stored bytes.
+/// A corrupt existing file must also remain untouched, with no temporary files left behind.
 #[test]
 fn duplicate_and_concurrent_writes_preserve_existing_objects() {
     let root = tempfile::tempdir().unwrap();
@@ -175,6 +191,8 @@ fn duplicate_and_concurrent_writes_preserve_existing_objects() {
     assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
 }
 
+/// Blocks publication with a directory at the destination object path.
+/// The write must fail, preserve that directory, and remove its temporary file.
 #[test]
 fn failed_publication_leaves_no_temporary_file() {
     let root = tempfile::tempdir().unwrap();

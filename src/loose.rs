@@ -212,6 +212,7 @@ fn decompress(file: File, limit: usize) -> Result<Vec<u8>, Error> {
 mod tests {
     use super::*;
 
+    /// Construction selects a path lazily: reading a missing object fails without creating storage.
     #[test]
     fn selects_sha1_without_creating_the_directory() {
         let root = tempfile::tempdir().unwrap();
@@ -224,6 +225,7 @@ mod tests {
         assert!(!directory.exists());
     }
 
+    /// Unsupported SHA-256 selection reports the format and leaves the filesystem unchanged.
     #[test]
     fn rejects_sha256_without_creating_the_directory() {
         let root = tempfile::tempdir().unwrap();
