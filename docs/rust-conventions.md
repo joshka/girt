@@ -47,3 +47,17 @@ maintainability and testing guidance.
   alone for independently testable local behavior.
 - Assert observable behavior and invariants rather than reproduce implementation steps or test
   derived traits. Keep cases focused on meaningful regressions.
+
+## Synchronous Storage and Async Deferral
+
+- Keep the current experimental local blob API explicitly synchronous and blocking. Its scope does
+  not yet justify an async runtime dependency, adapter, or backend framework.
+- Keep parsing, encoding, hashing, and compression independent of an async runtime.
+- Revisit the boundary before defining a shared object-store trait that consumers implement,
+  allowing object lookup to fetch remote data, or integrating an async consumer with concrete
+  responsiveness or concurrency requirements.
+- At that point, decide the local-versus-remote boundary, owned buffers for worker dispatch,
+  concurrency limits, and cancellation and write-completion semantics.
+- Consider a whole-operation blocking-worker adapter for local storage; async integration does not
+  necessarily require rewriting the core.
+- Treat this as a deferred design decision, not authorization to add async or expand the blob slice.
