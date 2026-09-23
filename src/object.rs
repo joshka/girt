@@ -120,26 +120,37 @@ pub(crate) fn blob_header(length: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn displays_git_object_format_names() {
-        assert_eq!(ObjectFormat::Sha1.to_string(), "sha1");
-        assert_eq!(ObjectFormat::Sha256.to_string(), "sha256");
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, "sha1")]
+    #[case::sha256(ObjectFormat::Sha256, "sha256")]
+    fn displays_git_object_format_names(#[case] format: ObjectFormat, #[case] expected: &str) {
+        assert_eq!(format.to_string(), expected);
+    }
+
+    #[rstest]
+    #[case::lowercase("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")]
+    #[case::uppercase("E69DE29BB2D1D6434B8B29AE775AD8C2E48C5391")]
+    fn parses_full_sha1_identifiers(#[case] value: &str) {
+        let id = ObjectId::for_blob(b"");
+        assert_eq!(value.parse(), Ok(id));
     }
 
     #[test]
-    fn parses_only_full_sha1_identifiers() {
+    fn preserves_raw_identity_bytes() {
         let id = ObjectId::for_blob(b"");
-        assert_eq!(id.to_string().to_uppercase().parse(), Ok(id));
         assert_eq!(ObjectId::from_bytes(*id.as_bytes()), id);
-        for invalid in [
-            "abc".to_owned(),
-            "0".repeat(64),
-            "g".repeat(40),
-            "é".repeat(20),
-        ] {
-            assert!(invalid.parse::<ObjectId>().is_err());
-        }
+    }
+
+    #[rstest]
+    #[case::abbreviated("abc".to_owned())]
+    #[case::sha256("0".repeat(64))]
+    #[case::non_hexadecimal("g".repeat(40))]
+    #[case::non_ascii("é".repeat(20))]
+    fn rejects_invalid_sha1_identifiers(#[case] value: String) {
+        assert_eq!(value.parse::<ObjectId>(), Err(ParseObjectIdError));
     }
 }
