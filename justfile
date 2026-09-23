@@ -11,7 +11,7 @@ test:
 
 # Measure blob and tree baselines (not a CI performance gate).
 bench:
-    cargo bench --bench blobs --bench trees
+    cargo bench --bench blobs --bench trees --bench loose_trees
 
 # Reject Clippy warnings across all targets.
 clippy:

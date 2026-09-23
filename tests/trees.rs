@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use girt::{EntryMode, ObjectId, Tree, TreeEntry};
+use girt::{EntryMode, LooseObjects, ObjectFormat, ObjectId, Tree, TreeEntry};
 use rstest::rstest;
 
 /// Runs Git in the disposable repository with supplied stdin and returns stdout.
@@ -116,19 +116,15 @@ fn interoperates_with_git_in_both_directions(
     let git_payload = git(root.path(), &["cat-file", "tree", &id], b"");
     assert_eq!(tree.encode(), git_payload);
 
-    let parsed = Tree::parse(&git_payload).unwrap();
+    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1).unwrap();
+    let parsed = objects.read_tree(tree.id(), git_payload.len()).unwrap();
     assert_eq!(parsed.entries(), tree.entries());
     assert_eq!(parsed.validate(), Ok(()));
     assert_eq!(parsed.id(), tree.id());
 
     // Remove the Git-produced object so the second half necessarily imports girt's payload.
     std::fs::remove_file(root.path().join("objects").join(&id[..2]).join(&id[2..])).unwrap();
-    let imported = git(
-        root.path(),
-        &["hash-object", "-w", "-t", "tree", "--stdin"],
-        &tree.encode(),
-    );
-    assert_eq!(imported, git_id);
+    assert_eq!(objects.write_tree(&tree).unwrap(), tree.id());
 
     let read_listing = git(root.path(), &["ls-tree", "-z", &id], b"");
     let reconstructed = git(root.path(), &["mktree", "-z", "--missing"], &read_listing);
@@ -155,7 +151,7 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
     let tree = Tree::parse(&payload).unwrap();
     let expected = git(
         root.path(),
-        &["hash-object", "--literally", "-t", "tree", "--stdin"],
+        &["hash-object", "-w", "--literally", "-t", "tree", "--stdin"],
         &payload,
     );
 
@@ -165,4 +161,10 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
         std::str::from_utf8(&expected).unwrap().trim()
     );
     assert!(tree.validate().is_err());
+    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1).unwrap();
+    assert_eq!(objects.read_tree(tree.id(), payload.len()).unwrap(), tree);
+    let hex = tree.id().to_string();
+    std::fs::remove_file(root.path().join("objects").join(&hex[..2]).join(&hex[2..])).unwrap();
+    assert_eq!(objects.write_tree(&tree).unwrap(), tree.id());
+    assert_eq!(git(root.path(), &["cat-file", "tree", &hex], b""), payload);
 }

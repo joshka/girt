@@ -6,13 +6,14 @@ use flate2::write::ZlibEncoder;
 use flate2::{Compression, Decompress, FlushDecompress, Status};
 use tempfile::NamedTempFile;
 
-use crate::object::blob_header;
-use crate::{ObjectFormat, ObjectId};
+use crate::object::object_header;
+use crate::{ObjectFormat, ObjectId, Tree, TreeError};
 
-/// Reads and writes loose blobs beneath an explicitly selected SHA-1 object directory.
+/// Reads and writes loose blobs and trees beneath an explicitly selected SHA-1 object directory.
 ///
 /// This owns the path to an object directory, usually `.git/objects`. Callers select the directory
-/// and supply its known object format; no repository configuration is inspected.
+/// and supply its known object format; no repository configuration is inspected. Operations are
+/// synchronous and block the calling thread.
 ///
 /// # Example
 ///
@@ -31,10 +32,10 @@ use crate::{ObjectFormat, ObjectId};
 ///
 /// # Supported storage
 ///
-/// Only SHA-1 loose blobs are supported. SHA-256 and other object types are rejected. Packs and
-/// alternates are not searched, so a packed-only blob appears missing. Reads validate canonical
+/// Only SHA-1 loose blobs and trees are supported. SHA-256 and other types are rejected. Packs and
+/// alternates are not searched, so a packed-only object appears missing. Reads validate canonical
 /// headers, lengths, zlib completion and checksum, and object identity. The caller supplies a
-/// maximum blob size to bound decompressed allocation. Writes compare existing content before
+/// maximum payload size to bound decompressed allocation. Writes compare existing content before
 /// accepting a duplicate and publish complete files without replacing existing objects.
 ///
 /// # Filesystem assumptions
@@ -77,6 +78,35 @@ impl LooseObjects {
     /// types, or [`Error::Corrupt`] for malformed headers, incomplete or trailing compressed
     /// data, or identity mismatches.
     pub fn read_blob(&self, id: ObjectId, max_size: usize) -> Result<Vec<u8>, Error> {
+        self.read_object(id, max_size, "blob")
+    }
+
+    /// Reads and parses a loose tree after verifying its framing and SHA-1 identity.
+    ///
+    /// Preserves all payloads supported by [`Tree::parse`], including invalid names, duplicates,
+    /// and unsorted entries. Call [`Tree::validate`] separately when those rules are required.
+    /// References are not resolved or checked against storage.
+    ///
+    /// `max_size` bounds decompressed payload bytes, excluding the header. Parsing additionally
+    /// allocates owned entries and names proportional to that payload; this is not a total heap
+    /// limit. Compressed input is read incrementally.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage errors documented by [`Self::read_blob`], including
+    /// [`Error::UnsupportedObjectType`] for a non-tree object, or [`Error::Tree`] when the
+    /// verified payload cannot be parsed.
+    pub fn read_tree(&self, id: ObjectId, max_size: usize) -> Result<Tree, Error> {
+        let payload = self.read_object(id, max_size, "tree")?;
+        Ok(Tree::parse(&payload)?)
+    }
+
+    fn read_object(
+        &self,
+        id: ObjectId,
+        max_size: usize,
+        expected_kind: &str,
+    ) -> Result<Vec<u8>, Error> {
         let file = File::open(self.object_path(id))?;
         let mut encoded = decompress(file, max_size.saturating_add(32))?;
         let separator = encoded
@@ -90,7 +120,7 @@ impl LooseObjects {
             .ok_or(Error::Corrupt("invalid header"))?;
         let kind = &header[..space];
         let length = &header[space + 1..];
-        if kind != b"blob" {
+        if kind != expected_kind.as_bytes() {
             return Err(Error::UnsupportedObjectType);
         }
         let content = &encoded[separator + 1..];
@@ -100,7 +130,7 @@ impl LooseObjects {
         if content.len() > max_size {
             return Err(Error::TooLarge);
         }
-        if ObjectId::for_blob(content) != id {
+        if ObjectId::for_object(expected_kind, content) != id {
             return Err(Error::Corrupt("object identity mismatch"));
         }
         encoded.drain(..separator + 1);
@@ -123,19 +153,40 @@ impl LooseObjects {
     /// Failed operations may leave created directories. No directory synchronization is
     /// performed, so success does not guarantee power-loss durability.
     pub fn write_blob(&self, bytes: &[u8]) -> Result<ObjectId, Error> {
-        let id = ObjectId::for_blob(bytes);
+        self.write_object("blob", bytes)
+    }
+
+    /// Writes a tree's exact encoded payload and returns its SHA-1 identity.
+    ///
+    /// Preserves parsed entries even when [`Tree::validate`] would reject them. Does not validate
+    /// names, reorder entries, or resolve references. Use [`Tree::new`] to construct a validated
+    /// tree. Allocates a payload buffer before compression.
+    ///
+    /// Publication, duplicate comparison, concurrency, cleanup, and filesystem assumptions are
+    /// identical to [`Self::write_blob`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage errors documented by [`Self::write_blob`]. Existing corrupt objects
+    /// remain untouched; failed writes may leave created directories.
+    pub fn write_tree(&self, tree: &Tree) -> Result<ObjectId, Error> {
+        self.write_object("tree", &tree.encode())
+    }
+
+    fn write_object(&self, kind: &str, bytes: &[u8]) -> Result<ObjectId, Error> {
+        let id = ObjectId::for_object(kind, bytes);
         let path = self.object_path(id);
         let parent = path.parent().expect("object path always has a parent");
         fs::create_dir_all(parent)?;
         let mut temporary = NamedTempFile::new_in(parent)?;
         let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), Compression::default());
-        encoder.write_all(blob_header(bytes.len()).as_bytes())?;
+        encoder.write_all(object_header(kind, bytes.len()).as_bytes())?;
         encoder.write_all(bytes)?;
         encoder.finish()?;
         match fs::hard_link(temporary.path(), &path) {
             Ok(()) => Ok(id),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if self.read_blob(id, bytes.len())? != bytes {
+                if self.read_object(id, bytes.len(), kind)? != bytes {
                     return Err(Error::ConflictingObject);
                 }
                 Ok(id)
@@ -150,7 +201,7 @@ impl LooseObjects {
     }
 }
 
-/// A failure to read or publish a loose blob.
+/// A failure to read or publish a loose object.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -160,15 +211,18 @@ pub enum Error {
     /// The caller selected a recognized object format that loose storage does not support.
     #[error("unsupported object format: {0}")]
     UnsupportedFormat(ObjectFormat),
-    /// A loose object names a type other than `blob`.
-    #[error("only blob objects are supported")]
+    /// A loose object has a different type from the requested operation.
+    #[error("object type does not match the requested operation")]
     UnsupportedObjectType,
     /// The zlib stream, header, length, or requested identity is invalid.
     #[error("corrupt loose object: {0}")]
     Corrupt(&'static str),
-    /// Decompressed content exceeds the caller's maximum blob size.
-    #[error("blob exceeds the size limit")]
+    /// Decompressed content exceeds the caller's maximum payload size.
+    #[error("object exceeds the size limit")]
     TooLarge,
+    /// The verified tree payload cannot be parsed; preserves the underlying parsing failure.
+    #[error("invalid tree payload: {0}")]
+    Tree(#[from] TreeError),
     /// An existing valid object has the same identity but different content.
     #[error("existing object has different content")]
     ConflictingObject,
@@ -237,5 +291,171 @@ mod tests {
         ));
         assert_eq!(error.to_string(), "unsupported object format: sha256");
         assert!(!directory.exists());
+    }
+
+    fn tree_fixture() -> Tree {
+        let tree = Tree::new(vec![crate::TreeEntry {
+            mode: crate::EntryMode::Blob,
+            name: b"file".to_vec(),
+            id: ObjectId::for_blob(b"contents"),
+        }]);
+        tree.unwrap()
+    }
+
+    /// Installs independently framed bytes to test failures before tree parsing.
+    fn install(objects: &LooseObjects, id: ObjectId, encoded: &[u8]) {
+        let path = objects.object_path(id);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(encoded).unwrap();
+        fs::write(path, encoder.finish().unwrap()).unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::empty(Tree::new(vec![]).unwrap())]
+    #[case::one_entry(tree_fixture())]
+    fn reads_tree_at_exact_payload_limit(#[case] tree: Tree) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = objects.write_tree(&tree).unwrap();
+        assert_eq!(id, tree.id());
+        assert_eq!(objects.read_tree(id, tree.encode().len()).unwrap(), tree);
+    }
+
+    #[test]
+    fn rejects_tree_one_byte_over_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let tree = tree_fixture();
+        let id = objects.write_tree(&tree).unwrap();
+        assert!(matches!(
+            objects.read_tree(id, tree.encode().len() - 1),
+            Err(Error::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn bounds_tree_decompression_before_parsing() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let payload = vec![0; 20000];
+        let id = ObjectId::for_object("tree", &payload);
+        install(
+            &objects,
+            id,
+            &[b"tree 20000\0".as_slice(), &payload].concat(),
+        );
+        assert!(matches!(objects.read_tree(id, 10), Err(Error::TooLarge)));
+    }
+
+    #[test]
+    fn rejects_blob_through_tree_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = objects.write_blob(b"").unwrap();
+        assert!(matches!(
+            objects.read_tree(id, 0),
+            Err(Error::UnsupportedObjectType)
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::missing_terminator(b"tree 0")]
+    #[case::missing_length(b"tree\0")]
+    #[case::leading_zero(b"tree 00\0")]
+    #[case::mismatched_length(b"tree 1\0")]
+    #[case::wrong_identity(b"tree 1\0x")]
+    fn rejects_corrupt_tree_framing(#[case] encoded: &[u8]) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = Tree::new(vec![]).unwrap().id();
+        install(&objects, id, encoded);
+        assert!(matches!(objects.read_tree(id, 100), Err(Error::Corrupt(_))));
+    }
+
+    #[rstest::rstest]
+    #[case::missing_mode(b"100644", TreeError::MissingModeDelimiter)]
+    #[case::missing_name(b"100644 a", TreeError::MissingNameDelimiter)]
+    #[case::truncated_id(b"100644 a\0", TreeError::TruncatedObjectId)]
+    fn reports_tree_parse_error_after_identity_verification(
+        #[case] payload: &[u8],
+        #[case] expected: TreeError,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = ObjectId::for_object("tree", payload);
+        let encoded = [object_header("tree", payload.len()).as_bytes(), payload].concat();
+        install(&objects, id, &encoded);
+        let Error::Tree(error) = objects.read_tree(id, payload.len()).unwrap_err() else {
+            panic!("expected tree parsing error");
+        };
+        assert_eq!(error, expected);
+    }
+
+    #[test]
+    fn reports_missing_tree_without_creating_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("objects");
+        let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
+        assert!(
+            matches!(objects.read_tree(tree_fixture().id(), 1024), Err(Error::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound)
+        );
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn duplicate_tree_preserves_file_and_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let tree = tree_fixture();
+        let id = objects.write_tree(&tree).unwrap();
+        let path = objects.object_path(id);
+        let original = fs::read(&path).unwrap();
+        assert_eq!(objects.write_tree(&tree).unwrap(), id);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn tree_write_preserves_corrupt_file_and_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let tree = tree_fixture();
+        let path = objects.object_path(tree.id());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"invalid zlib").unwrap();
+        assert!(matches!(objects.write_tree(&tree), Err(Error::Corrupt(_))));
+        assert_eq!(fs::read(&path).unwrap(), b"invalid zlib");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn concurrent_tree_writes_publish_one_object() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let tree = tree_fixture();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let objects = &objects;
+                let tree = &tree;
+                scope.spawn(move || assert_eq!(objects.write_tree(tree).unwrap(), tree.id()));
+            }
+        });
+        let path = objects.object_path(tree.id());
+        assert_eq!(objects.read_tree(tree.id(), 1024).unwrap(), tree);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_tree_publication_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let tree = tree_fixture();
+        let path = objects.object_path(tree.id());
+        fs::create_dir_all(&path).unwrap();
+        assert!(objects.write_tree(&tree).is_err());
+        assert!(path.is_dir());
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
     }
 }

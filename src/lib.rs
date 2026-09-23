@@ -7,10 +7,11 @@
 //! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
 //! - [`TreeError`]: tree parsing and structural validation failures.
 //! - [`encode_blob`]: uncompressed Git blob encoding.
-//! - [`LooseObjects`]: loose blob reads and writes, with a usage example and storage assumptions.
+//! - [`LooseObjects`]: loose blob and tree reads and writes, with a usage example and storage
+//!   assumptions.
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
-//! The current API is experimental and supports SHA-1 loose blobs and in-memory trees. Commits,
+//! The current API is experimental and supports SHA-1 loose blobs and trees. Commits,
 //! tags, references, the index, packfiles, repository discovery, and working-tree conversion are
 //! not implemented.
 

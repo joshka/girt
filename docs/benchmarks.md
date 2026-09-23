@@ -7,7 +7,7 @@
   `cargo bench --bench blobs -- write_new`.
 - Use the checked-in lockfile and default optimized Cargo bench profile. Criterion 0.8.2 handles
   sampling and analysis. No native CPU flags are required.
-- `cargo test --all-targets` runs Criterion's short test mode for all 32 benchmarks. `just check`
+- `cargo test --all-targets` runs Criterion's short test mode for the blob benchmarks. `just check`
   compiles the harness through Clippy without timing it. There are no CI performance gates.
 - Run without competing workloads where possible. Compare repeated runs on the same machine and
   filesystem before attributing a change to code.
@@ -111,10 +111,10 @@ PYTHON
 ## In-Memory Tree Baseline
 
 Run `cargo bench --bench trees` with the checked-in lockfile and default optimized bench profile.
-`just bench` runs both blob and tree harnesses. The tree harness uses Criterion with 30 samples, a
-one-second warmup, and a two-second target measurement duration per workload. Fixtures are
-constructed outside the measured operation: 16 or 1,024 entries, cycling through the five supported
-modes, with names `entry-000000` onward and fixed raw object IDs.
+`just bench` also runs blob and loose-tree harnesses. The tree harness uses Criterion with 30
+samples, a one-second warmup, and a two-second target measurement duration per workload. Fixtures
+are constructed outside the measured operation: 16 or 1,024 entries, cycling through the five
+supported modes, with names `entry-000000` onward and fixed raw object IDs.
 
 Parsing measures `Tree::parse` including owned entry/name allocation and destruction. Encoding
 measures `Tree::encode` including returned-buffer allocation and destruction. Construction, sorting,
@@ -138,3 +138,36 @@ operation-time estimates, not individual-operation latency percentiles.
 | ------- | ------------- | ----------------- | ------------------ |
 | 16      | 637           | 0.696             | 0.500              |
 | 1,024   | 40,755        | 34.807            | 11.059             |
+
+## Loose-Tree Storage Baseline
+
+Run `cargo bench --bench loose_trees` with the checked-in lockfile and default optimized bench
+profile. `just bench` includes this harness. Criterion uses 30 samples, a one-second warmup, and a
+two-second target measurement per workload. Fixtures contain 16 or 1,024 regular-file entries with
+names `entry-000000` onward and IDs derived from distinct `contents-{index}` blob payloads. Their
+encoded sizes are 640 and 40,960 bytes. Fixture construction is outside the timer.
+
+Cached reads measure file opening, decompression, framing and identity verification, owned tree
+parsing, and returned-tree destruction after one warmup read. New writes include tree encoding,
+hashing, compression, fanout creation, and publication. Existing writes additionally read and
+compare the stored payload. Writes use `iter_batched_ref` with `BatchSize::PerIteration`; empty or
+populated store setup and directory destruction occur outside the measurement.
+
+Measured on 2026-09-23 with rustc 1.98.1 (`48a229cea`) and Cargo 1.98.1 (`797e8a9bc`) on Apple M2
+Max, macOS 26.6.2 (25G83), arm64. Storage uses the default temporary directory on the internal APFS
+SSD. Command: `cargo bench --bench loose_trees > /tmp/girt-loose-trees-benchmark.log 2>&1`. No cache
+eviction or synchronization is performed; these are warm-cache desktop measurements with
+uncontrolled background activity, not cold-storage or durable-write latency.
+
+The [source manifest](benchmarks/loose-tree-baseline.sha256) identifies the measured source and
+harness. Verify with `shasum -a 256 -c docs/benchmarks/loose-tree-baseline.sha256`. The
+[CSV](benchmarks/loose-tree-baseline.csv) retains Criterion median estimates and 95% confidence
+intervals from `target/criterion/loose_trees/{operation}/{16,1024}/new/estimates.json`. No numerical
+performance threshold or cross-platform claim is established.
+
+Median estimates in microseconds per operation (not individual-operation latency percentiles):
+
+| Entries | Cached read (µs) | New write (µs) | Existing write (µs) |
+| ------- | ---------------- | -------------- | ------------------- |
+| 16      | 25.0             | 430.8          | 458.8               |
+| 1024    | 175.1            | 1205.5         | 1320.1              |

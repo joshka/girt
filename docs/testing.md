@@ -104,3 +104,18 @@ implemented. Keep these distinctions visible in the completion report.
   does not promise a configurable allocation limit.
 - The supported boundary is in-memory SHA-1 trees on the exercised macOS platform. This does not
   establish loose-tree storage, checkout safety, or complete `git fsck` validation.
+
+## Loose-Tree Completion
+
+- SHA-1 loose trees share framing, hashing, decompression, and safe publication with blobs. Reads
+  preserve the parsing/validation distinction; writes preserve supported payload bytes.
+- Focused storage unit tests cover limits, missing objects, framing and parsing failures, duplicate
+  and concurrent publication, and preservation/cleanup on failure. Existing blob corruption tests
+  exercise the shared decoder without changing blob behavior.
+- `examples/loose_tree.rs` demonstrates blobs referenced by a stored and restored tree.
+  `tests/trees.rs` checks Git-written storage and Git consumption of girt-written storage, including
+  supported noncanonical encodings.
+- The [loose-tree baseline](benchmarks.md#loose-tree-storage-baseline) measures cached reads, new
+  publication, and existing-object validation for small and large trees.
+- Reference resolution, recursive filesystem import, checkout, the index, commits, references,
+  packs, repository discovery, and SHA-256 storage remain outside this capability.

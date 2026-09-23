@@ -33,6 +33,8 @@ use crate::ObjectId;
 /// their existence or type. This API does not traverse directories, access storage, validate
 /// checkout safety on a particular filesystem, or support SHA-256 trees. Memory use is proportional
 /// to the supplied payload; callers must bound input size when reading untrusted objects.
+/// [`crate::LooseObjects::read_tree`] provides a payload limit for loose storage.
+/// Use [`crate::LooseObjects::write_tree`] to store an existing tree without normalization.
 ///
 /// ```
 /// use girt::{EntryMode, ObjectId, Tree, TreeEntry};

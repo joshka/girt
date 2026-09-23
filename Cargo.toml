@@ -33,3 +33,11 @@ harness = false
 [[example]]
 name = "tree"
 doc-scrape-examples = true
+
+[[example]]
+name = "loose_tree"
+doc-scrape-examples = true
+
+[[bench]]
+name = "loose_trees"
+harness = false

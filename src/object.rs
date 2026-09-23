@@ -48,7 +48,7 @@ impl ObjectId {
 
     pub(crate) fn for_object(kind: &str, bytes: &[u8]) -> Self {
         let mut hash = Sha1::new();
-        hash.update(format!("{kind} {}\0", bytes.len()));
+        hash.update(object_header(kind, bytes.len()));
         hash.update(bytes);
         Self(hash.finalize().into())
     }
@@ -106,13 +106,13 @@ pub struct ParseObjectIdError;
 /// assert_eq!(girt::encode_blob(b"a\0\xff"), b"blob 3\0a\0\xff");
 /// ```
 pub fn encode_blob(bytes: &[u8]) -> Vec<u8> {
-    let mut encoded = blob_header(bytes.len()).into_bytes();
+    let mut encoded = object_header("blob", bytes.len()).into_bytes();
     encoded.extend_from_slice(bytes);
     encoded
 }
 
-pub(crate) fn blob_header(length: usize) -> String {
-    format!("blob {length}\0")
+pub(crate) fn object_header(kind: &str, length: usize) -> String {
+    format!("{kind} {length}\0")
 }
 
 #[cfg(test)]

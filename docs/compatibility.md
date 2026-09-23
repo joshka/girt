@@ -1,9 +1,9 @@
 # Git Compatibility Evidence
 
-The first slice supports canonical SHA-1 blobs in loose storage. The caller supplies an object
-directory and its known `ObjectFormat::Sha1` format. The library rejects `ObjectFormat::Sha256`; it
-does not read repository configuration. Crate Rustdoc owns the API examples and complete
-limitations.
+Loose storage supports SHA-1 blobs and trees with canonical object headers. The caller supplies an
+object directory and its known `ObjectFormat::Sha1` format. The library rejects
+`ObjectFormat::Sha256`; it does not read repository configuration. Crate Rustdoc owns the API
+examples and complete limitations.
 
 ## References and Provenance
 
@@ -120,15 +120,42 @@ Both-direction interoperability tests run in disposable bare SHA-1 repositories 
 `GIT_*` overrides removed and system/global configuration disabled. `git mktree -z --missing`
 constructs trees from independently specified, unsorted listings; `git cat-file tree` supplies
 Git-produced payloads for girt to parse and compare byte-for-byte. The tests then remove the Git
-object and import girt's payload with `git hash-object -w -t tree --stdin`. `git ls-tree -z` and
-`git mktree` reconstruct the same identity. Empty and mixed-mode trees use this complete sequence.
-Synthetic referenced IDs intentionally avoid requiring commits or loose-tree storage in girt.
-Additional tests compare preserved unsorted, duplicate-name, and invalid-name identities with
+object and publish girt's tree with `LooseObjects::write_tree`. `git ls-tree -z` and `git mktree`
+reconstruct the same identity. Empty and mixed-mode trees use this complete sequence. Synthetic
+referenced IDs intentionally avoid requiring commits or reference resolution in girt. Additional
+tests compare preserved unsorted, duplicate-name, and invalid-name identities with
 `git hash-object --literally`.
 
 Validated with Git 2.55.0 on macOS arm64. Other platforms have not been exercised. The tree API
 performs no filesystem operations and makes no checkout-safety guarantee. It allocates owned entries
 and encoded buffers proportional to input size; callers bound input size before parsing. There is no
 separate resource-limit, partial-write, cleanup, or concurrency contract in this in-memory slice.
-SHA-256 trees, filesystem traversal, the index, checkout, commits, references, packs, and loose-tree
-storage remain outside scope. No dependencies were added.
+SHA-256 trees, filesystem traversal, the index, checkout, commits, references, and packs remain
+outside scope. No dependencies were added.
+
+## Loose SHA-1 Trees
+
+`LooseObjects::read_tree` verifies the canonical object header, payload size, complete zlib stream,
+and requested SHA-1 identity before parsing. `write_tree` stores the exact encoded payload,
+including supported unsorted entries, duplicate names, and invalid names. Neither operation calls
+`Tree::validate` or resolves references. Unparseable payloads return `Error::Tree` with the
+underlying cause; wrong object types return `Error::UnsupportedObjectType`.
+
+`tests/trees.rs` reads actual Git-written loose files and compares their identities, entries, and
+payloads. After deleting those files, it publishes trees through girt and checks Git's `cat-file`,
+`ls-tree`, and `mktree` results. Noncanonical fixtures use
+`git hash-object -w --literally -t tree --stdin`; girt reads and republishes their exact bytes,
+which Git reads back unchanged. All fixtures are original runtime data in isolated repositories.
+
+Unit tests in `src/loose.rs` cover empty and populated trees, exact and exceeded payload limits,
+highly compressed oversized input, malformed framing, identity mismatch, tree parse failures, wrong
+types, missing storage, duplicates, concurrent writes, corrupt existing files, and cleanup after
+failed publication. The existing blob suite continues to cover every truncated prefix of a zlib
+fixture, checksum damage, trailing data, and concatenated streams through the shared decoder.
+
+The executable `examples/loose_tree.rs` writes two blobs, constructs and stores a tree referencing
+them, then reads and checks the tree and both blobs. The size limit bounds decompressed payload, not
+total heap use: parsing additionally owns entries and names proportional to the payload. Storage
+shares blob publication and filesystem assumptions, including hard-link requirements and no
+power-loss durability guarantee. Validated with Git 2.55.0 on macOS arm64; other platforms remain
+untested. No dependencies were added.
