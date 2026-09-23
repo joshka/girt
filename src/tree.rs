@@ -354,6 +354,35 @@ mod tests {
         );
     }
 
+    /// Delimiters inside the fixed-width ID must not split records or shift the next entry.
+    #[test]
+    fn preserves_delimiter_bytes_inside_object_id() {
+        let raw_id = *b"\0 abcdefghijklmnop\0 ";
+        let payload = [
+            b"100644 a\0".as_slice(),
+            &raw_id,
+            b"100755 b\0",
+            &[0x81; 20],
+        ]
+        .concat();
+
+        let tree = Tree::parse(&payload).unwrap();
+
+        assert_eq!(
+            tree.entries(),
+            &[
+                TreeEntry {
+                    mode: EntryMode::Blob,
+                    name: b"a".to_vec(),
+                    id: ObjectId::from_bytes(raw_id),
+                },
+                entry(EntryMode::Executable, b"b"),
+            ]
+        );
+        assert_eq!(tree.encode(), payload);
+        assert_eq!(tree.validate(), Ok(()));
+    }
+
     #[rstest]
     #[case::non_utf8(b"\xff\x80")]
     #[case::whitespace(b"a b\t\n")]
