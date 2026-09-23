@@ -119,3 +119,25 @@ implemented. Keep these distinctions visible in the completion report.
   publication, and existing-object validation for small and large trees.
 - Reference resolution, recursive filesystem import, checkout, the index, commits, references,
   packs, repository discovery, and SHA-256 storage remain outside this capability.
+
+## Commit Completion
+
+- Root, single-parent, and merge commits expose ordered references, byte identities, Unix seconds,
+  offsets, message bytes, and opaque multiline headers. Parsing preserves accepted lexical details;
+  construction and explicit validation apply documented field rules without promising full fsck.
+- Local tests exercise literal payload/identity expectations, byte preservation, reconstruction,
+  malformed/truncated headers, date limits, invalid identities, and reserved header names.
+- `tests/commits.rs` independently compares Git-created and girt-created payloads and identities,
+  including actual loose storage in both directions. Ordinary commits pass strict Git fsck;
+  noncanonical and NUL fixtures use Git's literal object mode and promise preservation only.
+- Commit storage tests exercise resource limits, missing storage, wrong types, framing and parser
+  failures, duplicate/concurrent publication, and cleanup without replacing existing corrupt files.
+  Shared decoder corruption tests continue to apply.
+- `examples/loose_commit.rs` demonstrates blob-to-tree-to-commit publication and reading back the
+  snapshot. The doctest teaches construction, parsing, field access, and identity.
+- The commit Criterion harness measures construction, parsing, payload copying, hashing, warm reads,
+  new writes, and existing-object validation for small and large messages. No numerical threshold is
+  set.
+- The [compatibility evidence](compatibility.md#sha-1-commits-and-loose-storage) defines supported
+  grammar and provenance. SHA-256, history traversal, annotated tags, refs, signature verification,
+  packs, and transport remain excluded; only macOS arm64 has been exercised.

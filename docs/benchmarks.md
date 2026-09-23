@@ -171,3 +171,47 @@ Median estimates in microseconds per operation (not individual-operation latency
 | ------- | ---------------- | -------------- | ------------------- |
 | 16      | 25.0             | 430.8          | 458.8               |
 | 1024    | 175.1            | 1205.5         | 1320.1              |
+
+## Commit Baseline
+
+Run `cargo bench --bench commits` with the checked-in lockfile and default optimized bench profile;
+`just bench` includes this harness. Criterion uses 30 samples, one-second warmups, and two-second
+measurement targets. Each fixture has two parents, fixed identities/dates, an opaque multiline
+header, and a 128-byte or 65,536-byte message repeating the ASCII line
+`Record snapshot: original benchmark content.` with a final LF in the repeated pattern. Fixture
+construction occurs outside measurement.
+
+Construction measures cloning the fixture fields, validation, canonical encoding, and destruction.
+Parsing includes owned decoded fields, retention of the original payload, and destruction. Encoding
+measures copying the retained payload, not rebuilding fields. Identity hashes the canonical commit
+header and retained bytes. Cached reads include file opening, decompression, framing and identity
+checks, parsing, and destruction after a warmup read. New writes include hashing, compression,
+fanout creation, and publication. Existing writes additionally read and compare stored payloads.
+Per-iteration batched storage setup and directory destruction occur outside write measurements.
+
+Measured on 2026-09-23 on Apple M2 Max, macOS 26.6.2 (25G83), arm64, with rustc 1.98.1 (`48a229cea`)
+and Cargo 1.98.1 (`797e8a9bc`). Storage uses the default temporary directory on the internal APFS
+SSD. Command: `cargo bench --bench commits > /tmp/girt-commits-benchmark.log 2>&1`. These are
+warm-cache desktop measurements with uncontrolled background activity; no cache eviction or
+synchronization establishes cold-storage or durable-write latency. No numerical acceptance gate or
+comparison with another implementation is implied.
+
+The [CSV](benchmarks/commit-baseline.csv) retains Criterion median estimates and 95% confidence
+intervals from `target/criterion/commits/{operation}/{128,65536}/new/estimates.json`. The
+[source manifest](benchmarks/commit-baseline.sha256) identifies the measured library, lockfile, and
+harness; verify it with `shasum -a 256 -c docs/benchmarks/commit-baseline.sha256`. Small and large
+payloads contain 432 and 65,840 bytes. Construction and reads retain both decoded content and raw
+payload bytes; timings do not establish a total heap bound. Messages are repetitive and compress
+well, so storage results do not characterize high-entropy payloads.
+
+Median estimates below are microseconds per operation, not latency percentiles:
+
+| Operation                  | 128-byte message | 65,536-byte message |
+| -------------------------- | ---------------- | ------------------- |
+| Construct with field clone | 2.067            | 6.969               |
+| Parse                      | 0.907            | 3.366               |
+| Encode (copy)              | 0.032            | 1.318               |
+| Identity                   | 0.598            | 64.495              |
+| Cached read                | 23.938           | 110.505             |
+| New write                  | 442.445          | 572.093             |
+| Existing write             | 435.018          | 660.978             |

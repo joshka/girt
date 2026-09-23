@@ -41,3 +41,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "loose_trees"
 harness = false
+
+[[example]]
+name = "loose_commit"
+doc-scrape-examples = true
+
+[[bench]]
+name = "commits"
+harness = false

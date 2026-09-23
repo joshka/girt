@@ -1,7 +1,7 @@
 # Git Compatibility Evidence
 
-Loose storage supports SHA-1 blobs and trees with canonical object headers. The caller supplies an
-object directory and its known `ObjectFormat::Sha1` format. The library rejects
+Loose storage supports SHA-1 blobs, trees, and commits with canonical object headers. The caller
+supplies an object directory and its known `ObjectFormat::Sha1` format. The library rejects
 `ObjectFormat::Sha256`; it does not read repository configuration. Crate Rustdoc owns the API
 examples and complete limitations.
 
@@ -159,3 +159,64 @@ total heap use: parsing additionally owns entries and names proportional to the 
 shares blob publication and filesystem assumptions, including hard-link requirements and no
 power-loss durability guarantee. Validated with Git 2.55.0 on macOS arm64; other platforms remain
 untested. No dependencies were added.
+
+## SHA-1 Commits and Loose Storage
+
+`Commit` supports a tree ID, ordered parent IDs (including root and merge commits), author and
+committer byte identities, signed 64-bit Unix seconds, timezone offsets, arbitrary message bytes,
+and opaque extra headers with multiline values. Parsing requires the standard order: tree, parents,
+author, committer, extra headers, then a blank line. IDs must be 40 hexadecimal SHA-1 digits;
+offsets must be signed four-digit `HHMM` with hours below 24 and minutes below 60. Missing,
+reordered, or repeated required headers and continuations on required headers are unsupported.
+Malformed framing, truncated headers, SHA-256 IDs, and dates outside this grammar return errors. A
+shortened message is still a valid payload; only loose framing/identity can detect that corruption.
+
+Parsing retains the entire payload and decoded fields. Encoding and hashing preserve uppercase IDs,
+signed or padded seconds, `-0000`, unknown/repeated extra headers, continuation spaces, non-UTF-8
+bytes, and messages without a final newline. Continuation values remove exactly one framing space
+per line. Construction writes canonical IDs and dates and validates nonempty identity components
+without NUL, CR, LF, angle brackets, or surrounding ASCII whitespace. New seconds must be
+nonnegative. Extra-header names must be printable non-space ASCII and cannot reuse required keys;
+new values reject NUL and CR. `validate` applies these field rules without modifying parsed bytes.
+Explicit reconstruction may change identity by normalizing lexical details.
+
+Construction is not full `git fsck`: messages can contain NUL (which Git's default `hash-object`
+rejects), parent IDs can repeat or be zero, and referenced objects are not checked. Encoding and
+signature headers are opaque; no charset conversion, embedded-tag parsing, or cryptographic
+verification occurs. SHA-256, history traversal, annotated tag objects, refs, packs, and transport
+remain outside this slice.
+
+The format references are [`git commit-tree`](https://git-scm.com/docs/git-commit-tree) for commit
+metadata and date offsets, and [`gitformat-signature`](https://git-scm.com/docs/gitformat-signature)
+for multiline extra headers. Implementation and fixtures are original, based on those descriptions
+and observed Git behavior; no Git source code or tests were consulted or adapted.
+
+`src/commit.rs` covers literal encoding, a fixed independently calculated SHA-1 identity, root and
+ordered merge parents, message and header byte preservation, lexical reconstruction, malformed
+framing, invalid identity components, reserved keys, date bounds, and overflow. The fixed identity
+uses Python `hashlib.sha1(b"commit " + str(len(payload)).encode() + b"\0" + payload)` and is
+cross-checked with Git in `tests/commits.rs`.
+
+Integration tests isolate bare SHA-1 repositories, remove inherited `GIT_*` overrides, disable
+system/global configuration and templates, and set explicit author/committer identities and dates.
+`git commit-tree` independently creates root, single-parent, and merge commits. Tests compare
+fields, complete payloads, and identities, remove Git's loose files, publish girt's constructed
+commits, and check `cat-file` and strict `fsck` against real trees and parents. Additional tests
+check girt-created binary messages and unknown multiline headers in both storage directions;
+`hash-object --literally` permits NUL and noncanonical fixtures. These tests preserve bytes without
+claiming that Git considers those fixtures valid. No fixture files or new dependencies are added.
+
+`LooseObjects::read_commit` verifies framing, size, zlib completion, and identity before parsing;
+`write_commit` publishes exact bytes without calling `validate`. Commit storage unit tests cover
+exact/exceeded payload limits, oversized compressed data, wrong type, malformed framing, identity
+mismatch, parser errors with retained causes, missing storage, duplicate/concurrent writes, existing
+corruption, and publication cleanup. The shared blob decoder tests cover truncated zlib streams,
+invalid checksums, concatenated streams, and trailing compressed bytes. Size limits bound
+decompressed payload, not total heap use: parsed commits also own decoded fields and retained bytes.
+Publication inherits the documented hard-link and trusted-filesystem assumptions and does not
+promise power-loss durability.
+
+`examples/loose_commit.rs` exercises blob-to-tree-to-commit storage and reads the referenced
+snapshot back in disposable storage. Validated with Git 2.55.0 on macOS 26.6.2 arm64; other
+platforms are untested. The [commit baseline](benchmarks.md#commit-baseline) records performance
+evidence.

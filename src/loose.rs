@@ -7,9 +7,10 @@ use flate2::{Compression, Decompress, FlushDecompress, Status};
 use tempfile::NamedTempFile;
 
 use crate::object::object_header;
-use crate::{ObjectFormat, ObjectId, Tree, TreeError};
+use crate::{Commit, CommitError, ObjectFormat, ObjectId, Tree, TreeError};
 
-/// Reads and writes loose blobs and trees beneath an explicitly selected SHA-1 object directory.
+/// Reads and writes loose blobs, trees, and commits beneath an explicitly selected SHA-1 object
+/// directory.
 ///
 /// This owns the path to an object directory, usually `.git/objects`. Callers select the directory
 /// and supply its known object format; no repository configuration is inspected. Operations are
@@ -32,11 +33,12 @@ use crate::{ObjectFormat, ObjectId, Tree, TreeError};
 ///
 /// # Supported storage
 ///
-/// Only SHA-1 loose blobs and trees are supported. SHA-256 and other types are rejected. Packs and
-/// alternates are not searched, so a packed-only object appears missing. Reads validate canonical
-/// headers, lengths, zlib completion and checksum, and object identity. The caller supplies a
-/// maximum payload size to bound decompressed allocation. Writes compare existing content before
-/// accepting a duplicate and publish complete files without replacing existing objects.
+/// Only SHA-1 loose blobs, trees, and commits are supported. SHA-256 and other types are rejected.
+/// Packs and alternates are not searched, so a packed-only object appears missing. Reads validate
+/// canonical headers, lengths, zlib completion and checksum, and object identity. The caller
+/// supplies a maximum payload size to bound decompressed allocation. Writes compare existing
+/// content before accepting a duplicate and publish complete files without replacing existing
+/// objects.
 ///
 /// # Filesystem assumptions
 ///
@@ -99,6 +101,21 @@ impl LooseObjects {
     pub fn read_tree(&self, id: ObjectId, max_size: usize) -> Result<Tree, Error> {
         let payload = self.read_object(id, max_size, "tree")?;
         Ok(Tree::parse(&payload)?)
+    }
+
+    /// Reads a loose commit after verifying framing, size, zlib completion, and SHA-1 identity.
+    ///
+    /// Preserves the exact supported payload; does not call [`Commit::validate`] or resolve IDs.
+    /// `max_size` bounds decompressed payload bytes, not total heap use. Parsing additionally owns
+    /// the payload and decoded fields. Compressed input is read incrementally.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage errors of [`Self::read_blob`], including wrong object type, or
+    /// [`Error::Commit`] if the verified payload cannot be parsed.
+    pub fn read_commit(&self, id: ObjectId, max_size: usize) -> Result<Commit, Error> {
+        let payload = self.read_object(id, max_size, "commit")?;
+        Ok(Commit::parse(&payload)?)
     }
 
     fn read_object(
@@ -173,6 +190,20 @@ impl LooseObjects {
         self.write_object("tree", &tree.encode())
     }
 
+    /// Writes a commit's exact payload and returns its SHA-1 identity without normalizing it.
+    ///
+    /// Does not validate fields, resolve references, or verify signatures. Use [`Commit::new`] for
+    /// construction validation. Publication, duplicate checking, concurrent writers, cleanup, and
+    /// filesystem assumptions are identical to [`Self::write_blob`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage errors of [`Self::write_blob`]. Existing corrupt files remain untouched;
+    /// failed writes may leave created directories. Success does not promise power-loss durability.
+    pub fn write_commit(&self, commit: &Commit) -> Result<ObjectId, Error> {
+        self.write_object("commit", commit.as_bytes())
+    }
+
     fn write_object(&self, kind: &str, bytes: &[u8]) -> Result<ObjectId, Error> {
         let id = ObjectId::for_object(kind, bytes);
         let path = self.object_path(id);
@@ -223,6 +254,9 @@ pub enum Error {
     /// The verified tree payload cannot be parsed; preserves the underlying parsing failure.
     #[error("invalid tree payload: {0}")]
     Tree(#[from] TreeError),
+    /// The verified commit payload cannot be parsed; preserves the underlying cause.
+    #[error("invalid commit payload: {0}")]
+    Commit(#[from] CommitError),
     /// An existing valid object has the same identity but different content.
     #[error("existing object has different content")]
     ConflictingObject,
@@ -455,6 +489,179 @@ mod tests {
         let path = objects.object_path(tree.id());
         fs::create_dir_all(&path).unwrap();
         assert!(objects.write_tree(&tree).is_err());
+        assert!(path.is_dir());
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod commit_storage_tests {
+    use super::*;
+
+    fn commit_fixture() -> Commit {
+        Commit::parse(b"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a> 1 +0000\ncommitter C <c> 2 -0700\n\nmessage\n").unwrap()
+    }
+
+    /// Installs independently framed bytes to test failures before commit parsing.
+    fn install(objects: &LooseObjects, id: ObjectId, encoded: &[u8]) {
+        let path = objects.object_path(id);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(encoded).unwrap();
+        fs::write(path, encoder.finish().unwrap()).unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::root(commit_fixture())]
+    fn reads_commit_at_exact_payload_limit(#[case] commit: Commit) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = objects.write_commit(&commit).unwrap();
+        assert_eq!(id, commit.id());
+        assert_eq!(
+            objects.read_commit(id, commit.encode().len()).unwrap(),
+            commit
+        );
+    }
+
+    #[test]
+    fn rejects_commit_one_byte_over_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let commit = commit_fixture();
+        let id = objects.write_commit(&commit).unwrap();
+        assert!(matches!(
+            objects.read_commit(id, commit.encode().len() - 1),
+            Err(Error::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn bounds_commit_decompression_before_parsing() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let payload = vec![0; 20000];
+        let id = ObjectId::for_object("commit", &payload);
+        install(
+            &objects,
+            id,
+            &[b"commit 20000\0".as_slice(), &payload].concat(),
+        );
+        assert!(matches!(objects.read_commit(id, 10), Err(Error::TooLarge)));
+    }
+
+    #[test]
+    fn rejects_blob_through_commit_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = objects.write_blob(b"").unwrap();
+        assert!(matches!(
+            objects.read_commit(id, 0),
+            Err(Error::UnsupportedObjectType)
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::missing_terminator(b"commit 0")]
+    #[case::missing_length(b"commit\0")]
+    #[case::leading_zero(b"commit 00\0")]
+    #[case::mismatched_length(b"commit 1\0")]
+    #[case::wrong_identity(b"commit 1\0x")]
+    fn rejects_corrupt_commit_framing(#[case] encoded: &[u8]) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = commit_fixture().id();
+        install(&objects, id, encoded);
+        assert!(matches!(
+            objects.read_commit(id, 100),
+            Err(Error::Corrupt(_))
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::separator(b"tree abc", CommitError::MissingSeparator)]
+    #[case::identity(b"tree abc\n\n", CommitError::InvalidObjectId)]
+    fn reports_commit_parse_error_after_identity_verification(
+        #[case] payload: &[u8],
+        #[case] expected: CommitError,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = ObjectId::for_object("commit", payload);
+        let encoded = [object_header("commit", payload.len()).as_bytes(), payload].concat();
+        install(&objects, id, &encoded);
+        let Error::Commit(error) = objects.read_commit(id, payload.len()).unwrap_err() else {
+            panic!("expected commit parsing error");
+        };
+        assert_eq!(error, expected);
+    }
+
+    #[test]
+    fn reports_missing_commit_without_creating_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("objects");
+        let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
+        assert!(
+            matches!(objects.read_commit(commit_fixture().id(), 1024), Err(Error::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound)
+        );
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn duplicate_commit_preserves_file_and_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let commit = commit_fixture();
+        let id = objects.write_commit(&commit).unwrap();
+        let path = objects.object_path(id);
+        let original = fs::read(&path).unwrap();
+        assert_eq!(objects.write_commit(&commit).unwrap(), id);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn commit_write_preserves_corrupt_file_and_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let commit = commit_fixture();
+        let path = objects.object_path(commit.id());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"invalid zlib").unwrap();
+        assert!(matches!(
+            objects.write_commit(&commit),
+            Err(Error::Corrupt(_))
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"invalid zlib");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn concurrent_commit_writes_publish_one_object() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let commit = commit_fixture();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let objects = &objects;
+                let commit = &commit;
+                scope.spawn(move || assert_eq!(objects.write_commit(commit).unwrap(), commit.id()));
+            }
+        });
+        let path = objects.object_path(commit.id());
+        assert_eq!(objects.read_commit(commit.id(), 1024).unwrap(), commit);
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_commit_publication_cleans_temporary() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let commit = commit_fixture();
+        let path = objects.object_path(commit.id());
+        fs::create_dir_all(&path).unwrap();
+        assert!(objects.write_commit(&commit).is_err());
         assert!(path.is_dir());
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
     }
