@@ -43,8 +43,9 @@ validation boundaries callers need.
 - Prefer executable doctests. Use `no_run` when execution needs external resources; explain any
   unavoidable `ignore`.
 - For changed examples or contracts, run `cargo test --doc` and affected examples under documented
-  features. For changed Rustdoc links, structure, or API surface, build with
-  `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps`. Corrections preserving meaning, links, and
-  examples need only prose review.
-- Inspect rendered pages when layout or navigation changes. Include `--document-private-items` when
-  validating internal documentation. Report unavailable checks honestly.
+  features. For changed Rustdoc links, structure, or API surface, build with `just docs-rs` to check
+  the docs.rs build with warnings rejected. Corrections preserving meaning, links, and examples need
+  only prose review.
+- Inspect rendered pages when layout or navigation changes. For internal documentation, also run
+  `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items`. Report unavailable
+  checks honestly.

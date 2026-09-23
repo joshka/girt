@@ -6,16 +6,18 @@ architecture changes before implementing them.
 
 ## Setup
 
-Install a stable Rust toolchain supporting edition 2024, plus the formatting tools:
+Install a stable Rust toolchain supporting edition 2024, plus the development tools:
 
 ```sh
+rustup component add clippy
 rustup toolchain install nightly --component rustfmt
 cargo install just --locked
 cargo install rumdl --locked
+cargo install cargo-docs-rs --locked
 ```
 
-Nightly is needed for rustfmt's unstable options. Normal builds and tests use your default Rust
-toolchain.
+Nightly is needed for rustfmt's unstable options and the docs.rs check. Normal builds, tests, and
+Clippy use your default Rust toolchain.
 
 ## Development Checks
 
@@ -28,11 +30,14 @@ For Rust implementation changes, run these checks before submitting a contributi
 
 ```sh
 just fmt
-just fmt-check
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo doc --no-deps
+just check
 ```
+
+`just check` runs formatting checks, tests (including doctests), Clippy across all targets, and
+`cargo +nightly docs-rs`. Clippy and Rustdoc warnings fail the checks. Run `just test`,
+`just clippy`, or `just docs-rs` for individual checks. The
+[docs.rs check](https://docs.rs/about/builds) uses the crate's docs.rs metadata to approximate the
+hosted build; it does not reproduce the hosted sandbox.
 
 Use `just fmt-rust` or `just fmt-md` to format one language, and `just fmt-rust-check` or
 `just fmt-md-check` to check it without changes. Markdown prose wraps at 100 characters; table

@@ -2,6 +2,21 @@
 default:
     @just --list
 
+# Run the common checks for Rust implementation changes.
+check: fmt-check test clippy docs-rs
+
+# Run unit, integration, and documentation tests.
+test:
+    cargo test
+
+# Reject Clippy warnings across all targets.
+clippy:
+    cargo clippy --all-targets -- -D warnings
+
+# Check documentation with docs.rs options and reject Rustdoc warnings.
+docs-rs:
+    RUSTDOCFLAGS="-D warnings" cargo +nightly docs-rs
+
 # Format Rust and Markdown.
 fmt: fmt-rust fmt-md
 

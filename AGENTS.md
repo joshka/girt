@@ -40,7 +40,9 @@
 - `just fmt`: format Rust with nightly rustfmt and Markdown with rumdl.
 - `just fmt-check`: check formatting without changing files.
 - `just fmt-md` / `just fmt-md-check`: format or check Markdown only.
-- `cargo clippy --all-targets -- -D warnings`: check lint warnings.
+- `just check`: run formatting checks, tests, Clippy, and the docs.rs check.
+- `just clippy`: check all targets, rejecting warnings.
+- `just docs-rs`: check docs.rs documentation builds on nightly, rejecting Rustdoc warnings.
 - `cargo doc --no-deps`: generate API documentation.
 
 ## Coding Style and Testing
