@@ -215,3 +215,44 @@ Median estimates below are microseconds per operation, not latency percentiles:
 | Cached read                | 23.938           | 110.505             |
 | New write                  | 442.445          | 572.093             |
 | Existing write             | 435.018          | 660.978             |
+
+## Tag Baseline
+
+Run `cargo bench --bench tags` with the checked-in lockfile and default optimized bench profile;
+`just bench` includes the harness. Criterion uses 30 samples, one-second warmups, and two-second
+measurement targets. Fixtures have a declared commit target, fixed tagger, name `v1`, one opaque
+header, and a 128-byte or 65,536-byte message repeating
+`Record snapshot: original benchmark content.` followed by LF. Setup is outside measurement.
+
+Construction includes field cloning, validation, canonical encoding, and destruction. Parsing owns
+both decoded fields and original bytes. Encoding copies the retained payload; identity hashes its
+canonical tag header and bytes. Cached reads include file opening, decompression, validation,
+parsing, and destruction after a warmup read. New writes hash, compress, create fanout directories,
+and publish. Existing writes also read and compare stored bytes. Per-iteration batched store setup
+and directory destruction are outside write measurements.
+
+Measured on 2026-09-23 on Apple M2 Max, macOS 26.6.2 (25G83), arm64, with rustc 1.98.1 (`48a229cea`)
+and Cargo 1.98.1 (`797e8a9bc`). Storage uses the default temporary directory on the internal APFS
+SSD. Command: `cargo bench --bench tags > /tmp/girt-tag-benchmark.log 2>&1`. These are warm-cache
+desktop measurements with uncontrolled background activity, no cache eviction, and no durability
+synchronization. Repetitive messages compress well; these results do not characterize high-entropy
+payloads or cold-storage latency. No numerical acceptance threshold is established.
+
+The [CSV](benchmarks/tag-baseline.csv) retains Criterion median estimates and 95% confidence
+intervals from `target/criterion/tags/{operation}/{128,65536}/new/estimates.json`. The
+[source manifest](benchmarks/tag-baseline.sha256) records library, lockfile, and harness
+fingerprints; verify with `shasum -a 256 -c docs/benchmarks/tag-baseline.sha256`. Timings do not
+establish a total heap bound: parsed tags own both fields and retained payloads.
+
+Payloads contain 269 and 65,677 bytes. Median estimates below are microseconds per operation, not
+latency percentiles:
+
+| Operation                  | 128-byte message | 65,536-byte message |
+| -------------------------- | ---------------- | ------------------- |
+| Construct with field clone | 1.212            | 7.596               |
+| Parse                      | 0.667            | 4.019               |
+| Encode (copy)              | 0.036            | 1.895               |
+| Identity                   | 0.522            | 88.658              |
+| Cached read                | 33.472           | 156.570             |
+| New write                  | 640.830          | 871.978             |
+| Existing write             | 702.841          | 1065.512            |

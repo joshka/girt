@@ -216,10 +216,10 @@ impl CommitFields {
     }
 }
 
-/// A Git author or committer identity and date, independent of text encoding.
+/// A Git author, committer, or tagger identity and date, independent of text encoding.
 ///
 /// This is identity metadata, not a cryptographic signature. Fields are unchecked until used by
-/// [`Commit::new`]; see [`Commit::validate`] for construction rules.
+/// [`Commit::new`] or [`crate::Tag::new`]; see [`Commit::validate`] for construction rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Signature {
     /// Person's name as bytes, without the separating space or angle brackets.
@@ -236,7 +236,7 @@ pub struct Signature {
 }
 
 impl Signature {
-    fn parse(bytes: &[u8]) -> Result<Self, CommitError> {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, CommitError> {
         let open = bytes
             .windows(2)
             .position(|pair| pair == b" <")
@@ -279,7 +279,7 @@ impl Signature {
         })
     }
 
-    fn validate(&self) -> Result<(), CommitError> {
+    pub(crate) fn validate(&self) -> Result<(), CommitError> {
         for component in [&self.name, &self.email] {
             if component.is_empty()
                 || component
@@ -297,7 +297,7 @@ impl Signature {
         Ok(())
     }
 
-    fn encode(&self, key: &[u8], output: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, key: &[u8], output: &mut Vec<u8>) {
         output.extend_from_slice(key);
         output.push(b' ');
         output.extend_from_slice(&self.name);

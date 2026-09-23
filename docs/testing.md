@@ -139,5 +139,27 @@ implemented. Keep these distinctions visible in the completion report.
   new writes, and existing-object validation for small and large messages. No numerical threshold is
   set.
 - The [compatibility evidence](compatibility.md#sha-1-commits-and-loose-storage) defines supported
-  grammar and provenance. SHA-256, history traversal, annotated tags, refs, signature verification,
-  packs, and transport remain excluded; only macOS arm64 has been exercised.
+  grammar and provenance. SHA-256, history traversal, refs, signature verification, packs, and
+  transport remain excluded; only macOS arm64 has been exercised.
+
+## Annotated Tag Completion
+
+- Tags target blobs, trees, commits, or tags and expose names, optional taggers, opaque header
+  lines, and byte messages. Parsing preserves exact payloads, including omitted taggers and empty
+  messages without separators. Construction validates separately and emits canonical framing.
+- Unit tests cover each target type, literal identity, opaque PGP/SSH message content, lexical
+  preservation, malformed/truncated headers, unsupported formats, and construction rejection.
+- `tests/tags.rs` compares independently Git-created payloads and identities, reads Git loose
+  storage, then republishes through girt for Git consumption. Ordinary tags pass strict fsck;
+  preservation fixtures use explicitly relaxed mktag or literal hashing as documented in the
+  [compatibility evidence](compatibility.md#sha-1-annotated-tags-and-loose-storage).
+- Tag storage tests cover exact and exceeded limits, bounded decompression, missing objects, wrong
+  types, corruption, parsing errors, duplicate/concurrent publication, and failure cleanup. Shared
+  zlib decoder tests continue to apply.
+- `examples/loose_tag.rs` and the `Tag` doctest demonstrate construction, storage, field access,
+  parsing, and identity without creating tag references.
+- The Criterion tag harness measures construction, parsing, copying, identity, warm reads, new
+  writes, and existing-object validation with small and large messages. The
+  [baseline](benchmarks.md#tag-baseline) records reproducible evidence without a numerical gate.
+- Only SHA-1 on macOS arm64 has been exercised. Tag references, recursive peeling, signature
+  verification, repository discovery, packs, and transport remain excluded.

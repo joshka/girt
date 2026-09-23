@@ -1,7 +1,7 @@
 # Git Compatibility Evidence
 
-Loose storage supports SHA-1 blobs, trees, and commits with canonical object headers. The caller
-supplies an object directory and its known `ObjectFormat::Sha1` format. The library rejects
+Loose storage supports SHA-1 blobs, trees, commits, and tags with canonical object headers. The
+caller supplies an object directory and its known `ObjectFormat::Sha1` format. The library rejects
 `ObjectFormat::Sha256`; it does not read repository configuration. Crate Rustdoc owns the API
 examples and complete limitations.
 
@@ -183,8 +183,8 @@ Explicit reconstruction may change identity by normalizing lexical details.
 Construction is not full `git fsck`: messages can contain NUL (which Git's default `hash-object`
 rejects), parent IDs can repeat or be zero, and referenced objects are not checked. Encoding and
 signature headers are opaque; no charset conversion, embedded-tag parsing, or cryptographic
-verification occurs. SHA-256, history traversal, annotated tag objects, refs, packs, and transport
-remain outside this slice.
+verification occurs. SHA-256, history traversal, refs, packs, and transport remain outside this
+slice.
 
 The format references are [`git commit-tree`](https://git-scm.com/docs/git-commit-tree) for commit
 metadata and date offsets, and [`gitformat-signature`](https://git-scm.com/docs/gitformat-signature)
@@ -220,3 +220,57 @@ promise power-loss durability.
 snapshot back in disposable storage. Validated with Git 2.55.0 on macOS 26.6.2 arm64; other
 platforms are untested. The [commit baseline](benchmarks.md#commit-baseline) records performance
 evidence.
+
+## SHA-1 Annotated Tags and Loose Storage
+
+`Tag` supports a target ID and declared `ObjectKind` (blob, tree, commit, or tag), byte name,
+optional `Signature` tagger, opaque extra header lines, and arbitrary message bytes. Creating or
+storing an object does not create a tag reference, resolve the target, check its actual type, or
+peel nested tags. Embedded signature armor remains part of the message without verification.
+
+The format reference is [`git mktag`](https://git-scm.com/docs/git-mktag). Independent command-line
+probes and `tests/tags.rs` verify tags with absent taggers, opaque extra lines, and empty messages
+without a blank separator. Git's strict `mktag` promotes missing-tagger diagnostics to errors and
+rejects extra headers; those fixtures explicitly set `fsck.missingTaggerEntry=ignore` and
+`fsck.extraHeaderEntry=ignore`. This documents preservation rather than a claim that every supported
+payload passes default strict validation.
+
+Parsing requires ordered `object`, `type`, and `tag` headers, followed by an optional `tagger` and
+extra lines. Headers end in LF; a blank line introduces arbitrary message bytes. Without a blank
+separator, every header must still end in LF and the message is empty. Known headers cannot repeat
+or appear among extra lines. Targets require exactly 40 hexadecimal digits; unknown types, SHA-256
+IDs, truncated headers, and unreadable tagger dates fail explicitly. Taggers reuse the commit
+identity/date grammar. Parsing retains lexical details and does not apply construction validation.
+Extra lines retain their full bytes and order, including bare keys, repeated unknown keys, and
+leading spaces; they are not decoded as commit continuations.
+
+Construction rejects empty names, ASCII whitespace or NUL in names, and extra lines containing NUL,
+CR, or LF. Taggers apply the existing identity/date validation. Absent taggers are allowed. This
+does not validate tag reference paths or promise full fsck validity. Construction emits a blank
+separator even for empty messages, lowercase IDs, and canonical dates; reconstructing parsed fields
+can change identity. Encoding, hashing, and storage use the retained payload unchanged.
+
+Original runtime fixtures in `tests/tags.rs` use isolated bare SHA-1 repositories with inherited Git
+overrides removed and global/system configuration disabled. `git tag -a` independently creates tags
+of each of the four object types. Tests compare exact fields, payloads, and identities, remove the
+Git-written loose object, publish through girt, and check `cat-file`, `mktag`, and strict `fsck`.
+Additional fixtures check absent taggers, omitted separators, unknown lines, and opaque signature
+text through relaxed `mktag`. Noncanonical dates, uppercase IDs, binary content, and invalid
+construction fields use `hash-object --literally`; they promise byte preservation only. No Git
+implementation code or fixture content was copied or adapted.
+
+The literal unit identity `1316e0263ce4c0bc7afc85d20286be352811d4cf` was independently obtained with
+Git for a tag of the empty blob named `v1`, tagger `A <a> 1 +0000`, and no message separator. Unit
+tests also exercise all target types, framing errors, unsupported formats, byte names, reserved
+headers, opaque PGP/SSH signature text, and validation failures without losing original bytes.
+Storage tests cover exact limits, oversized decompression, wrong types, missing files, corruption,
+parser errors after identity verification, duplicate/concurrent publication, and cleanup while
+preserving existing corrupt files. Existing shared decoder tests cover zlib truncation and trailing
+data. The example `loose_tag` demonstrates storage without tag refs.
+
+Validated with Git 2.55.0 on macOS arm64; other platforms are untested. No dependencies were added.
+Storage retains the existing trusted-directory, hard-link, synchronous I/O, and durability limits.
+The read limit bounds decompressed payload bytes, not the additional owned fields and payload
+copies. SHA-256, tag refs, peeling/traversal, signature verification, discovery, packs, and
+transport remain outside scope. [Performance evidence](benchmarks.md#tag-baseline) records the tag
+baseline.

@@ -49,3 +49,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "commits"
 harness = false
+
+[[example]]
+name = "loose_tag"
+doc-scrape-examples = true
+
+[[bench]]
+name = "tags"
+harness = false

@@ -8,18 +8,20 @@ concepts and exact interoperability for supported repository formats and operati
 ## Status
 
 The library derives SHA-1 blob identities, encodes blobs, and reads and writes loose blobs, trees,
-and commits in an explicitly selected object directory. Reads validate object contents; writes
-publish complete objects without replacing existing files. In-memory SHA-1 trees support
-byte-preserving names, standard entry modes, payload parsing and encoding, Git ordering, and
+commits, and annotated tags in an explicitly selected object directory. Reads validate object
+contents; writes publish complete objects without replacing existing files. In-memory SHA-1 trees
+support byte-preserving names, standard entry modes, payload parsing and encoding, Git ordering, and
 identity. Parsing preserves supported noncanonical trees; construction validates names and
 duplicates. Commits preserve exact payloads and expose tree, ordered parents, identities, dates,
 byte messages, and opaque multiline headers. Construction validates fields separately from parsing
-existing commits. The API is experimental.
+existing commits. Annotated tags preserve target identity and type, byte names, optional taggers,
+opaque extra headers, and message bytes, including embedded signatures. Storing a tag object does
+not create a tag reference. The API is experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, annotated tags, history traversal, refs, packs, repository discovery, and a
-CLI are not implemented.
+dependencies. SHA-256, history traversal, refs, packs, repository discovery, and a CLI are not
+implemented.
 
 ## Design Goals
 
@@ -39,7 +41,8 @@ store. The temporary directory is removed when the example exits normally. Run
 `cargo run --example tree` to build, encode, and parse an in-memory tree. Run
 `cargo run --example loose_tree` to write blobs, construct a tree referencing them, store it, and
 read the tree and its blobs back. Run `cargo run --example loose_commit` to store a blob, its tree,
-and a root commit, then read the snapshot back.
+and a root commit, then read the snapshot back. Run `cargo run --example loose_tag` to store an
+annotated tag of a blob and read both objects back.
 
 ## Development
 
