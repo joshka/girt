@@ -2,6 +2,8 @@
 //!
 //! # Library contents
 //!
+//! - [`Repository`] and [`OpenError`]: explicit-path opening with local format detection.
+//! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
 //! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
@@ -16,17 +18,21 @@
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
 //! The current API is experimental and supports SHA-1 loose blobs, trees, commits, and tags.
-//! References, the index, packfiles, repository discovery, and working-tree conversion are
+//! References, the index, packfiles, upward repository discovery, and working-tree conversion are
 //! not implemented.
 
 mod commit;
+pub mod config;
 mod loose;
 mod object;
+mod repository;
 mod tag;
 mod tree;
 
 pub use commit::{Commit, CommitError, CommitFields, CommitHeader, Signature};
+pub use config::{Config, ConfigError};
 pub use loose::{Error, LooseObjects};
 pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};
+pub use repository::{OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

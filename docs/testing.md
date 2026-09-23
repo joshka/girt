@@ -163,3 +163,23 @@ implemented. Keep these distinctions visible in the completion report.
   [baseline](benchmarks.md#tag-baseline) records reproducible evidence without a numerical gate.
 - Only SHA-1 on macOS arm64 has been exercised. Tag references, recursive peeling, signature
   verification, repository discovery, packs, and transport remain excluded.
+
+## Repository Opening Completion
+
+- Explicit roots, metadata directories and gitfiles open ordinary, bare, separate-directory and
+  linked-worktree Git fixtures. Paths and worktree relationships are checked, and Git-written loose
+  blobs are read through the detected store.
+- Configuration unit tests cover byte parsing, quoting, escapes, implicit/empty/repeated values,
+  subsection case, malformed syntax and numeric interpretation. Independent Git CLI comparisons
+  establish the supported forms and relevant core/extensions behavior.
+- Rejection tests cover unsupported formats, includes, worktree configuration, extensions, storage
+  layouts and malformed metadata. Snapshots check non-mutation; missing paths are not created. An
+  example subprocess proves that inherited Git overrides do not affect explicit opening.
+- `examples/open_repository.rs` runs against a disposable Git fixture. Public Rustdoc describes
+  source semantics and limitations; [compatibility evidence](compatibility.md) owns the detailed
+  boundary and provenance.
+- The repository Criterion harness measures small/large configuration parsing and cached bare
+  opening. [Performance evidence](benchmarks.md#repository-opening-baseline) records the baseline;
+  there is no numerical performance gate.
+- Only macOS arm64 is exercised. Initialization, upward discovery, refs, packed reads, history and
+  transport are excluded. Worktree configuration, includes and unknown extensions fail explicitly.

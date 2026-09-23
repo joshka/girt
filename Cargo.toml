@@ -57,3 +57,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "tags"
 harness = false
+
+[[example]]
+name = "open_repository"
+doc-scrape-examples = true
+
+[[bench]]
+name = "repositories"
+harness = false

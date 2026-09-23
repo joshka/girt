@@ -1,9 +1,9 @@
 # Git Compatibility Evidence
 
 Loose storage supports SHA-1 blobs, trees, commits, and tags with canonical object headers. The
-caller supplies an object directory and its known `ObjectFormat::Sha1` format. The library rejects
-`ObjectFormat::Sha256`; it does not read repository configuration. Crate Rustdoc owns the API
-examples and complete limitations.
+caller can supply an object directory and its known `ObjectFormat::Sha1` format, or use `Repository`
+to open an explicit repository path and detect the format from local configuration. SHA-256 storage
+is recognized and rejected. Crate Rustdoc owns the API examples and complete limitations.
 
 ## References and Provenance
 
@@ -274,3 +274,75 @@ The read limit bounds decompressed payload bytes, not the additional owned field
 copies. SHA-256, tag refs, peeling/traversal, signature verification, discovery, packs, and
 transport remain outside scope. [Performance evidence](benchmarks.md#tag-baseline) records the tag
 baseline.
+
+## Repository Opening and Configuration
+
+`Repository::open` accepts exactly a worktree root, Git directory, or indirection file. Ordinary,
+bare, separate Git directories and linked worktrees are covered. It returns canonical Git/common
+paths, the shared object directory, and the associated worktree. No upward search, initialization,
+reference resolution, packed-object reads, graph traversal or transport is performed.
+
+The original implementation follows the published
+[repository layout](https://git-scm.com/docs/gitrepository-layout),
+[configuration syntax](https://git-scm.com/docs/git-config#_syntax) and
+[repository version](https://git-scm.com/docs/repository-version) specifications. Independent
+runtime fixtures in `tests/repositories.rs` use Git 2.55.0 on macOS arm64. They create repositories
+with `git init --template=`, separate metadata with `--separate-git-dir`, and linked worktrees with
+`git worktree add`. Git-generated loose blobs are read through the opened repository. No dependency
+was added, and no Git implementation or upstream fixture was copied.
+
+### Configuration Boundary
+
+- `Config::parse` consumes caller-supplied bytes from one source. Repository opening supplies only
+  the common directory's `config`; a missing file uses layout defaults, repository version 0 and
+  SHA-1. No system/global config, command-line settings, `GIT_*` override, home directory lookup or
+  precedence merge is consulted. The current directory only resolves relative input paths.
+- Section/variable names use ASCII case-insensitive lookup; quoted subsections preserve exact case
+  and bytes. Ordered repeated values, implicit booleans and explicit empty values remain distinct.
+  Scalar lookup selects the last occurrence. Includes remain inert entries in standalone parsing;
+  opening rejects every include/includeIf entry, even an apparently inactive condition.
+- Supported syntax includes comments, mixed quoted/unquoted values, documented escapes, physical
+  line continuations, LF/CRLF and an initial UTF-8 BOM. Arbitrary value bytes are preserved. NUL,
+  invalid escapes, multiline quoted strings, unsectioned variables and malformed headers are
+  rejected. Deprecated dotted section syntax is explicitly rejected rather than misinterpreted as a
+  modern quoted subsection.
+- Opening interprets core.repositoryFormatVersion, core.bare, core.worktree and
+  extensions.objectFormat. Integer settings support signs, decimal/octal/hexadecimal notation and
+  binary k/m/g suffixes within the implementation's integer range. Boolean words are
+  case-insensitive; empty values are false, implicit values true, and numeric zero is false.
+- Versions 0 and 1 with SHA-1 are supported. SHA-256, unknown object formats, every other extension
+  (including refStorage and worktreeConfig), and objectFormat under version 0 are rejected.
+  Rejecting extensions under version 0 is intentionally stricter than historical Git behavior.
+  Ordinary unrelated settings remain queryable without affecting opening.
+- `config.worktree` is ignored when its extension is absent, as in Git. Enabling the extension is
+  unsupported, including on ordinary repositories; this prevents accidentally missing overrides.
+  Shared core.worktree is rejected for linked layouts. Linked worktrees use the verified absolute
+  `gitdir` backlink; relative backlinks are explicitly unsupported.
+- Relative core.worktree paths resolve against the Git directory. Bare/worktree conflicts and empty
+  worktree values fail. Tilde and `%(...)` path interpolation is unsupported. A directly supplied,
+  non-bare metadata directory needs an explicit worktree relationship; no current-directory worktree
+  is guessed. Unix path conversion preserves bytes. A non-UTF-8 filename fixture is Linux-only
+  because the exercised macOS filesystem rejects such filenames; byte conversion itself is tested on
+  macOS. Other platforms require UTF-8 metadata paths and remain untested.
+
+### Failure and Compatibility Evidence
+
+Named Git comparisons cover comments, whitespace, escaping, continuation, CRLF/BOM, byte values,
+Git-written quoted subsections, repeated keys, boolean forms, numeric versions and relative
+core.worktree. Repository fixtures cover root, Git-directory and gitfile inputs, shared linked
+objects, SHA-256 rejection, unsupported sources/extensions/storage, malformed metadata, missing
+paths, and no parent discovery. The runnable example is exercised with hostile Git environment and
+global configuration settings in its child process; those settings do not affect opening.
+
+Opening checks HEAD's marker shape without resolving its reference and requires object and refs
+directories. It rejects shallow markers and alternates files, including empty ones, rather than
+pretending that loose local storage is complete. Packs may exist, but subsequent object reads only
+search loose storage and can report an object missing even when it is packed.
+
+File-content snapshots before and after successful and rejected opening establish absence of file
+creation, deletion or content changes. Filesystem access times are not covered by that guarantee.
+Missing repositories, malformed metadata, configuration syntax failures, filesystem errors and
+unsupported features have distinct error variants with source paths. Opening performs synchronous
+reads and allocations without a configurable resource limit. Concurrent metadata replacement is not
+a consistent snapshot, and canonicalization is not an ownership or security check. Symlinks are
+resolved; callers must supply a trusted repository path and handle later storage changes.

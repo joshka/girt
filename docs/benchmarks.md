@@ -256,3 +256,30 @@ latency percentiles:
 | Cached read                | 33.472           | 156.570             |
 | New write                  | 640.830          | 871.978             |
 | Existing write             | 702.841          | 1065.512            |
+
+## Repository Opening Baseline
+
+Measured on 2026-09-23 with Rust 1.98.1, Criterion 0.8.2, macOS arm64, and the default optimized
+bench profile. Run:
+
+```sh
+cargo bench --bench repositories -- --sample-size 20 --warm-up-time 1 --measurement-time 2
+```
+
+The original harness constructs fixtures before timing. Parsing includes allocation and destruction
+of the owned configuration. The small input contains repository version and bare settings; the large
+input adds 1,000 remotes with URLs and fetch mappings. Opening repeatedly reads the same bare
+repository, including metadata checks, configuration parsing and path canonicalization. This is a
+warm filesystem-cache measurement, not a cold-storage estimate. No object payload is read.
+
+| Operation                   | Criterion point estimate | 95% confidence interval |
+| --------------------------- | ------------------------ | ----------------------- |
+| Parse small config          | 300.20 ns                | 298.96–301.04 ns        |
+| Parse 1,000 remote sections | 711.40 µs                | 693.21–726.96 µs        |
+| Open bare repository, warm  | 40.556 µs                | 40.209–41.059 µs        |
+
+The retained [estimates](benchmarks/repository-baseline.csv) and
+[source fingerprints](benchmarks/repository-baseline.sha256) identify the measured implementation.
+Check fingerprints with `shasum -a 256 -c docs/benchmarks/repository-baseline.sha256` from the
+repository root. These are initial baselines without a numerical acceptance threshold or a claim
+about other platforms, large real-world configurations, or cold storage.
