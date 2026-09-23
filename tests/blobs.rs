@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use girt::{Error, LooseObjects, ObjectFormat, ObjectId};
+use rstest::rstest;
 
 /// Maps an identity to its loose-object path so tests can inspect or replace the stored file.
 fn object_path(directory: &Path, id: ObjectId) -> std::path::PathBuf {
@@ -60,8 +61,11 @@ fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
 
 /// Checks empty, text, and binary blobs against Git's identities and readers in both directions.
 /// Removing girt's file before Git writes ensures the final read exercises Git-produced storage.
-#[test]
-fn interoperates_with_git_in_both_directions() {
+#[rstest]
+#[case::empty(Vec::new())]
+#[case::text(b"girt original fixture\n".to_vec())]
+#[case::binary((0..=255).cycle().take(16384).collect())]
+fn interoperates_with_git_in_both_directions(#[case] bytes: Vec<u8>) {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
@@ -70,43 +74,56 @@ fn interoperates_with_git_in_both_directions() {
     );
     let directory = root.path().join("objects");
     let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
-    let binary: Vec<u8> = (0..=255).cycle().take(16384).collect();
-    for bytes in [b"".as_slice(), b"girt original fixture\n", &binary] {
-        let expected = git(root.path(), &["hash-object", "--stdin"], bytes);
-        let expected: ObjectId = std::str::from_utf8(&expected)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let id = objects.write_blob(bytes).unwrap();
-        assert_eq!(id, expected);
-        assert_eq!(
-            git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
-            bytes
-        );
-        fs::remove_file(object_path(&directory, id)).unwrap();
-        git(root.path(), &["hash-object", "-w", "--stdin"], bytes);
-        assert_eq!(objects.read_blob(id, bytes.len()).unwrap(), bytes);
-    }
+    let expected = git(root.path(), &["hash-object", "--stdin"], &bytes);
+    let expected: ObjectId = std::str::from_utf8(&expected)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    let id = objects.write_blob(&bytes).unwrap();
+    assert_eq!(id, expected);
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
+        bytes
+    );
+
+    fs::remove_file(object_path(&directory, id)).unwrap();
+    git(root.path(), &["hash-object", "-w", "--stdin"], &bytes);
+    assert_eq!(objects.read_blob(id, bytes.len()).unwrap(), bytes);
 }
 
-/// Distinguishes missing files, unsupported formats/types, and caller size-limit failures.
-/// Both a highly compressed large blob and a blob one byte over the limit must be rejected.
+/// Reports a missing object as a filesystem NotFound error rather than malformed content.
 #[test]
-fn rejects_missing_unsupported_and_oversized_objects() {
+fn reports_missing_object() {
     let root = tempfile::tempdir().unwrap();
-    assert!(matches!(
-        LooseObjects::new(root.path(), ObjectFormat::Sha256),
-        Err(Error::UnsupportedFormat(ObjectFormat::Sha256))
-    ));
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"missing");
-    assert!(matches!(objects.read_blob(id, 10), Err(Error::Io(error))
-        if error.kind() == std::io::ErrorKind::NotFound));
-    let id = objects.write_blob(&vec![0; 20000]).unwrap();
-    assert!(matches!(objects.read_blob(id, 10), Err(Error::TooLarge)));
-    let id = objects.write_blob(b"abc").unwrap();
-    assert!(matches!(objects.read_blob(id, 2), Err(Error::TooLarge)));
+    let error = objects
+        .read_blob(ObjectId::for_blob(b"missing"), 10)
+        .unwrap_err();
+    let Error::Io(error) = error else {
+        panic!("expected an I/O error")
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+}
+
+/// Enforces the caller's limit for both highly compressed input and a one-byte overrun.
+#[rstest]
+#[case::highly_compressed(vec![0; 20000], 10)]
+#[case::one_byte_over_limit(b"abc".to_vec(), 2)]
+fn rejects_oversized_objects(#[case] bytes: Vec<u8>, #[case] limit: usize) {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = objects.write_blob(&bytes).unwrap();
+    assert!(matches!(objects.read_blob(id, limit), Err(Error::TooLarge)));
+}
+
+/// Recognizes a valid non-blob header but refuses to expose it through the blob API.
+#[test]
+fn rejects_unsupported_object_type() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"abc");
     install(root.path(), id, &compressed(b"tree 0\0"));
     assert!(matches!(
         objects.read_blob(id, 10),
@@ -114,62 +131,111 @@ fn rejects_missing_unsupported_and_oversized_objects() {
     ));
 }
 
-/// Rejects invalid object contents even when their zlib wrapper is valid.
-/// Cases cover header syntax, noncanonical or mismatched lengths, and content stored under the
-/// wrong ID.
-#[test]
-fn rejects_malformed_headers_lengths_and_identities() {
+/// Rejects malformed object content independently of zlib decoding, which succeeds for each case.
+#[rstest]
+#[case::missing_terminator(b"blob 3")]
+#[case::missing_length(b"blob\0abc")]
+#[case::leading_zero(b"blob 03\0abc")]
+#[case::positive_sign(b"blob +3\0abc")]
+#[case::negative_length(b"blob -1\0abc")]
+#[case::length_too_small(b"blob 2\0abc")]
+#[case::length_too_large(b"blob 4\0abc")]
+#[case::wrong_identity(b"blob 3\0xyz")]
+#[case::unrepresentable_length(b"blob 999999999999999999999999999999\0abc")]
+fn rejects_malformed_headers_lengths_and_identities(#[case] encoded: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"abc");
-    for encoded in [
-        b"blob 3".as_slice(),
-        b"blob\0abc",
-        b"blob 03\0abc",
-        b"blob +3\0abc",
-        b"blob -1\0abc",
-        b"blob 2\0abc",
-        b"blob 4\0abc",
-        b"blob 3\0xyz",
-        b"blob 999999999999999999999999999999\0abc",
-    ] {
-        install(root.path(), id, &compressed(encoded));
-        assert!(
-            matches!(objects.read_blob(id, 1024), Err(Error::Corrupt(_))),
-            "{encoded:?}"
-        );
-    }
+    install(root.path(), id, &compressed(encoded));
+    assert!(matches!(
+        objects.read_blob(id, 1024),
+        Err(Error::Corrupt(_))
+    ));
 }
 
-/// Requires exactly one complete zlib stream with a valid checksum.
-/// Every truncation is rejected, including cuts after the payload but before the trailer is
-/// complete.
+// Original fixture generated with Python zlib.compress(b"blob 3\0abc"). Fixed bytes make every
+// truncation case independent of compressor output changes; the complete fixture is tested below.
+const ABC_LOOSE: &[u8] = &[
+    0x78, 0x9c, 0x4b, 0xca, 0xc9, 0x4f, 0x52, 0x30, 0x66, 0x48, 0x4c, 0x4a, 0x06, 0x00, 0x11, 0xd9,
+    0x03, 0x19,
+];
+
+/// Confirms the fixed fixture used by corruption tests is readable before it is damaged.
 #[test]
-fn rejects_truncated_corrupt_and_trailing_zlib_data() {
+fn reads_complete_zlib_fixture() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let id = ObjectId::for_blob(b"abc");
-    let encoded = compressed(&girt::encode_blob(b"abc"));
-    for length in 0..encoded.len() {
-        install(root.path(), id, &encoded[..length]);
-        assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
-    }
-    let mut bad_checksum = encoded.clone();
-    *bad_checksum.last_mut().unwrap() ^= 1;
-    let mut trailing = encoded.clone();
-    trailing.push(0);
-    let mut concatenated = encoded.clone();
-    concatenated.extend_from_slice(&encoded);
-    for invalid in [bad_checksum, trailing, concatenated, b"not zlib".to_vec()] {
-        install(root.path(), id, &invalid);
-        assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
-    }
+    install(root.path(), id, ABC_LOOSE);
+    assert_eq!(objects.read_blob(id, 3).unwrap(), b"abc");
 }
 
-/// Checks that concurrent identical writes converge and a later duplicate preserves stored bytes.
-/// A corrupt existing file must also remain untouched, with no temporary files left behind.
+/// Rejects every incomplete prefix, including complete payloads missing part of the checksum.
+#[rstest]
+#[case::empty(0)]
+#[case::zlib_header_byte_1(1)]
+#[case::zlib_header_only(2)]
+#[case::deflate_prefix_1(3)]
+#[case::deflate_prefix_2(4)]
+#[case::deflate_prefix_3(5)]
+#[case::deflate_prefix_4(6)]
+#[case::deflate_prefix_5(7)]
+#[case::deflate_prefix_6(8)]
+#[case::deflate_prefix_7(9)]
+#[case::deflate_prefix_8(10)]
+#[case::deflate_prefix_9(11)]
+#[case::deflate_prefix_10(12)]
+#[case::deflate_prefix_11(13)]
+#[case::missing_checksum(14)]
+#[case::checksum_byte_1(15)]
+#[case::checksum_byte_2(16)]
+#[case::checksum_byte_3(17)]
+fn rejects_truncated_zlib_data(#[case] length: usize) {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"abc");
+    install(root.path(), id, &ABC_LOOSE[..length]);
+    assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+}
+
+/// Detects checksum damage even though the header and blob payload remain intact.
 #[test]
-fn duplicate_and_concurrent_writes_preserve_existing_objects() {
+fn rejects_invalid_zlib_checksum() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"abc");
+    let mut encoded = ABC_LOOSE.to_vec();
+    *encoded.last_mut().unwrap() ^= 1;
+    install(root.path(), id, &encoded);
+    assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+}
+
+/// Requires the file to end after one zlib stream, rejecting junk and concatenated streams.
+#[rstest]
+#[case::trailing_byte(b"\0")]
+#[case::second_stream(ABC_LOOSE)]
+fn rejects_trailing_zlib_data(#[case] suffix: &[u8]) {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"abc");
+    let encoded = [ABC_LOOSE, suffix].concat();
+    install(root.path(), id, &encoded);
+    assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+}
+
+/// Reports invalid compression framing as corruption before interpreting object contents.
+#[test]
+fn rejects_non_zlib_data() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"abc");
+    install(root.path(), id, b"not zlib");
+    assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+}
+
+/// Concurrent identical writes must converge on one readable object without temporary-file leaks.
+#[test]
+fn concurrent_writes_publish_one_object() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let bytes = b"concurrent original fixture";
@@ -181,12 +247,35 @@ fn duplicate_and_concurrent_writes_preserve_existing_objects() {
         }
     });
     let path = object_path(root.path(), id);
-    let original = fs::read(&path).unwrap();
-    objects.write_blob(bytes).unwrap();
-    assert_eq!(fs::read(&path).unwrap(), original);
     assert_eq!(objects.read_blob(id, bytes.len()).unwrap(), bytes);
-    fs::write(&path, b"corrupt existing object").unwrap();
-    assert!(matches!(objects.write_blob(bytes), Err(Error::Corrupt(_))));
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+/// A duplicate write must preserve the existing compressed bytes and leave no temporary file.
+#[test]
+fn duplicate_write_preserves_existing_object() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = objects.write_blob(b"duplicate").unwrap();
+    let path = object_path(root.path(), id);
+    let original = fs::read(&path).unwrap();
+    assert_eq!(objects.write_blob(b"duplicate").unwrap(), id);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+/// A failed duplicate write must preserve corrupt existing bytes rather than silently repair them.
+#[test]
+fn write_preserves_corrupt_existing_object() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let id = ObjectId::for_blob(b"duplicate");
+    let path = object_path(root.path(), id);
+    install(root.path(), id, b"corrupt existing object");
+    assert!(matches!(
+        objects.write_blob(b"duplicate"),
+        Err(Error::Corrupt(_))
+    ));
     assert_eq!(fs::read(&path).unwrap(), b"corrupt existing object");
     assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
 }

@@ -13,8 +13,10 @@ identity hashes the uncompressed header and content. Loose files contain a zlib 
 under the first two hexadecimal identity digits and a filename containing the remaining digits.
 
 Implementation and tests are original. No Git source, test code, or comments were copied or adapted.
-`tests/blobs.rs` generates all fixtures at runtime: an empty blob, an original text string, repeated
-bytes spanning 0 through 255, and deliberately malformed encodings. No fixture files are vendored.
+`tests/blobs.rs` generates empty, text, binary, and malformed inputs at runtime. Its fixed
+`ABC_LOOSE` byte array was independently generated with Python's `zlib.compress(b"blob 3\0abc")`. A
+complete-read case validates that fixture; named cases test all 18 incomplete prefixes. No fixture
+files are vendored.
 
 Run `cargo test` with Git available on `PATH`. Interoperability tests create isolated bare SHA-1
 repositories using `git init --bare --object-format=sha1 --template=`. They compare identities with
