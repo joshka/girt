@@ -124,6 +124,25 @@ mod tests {
 
     use super::*;
 
+    // Expected identities were independently checked with Python hashlib and Git 2.55.0.
+    // See docs/compatibility.md for the reproduction command.
+    #[rstest]
+    #[case::nine_bytes(vec![b'x'; 9], b"blob 9\0", "aab1169962b9fd16c9465117c12cad0ffd8bffac")]
+    #[case::ten_bytes(vec![b'x'; 10], b"blob 10\0", "72035e10b5524757f990eb198acfce358b268c12")]
+    #[case::ninety_nine_bytes(vec![b'x'; 99], b"blob 99\0", "9e84ea89f5f5200b6ef0350a87885d5d3f39e453")]
+    #[case::one_hundred_bytes(vec![b'x'; 100], b"blob 100\0", "f6be7cae2045aac11912ea642bf7f9d5d261f63b")]
+    #[case::all_byte_values((0..=255).collect(), b"blob 256\0", "c86626638e0bc8cf47ca49bb1525b40e9737ee64")]
+    fn encodes_and_identifies_blob_bytes(
+        #[case] bytes: Vec<u8>,
+        #[case] header: &[u8],
+        #[case] expected_id: &str,
+    ) {
+        let expected_encoding = [header, bytes.as_slice()].concat();
+
+        assert_eq!(encode_blob(&bytes), expected_encoding);
+        assert_eq!(ObjectId::for_blob(&bytes).to_string(), expected_id);
+    }
+
     #[rstest]
     #[case::sha1(ObjectFormat::Sha1, "sha1")]
     #[case::sha256(ObjectFormat::Sha256, "sha256")]

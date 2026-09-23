@@ -15,4 +15,9 @@ sha1 = "0.10"
 tempfile = "3"
 
 [dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rstest = { version = "0.27.0", default-features = false }
+
+[[bench]]
+name = "blobs"
+harness = false

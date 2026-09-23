@@ -43,6 +43,10 @@ Use `just fmt-rust` or `just fmt-md` to format one language, and `just fmt-rust-
 `just fmt-md-check` to check it without changes. Markdown prose wraps at 100 characters; table
 columns and separators stay aligned, even when a table must be wider.
 
+For performance-sensitive changes, run `just bench`. See
+[Blob Performance Baseline](docs/benchmarks.md) for workloads, measured operations, cache
+conditions, and recorded results.
+
 ## Implementation and Tests
 
 Use [Testing and Completion Criteria](docs/testing.md) to define acceptance evidence for each

@@ -24,6 +24,38 @@ inherited `GIT_*` environment overrides and disable system/global config for chi
 do not modify global configuration or the working checkout. This slice was validated with Git 2.55.0
 on macOS; other platforms have not been exercised.
 
+## Independent Unit-Test Identities
+
+- `src/object.rs` checks exact headers at 9/10-byte and 99/100-byte decimal transitions, using
+  repeated `x` bytes. A fifth case preserves every byte value from 0 through 255, including NUL and
+  non-UTF-8 bytes.
+- Each named case compares the complete encoding with a literal header plus the original payload,
+  and the identity with a literal expected SHA-1 value. Expected values are not computed by girt.
+- The constants were established with Python 3.14.7 `hashlib` and independently cross-checked with
+  Git 2.55.0. The empty-blob identity remains covered by the existing doctest.
+- Reproduce the constants outside a repository with this script; all temporary state is disposable:
+
+```python
+import hashlib
+import os
+import subprocess
+import tempfile
+
+fixtures = [b"x" * size for size in (9, 10, 99, 100)] + [bytes(range(256))]
+env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+with tempfile.TemporaryDirectory() as directory:
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.path.join(directory, "absent"))
+    for content in fixtures:
+        encoded = b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+        expected = hashlib.sha1(encoded).hexdigest()
+        result = subprocess.run(
+            ["git", "hash-object", "--stdin"], input=content, cwd=directory, env=env,
+            check=True, capture_output=True,
+        )
+        assert result.stdout.decode().strip() == expected
+        print(len(content), expected)
+```
+
 ## Validation Boundaries
 
 Tests cover empty and binary content, exact read limits, missing objects, unsupported formats and
@@ -38,15 +70,21 @@ output; identity and decoded bytes must agree. This slice does not implement col
 packed objects, alternates, power-loss durability, shared-repository permissions, or protection
 against a hostile filesystem owner. File publication requires hard-link support.
 
+Performance commands, cache conditions, results, and limitations are recorded in the
+[blob benchmark baseline](benchmarks.md).
+
 ## Dependencies
 
-Direct dependencies are `sha1` for hashing, `flate2` for zlib, and `tempfile` for exclusive
+Runtime dependencies are `sha1` for hashing, `flate2` for zlib, and `tempfile` for exclusive
 temporary files and disposable test directories. All three declare `MIT OR Apache-2.0`. Requirements
 permit compatible releases within their selected release series; the lockfile records tested
 versions.
 
-The resolved dependency manifests were checked with `cargo metadata --format-version 1`. Every
-resolved package offers MIT, Apache-2.0, or Zlib terms, including platform-specific dependencies.
-`simd-adler32` and `generic-array` use MIT; `zlib-rs` uses Zlib. License alternatives in transitive
-packages do not require selecting LGPL. This records package metadata, not an independent legal
-audit.
+`rstest` provides test parameterization and Criterion provides benchmark sampling and analysis. Both
+are development-only dependencies with MIT/Apache-2.0 license alternatives.
+
+The resolved dependency manifests were checked with `cargo metadata --format-version 1`. Resolved
+packages offer MIT, Apache-2.0, or Zlib terms, including platform-specific dependencies;
+`unicode-ident` also requires Unicode-3.0 terms. `simd-adler32` and `generic-array` use MIT;
+`zlib-rs` uses Zlib. License alternatives in transitive packages do not require selecting LGPL. This
+records package metadata, not an independent legal audit.

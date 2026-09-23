@@ -44,11 +44,13 @@ path, or making a performance claim. Hashing, compression, pack decoding, and gr
 representative baselines. A domain-type change or documentation correction usually does not require
 a new benchmark; use existing benchmarks when performance could be affected.
 
-Keep benchmark harnesses under `benches/`. Choose representative input sizes and content, keep
-fixture setup outside the measured operation, and name what is measured. Separate operations with
-different costs, such as publishing a new object and validating an existing one. For filesystem
-measurements, record cache conditions and avoid presenting cached reads as cold-storage performance.
-Record the command, toolchain, platform, workload, and baseline revision needed to repeat a result.
+Use Criterion for benchmark sampling and analysis rather than a manual timing harness. Keep
+benchmark harnesses under `benches/`. Choose representative input sizes and content, keep fixture
+setup outside the measured operation, and name what is measured. Separate operations with different
+costs, such as publishing a new object and validating an existing one. For filesystem measurements,
+record cache conditions and avoid presenting cached reads as cold-storage performance. Record the
+command, toolchain, platform, workload, and retained revision or verifiable source fingerprint
+needed to repeat a result.
 
 Use measurements to identify sustained regressions and guide design. Establish numerical acceptance
 thresholds only when a consumer requirement or measured budget justifies them; noisy timing changes
@@ -74,11 +76,14 @@ A capability may be complete within an explicitly limited scope. Validation on o
 establish support on other platforms, and recognizing a format does not establish that it is
 implemented. Keep these distinctions visible in the completion report.
 
-## Blob Baseline Follow-up
+## Blob Baseline Completion
 
-The [blob compatibility record](compatibility.md) describes the existing integration coverage.
-Additional baseline work should include focused tests for exact blob headers at decimal-length
-transitions, preservation of binary bytes, and independently established expected identities. Add
-benchmarks for blob hashing and loose reads/writes using small and larger inputs with different
-compressibility, separating new-object writes from writes to existing objects. These are follow-up
-criteria, not claims that the tests or benchmarks already exist.
+- Exact encoding and independently established identities are covered by named `rstest` cases for
+  9/10-byte and 99/100-byte lengths and all 256 byte values in `src/object.rs`.
+- [Compatibility evidence](compatibility.md) records fixture provenance and both directions of Git
+  interoperability, plus existing corruption, size-limit, concurrency, and cleanup coverage.
+- [Performance evidence](benchmarks.md) records reproducible hashing, cached reads, new-object
+  writes, and existing-object writes over varied sizes and compressibility, with environment and
+  results.
+- The baseline remains limited to SHA-1 loose blobs on the exercised macOS platform. No new Git
+  capability or numerical performance threshold is implied by completion.

@@ -9,6 +9,10 @@ check: fmt-check test clippy docs-rs
 test:
     cargo test
 
+# Measure the blob baseline (not a CI performance gate).
+bench:
+    cargo bench --bench blobs
+
 # Reject Clippy warnings across all targets.
 clippy:
     cargo clippy --all-targets -- -D warnings
