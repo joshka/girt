@@ -1,5 +1,42 @@
 //! An incremental Rust library for Git's data formats and storage.
 //!
+//! # Reading a repository
+//!
+//! Open an explicit path with [`Repository::open`], then retain an [`Objects`] reader with chosen
+//! [`PackLimits`]. Loose objects are read live; packs form an immutable snapshot that survives
+//! repacking. Reopen to discover new packs. [`Objects::read`] checks framing and identity under
+//! per-read [`ReadLimits`]; parse its exact bytes with [`Commit`], [`Tree`], or [`Tag`] when
+//! structured fields are needed. Repository history queries follow complete commit ancestry under
+//! [`HistoryLimits`] without relying on timestamps.
+//!
+//! # Fetching and publishing references
+//!
+//! Build optional [`fetch::KnownHistory`] from verified local objects before negotiation. Local
+//! and stream fetches return [`fetch::ReceivedFetch`]. HTTP/SSH downloads instead own unvalidated
+//! bytes and the exact negotiation history; move them to a caller-managed blocking worker and
+//! validate them there. The caller bounds queued downloads and active workers, then joins the
+//! work even after requesting cancellation.
+//!
+//! [`fetch::ReceivedFetch::install`] reopens the destination under explicit snapshot limits and
+//! rechecks local dependencies before publishing a pack/index pair. It leaves references unchanged.
+//! Coordinate with pruning until a separate conditional [`refs::References::update_without_reflog`]
+//! publishes the intended tip. Pack installation and each reference update have separate failure
+//! and retry contracts; multiple reference updates are not a transaction.
+//!
+//! # Preparing and sending a push
+//!
+//! [`push::PreparedPush`] synchronously verifies selected history, proves required ancestry, and
+//! builds bounded pack buffers. Optional receiver roots exclude only history proven within that
+//! verified graph. Sending checks current advertised values before attempting commands; the
+//! server checks those expected old values again when updating references.
+//!
+//! Inspect [`push::PushReport`] even after a successful send: individual references may be
+//! rejected. [`push::PushError`] distinguishes failure before transmission from uncertain outcomes
+//! that retain valid acknowledgements. Inspect remote references before retrying unknown outcomes.
+//! Local storage, hashing, graph work, and compression remain synchronous; optional async
+//! transports use the caller's runtime. Resource limits apply to the documented phase or read, not
+//! total process memory or an operation-wide deadline.
+//!
 //! # Library contents
 //!
 //! - [`Repository`] and [`OpenError`]: explicit-path opening with local format detection.

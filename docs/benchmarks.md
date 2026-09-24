@@ -679,3 +679,36 @@ RSS, cold-cache behavior and remote network latency are not measured.
 [CSV estimates](benchmarks/ssh-baseline.csv) and
 [source fingerprints](benchmarks/ssh-baseline.sha256) retain reproducible evidence. Linux runtime
 performance is not established by this macOS run.
+
+## Forward Delta Ordering
+
+The original `tests/support/forward_delta.rs` fixture emits independent depth-64 REF_DELTA chains,
+each in reverse dependency order, with unique eight-byte blob payloads. Literal-only deltas isolate
+resolution ordering from compression matching. Setup is outside sampling. The measured operation
+replays in-memory protocol bytes, imports and hashes all objects, builds an index, validates one
+selected blob, and drops the result. It performs no filesystem or network I/O.
+
+At review follow-up change `161fe6ed54b2` (the fixture and importer used for these measurements), a
+chain of 65 entries requires 65 full resolver passes: 4,225 visits. The regression accepts that
+exact budget and rejects one fewer; Git independently accepts the pack with `index-pack --strict`
+and returns its tip with `cat-file`. The default ten-million-visit budget can therefore reject a
+pack below the object-count limit when many deep chains have this ordering.
+
+Measured on macOS arm64 (Darwin 25.6.0), rustc 1.98.1, Git 2.55.0, with the checked-in lockfile and
+optimized bench profile. Criterion used ten samples, a one-second warmup and one-second measurement
+target:
+
+```sh
+cargo bench --bench fetch -- forward-ref-delta --warm-up-time 1 --measurement-time 1 --sample-size 10
+```
+
+| Chains | Objects | Estimate  | 95% interval     |
+| ------ | ------- | --------- | ---------------- |
+| 1      | 65      | 288.59 µs | 287.12–289.63 µs |
+| 16     | 1,040   | 4.8054 ms | 4.7054–4.8881 ms |
+| 128    | 8,320   | 37.428 ms | 37.000–37.897 ms |
+
+These are small-payload ordering measurements, not large-payload or peak-memory results. The
+resolver and defaults remain unchanged: their existing work bound is explicit, and no required
+consumer workload currently justifies a ready-queue redesign. A future need to accept larger
+deep-forward packs should revisit the algorithm rather than silently raise the work allowance.

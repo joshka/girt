@@ -5,7 +5,27 @@ caller can supply an object directory and its known `ObjectFormat::Sha1` format,
 to open an explicit repository path and detect the format from local configuration. SHA-256 storage
 is recognized and rejected. Crate Rustdoc owns the API examples and complete limitations.
 
+## Current Capabilities and Evidence
+
+The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
+fetch, conditional branch/tag push, and explicit reference updates without reflogs. HTTP and SSH
+downloads share owned validation state. Installation takes explicit destination snapshot limits.
+Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
+implied.
+
+| Platform       | Current evidence boundary                                   |
+| -------------- | ----------------------------------------------------------- |
+| macOS arm64    | Latest transport and ownership tests run locally.           |
+| Linux x86_64   | Earlier runtime evidence; current revision awaits CI.       |
+| Windows x86_64 | Earlier portable tests; repository support remains limited. |
+
+The configured CI checks core-only, HTTP-only, and SSH-only library compilation independently.
+Configuration is not evidence of a successful run. Historical run IDs, counts and environments below
+apply only to their stated revisions.
+
 ## Platform and Git-Version Validation
+
+### Historical Cross-Platform Runs
 
 The repository capabilities preceding transport interruption have runtime evidence on macOS arm64
 and Linux x86_64. The [owned transport change](#owned-transport-interruption) records its evidence
@@ -1086,3 +1106,35 @@ Implementation and original fixtures use the public
 source or tests were copied or adapted. New runtime evidence is macOS arm64, Git 2.55.0, OpenSSH
 10.3p1 and Rust 1.98.1. No Linux runtime result or Windows SSH support is claimed. Broader async
 filesystem/object-store architecture remains undecided.
+
+## Transfer Ownership and Operational Review
+
+The review follow-up preserves exact object bytes, typed graph checks, retained pack snapshots,
+owned negotiation history, installation/reference separation, and uncertain push reports. Focused
+regressions cover caller-selected installation limits and retry, cancellation before pack output,
+artifact paths and reachable-object diagnostic context, and bounded local upload/status progress
+with retained acknowledgements. HTTP/SSH lifetime and actual Git interoperability tests exercise the
+common downloaded-fetch state.
+
+The original early-rejection fixture fills stdout before resuming stdin consumption. It reproduced a
+local write-before-read deadline and now completes with its rejection report. This establishes
+finite bidirectional backpressure handling; it is not a claim that a particular Git release emits
+that exact response. Actual Git push integration remains separate evidence.
+
+The original forward REF_DELTA fixture in `tests/support/forward_delta.rs` contains unique
+eight-byte blobs and literal-only delta programs, with each chain ordered deepest-first. Git
+`index-pack --strict` accepts it and `cat-file` returns the expected tip. Girt accepts the
+65-object, depth-64 chain with 4,225 resolution visits and rejects a budget one visit smaller.
+[Measurements](benchmarks.md#forward-delta-ordering) quantify this supported worst-order shape.
+
+Fixture startup owns its process before parsing readiness, uses a ten-second startup deadline, and
+includes retained stderr in failures. SSH readiness uses test-only `serde_json` (MIT OR Apache-2.0,
+as declared by the resolved package); no runtime dependency is added.
+
+Review follow-up validation on macOS arm64 passed `just check` (685 unit tests, 314 integration
+tests, 12 doctests, formatting, all-target/all-feature Clippy and docs.rs), warning-denying private
+Rustdoc, the disposable HTTP/SSH/local-fetch examples, owned-history worker compiler probes, and
+Markdown lint. Independent core-only, HTTP-only, and SSH-only library checks also passed. Linux GNU
+and Windows GNU library cross-checks with SSH passed. Windows all-feature cross-compilation was
+blocked in `aws-lc-sys` by the unavailable `x86_64-w64-mingw32-gcc`; native Windows CI remains the
+follow-up for that build. No new Linux or Windows runtime result is claimed.

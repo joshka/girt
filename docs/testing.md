@@ -76,7 +76,15 @@ A capability may be complete within an explicitly limited scope. Validation on o
 establish support on other platforms, and recognizing a format does not establish that it is
 implemented. Keep these distinctions visible in the completion report.
 
-## Blob Baseline Completion
+## Historical Capability Completion Records
+
+The following sections record evidence collected when each capability landed. Counts, commands, API
+names, and platform results describe those revisions, not a fresh run of the current checkout.
+Current implementation expectations are above; current capability and platform boundaries are in
+[compatibility evidence](compatibility.md#current-capabilities-and-evidence).
+Later records may supersede earlier limitations, with the original evidence retained for provenance.
+
+### Blob Baseline Completion
 
 - Exact encoding and independently established identities are covered by named `rstest` cases for
   9/10-byte and 99/100-byte lengths and all 256 byte values in `src/object.rs`.
@@ -88,7 +96,7 @@ implemented. Keep these distinctions visible in the completion report.
 - The baseline remains limited to SHA-1 loose blobs on the exercised macOS platform. No new Git
   capability or numerical performance threshold is implied by completion.
 
-## In-Memory Tree Completion
+### In-Memory Tree Completion
 
 - Structural parsing and construction are separate: exact supported payloads round-trip even when
   name or ordering validation fails. Unit tests cover empty trees, five modes, byte names, prefix
@@ -105,7 +113,7 @@ implemented. Keep these distinctions visible in the completion report.
 - The supported boundary is in-memory SHA-1 trees on the exercised macOS platform. This does not
   establish loose-tree storage, checkout safety, or complete `git fsck` validation.
 
-## Loose-Tree Completion
+### Loose-Tree Completion
 
 - SHA-1 loose trees share framing, hashing, decompression, and safe publication with blobs. Reads
   preserve the parsing/validation distinction; writes preserve supported payload bytes.
@@ -120,7 +128,7 @@ implemented. Keep these distinctions visible in the completion report.
 - Reference resolution, recursive filesystem import, checkout, the index, commits, references,
   packs, repository discovery, and SHA-256 storage remain outside this capability.
 
-## Commit Completion
+### Commit Completion
 
 - Root, single-parent, and merge commits expose ordered references, byte identities, Unix seconds,
   offsets, message bytes, and opaque multiline headers. Parsing preserves accepted lexical details;
@@ -142,7 +150,7 @@ implemented. Keep these distinctions visible in the completion report.
   grammar and provenance. SHA-256, history traversal, refs, signature verification, packs, and
   transport remain excluded; only macOS arm64 has been exercised.
 
-## Annotated Tag Completion
+### Annotated Tag Completion
 
 - Tags target blobs, trees, commits, or tags and expose names, optional taggers, opaque header
   lines, and byte messages. Parsing preserves exact payloads, including omitted taggers and empty
@@ -164,7 +172,7 @@ implemented. Keep these distinctions visible in the completion report.
 - Only SHA-1 on macOS arm64 has been exercised. Tag references, recursive peeling, signature
   verification, repository discovery, packs, and transport remain excluded.
 
-## Repository Opening Completion
+### Repository Opening Completion
 
 - Explicit roots, metadata directories and gitfiles open ordinary, bare, separate-directory and
   linked-worktree Git fixtures. Paths and worktree relationships are checked, and Git-written loose
@@ -184,7 +192,7 @@ implemented. Keep these distinctions visible in the completion report.
 - Only macOS arm64 is exercised. Initialization, upward discovery, refs, packed reads, history and
   transport are excluded. Worktree configuration, includes and unknown extensions fail explicitly.
 
-## Reference Completion
+### Reference Completion
 
 - `RefName` unit cases validate full byte names and HEAD without normalization. Git name checks
   independently cover valid and invalid names; byte names also round-trip through packed refs.
@@ -207,7 +215,7 @@ implemented. Keep these distinctions visible in the completion report.
   storage, noncooperating writers, crash durability, reflogs, deletion and multi-ref transactions
   are outside the supported boundary. No object-pack, history or transport capability is implied.
 
-## Pack Reading Completion
+### Pack Reading Completion
 
 - SHA-1 pack/index v2 reads expose all four object kinds and exact payloads through
   `Repository::objects`. Loose reads take precedence; loose writing remains unchanged.
@@ -230,7 +238,7 @@ implemented. Keep these distinctions visible in the completion report.
   outside the pack-reading capability. Only macOS arm64 is exercised; no performance threshold is
   set.
 
-## Commit History Completion
+### Commit History Completion
 
 - `Objects::walk` accepts explicit SHA-1 roots, deduplicates shared history, and returns
   breadth-first root/parent discovery order. It is not topological; timestamps never influence
@@ -262,7 +270,7 @@ the global 100-column configuration. The consumer example ran against this check
 endpoints and returned that endpoint as the sole merge base. Criterion results and source
 fingerprints are retained with the benchmark evidence.
 
-## Pack Writing Completion
+### Pack Writing Completion
 
 - `write_pack` generates SHA-1 pack v2 and index v2 artifacts from explicit borrowed inputs, with
   ordinary entries for blobs, trees, commits, and tags. Reachability and payload syntax remain
@@ -292,7 +300,7 @@ with the global 100-column configuration. `cargo run --example write_pack` expor
 private artifact pair. Criterion completed the four writer workloads with five-second sampling
 windows; results and source fingerprints are retained with the benchmark evidence.
 
-## Upload-Pack Fetch Completion
+### Upload-Pack Fetch Completion
 
 - Protocol v0 provides explicit advertised wants, no-haves/NAK negotiation, side-band-64k progress
   and errors, exact framing, EOF validation and bounded input. The supplied adapter is local
@@ -326,7 +334,7 @@ completed both protocol/import workloads and the advertisement workload; CSV est
 fingerprints are retained. After final local cleanup, affected tests, Clippy and documentation
 checks passed again.
 
-## Receive-Pack Push Completion
+### Receive-Pack Push Completion
 
 - Preparation accepts explicit branch/tag commands with exact expected old values, validates the
   complete typed reachable graph, proves fast-forward updates, and builds a bounded non-thin pack.
@@ -356,7 +364,7 @@ and read its blob back. Rendered push module/function documentation and error li
 Criterion completed both preparation and protocol workloads; medians, confidence intervals and
 source fingerprints are retained. Validation is limited to macOS arm64 and Git 2.55.0.
 
-## Owned Transport Interruption Completion
+### Owned Transport Interruption Completion
 
 - [x] macOS/Linux owned pipes support cancellation and absolute deadlines; other OSes reject local
   adapters. Caller-owned streams remain cooperative. Blocking filesystem/CPU/callback work and
@@ -384,7 +392,7 @@ warnings rejected. The [owned transport baseline](benchmarks.md#owned-transport-
 actual process/transfer/cleanup measurements on macOS. Linux runtime tests for this change and
 Windows transport support remain outside this evidence.
 
-## Incremental Transfer Completion
+### Incremental Transfer Completion
 
 - [x] Explicit verified local history supports bounded upload-pack have/ACK negotiation, known-only
   no-ops and combined received/local connectivity; delta bases remain pack-internal.
@@ -415,7 +423,7 @@ boundary and merge/divergence cases were added. Both disposable examples complet
 passed rumdl and markdownlint-cli2 with the global 100-column configuration. Linux GNU and Windows
 GNU/MSVC library Clippy cross-checks passed; these are compile checks, not runtime evidence.
 
-## Bounded Delta Compression Completion
+### Bounded Delta Compression Completion
 
 - Ordinary writing remains the default; explicit pack and push options select bounded internal
   REF_DELTA compression. Same-kind, size-ratio and backward-window selection preserve deterministic
@@ -448,7 +456,7 @@ also passed. `cargo bench --bench pack_delta` completed all seven ordinary/delta
 retained source fingerprints verify successfully. Runtime evidence remains macOS arm64 and Git
 2.55.0; the earlier Linux CI runs do not validate this change.
 
-## Smart HTTP Completion
+### Smart HTTP Completion
 
 - [x] SHA-1 protocol v0 discovery and single stateless RPC boundaries preserve stream/local APIs.
   Full/incremental fetch, receiver-history exclusion and optional delta push remain explicit.
@@ -473,7 +481,7 @@ The adapter is opt-in. `just check` now tests/clippies all features and docs.rs 
 features; core-only compilation is checked separately. New runtime evidence is limited to macOS
 arm64. Earlier Linux CI is not HTTP validation, and HTTP integration fixtures remain Unix-gated.
 
-## SSH Completion
+### SSH Completion
 
 - [x] Optional macOS/Linux OpenSSH adapters expose async v0 fetch/push with caller-owned runtime,
       explicit endpoint components/config, separate synchronous fetch validation and push
@@ -508,7 +516,7 @@ all-target cross-check was blocked by the existing `alloca` dev dependency requi
 `x86_64-w64-mingw32-gcc`; no Windows runtime evidence is claimed. The concrete follow-up is to run
 all-target Clippy on the configured native Windows CI runner or provide that cross C compiler.
 
-## Owned Network Fetch Handoff Completion
+### Owned Network Fetch Handoff Completion
 
 - HTTP/SSH receive entry points take `Option<Arc<KnownHistory>>`. Downloads privately own the exact
   negotiation history, have no history lifetime parameter, and require no allocated history for
