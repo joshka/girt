@@ -493,8 +493,9 @@ Pack bytes and index tables are retained for the reader's lifetime. Decoded obje
 Repacking after opening cannot invalidate the owned bytes, but new packs require reopening. Races
 while opening can return I/O errors; callers may reopen. Loose reads remain live. Trusted paths and
 ancestors are required; this API does not secure hostile concurrent filesystem mutation. Multi-pack
-indexes, bitmap/reverse indexes, alternates, partial/shallow repositories, thin packs, pack writing,
-transport, and traversal are outside this capability. Auxiliary acceleration files are ignored.
+indexes, bitmap/reverse indexes, alternates, partial/shallow repositories, thin packs, live pack
+installation, transport, and traversal are outside this capability. Auxiliary acceleration files are
+ignored.
 
 ### Independent Evidence
 
@@ -534,3 +535,50 @@ encounter, supplied root order, stored parent order, without duplicates. Commit 
 verification reuse the existing APIs. Missing parents are errors, including when an endpoint already
 answers the query. Referenced trees are not resolved. Annotated tags must be peeled by the caller.
 Shallow/partial repositories and replacement-object semantics are not supported.
+
+## SHA-1 Pack Writing
+
+`write_pack` exports the caller's explicit object set to separate pack and index `Write` sinks. It
+hashes canonical kind/length framing and exact payloads, rejects mismatched identities and
+conflicting duplicates, and collapses exact duplicates. `ObjectKind` admits only the four logical
+Git kinds. It does not parse payload syntax, traverse references, or require graph closure. This
+permits byte-preserving forwarding of objects while leaving graph policy to the caller.
+
+Pack v2 entries and index v2 IDs are ordered by ascending SHA-1 identity. Entries use zlib level 6
+without deltas. Identical inputs produce identical artifacts with the same compression backend and
+version; dependency upgrades may change compressed bytes. Similar revisions can take substantially
+more space than delta-selected packs. SHA-256, thin packs, delta selection, repacking, pruning, GC,
+multi-pack indexes, and transport are excluded. No dependencies were added.
+
+`PackWriteLimits` bounds input occurrences before allocation/sorting, each payload, total input
+bytes including duplicates, and both output lengths. Payloads are borrowed and compressed directly
+into the sink; metadata grows with input count and zlib uses its own scratch space. Limits are not a
+process-memory ceiling. Pack counts fit `u32`; byte counters use checked `u64` arithmetic. Index
+large-offset references have 31-bit slots. Output checks include trailers and never write beyond the
+configured byte limit.
+
+Input validation failures leave both sinks untouched. Later failures may leave partial artifacts, or
+a complete pack and incomplete index. Both must be discarded. Success includes flushing both sinks,
+not filesystem synchronization. Sinks must start at artifact offset zero. Buffered sinks are
+recommended for files because index tables are emitted incrementally.
+
+The API does not install artifacts. It never removes loose objects or existing packs. The example
+assembles a new, private repository before any readers exist; its renames are not a live publication
+protocol. Future fetch integration needs staging, validation, existing-file collision handling,
+crash recovery, and pair publication compatible with `Repository::objects` snapshot opening.
+Existing reader snapshots own their bytes, but opening during a partial pair publication has no
+success guarantee in this slice.
+
+Original writer code and synthetic fixtures follow the public
+[Git pack format specification](https://git-scm.com/docs/pack-format); no Git source or tests were
+copied. `tests/packs.rs` exports Git-generated mixed-kind payloads and original binary/4 MiB blobs,
+then runs independent `git index-pack --index-version=2`, compares the complete regenerated index,
+runs `git verify-pack`, and checks exact `git cat-file` and girt reads from pack-only private
+stores. Empty packs and repeated input objects are included. Tests beside the writer cover
+deterministic ordering, identity/kind mismatches, duplicate conflicts, short writes, write/flush
+errors, limits, header boundaries, and counter overflow.
+
+The original synthetic index fixture checks offsets immediately below and at 2 GiB and at 4 GiB,
+including exact 32-bit slots, 64-bit table bytes, checksums, and reader interpretation on 64-bit
+hosts. It does not allocate or validate an actual multi-gigabyte pack. Git 2.55.0 on macOS 26.6.2
+arm64 was exercised; other platforms and actual multi-gigabyte output remain untested.

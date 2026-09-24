@@ -381,3 +381,35 @@ Recorded on 2026-09-23 with `cargo bench --bench history`. Verify sources with
 
 These values describe the final diamond workload. Criterion comparisons against earlier exploratory
 fixture shapes are not implementation performance comparisons.
+
+## Pack Write Baseline
+
+Run `cargo bench --bench pack_write` with the checked-in lockfile. Criterion uses 30 samples,
+one-second warmup and five-second target measurement. Fixture creation and expected identity hashing
+occur outside timing. Each measured call validates identities, sorts/deduplicates inputs, compresses
+ordinary entries at zlib level 6, computes CRCs/checksums, and writes both artifacts to `io::sink`.
+There is no filesystem I/O or retained output buffer; this measures artifact generation, not
+installation or durable storage throughput.
+
+Workloads contain 64 distinct 4 KiB blobs or four distinct 1 MiB blobs. Similar inputs repeat `x`
+with distinct eight-byte prefixes. Pseudorandom inputs use a fixed-seed xorshift sequence per blob.
+The harness prints exact input, pack and index sizes alongside Criterion throughput. Size ratios
+compare pack bytes with payload bytes; index bytes are additional. These workloads illustrate
+compressibility, not the savings available from delta selection across real revision histories.
+
+Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, using the
+default optimized bench profile and flate2's lockfile-selected backend. The desktop session was not
+CPU-isolated. The [CSV](benchmarks/pack-write-baseline.csv) retains median estimates and 95%
+confidence intervals; the [source manifest](benchmarks/pack-write-baseline.sha256) identifies the
+harness, library sources, manifest and lockfile. There is no performance acceptance threshold.
+
+| Payloads (bytes) | Content      | Median (ms) | MiB/s | Pack bytes | Index bytes |
+| ---------------- | ------------ | ----------- | ----- | ---------- | ----------- |
+| 64 × 4096        | similar      | 1.107       | 225.9 | 2195       | 2864        |
+| 64 × 4096        | pseudorandom | 3.774       | 66.2  | 263072     | 2864        |
+| 4 × 1048576      | similar      | 8.030       | 498.1 | 4218       | 1184        |
+| 4 × 1048576      | pseudorandom | 84.952      | 47.1  | 4195056    | 1184        |
+
+Throughput uses uncompressed input bytes divided by the median time. Pack sizes include framing and
+checksums. The final run followed validation jobs to reduce local contention; comparisons against
+exploratory runs are not evidence of implementation regressions.

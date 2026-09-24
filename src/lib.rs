@@ -7,6 +7,7 @@
 //!   single-reference updates explicitly without reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
+//! - [`write_pack`]: bounded pack/index v2 artifact generation from explicit objects.
 //! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
 //! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
@@ -22,9 +23,10 @@
 //!   storage assumptions.
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
-//! The current API is experimental and supports SHA-1 loose objects and pack/index v2 reads.
+//! The current API is experimental and supports SHA-1 loose objects, pack/index v2 reads,
+//! and caller-owned pack/index v2 exports.
 //! Files references support reads, symbolic resolution, and explicit no-reflog updates.
-//! The working-tree index, pack writing, upward discovery, and working-tree conversion are
+//! The working-tree index, upward discovery, and working-tree conversion are
 //! not implemented.
 
 mod commit;
@@ -33,7 +35,7 @@ mod history;
 mod loose;
 mod object;
 mod objects;
-mod pack;
+pub mod pack;
 pub mod refs;
 mod repository;
 mod tag;
@@ -45,6 +47,7 @@ pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
 pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};
 pub use objects::{Object, ObjectReadError, Objects, PackLimits, ReadLimits};
+pub use pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack};
 pub use repository::{OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

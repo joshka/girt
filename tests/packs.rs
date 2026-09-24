@@ -141,3 +141,83 @@ fn missing_index_is_storage_failure_not_object_absence() {
         Err(ObjectReadError::Io(_))
     ));
 }
+
+/// Installs only into a fresh, private fixture before any reader exists. This is not a live
+/// repository publication protocol. Git regenerates an independent index beside the export.
+fn verify_export(records: &[(ObjectId, ObjectKind, Vec<u8>)]) {
+    use girt::{PackObject, PackWriteLimits, Repository, write_pack};
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &["init", "--bare", "--object-format=sha1", "--template=", "."],
+        b"",
+    );
+    let input: Vec<_> = records
+        .iter()
+        .map(|(id, kind, data)| PackObject {
+            id: *id,
+            kind: *kind,
+            data,
+        })
+        .collect();
+    let (mut pack, mut index) = (vec![], vec![]);
+    let result = write_pack(&input, &mut pack, &mut index, PackWriteLimits::default()).unwrap();
+    let basename = format!("objects/pack/pack-{}", result.checksum);
+    let pack_path = format!("{basename}.pack");
+    let index_path = format!("{basename}.idx");
+    fs::write(root.path().join(&pack_path), &pack).unwrap();
+    fs::write(root.path().join(&index_path), &index).unwrap();
+    git(
+        root.path(),
+        &[
+            "index-pack",
+            "--index-version=2",
+            "-o",
+            "independent.idx",
+            &pack_path,
+        ],
+        b"",
+    );
+    assert_eq!(
+        fs::read(root.path().join("independent.idx")).unwrap(),
+        index
+    );
+    git(root.path(), &["verify-pack", "-v", &index_path], b"");
+    let repo = Repository::open(root.path()).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    for (id, kind, expected) in records {
+        let restored = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+        assert_eq!(restored.kind(), *kind);
+        assert_eq!(restored.data(), expected);
+        assert_eq!(
+            git(
+                root.path(),
+                &["cat-file", kind.as_str(), &id.to_string()],
+                b""
+            ),
+            *expected
+        );
+    }
+    assert_eq!(result.pack_bytes, pack.len() as u64);
+    assert_eq!(result.index_bytes, index.len() as u64);
+}
+
+#[test]
+fn git_and_reader_accept_empty_export() {
+    verify_export(&[]);
+}
+
+#[test]
+fn git_and_reader_accept_mixed_export_and_repeated_objects() {
+    let fixture = Fixture::new(true, 2);
+    let mut records = fixture.records.clone();
+    records.push(records[0].clone());
+    verify_export(&records);
+}
+
+#[rstest]
+#[case::binary((0..=255).collect())]
+#[case::large((0..4 * 1024 * 1024).map(|n| (n % 251) as u8).collect())]
+fn git_and_reader_accept_binary_and_large_exports(#[case] data: Vec<u8>) {
+    verify_export(&[(ObjectId::for_blob(&data), ObjectKind::Blob, data)]);
+}

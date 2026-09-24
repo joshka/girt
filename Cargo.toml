@@ -90,3 +90,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "history"
 harness = false
+
+[[example]]
+name = "write_pack"
+doc-scrape-examples = true
+
+[[bench]]
+name = "pack_write"
+harness = false

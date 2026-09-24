@@ -26,12 +26,16 @@ including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is experimen
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, pack writing, reflogs, reference deletion, multi-ref transactions, upward
-repository discovery, and a CLI are not implemented.
+dependencies. SHA-256, live pack installation, reflogs, reference deletion, multi-ref transactions,
+upward repository discovery, and a CLI are not implemented.
 
 Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, and
 `Objects::merge_bases`; see the [history example](examples/history.rs) and
 [completion evidence](docs/testing.md#commit-history-completion).
+
+Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
+`cargo run --example write_pack` to export and reopen a private pack. The writer uses ordinary
+zlib-compressed entries without delta selection; installation into a live repository is deferred.
 
 ## Design Goals
 

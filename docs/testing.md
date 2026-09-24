@@ -261,3 +261,32 @@ checks, all-target Clippy, and docs.rs), warning-denying private Rustdoc, and ma
 the global 100-column configuration. The consumer example ran against this checkout with identical
 endpoints and returned that endpoint as the sole merge base. Criterion results and source
 fingerprints are retained with the benchmark evidence.
+
+## Pack Writing Completion
+
+- `write_pack` generates SHA-1 pack v2 and index v2 artifacts from explicit borrowed inputs, with
+  ordinary entries for blobs, trees, commits, and tags. Reachability and payload syntax remain
+  caller responsibilities. No installation, delta selection, pruning, GC, or transport is exposed.
+- Focused unit tests cover identity/kind mismatches, conflicting and exact duplicates, deterministic
+  ordering, input and output limits, exact bounds, short writes, write/flush failures, size headers,
+  and checked output-counter overflow. Input rejection leaves both outputs untouched; later failure
+  requires callers to discard both artifacts.
+- `examples/write_pack.rs` exports a binary blob to caller-owned files, constructs an exclusively
+  owned private repository, and reopens/verifies it. No live pair-publication guarantee is implied.
+- `tests/packs.rs` checks empty, mixed-kind, repeated, binary, and 4 MiB exports against independent
+  Git index generation, complete index-byte equality, verify-pack, and exact object reads by both
+  Git and girt. Test repositories contain only the exported pack objects.
+- Synthetic original index fixtures cover 2 GiB and 4 GiB offset encoding without multi-gigabyte
+  allocation. Actual multi-gigabyte validation and non-macOS platforms remain untested.
+- The Criterion writer harness measures hashing, deduplication/sorting, compression, checksums, and
+  index generation for similar and pseudorandom payloads. Output sizes and throughput are recorded
+  in [benchmark evidence](benchmarks.md#pack-write-baseline), with no numerical acceptance gate.
+- [Compatibility evidence](compatibility.md#sha-1-pack-writing) records contracts, fixture
+  provenance, Git/platform versions, failure recovery, and the next publication boundary needed by
+  fetch.
+
+Validation on 2026-09-23 passed `just check` (616 unit, integration, and documentation tests,
+formatting, all-target Clippy, and docs.rs), warning-denying private Rustdoc, and markdownlint-cli2
+with the global 100-column configuration. `cargo run --example write_pack` exported and verified its
+private artifact pair. Criterion completed the four writer workloads with five-second sampling
+windows; results and source fingerprints are retained with the benchmark evidence.
