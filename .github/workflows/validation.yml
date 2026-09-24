@@ -35,8 +35,8 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --locked --no-deps --document-private-items
 
-  windows-compile:
-    # This is a compile gate, not a claim of Windows repository/runtime support.
+  windows:
+    # Exercise portable units; Unix reference storage remains unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -49,3 +49,5 @@ jobs:
           rustc +stable -Vv
           git --version
       - run: cargo +stable check --locked --all-targets
+      - run: cargo +stable test --locked --lib
+      - run: cargo +stable test --locked --doc
