@@ -99,8 +99,8 @@ pub enum PackWriteError {
 /// this call's first byte. They need only implement [`Write`], not seeking. The pack is completed
 /// and flushed before the index is written and flushed. Success does not promise disk durability.
 /// The caller owns buffering, storage, cleanup, and installation; never pass live repository pack
-/// paths directly. No existing packs or loose objects are removed. Transport integration still
-/// needs a separate validated, concurrency-safe pair publication policy.
+/// paths directly. No existing packs or loose objects are removed. Validated received-pack
+/// installation is available separately through [`crate::fetch`].
 ///
 /// # Errors
 ///
@@ -228,10 +228,21 @@ fn entry_header(kind: ObjectKind, mut size: u64) -> Vec<u8> {
     bytes
 }
 
-struct Entry {
-    id: ObjectId,
-    offset: u64,
-    crc: u32,
+pub(super) struct Entry {
+    pub id: ObjectId,
+    pub offset: u64,
+    pub crc: u32,
+}
+
+pub(super) fn encode_index(
+    entries: &[Entry],
+    checksum: ObjectId,
+) -> Result<Vec<u8>, PackWriteError> {
+    let mut bytes = Vec::new();
+    let mut out = Output::new(&mut bytes, u64::MAX, "index bytes");
+    write_index(entries, checksum, &mut out)?;
+    out.finish()?;
+    Ok(bytes)
 }
 
 fn write_index(

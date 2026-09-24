@@ -290,3 +290,36 @@ formatting, all-target Clippy, and docs.rs), warning-denying private Rustdoc, an
 with the global 100-column configuration. `cargo run --example write_pack` exported and verified its
 private artifact pair. Criterion completed the four writer workloads with five-second sampling
 windows; results and source fingerprints are retained with the benchmark evidence.
+
+## Upload-Pack Fetch Completion
+
+- Protocol v0 provides explicit advertised wants, no-haves/NAK negotiation, side-band-64k progress
+  and errors, exact framing, EOF validation and bounded input. The supplied adapter is local
+  upload-pack; HTTP/SSH and credential discovery remain separate work.
+- Pack import validates checksums, entries, ordinary objects, OFS/REF deltas, identities and typed
+  reachable connectivity, then builds an index. Missing external bases and incomplete selected
+  graphs fail before installation. Gitlinks remain external submodule roots.
+- Index-last, no-clobber installation resolves concurrent opening: unindexed packs are ignored,
+  indexed packs must be complete. Tests cover existing-artifact conflicts, retry after index
+  publication failure, concurrent publishers/readers, and snapshot retention.
+- Fetch changes no refs. Tests and the example separately exercise conditional no-reflog updates,
+  including a concurrent ref change. Callers retain individual results for any multi-ref sequence.
+- Focused unit tests cover protocol errors/truncation, cancellation and interrupted I/O, corrupt
+  zlib and deltas, forward bases, missing and mistyped edges, work/byte/count limits and exact
+  bounds. Integration tests use disposable local Git servers and verify all object kinds and actual
+  deltas, selected branches/tags, empty/repeated/incremental fetches, Git fsck, and complete index
+  equality.
+- `examples/fetch_local.rs` is the runnable consumer. The fetch Criterion harness measures
+  10,000-ref advertisement processing and protocol/import/connectivity for two delta-pack sizes,
+  with fixture construction and server execution outside timing. No numerical acceptance gate is
+  imposed.
+- [Compatibility](compatibility.md#upload-pack-fetch) and [benchmarks](benchmarks.md#fetch-baseline)
+  state limitations: redundant full-history transfer, between-I/O cancellation, trusted paths,
+  caller coordination with GC, no power-loss guarantee, and macOS-only validation.
+
+Validation on 2026-09-23 passed `just check` (710 unit, integration and documentation tests,
+formatting, all-target Clippy and docs.rs), warning-denying private Rustdoc, and markdownlint-cli2
+with the global 100-column configuration. The disposable local-fetch example completed. Criterion
+completed both protocol/import workloads and the advertisement workload; CSV estimates and source
+fingerprints are retained. After final local cleanup, affected tests, Clippy and documentation
+checks passed again.

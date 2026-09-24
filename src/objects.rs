@@ -40,7 +40,8 @@ impl Object {
 /// Bounds the pack snapshot retained by [`crate::Repository::objects`].
 ///
 /// Index-derived tables require additional memory proportional to index bytes. These are input
-/// bounds, not a total heap limit. Zero values permit only an empty pack directory.
+/// bounds, not a total heap limit. Zero values permit no indexed packs. Unindexed files are
+/// ignored.
 #[derive(Debug, Clone, Copy)]
 pub struct PackLimits {
     /// Maximum sum of `.idx` and `.pack` file bytes (default 512 MiB).
@@ -106,9 +107,11 @@ impl Default for ReadLimits {
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
 /// detects cycles, and enforces [`ReadLimits`]. Multi-pack indexes and bitmap/reverse indexes are
-/// ignored; ordinary pack indexes remain required. An unpaired pack or index is an opening error.
-/// Alternates and partial/shallow repositories are outside the repository opener's supported scope.
-/// Writes remain on [`LooseObjects`].
+/// ignored; ordinary pack indexes remain required. Indexes are publication markers: unindexed packs
+/// are ignored, while an index without its pack is an opening error. A publisher must finish the
+/// pack before publishing its index. Alternates and partial/shallow repositories are outside the
+/// repository opener's supported scope. Loose writes use [`LooseObjects`]; validated received-pack
+/// installation uses [`crate::fetch::ReceivedFetch::install`].
 ///
 /// # Example
 ///
@@ -142,20 +145,8 @@ impl Objects {
             Err(error) => return Err(error.into()),
         };
         let mut paths = Vec::new();
-        let mut pack_count = 0;
         for entry in entries {
             let path = entry?.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "pack")
-            {
-                if pack_count == limits.max_packs {
-                    return Err(ObjectReadError::Limit("pack count"));
-                }
-                pack_count += 1;
-                // An orphan pack must not make its objects silently appear absent.
-                fs::metadata(path.with_extension("idx"))?;
-            }
             if path.extension().is_some_and(|extension| extension == "idx") {
                 if paths.len() == limits.max_packs {
                     return Err(ObjectReadError::Limit("pack count"));

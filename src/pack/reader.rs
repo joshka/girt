@@ -140,7 +140,15 @@ fn verify_identity(object: &Object, expected: ObjectId) -> Result<(), Error> {
     Ok(())
 }
 
-fn inflate(mut input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
+fn inflate(input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
+    let (data, consumed) = inflate_prefix(input, expected)?;
+    if consumed != input.len() {
+        return Err(Error::Corrupt("packed entry length or trailing data"));
+    }
+    Ok(data)
+}
+
+pub(super) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u8>, usize), Error> {
     let mut inflater = Decompress::new(true);
     let mut output = [0; 8192];
     let mut data = Vec::new();
@@ -158,10 +166,10 @@ fn inflate(mut input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
         }
         data.extend_from_slice(&output[..produced]);
         if status == Status::StreamEnd {
-            if data.len() != expected || !input.is_empty() {
+            if data.len() != expected {
                 return Err(Error::Corrupt("packed entry length or trailing data"));
             }
-            return Ok(data);
+            return Ok((data, inflater.total_in() as usize));
         }
         if produced == 0 && consumed == 0 {
             return Err(Error::Corrupt("truncated packed zlib stream"));

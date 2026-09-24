@@ -133,13 +133,16 @@ fn missing_pack_is_storage_failure_not_object_absence() {
 }
 
 #[test]
-fn missing_index_is_storage_failure_not_object_absence() {
+fn unindexed_pack_is_not_yet_published() {
     let fixture = Fixture::new(true, 4);
-    fs::remove_file(&fixture.index_path).unwrap();
-    assert!(matches!(
-        fixture.repo.objects(PackLimits::default()),
-        Err(ObjectReadError::Io(_))
-    ));
+    std::fs::remove_file(&fixture.index_path).unwrap();
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap(),
+        None
+    );
 }
 
 /// Installs only into a fresh, private fixture before any reader exists. This is not a live

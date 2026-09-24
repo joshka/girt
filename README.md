@@ -26,8 +26,8 @@ including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is experimen
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, live pack installation, reflogs, reference deletion, multi-ref transactions,
-upward repository discovery, and a CLI are not implemented.
+dependencies. SHA-256, reflogs, reference deletion, multi-ref transactions, upward repository
+discovery, and a CLI are not implemented.
 
 Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, and
 `Objects::merge_bases`; see the [history example](examples/history.rs) and
@@ -35,7 +35,16 @@ Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, an
 
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The writer uses ordinary
-zlib-compressed entries without delta selection; installation into a live repository is deferred.
+zlib-compressed entries without delta selection; the writer leaves installation to callers.
+
+`fetch::receive` implements upload-pack protocol v0 over caller-supplied streams;
+`fetch::receive_local` supplies a local Git upload-pack process adapter. Fetch validates complete
+packs, deltas, identities, and selected-tip connectivity before explicit index-last installation.
+No-haves negotiation can retransmit history on incremental fetches. Reference updates remain
+separate conditional operations without reflogs. Run `cargo run --example fetch_local` for a
+complete disposable example. HTTP/SSH adapters, credentials, remote/refspec policy, shallow/partial
+fetches, automatic tags, pruning, and push are not implemented. See
+[fetch compatibility](docs/compatibility.md#upload-pack-fetch).
 
 ## Design Goals
 

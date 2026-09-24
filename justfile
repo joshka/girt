@@ -11,7 +11,7 @@ test:
 
 # Measure object and repository baselines (not a CI performance gate).
 bench:
-    cargo bench --bench blobs --bench trees --bench loose_trees --bench commits --bench tags --bench repositories --bench references --bench packs --bench history --bench pack_write
+    cargo bench --bench blobs --bench trees --bench loose_trees --bench commits --bench tags --bench repositories --bench references --bench packs --bench history --bench pack_write --bench fetch
 
 # Reject Clippy warnings across all targets.
 clippy:

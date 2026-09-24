@@ -98,3 +98,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "pack_write"
 harness = false
+
+[[example]]
+name = "fetch_local"
+doc-scrape-examples = true
+
+[[bench]]
+name = "fetch"
+harness = false

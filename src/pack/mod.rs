@@ -1,10 +1,12 @@
 //! SHA-1 pack v2 and index v2 reading and caller-owned artifact writing.
 
 mod delta;
+mod import;
 mod index;
 mod reader;
 mod write;
 
+pub(crate) use import::Imported;
 pub(crate) use reader::Pack;
 pub use write::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack};
 

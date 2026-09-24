@@ -477,10 +477,11 @@ offset-ordered table identifies entry boundaries and OFS_DELTA bases.
 Opening reads all pairs within caller-supplied aggregate byte and pack-count limits. It validates
 index lengths, sorted unique IDs, exact fanout counts, large-offset references, unique in-range
 entry offsets, pack headers/counts, both SHA-1 trailers, their agreement, and every entry CRC32. An
-unpaired pack or index is an I/O error. Entry framing, exact zlib termination, declared lengths,
-delta programs, and object identities are checked on demand, including all traversed bases and
-intermediate results. Opening alone does not certify payload syntax or all object identities. The
-checks detect corruption; SHA-1 collision detection is not provided.
+index without its pack is an I/O error. Unindexed packs are ignored: indexes are publication markers
+(see [fetch installation](#upload-pack-fetch)). Entry framing, exact zlib termination, declared
+lengths, delta programs, and object identities are checked on demand, including all traversed bases
+and intermediate results. Opening alone does not certify payload syntax or all object identities.
+The checks detect corruption; SHA-1 collision detection is not provided.
 
 REF_DELTA resolves only inside its own pack, including forward references. An external or missing
 base returns `MissingBase`, even if another pack or loose storage contains that identity. Iterative
@@ -564,10 +565,9 @@ recommended for files because index tables are emitted incrementally.
 
 The API does not install artifacts. It never removes loose objects or existing packs. The example
 assembles a new, private repository before any readers exist; its renames are not a live publication
-protocol. Future fetch integration needs staging, validation, existing-file collision handling,
-crash recovery, and pair publication compatible with `Repository::objects` snapshot opening.
-Existing reader snapshots own their bytes, but opening during a partial pair publication has no
-success guarantee in this slice.
+protocol. Validated received-pack installation is now provided separately by
+[fetch](#upload-pack-fetch), with index-last discovery and no-clobber publication. The writer itself
+continues to produce caller-owned artifacts only.
 
 Original writer code and synthetic fixtures follow the public
 [Git pack format specification](https://git-scm.com/docs/pack-format); no Git source or tests were
@@ -582,3 +582,93 @@ The original synthetic index fixture checks offsets immediately below and at 2 G
 including exact 32-bit slots, 64-bit table bytes, checksums, and reader interpretation on 64-bit
 hosts. It does not allocate or validate an actual multi-gigabyte pack. Git 2.55.0 on macOS 26.6.2
 arm64 was exercised; other platforms and actual multi-gigabyte output remain untested.
+
+## Upload-Pack Fetch
+
+`fetch::receive` implements a single protocol v0 upload-pack session over blocking `Read`/`Write`
+streams. `fetch::receive_local` is the available transport adapter: it starts a trusted local
+`git upload-pack` server. It does not use `git fetch`, `fetch-pack`, `index-pack`, or Git parsers on
+the client path. HTTP/SSH connections and credential discovery are not provided. No new dependencies
+were added.
+
+The client exposes complete byte-preserving advertisements, capability tokens, and peeled tag hints.
+The caller selects explicit advertised tip IDs; peeled hints are not wants. Empty selection sends a
+flush and expects EOF. Nonempty selection requires `side-band-64k`, requests `ofs-delta` only when
+advertised, sends no haves, then sends `done` and requires NAK. This deliberately simple negotiation
+requests complete history on every fetch, including incremental fetches. It sacrifices bandwidth to
+keep the received graph independent of destination state. Thin/shallow/filter features, include-tag,
+and multi-ACK are never requested. v1/v2 and non-SHA-1 advertisements fail explicitly.
+
+Packet lengths, aggregate wire bytes, advertisements, refs, wants, and pack bytes have explicit
+bounds. Channel 1 carries pack data, channel 2 reaches the caller's progress callback, and channel 3
+or `ERR` fails with the peer's message bytes. Truncated packets, unexpected negotiation/channel
+messages, missing final flush, and bytes after that flush fail. Streams must end at EOF; this is not
+a reusable or stateless HTTP session. The local adapter also requires a successful server exit.
+
+Import checks pack v2 framing, object count, SHA-1 trailer, exact zlib entry termination, and delta
+programs. OFS_DELTA and forward/backward REF_DELTA resolve only inside the received pack; external
+bases fail even if present locally. All resolved objects receive independently computed identities,
+and duplicate identities are rejected. girt generates index v2 offsets, CRCs, fanout and checksums
+from the received entries. Reachability from each selected tip checks commit trees and parents, tree
+child kinds, and annotated tag target kinds using girt's parsers. Gitlinks refer to separate
+submodule stores and are not followed. Tree names and ordering are validated. This is supported
+syntax/connectivity validation, not full `git fsck`, signature verification, or SHA-1 collision
+detection. Unreachable extras get pack/identity validation but not structured-payload validation.
+
+Object count, individual payload/program sizes, cumulative inflation/reconstruction bytes, delta
+depth, resolution visits, and reachable edge occurrences are bounded. Resolution retains decoded
+objects until connectivity succeeds and then releases them. It visits unresolved entries in passes;
+the work limit bounds pathological forward chains rather than promising linear resolution time.
+Index/table memory grows with object count; graph metadata grows with objects/edges. Parsing can
+copy structured payloads. These are input/work bounds, not an allocator or process-memory quota.
+
+Cancellation is checked between I/O calls, packets, objects, and graph steps, and a progress
+callback can cancel. Interrupted I/O is returned without retrying. A flag cannot interrupt a blocked
+stream read or one inflation/hash; a caller needing deadlines must supply interruptible streams. The
+local server's 30-second idle timeout is not a wall-clock deadline. Failure kills and reaps the
+direct upload-pack child; descendant process-group termination is not promised.
+
+### Installation and Reference Policy
+
+The received result owns validated pack/index buffers and makes no filesystem changes. Explicit
+`install` writes and syncs private temporary files in the destination pack directory, then publishes
+the pack first and index last without replacing either path. Identical existing files are reused;
+different bytes fail. Readers discover indexes, so an unindexed pack is invisible and an index must
+have its complete pack. Existing snapshots retain their bytes; new snapshots see the old object set
+or the new pair. Concurrent deletion or repacking by other tools can still require an opening retry.
+Paths must be trusted, and callers must coordinate pruning/GC until references protect the objects.
+
+Failure never removes or overwrites preexisting objects. Failure between publications may leave a
+complete unindexed pack; retrying the same received result can finish it. Ordinary failures clean
+private temporaries; crashes may leave them. Directory entries are not synced, so power-loss
+durability is not promised. Installation does not repair corrupt existing loose objects that shadow
+packed objects. Reopen and read with suitable limits before using the destination as a source.
+
+Fetch never updates refs, reflogs, or `FETCH_HEAD`. Callers may use the existing explicit
+`update_without_reflog` operations after installation, with expected old values. Each update is
+independent; failure of a later update does not undo earlier successes. No multi-ref atomicity is
+implied. Remote configuration, refspecs, automatic tag following, pruning, shallow/partial stores,
+authentication helpers and push remain outside this capability.
+
+### Fetch Evidence and Provenance
+
+Original code and synthetic fixtures follow the public
+[pack protocol](https://git-scm.com/docs/pack-protocol),
+[capability](https://git-scm.com/docs/protocol-capabilities), and
+[pack format](https://git-scm.com/docs/gitformat-pack) specifications. No Git source/tests were
+copied. `tests/fetch.rs` starts disposable local upload-pack servers using independently generated
+Git objects. It covers all object kinds, actual server-produced deltas, selected branches/tags,
+empty, repeated and incremental fetches, exact Git/girt payload agreement, strict Git fsck, and
+byte-for-byte agreement with independently regenerated Git indexes. Local tests exercise
+malformed/truncated protocols, peer errors, cancellation/interrupted I/O, corrupt packs,
+internal/absent bases, missing and mistyped connectivity, limits and exact boundaries. Publication
+tests cover conflicting paths, retry after index failure, preserved existing objects, concurrent
+publishers/openers, old snapshots, and concurrent reference changes with conditional-update
+rejection.
+
+The runnable `cargo run --example fetch_local` builds both repositories from scratch, fetches three
+objects, publishes a branch conditionally without a reflog, and reads the fetched blob. The
+[Criterion baseline](benchmarks.md#fetch-baseline) measures advertisement processing and replayed
+protocol/import/connectivity separately from server execution and disk publication. Git 2.55.0,
+rustc 1.98.1, and macOS 26.6.2 arm64 were exercised. Other platforms, actual multi-gigabyte packs,
+hostile filesystems and concurrent GC are not covered by this evidence.

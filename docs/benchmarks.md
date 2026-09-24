@@ -413,3 +413,36 @@ harness, library sources, manifest and lockfile. There is no performance accepta
 Throughput uses uncompressed input bytes divided by the median time. Pack sizes include framing and
 checksums. The final run followed validation jobs to reduce local contention; comparisons against
 exploratory runs are not evidence of implementation regressions.
+
+## Fetch Baseline
+
+Run `cargo bench --bench fetch` with the checked-in lockfile. Criterion uses 30 samples, one-second
+warmup and five-second target measurement windows. Fixture construction and one real local
+upload-pack transfer per fixture occur outside timing. The measured receive operation replays an
+in-memory v0 response through girt's advertisement parser, want encoding, sideband decoding, pack
+validation, delta reconstruction, index generation, and selected-tip connectivity. No server,
+network, disk publication, or ref update latency is included.
+
+The pack fixtures contain 16 or 256 similar, independently Git-generated blobs, plus a tree, commit
+and annotated tag. Git's pack-objects chooses actual deltas. Respective uncompressed payload totals
+are 574,362 and 9,185,238 bytes; pack lengths are 3,697 and 19,631 bytes. The advertised wanted tag
+reaches every object. Replay responses add 107 bytes of framing/advertisement. A separate workload
+parses 10,000 branch advertisements and selects nothing, isolating negotiation from pack processing.
+
+Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, optimized
+bench profile and lockfile-selected flate2 backend. Inputs are already in memory and fixture
+filesystem caches are warm; no CPU pinning or cold-cache measurements were performed. Desktop and
+development activity may overlap sampling. The [CSV](benchmarks/fetch-baseline.csv) records median
+estimates and 95% confidence intervals. Verify the retained source identity with
+`shasum -a 256 -c docs/benchmarks/fetch-baseline.sha256`.
+
+| Operation                                 | Median (ms) |
+| ----------------------------------------- | ----------- |
+| Protocol/import/connectivity, 19 objects  | 0.671       |
+| Protocol/import/connectivity, 259 objects | 10.494      |
+| Advertisement/select-none, 10,000 refs    | 3.198       |
+
+These establish an initial baseline, with no numerical acceptance gate. Similar input deltas are
+representative of repeated file revisions but not of all repositories. The measurements do not
+establish deep-chain, multi-gigabyte, network, durable-publication, or concurrent-fetch throughput.
+Resource-bound tests, rather than these throughput numbers, provide the memory/work-limit evidence.
