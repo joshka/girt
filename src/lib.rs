@@ -8,6 +8,7 @@
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
+//! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
 //! - [`write_pack`]: bounded pack/index v2 artifact generation from explicit objects.
 //! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
 //! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
@@ -25,7 +26,8 @@
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
 //! The current API is experimental and supports SHA-1 loose objects, pack/index v2 reads,
-//! caller-owned pack/index v2 exports, and object-only fetch over v0 streams or local upload-pack.
+//! caller-owned pack/index v2 exports, object-only fetch, and conditional branch/tag push. Fetch
+//! and push accept v0 streams or local Git server adapters.
 //! Files references support reads, symbolic resolution, and explicit no-reflog updates.
 //! The working-tree index, upward discovery, and working-tree conversion are
 //! not implemented.
@@ -38,6 +40,8 @@ mod loose;
 mod object;
 mod objects;
 pub mod pack;
+mod packet;
+pub mod push;
 pub mod refs;
 mod repository;
 mod tag;

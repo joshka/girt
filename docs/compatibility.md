@@ -672,3 +672,107 @@ objects, publishes a branch conditionally without a reflog, and reads the fetche
 protocol/import/connectivity separately from server execution and disk publication. Git 2.55.0,
 rustc 1.98.1, and macOS 26.6.2 arm64 were exercised. Other platforms, actual multi-gigabyte packs,
 hostile filesystems and concurrent GC are not covered by this evidence.
+
+## Receive-Pack Push
+
+`push::PreparedPush::new` prepares an immutable command list and a complete non-thin SHA-1 pack.
+`push::send` implements the receive-pack v0 client over caller-owned blocking streams;
+`push::send_local` starts a trusted local Git receive-pack server with binary pipes. No Git client
+command selects objects, builds the pack, applies client force policy or parses status. The adapter
+clears inherited environment except PATH, disables system/global configuration and forces v0. Local
+server configuration and hooks still apply. Both the executable and destination must be trusted.
+
+### Commands and Reachability
+
+Commands name full `refs/heads/` or `refs/tags/` destinations and carry an expected old value,
+desired nonzero new ID, and explicit force policy. `None` expects absence; `Some(id)` expects that
+exact nonzero ID. Duplicate destinations, HEAD, other namespaces and deletion are rejected.
+Advertisement mismatch rejects the whole request before commands are sent. Hidden refs cannot
+satisfy an expected existing value. Server old-value checks protect against races after discovery;
+force does not remove the expectation.
+
+Branch tips must be commits even with force enabled. By default, an existing branch can advance only
+when the old ID is reachable through the new commit's parent graph. An existing tag can retain its
+ID but replacement requires `ForcePolicy::Allow`. Creation is allowed, and tags may directly name
+any supported object type. Explicit force permits branch rewinds or tag replacement; it cannot
+bypass server configuration or hooks. Same-ID commands are still sent conditionally and can be
+rejected by server policy. Local refs, tracking refs, configuration, reflogs and working-tree files
+never change. The server controls its own ref/reflog and object-storage effects.
+
+Selection follows all commit parents and trees, typed tree children and annotated-tag targets,
+including nested tags. Gitlinks are external submodule commits and are not followed. Every selected
+object must exist locally and pass identity and supported payload validation, even if the
+destination already has it. Each distinct object is read once through existing loose/packed readers,
+although a packed read can decode shared bases again. All typed edges are checked. A missing or
+invalid object fails preparation before any remote command. This is not a claim of full Git fsck
+equivalence.
+
+The existing writer emits ordinary zlib entries and a complete pack with no deltas or external
+bases. Its companion index is generated into a sink, not sent or installed. Repeated and incremental
+pushes retransmit full selected histories. Preparation releases selected payloads after buffering
+the pack; the caller can drop its object reader before connecting. Inputs, graph
+objects/bytes/edges, cumulative ancestry visits/parent edges, individual reads, pack/index output,
+command bytes, advertisement bytes/entries and status bytes have explicit bounds. These bounds
+exclude allocator overhead, the caller's preexisting snapshot, and server memory. Read decoding
+budgets apply per object, not across the selection.
+
+### Status, Failure and Transport Boundaries
+
+Nonempty pushes require and request `report-status`. Unknown optional capabilities are ignored.
+Protocol v1/v2 advertisements, SHA-256, shallow advertisements and report-status-v2-only servers are
+rejected. No atomic, sideband, deletion, push-options, signed-push or report-status-v2 capability is
+requested. Receive-pack `.have` entries are validated and counted but do not shorten the object set;
+fetch peeling hints are not accepted as receive-pack refs. The wire framing implementation is shared
+with fetch, while service-specific negotiation and parsing remain separate.
+
+A complete `PushReport` preserves unpack status and one result per command in caller order,
+retaining rejection messages as bytes. `Ok(report)` can contain complete rejection or partial
+success: callers must inspect `all_succeeded` and individual results. Multiple refs are never
+promised atomicity. Missing, duplicate, unrequested, contradictory or malformed status, premature
+EOF and trailing bytes are errors. Server success is an acknowledgement, not a durability guarantee
+or a claim that another writer cannot subsequently change a ref.
+
+`PushError::NotSent` means no commands were attempted. Once transmission starts, transport,
+cancellation, bound or protocol failure becomes `Uncertain`, preserving every valid status received
+so far. Missing acknowledgements mean unknown outcomes, not rejection. Inspect destination refs
+before retrying; killing receive-pack does not roll back updates already applied. Even a complete
+report is retained when final EOF or local process completion fails. A successful unpack alone does
+not establish any ref update. Rejected pushes may leave server-side objects, and hooks can have
+independent side effects.
+
+Cancellation is checked between I/O calls, packets, graph steps and pack writes. Interrupted
+protocol I/O is propagated without retrying. A flag cannot interrupt a blocked stream, a single
+storage read, hash, parse or compression call. The local adapter has no idle or wall-clock timeout,
+and hooks may block. On failure or unwinding it kills and reaps the direct child, without a
+process-group guarantee. Caller-owned streams must provide interruption/deadlines if needed and must
+be closed after errors. Streams are one-shot and must end at EOF after the final status flush.
+
+HTTP/SSH adapters, authentication, remote/refspec configuration, automatic force, pruning, thin or
+delta-selected packs, deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and
+server infrastructure remain deferred. Empty command lists exchange only advertisement and flush,
+with no pack or status report.
+
+### Push Evidence and Provenance
+
+The implementation and synthetic packets are original, based on the public
+[pack protocol](https://git-scm.com/docs/pack-protocol) and
+[capability](https://git-scm.com/docs/protocol-capabilities) specifications and observable server
+behavior. No Git implementation or test expression was copied; no dependencies were added.
+`tests/push.rs` uses disposable repositories and independently Git-generated OFS/REF-delta sources.
+It verifies empty destinations, branch creation/advancement, annotated tags, repeated publication,
+all object kinds, exact Git/girt payload agreement and strict Git fsck. Original girt-written
+fixtures also cover nested tags, tree nesting, binary blobs, symlinks and missing external gitlinks.
+
+Failure tests cover stale advertisements, an update-hook ref race, explicit force with and without
+server permission, checked-out-branch rejection, pre-receive rejection, and partial success with an
+update hook. Unit tests cover malformed/truncated status, unsupported protocol/capabilities, missing
+or mistyped graph edges, malformed reachable payloads, duplicate commands, resource bounds and exact
+limits, short writes, interrupted reads/writes, flush failure and cancellation. Unknown results
+remain distinguishable from acknowledged rejection, and valid status prefixes survive truncation.
+
+`cargo run --example push_local` creates two private repositories, publishes a branch and annotated
+tag, checks the report and reads the transferred blob. The
+[Criterion baseline](benchmarks.md#push-baseline) separates reachable selection/read/validation/pack
+construction from prepared-protocol replay. Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64 and Apple
+M2 Max were exercised. Other platforms, multi-gigabyte packs, concurrent source GC, hostile
+filesystems and blocked-I/O cancellation are not established by this evidence.

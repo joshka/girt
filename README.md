@@ -43,8 +43,17 @@ packs, deltas, identities, and selected-tip connectivity before explicit index-l
 No-haves negotiation can retransmit history on incremental fetches. Reference updates remain
 separate conditional operations without reflogs. Run `cargo run --example fetch_local` for a
 complete disposable example. HTTP/SSH adapters, credentials, remote/refspec policy, shallow/partial
-fetches, automatic tags, pruning, and push are not implemented. See
+fetches, automatic tags, and pruning are not implemented. See
 [fetch compatibility](docs/compatibility.md#upload-pack-fetch).
+
+`push::PreparedPush` selects and validates complete reachable histories and builds a non-thin pack.
+`push::send` publishes explicit conditional branch/tag commands over receive-pack v0 streams;
+`push::send_local` supplies a local Git server adapter. Branch rewinds and tag replacement require
+explicit force policy. Results preserve unpack and per-ref status, including partial success;
+connection failures after transmission are distinguished as uncertain. Local tracking refs remain
+unchanged. Run `cargo run --example push_local` for a disposable branch/tag publication example.
+Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred. See
+[push compatibility](docs/compatibility.md#receive-pack-push).
 
 ## Design Goals
 

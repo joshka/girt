@@ -142,3 +142,15 @@ pub(crate) fn check_cancelled(cancel: &AtomicBool) -> Result<(), FetchError> {
 
 #[cfg(test)]
 mod tests;
+
+impl From<crate::packet::Error> for FetchError {
+    fn from(error: crate::packet::Error) -> Self {
+        match error {
+            crate::packet::Error::Io(e) => Self::Io(e),
+            crate::packet::Error::Protocol(e) => Self::Protocol(e),
+            crate::packet::Error::Limit(e) => Self::Limit(e),
+            crate::packet::Error::Cancelled => Self::Cancelled,
+            crate::packet::Error::Remote(e) => Self::Remote(e),
+        }
+    }
+}

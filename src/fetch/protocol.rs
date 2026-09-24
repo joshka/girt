@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, ReceivedFetch, check_cancelled};
 use crate::ObjectId;
+use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
 
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
@@ -235,79 +236,4 @@ fn split_byte(bytes: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
 
 fn line(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\n").unwrap_or(bytes)
-}
-
-struct Wire<'a, R> {
-    reader: &'a mut R,
-    remaining: usize,
-    cancel: &'a AtomicBool,
-}
-impl<R: Read> Wire<'_, R> {
-    fn packet(&mut self) -> Result<Option<Vec<u8>>, Error> {
-        self.charge(4)?;
-        let mut header = [0; 4];
-        self.exact(&mut header)?;
-        if !header.iter().all(u8::is_ascii_hexdigit) {
-            return Err(Error::Protocol("pkt-line header"));
-        }
-        let length = usize::from_str_radix(std::str::from_utf8(&header).unwrap(), 16).unwrap();
-        if length == 0 {
-            return Ok(None);
-        }
-        if !(4..=65520).contains(&length) {
-            return Err(Error::Protocol("pkt-line length"));
-        }
-        self.charge(length - 4)?;
-        let mut bytes = vec![0; length - 4];
-        self.exact(&mut bytes)?;
-        if let Some(message) = bytes.strip_prefix(b"ERR ") {
-            return Err(Error::Remote(message.to_vec()));
-        }
-        Ok(Some(bytes))
-    }
-    fn charge(&mut self, bytes: usize) -> Result<(), Error> {
-        self.remaining = self
-            .remaining
-            .checked_sub(bytes)
-            .ok_or(Error::Limit("wire bytes"))?;
-        Ok(())
-    }
-    fn exact(&mut self, mut bytes: &mut [u8]) -> Result<(), Error> {
-        while !bytes.is_empty() {
-            check_cancelled(self.cancel)?;
-            let read = self.reader.read(bytes)?;
-            if read == 0 {
-                return Err(Error::Protocol("truncated pkt-line"));
-            }
-            bytes = &mut bytes[read..];
-        }
-        Ok(())
-    }
-    fn end(&mut self) -> Result<(), Error> {
-        check_cancelled(self.cancel)?;
-        if self.reader.read(&mut [0])? != 0 {
-            return Err(Error::Protocol("trailing response bytes"));
-        }
-        Ok(())
-    }
-}
-
-fn packet(writer: &mut impl Write, bytes: &[u8], cancel: &AtomicBool) -> Result<(), Error> {
-    put(
-        writer,
-        format!("{:04x}", bytes.len() + 4).as_bytes(),
-        cancel,
-    )?;
-    put(writer, bytes, cancel)
-}
-fn put(writer: &mut impl Write, mut bytes: &[u8], cancel: &AtomicBool) -> Result<(), Error> {
-    while !bytes.is_empty() {
-        check_cancelled(cancel)?;
-        let written = writer.write(bytes)?;
-        if written == 0 {
-            return Err(Error::Io(std::io::ErrorKind::WriteZero.into()));
-        }
-        bytes = &bytes[written..];
-    }
-    Ok(())
 }

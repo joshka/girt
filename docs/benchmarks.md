@@ -446,3 +446,37 @@ These establish an initial baseline, with no numerical acceptance gate. Similar 
 representative of repeated file revisions but not of all repositories. The measurements do not
 establish deep-chain, multi-gigabyte, network, durable-publication, or concurrent-fetch throughput.
 Resource-bound tests, rather than these throughput numbers, provide the memory/work-limit evidence.
+
+## Push Baseline
+
+Run `cargo bench --bench push` with the checked-in lockfile. Criterion uses 30 samples, one-second
+warmup and five-second target measurement windows. Fixture construction, object-snapshot opening and
+one real receive-pack transfer per fixture occur outside timing. Selection/read/validation/pack
+construction starts from a packed `Objects` snapshot and ends with a buffered `PreparedPush`.
+Prepared-protocol replay separately parses an in-memory advertisement, checks the expectation,
+writes to a sink and parses a complete report. It excludes graph work and compression; sink writes
+do not measure pack copying, disk or network throughput.
+
+Fixtures contain 16 or 256 similar Git-generated blobs plus a tree, commit and annotated tag. The
+selected tag reaches all 19 or 259 objects. Source packs use Git-selected deltas; outgoing packs use
+girt's ordinary entries. This exercises packed reads, typed graph selection, payload validation,
+hashing, sorting, compression and index generation into a sink. Filesystem caches are warm, pack
+snapshots and protocol input are resident, and no cold-cache or CPU-pinned sampling is claimed.
+
+Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, optimized
+bench profile and the lockfile-selected flate2 backend. Desktop/browser activity may overlap
+sampling. The [CSV](benchmarks/push-baseline.csv) retains medians and 95% confidence intervals.
+Verify the library, harness, fixture, manifest and lockfile with
+`shasum -a 256 -c docs/benchmarks/push-baseline.sha256`.
+
+| Objects | Payload bytes | Outgoing pack bytes | Prepare (ms) | Replay (µs) |
+| ------- | ------------- | ------------------- | ------------ | ----------- |
+| 19      | 574362        | 39189               | 4.276        | 0.581       |
+| 259     | 9185238       | 622108              | 66.781       | 0.585       |
+
+The source delta packs contain 3,697 and 19,631 bytes respectively. The larger outgoing packs are
+expected from the writer's ordinary entries and full reachable transfer. These are initial baselines
+with no numerical acceptance gate; they do not establish multi-gigabyte, deep-history,
+large-advertisement, network or concurrent-push throughput. Protocol replay mostly measures
+framing/status bookkeeping because sink writes discard pack bytes. Resource-bound tests provide
+separate work and memory evidence.

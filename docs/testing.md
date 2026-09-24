@@ -323,3 +323,33 @@ with the global 100-column configuration. The disposable local-fetch example com
 completed both protocol/import workloads and the advertisement workload; CSV estimates and source
 fingerprints are retained. After final local cleanup, affected tests, Clippy and documentation
 checks passed again.
+
+## Receive-Pack Push Completion
+
+- Preparation accepts explicit branch/tag commands with exact expected old values, validates the
+  complete typed reachable graph, proves fast-forward updates, and builds a bounded non-thin pack.
+  Gitlinks stay external. Branch rewinds and tag replacement require explicit force; the expectation
+  and server policy remain in effect. Deletion and atomic multi-ref push are deferred.
+- The v0 client uses shared pkt-line framing with independent receive-pack semantics. It requests
+  only `report-status`, checks advertisement expectations and preserves unpack/per-ref results in
+  caller order. Complete rejection and partial success are reports; failures after command
+  transmission are uncertain and retain valid acknowledgement prefixes. Local refs never change.
+- Focused tests cover graph kinds, missing and malformed payloads, duplicate destinations, force
+  policy, unsupported protocols/capabilities, corrupt/truncated reports, exact bounds, cancellation,
+  interrupted I/O, short writes and flush failures.
+- Disposable real Git receive-pack tests establish empty, repeated and subsequent publication,
+  branches/tags, OFS/REF-delta source reads, nested tags/trees, binary/symlink blobs and gitlinks.
+  Git/girt reads and strict Git fsck verify the result. Server-policy tests include checked-out
+  branches, non-fast-forward rejection, pre-receive/update hooks, partial success and a ref race
+  after advertisement. No real remotes or project publication are used.
+- `examples/push_local.rs` demonstrates branch/tag publication and report checking. Criterion
+  measures selection/read/validation/pack construction and prepared-protocol replay at two graph
+  sizes, with server setup outside timing. [Compatibility](compatibility.md#receive-pack-push) and
+  [benchmark evidence](benchmarks.md#push-baseline) state limits and provenance.
+
+Validation on 2026-09-23 passed `just check` (782 unit, integration and documentation tests,
+formatting, all-target Clippy and docs.rs), warning-denying private Rustdoc and markdownlint-cli2
+with the global 100-column configuration. The disposable local-push example published four objects
+and read its blob back. Rendered push module/function documentation and error links were inspected.
+Criterion completed both preparation and protocol workloads; medians, confidence intervals and
+source fingerprints are retained. Validation is limited to macOS arm64 and Git 2.55.0.
