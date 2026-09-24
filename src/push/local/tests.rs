@@ -56,7 +56,8 @@ impl Fixture {
                 "(sleep 8; kill -KILL -$$) </dev/null >/dev/null 2>&1 &\n{script}"
             ))
             .arg("fixture")
-            .arg((self.prepared.request.len() + self.prepared.pack.len()).to_string());
+            .arg((self.prepared.request.len() + self.prepared.pack.len()).to_string())
+            .arg(self.prepared.request.len().to_string());
         command
     }
     fn status(&self, complete: bool) {
@@ -193,4 +194,68 @@ fn deadline_during_blocked_pack_write_is_uncertain() {
     assert_eq!(report.unpack, None);
     assert_eq!(report.refs[0].status, None);
     assert_eq!(report.refs[1].status, None);
+}
+
+#[test]
+fn early_rejection_does_not_deadlock_upload_and_preserves_status() {
+    let mut state = 1u32;
+    let payload: Vec<u8> = (0..1024 * 1024)
+        .map(|_| {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            (state >> 24) as u8
+        })
+        .collect();
+    let f = Fixture::with_blob(&payload);
+    let reason = vec![b'x'; 60000];
+    write_large_rejection(&f, &reason);
+    // Both directions exceed pipe capacity. The peer finishes its finite rejection before
+    // resuming input consumption; a write-all-before-read client cannot make progress.
+    let cancel = AtomicBool::new(false);
+    let result = send_server(
+        &mut f.command("cat advertisement; dd bs=1 count=\"$2\" of=/dev/null 2>/dev/null; cat status; python3 -c 'import sys; sys.stdin.buffer.read(int(sys.argv[1])-int(sys.argv[2]))' \"$1\" \"$2\""),
+        &f.prepared, deadline(&cancel),
+    );
+    let report = result.unwrap();
+    assert_eq!(report.unpack, Some(Status::Rejected(b"rejected".to_vec())));
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(reason.clone()))
+    );
+    assert_eq!(report.refs[1].status, Some(Status::Rejected(reason)));
+}
+
+#[test]
+fn early_status_limit_preserves_retained_acknowledgement() {
+    let mut f = Fixture::new();
+    f.status(true);
+    f.prepared.limits.max_status_bytes = 14; // Complete "unpack ok" packet only.
+    let cancel = AtomicBool::new(false);
+    let error = send_server(
+        &mut f.command(
+            "cat advertisement; dd bs=1 count=\"$2\" of=/dev/null 2>/dev/null; cat status; sleep 3",
+        ),
+        &f.prepared,
+        deadline(&cancel),
+    )
+    .unwrap_err();
+    let PushError::Uncertain { cause, report } = error else {
+        panic!("expected uncertain push");
+    };
+    assert!(matches!(cause, PushFailure::Limit("wire bytes")));
+    assert_eq!(report.unpack, Some(Status::Ok));
+    assert_eq!(report.refs[0].status, None);
+}
+
+fn write_large_rejection(f: &Fixture, reason: &[u8]) {
+    let mut status = Vec::new();
+    for line in [
+        b"unpack rejected\n".to_vec(),
+        [b"ng refs/tags/one ".as_slice(), reason, b"\n"].concat(),
+        [b"ng refs/tags/two ".as_slice(), reason, b"\n"].concat(),
+    ] {
+        status.extend(format!("{:04x}", line.len() + 4).bytes());
+        status.extend(line);
+    }
+    status.extend(b"0000");
+    fs::write(f.root.path().join("status"), status).unwrap();
 }

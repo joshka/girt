@@ -60,6 +60,29 @@ impl<'a> Server<'a> {
         )
     }
 
+    /// Upload while draining bounded output, so an early rejecting peer cannot fill both pipes.
+    /// Return retained bytes even on interruption for protocol-level acknowledgement recovery.
+    pub(crate) fn exchange(
+        mut reader: Pipe<'_, ChildStdout>,
+        writer: Pipe<'_, ChildStdin>,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+    ) -> (Vec<u8>, Result<(), crate::packet::Error>, bool) {
+        let mut body = Vec::new();
+        let mut attempted = false;
+        let result = exchange(
+            &mut reader,
+            writer,
+            request,
+            pack,
+            limit,
+            &mut body,
+            &mut attempted,
+        );
+        (body, result, attempted)
+    }
+
     pub(crate) fn wait(&mut self) -> io::Result<ExitStatus> {
         loop {
             // WNOWAIT keeps the leader's PID reserved until group cleanup; try_wait would reap it.
@@ -97,6 +120,100 @@ impl Drop for Server<'_> {
             self.kill_group();
             let _ = self.child.kill();
             let _ = self.child.wait();
+        }
+    }
+}
+
+fn exchange(
+    reader: &mut Pipe<'_, ChildStdout>,
+    writer: Pipe<'_, ChildStdin>,
+    request: &[u8],
+    pack: &[u8],
+    limit: usize,
+    body: &mut Vec<u8>,
+    attempted: &mut bool,
+) -> Result<(), crate::packet::Error> {
+    let mut writer = Some(writer);
+    let mut sent = 0;
+    let mut write_error = None;
+    let mut buffer = [0; 8192];
+    loop {
+        reader.control.check()?;
+        drain(reader.diagnostics)?;
+        let mut progressed = false;
+        // One bounded read and write per pass preserves cancellation and diagnostic fairness.
+        let capacity = buffer
+            .len()
+            .min(limit.saturating_sub(body.len()).saturating_add(1));
+        match reader.pipe.read(&mut buffer[..capacity]) {
+            Ok(0) => {
+                if let Some(error) = write_error {
+                    return Err(error);
+                }
+                if sent < request.len() + pack.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "peer closed during upload",
+                    )
+                    .into());
+                }
+                return Ok(());
+            }
+            Ok(count) => {
+                let retained = count.min(limit - body.len());
+                body.extend_from_slice(&buffer[..retained]);
+                if count > retained {
+                    return Err(crate::packet::Error::Limit("wire bytes"));
+                }
+                progressed = true;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error.into()),
+        }
+        let pending = if sent < request.len() {
+            &request[sent..]
+        } else {
+            &pack[sent - request.len()..]
+        };
+        if pending.is_empty() {
+            writer.take();
+        } else if let Some(output) = writer.as_mut() {
+            *attempted = true;
+            match output.pipe.write(&pending[..pending.len().min(65536)]) {
+                Ok(0) => {
+                    write_error = Some(
+                        io::Error::new(io::ErrorKind::WriteZero, "local upload stalled").into(),
+                    );
+                    writer.take();
+                }
+                Ok(count) => {
+                    sent += count;
+                    progressed = true;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => {
+                    write_error = Some(error.into());
+                    writer.take();
+                }
+            }
+        }
+        if !progressed {
+            // Poll both directions; neither a full stdin nor an empty stdout should busy-spin.
+            let mut fds = vec![PollFd::new(&reader.pipe, PollFlags::IN)];
+            if let Some(output) = &writer {
+                fds.push(PollFd::new(&output.pipe, PollFlags::OUT));
+            }
+            let duration = reader
+                .control
+                .deadline
+                .map_or(Duration::from_millis(20), |end| {
+                    end.saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(20))
+                });
+            match poll(&mut fds, Some(&Timespec::try_from(duration).unwrap())) {
+                Ok(_) | Err(rustix::io::Errno::INTR) => {}
+                Err(error) => return Err(io::Error::from(error).into()),
+            }
         }
     }
 }
