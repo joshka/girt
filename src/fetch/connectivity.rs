@@ -5,16 +5,28 @@ use super::{FetchError, FetchLimits, check_cancelled};
 use crate::{Commit, EntryMode, Object, ObjectId, ObjectKind, Tag, Tree};
 
 /// Follow typed edges from every selected tip. Gitlinks refer to independent submodule stores.
+#[cfg(test)]
 pub(super) fn validate(
     objects: &HashMap<ObjectId, Object>,
     wants: &[ObjectId],
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<(), FetchError> {
+    validate_with_known(objects, &HashMap::new(), wants, limits, cancel).map(|_| ())
+}
+
+pub(super) fn validate_with_known(
+    objects: &HashMap<ObjectId, Object>,
+    known: &HashMap<ObjectId, Object>,
+    wants: &[ObjectId],
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<Vec<ObjectId>, FetchError> {
+    let mut dependencies = Vec::new();
     let mut pending = VecDeque::new();
     let mut seen = HashSet::new();
     for &id in wants {
-        if !objects.contains_key(&id) {
+        if !(objects.contains_key(&id) || known.contains_key(&id)) {
             return Err(FetchError::Missing(id));
         }
         if seen.insert(id) {
@@ -24,12 +36,18 @@ pub(super) fn validate(
     let mut remaining = limits.max_connectivity_edges;
     while let Some(id) = pending.pop_front() {
         check_cancelled(cancel)?;
-        let object = &objects[&id];
+        let object = objects.get(&id).or_else(|| known.get(&id)).unwrap();
+        if !objects.contains_key(&id) {
+            dependencies.push(id);
+        }
         let mut edge = |id, kind| {
             remaining = remaining
                 .checked_sub(1)
                 .ok_or(FetchError::Limit("connectivity edges"))?;
-            let object = objects.get(&id).ok_or(FetchError::Missing(id))?;
+            let object = objects
+                .get(&id)
+                .or_else(|| known.get(&id))
+                .ok_or(FetchError::Missing(id))?;
             if object.kind() != kind {
                 return Err(FetchError::Kind(id));
             }
@@ -64,7 +82,7 @@ pub(super) fn validate(
             }
         }
     }
-    Ok(())
+    Ok(dependencies)
 }
 
 #[cfg(test)]
@@ -209,5 +227,64 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn combined_graph_records_only_used_local_dependencies() {
+        let blob = object(ObjectKind::Blob, b"known".to_vec());
+        let unrelated = object(ObjectKind::Blob, b"unrelated".to_vec());
+        let root = tree(blob.id(), EntryMode::Blob);
+        let id = root.id();
+        let expected = blob.id();
+        let received = HashMap::from([(id, root)]);
+        let known = HashMap::from([(blob.id(), blob), (unrelated.id(), unrelated)]);
+        let dependencies = validate_with_known(
+            &received,
+            &known,
+            &[id],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(dependencies, vec![expected]);
+    }
+
+    #[test]
+    fn combined_graph_rejects_wrong_local_edge_kind() {
+        let blob = object(ObjectKind::Blob, b"known".to_vec());
+        let root = tree(blob.id(), EntryMode::Tree);
+        let id = root.id();
+        let received = HashMap::from([(id, root)]);
+        let known = HashMap::from([(blob.id(), blob)]);
+        assert!(matches!(
+            validate_with_known(
+                &received,
+                &known,
+                &[id],
+                FetchLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(FetchError::Kind(_))
+        ));
+    }
+
+    #[test]
+    fn combined_graph_charges_local_edges_to_verification_budget() {
+        let blob = object(ObjectKind::Blob, b"known".to_vec());
+        let root = tree(blob.id(), EntryMode::Blob);
+        let id = root.id();
+        let known = HashMap::from([(id, root), (blob.id(), blob)]);
+        assert!(matches!(
+            validate_with_known(
+                &HashMap::new(),
+                &known,
+                &[id],
+                FetchLimits {
+                    max_connectivity_edges: 0,
+                    ..FetchLimits::default()
+                },
+                &AtomicBool::new(false)
+            ),
+            Err(FetchError::Limit("connectivity edges"))
+        ));
     }
 }

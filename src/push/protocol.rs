@@ -13,8 +13,9 @@ use crate::refs::RefName;
 /// expected old value, then writes commands and a raw non-thin pack. Only `report-status` is
 /// requested, even when atomic or sideband capabilities are advertised. Unknown optional
 /// capabilities are ignored; non-SHA-1 object formats, protocol versions, shallow advertisements,
-/// peeled hints and report-status-v2-only servers are rejected. `.have` entries are counted and
-/// validated but not used to omit objects. Hidden refs are unadvertised and cannot be updated by
+/// peeled hints and report-status-v2-only servers are rejected. Roots used by
+/// [`PreparedPush::new_excluding`] must appear as a current advertised tip or `.have`; otherwise
+/// the push fails before transmission. Hidden refs are unadvertised and cannot be updated by
 /// an expected existing value through this API.
 ///
 /// Streams must end at EOF after the report flush, and cannot be reused. Callers must close both
@@ -80,6 +81,7 @@ fn transmit(
 
 fn advertise(wire: &mut Wire<'_, impl Read>, prepared: &PreparedPush) -> Result<(), Error> {
     let mut refs = HashMap::new();
+    let mut roots = HashSet::new();
     let mut count = 0usize;
     let mut report_status = false;
     let mut empty = false;
@@ -119,6 +121,7 @@ fn advertise(wire: &mut Wire<'_, impl Read>, prepared: &PreparedPush) -> Result<
             if count >= prepared.limits.max_refs {
                 return Err(Error::Limit("advertised refs"));
             }
+            roots.insert(id);
             if name != b".have" {
                 let name =
                     RefName::new(name).map_err(|_| Error::Protocol("advertised ref name"))?;
@@ -136,6 +139,12 @@ fn advertise(wire: &mut Wire<'_, impl Read>, prepared: &PreparedPush) -> Result<
     }
     if !prepared.commands.is_empty() && !report_status {
         return Err(Error::Unsupported("report-status is required"));
+    }
+    for &id in &prepared.receiver_roots {
+        check_cancelled(wire.cancel)?;
+        if !roots.contains(&id) {
+            return Err(Error::KnowledgeChanged(id));
+        }
     }
     for command in &prepared.commands {
         check_cancelled(wire.cancel)?;

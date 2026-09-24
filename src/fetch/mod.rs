@@ -5,31 +5,37 @@
 //! Install it explicitly, then use [`crate::refs`] for caller-selected conditional reference
 //! updates. Fetch never writes references, reflogs, remote configuration, or `FETCH_HEAD`.
 //!
-//! Wants must be advertised IDs. Negotiation sends no haves and expects NAK, requesting a complete
-//! pack on every transfer. Repeat/incremental fetches are correct but can retransmit history.
-//! Only `side-band-64k` and, when advertised, `ofs-delta` are requested. Thin packs, shallow/filter
+//! Wants must be advertised IDs. [`receive`] requests full histories; [`receive_with_known`] uses
+//! bounded [`KnownHistory`] to negotiate incremental transfers. Received delta bases stay internal,
+//! while selected-tip connectivity can depend on verified local objects. Installation rechecks
+//! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
+//! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
 //! requests, automatic tags, refspecs, pruning, protocol v1/v2, HTTP, SSH, and credentials are
 //! outside this slice. Peeling hints are exposed separately from selectable reference tips.
 
 mod connectivity;
 mod install;
+mod known;
 mod local;
 mod protocol;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use install::{FetchInstalled, ReceivedFetch};
-pub use local::{receive_local, receive_local_with_control};
-pub use protocol::{AdvertisedRef, Advertisement, receive};
+pub use known::KnownHistory;
+pub use local::{receive_local, receive_local_with_control, receive_local_with_known};
+pub use protocol::{AdvertisedRef, Advertisement, receive, receive_with_known};
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
 ///
 /// Retained buffers are O(`max_wire_bytes` + `max_decode_bytes` + `max_objects` +
-/// `max_connectivity_edges`). Index generation needs at most 36 bytes per object plus 1072 bytes.
-/// Graph parsing can temporarily copy a structured payload and its fields. These input/work bounds
-/// exclude allocator overhead, stream-owned buffers, fixed zlib scratch space, and server memory;
-/// they are not a hard process heap or wall-clock limit. Zero bounds allow only the corresponding
-/// empty operation. Counters include duplicate input occurrences where applicable.
+/// `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads bounded by
+/// `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs at most 36
+/// bytes per object plus 1072 bytes. Graph parsing can temporarily copy a structured payload and
+/// its fields. These input/work bounds exclude allocator overhead, stream-owned buffers, fixed zlib
+/// scratch space, and server memory; they are not a hard process heap or wall-clock limit. Zero
+/// bounds allow only the corresponding empty operation. Counters include duplicate input
+/// occurrences where applicable.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchLimits {
     /// Total received pkt-line bytes, framing included (default 512 MiB).
@@ -40,6 +46,19 @@ pub struct FetchLimits {
     pub max_refs: usize,
     /// Want occurrences accepted from the selection callback (default 100,000).
     pub max_wants: usize,
+    /// Maximum have candidates retained (default 256). The single wire batch sends at most 32
+    /// with multi-ACK, or one without it.
+    /// Additional verified commits are retained for connectivity but not offered as haves.
+    pub max_haves: usize,
+    /// Objects retained while verifying local history (default one million).
+    pub max_known_objects: usize,
+    /// Aggregate local payload bytes retained (default 256 MiB).
+    pub max_known_bytes: usize,
+    /// Local history edge occurrences (default 4 million).
+    pub max_known_edges: usize,
+    /// Per-read decoding limits for local verification and installation rechecks.
+    /// Total decoding work is bounded by this budget times `max_known_objects`.
+    pub known_read: crate::ReadLimits,
     /// Received pack bytes, including header and trailer (default 256 MiB).
     pub max_pack_bytes: usize,
     /// Objects in the pack (default one million).
@@ -65,6 +84,11 @@ impl Default for FetchLimits {
             max_advertisement_bytes: 4 * 1024 * 1024,
             max_refs: 100_000,
             max_wants: 100_000,
+            max_haves: 256,
+            max_known_objects: 1_000_000,
+            max_known_bytes: 256 * 1024 * 1024,
+            max_known_edges: 4_000_000,
+            known_read: crate::ReadLimits::default(),
             max_pack_bytes: 256 * 1024 * 1024,
             max_objects: 1_000_000,
             max_object_bytes: 64 * 1024 * 1024,
@@ -110,7 +134,7 @@ pub enum FetchError {
     /// Index encoding failed.
     #[error("received index: {0}")]
     Index(#[from] crate::PackWriteError),
-    /// A selected tip or an object it references is absent from the received pack.
+    /// A selected tip or reachable object is absent from both received and verified local objects.
     #[error("missing reachable object {0}")]
     Missing(ObjectId),
     /// A reachable reference has the wrong logical object type.

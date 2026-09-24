@@ -41,19 +41,22 @@ zlib-compressed entries without delta selection; the writer leaves installation 
 `fetch::receive` implements upload-pack protocol v0 over caller-supplied streams;
 `fetch::receive_local` supplies a local Git upload-pack process adapter. Fetch validates complete
 packs, deltas, identities, and selected-tip connectivity before explicit index-last installation.
-No-haves negotiation can retransmit history on incremental fetches. Reference updates remain
-separate conditional operations without reflogs. Run `cargo run --example fetch_local` for a
-complete disposable example. HTTP/SSH adapters, credentials, remote/refspec policy, shallow/partial
-fetches, automatic tags, and pruning are not implemented. See
+Explicit `fetch::KnownHistory` enables bounded have/ACK negotiation and known-only no-op fetches;
+installation rechecks the required local objects. Reference updates remain separate conditional
+operations without reflogs. Run `cargo run --example fetch_local` for a complete disposable example.
+HTTP/SSH adapters, credentials, remote/refspec policy, shallow/partial fetches, automatic tags, and
+pruning are not implemented. See
 [fetch compatibility](docs/compatibility.md#upload-pack-fetch).
 
-`push::PreparedPush` selects and validates complete reachable histories and builds a non-thin pack.
-`push::send` publishes explicit conditional branch/tag commands over receive-pack v0 streams;
-`push::send_local` supplies a local Git server adapter. Branch rewinds and tag replacement require
-explicit force policy. Results preserve unpack and per-ref status, including partial success;
-connection failures after transmission are distinguished as uncertain. Local tracking refs remain
-unchanged. Run `cargo run --example push_local` for a disposable branch/tag publication example.
-Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred. See
+`push::PreparedPush` validates complete reachable histories and builds a non-thin pack.
+`new_excluding` omits explicit receiver roots only when they belong to that validated graph and
+remain advertised during sending. `push::send` publishes explicit conditional branch/tag commands
+over receive-pack v0 streams; `push::send_local` supplies a local Git server adapter. Branch rewinds
+and tag replacement require explicit force policy. Results preserve unpack and per-ref status,
+including partial success; connection failures after transmission are distinguished as uncertain.
+Local tracking refs remain unchanged. Run `cargo run --example push_local` for a disposable
+branch/tag publication example. Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred.
+See
 [push compatibility](docs/compatibility.md#receive-pack-push).
 
 Local adapters on macOS/Linux interrupt pipe and server-exit waits when cancelled. Their

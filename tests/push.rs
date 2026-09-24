@@ -43,9 +43,11 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
     }
 }
 fn prepare(repo: &Repository, commands: Vec<PushCommand>) -> PreparedPush {
-    PreparedPush::new(
+    let roots: Vec<_> = commands.iter().filter_map(|c| c.expected).collect();
+    PreparedPush::new_excluding(
         &repo.objects(PackLimits::default()).unwrap(),
         commands,
+        &roots,
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -599,4 +601,200 @@ fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bo
             .count(),
         0
     );
+}
+
+#[test]
+fn exclusion_reduces_incremental_and_noop_packs() {
+    let f = Fixture::new(true, 16);
+    let (_root, dest) = destination(true);
+    let old = main(&f);
+    assert!(
+        push(&f.repo, &dest, vec![command("refs/heads/main", None, old)])
+            .unwrap()
+            .all_succeeded()
+    );
+    let new = next(&f);
+    let commands = vec![command("refs/heads/main", Some(old), new)];
+    let full = PreparedPush::new(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        commands.clone(),
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let reduced = prepare(&f.repo, commands);
+    assert_eq!(reduced.object_count(), 1);
+    assert!(reduced.pack_bytes() < full.pack_bytes());
+    assert!(
+        send_local(dest.git_dir(), &reduced, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    let noop = prepare(&f.repo, vec![command("refs/heads/main", Some(new), new)]);
+    assert_eq!(noop.object_count(), 0);
+    assert_eq!(noop.pack_bytes(), 32);
+    assert!(
+        send_local(dest.git_dir(), &noop, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
+    eprintln!(
+        "push comparison incremental={}/{} full={}/{} noop={}/{}",
+        reduced.object_count(),
+        reduced.pack_bytes(),
+        full.object_count(),
+        full.pack_bytes(),
+        noop.object_count(),
+        noop.pack_bytes()
+    );
+}
+
+#[test]
+fn arbitrary_local_possession_is_not_receiver_knowledge() {
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", None, main(&f))],
+        &[main(&f)],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 0);
+    let result = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false));
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(PushFailure::KnowledgeChanged(_)))
+    ));
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+}
+
+#[test]
+fn receiver_root_missing_locally_preserves_full_forced_transfer() {
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    let foreign = dest
+        .loose_objects()
+        .unwrap()
+        .write_blob(b"foreign root")
+        .unwrap();
+    git(
+        dest.git_dir(),
+        &["update-ref", "refs/tags/foreign", &foreign.to_string()],
+        b"",
+    );
+    let commands = vec![PushCommand {
+        force: ForcePolicy::Allow,
+        ..command("refs/tags/foreign", Some(foreign), main(&f))
+    }];
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        commands.clone(),
+        &[foreign],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let full = PreparedPush::new(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        commands,
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), full.object_count());
+    assert_eq!(prepared.pack_bytes(), full.pack_bytes());
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    git(
+        dest.git_dir(),
+        &["fsck", "--strict", &main(&f).to_string()],
+        b"",
+    );
+}
+
+fn commit_with_parents(f: &Fixture, parents: &[ObjectId], message: &[u8]) -> ObjectId {
+    let tree = String::from_utf8(git(f.root.path(), &["rev-parse", "main^{tree}"], b"")).unwrap();
+    let mut args = vec!["commit-tree".to_owned(), tree.trim().to_owned()];
+    for parent in parents {
+        args.extend(["-p".to_owned(), parent.to_string()]);
+    }
+    let args: Vec<_> = args.iter().map(String::as_str).collect();
+    String::from_utf8(git(f.root.path(), &args, message))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn merge_push_excludes_receiver_second_parent_and_preserves_other_side() {
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    let left = commit_with_parents(&f, &[main(&f)], b"left\n");
+    let right = commit_with_parents(&f, &[main(&f)], b"right\n");
+    let merge = commit_with_parents(&f, &[left, right], b"merge\n");
+    assert!(
+        push(
+            &f.repo,
+            &dest,
+            vec![command("refs/heads/main", None, right)]
+        )
+        .unwrap()
+        .all_succeeded()
+    );
+    let prepared = prepare(
+        &f.repo,
+        vec![command("refs/heads/main", Some(right), merge)],
+    );
+    assert_eq!(prepared.object_count(), 2);
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(merge));
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_possession() {
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    let left = commit_with_parents(&f, &[main(&f)], b"left\n");
+    let right = commit_with_parents(&f, &[main(&f)], b"right\n");
+    assert!(
+        push(
+            &f.repo,
+            &dest,
+            vec![command("refs/heads/main", None, right)]
+        )
+        .unwrap()
+        .all_succeeded()
+    );
+    let update = PushCommand {
+        force: ForcePolicy::Allow,
+        ..command("refs/heads/main", Some(right), left)
+    };
+    let full = PreparedPush::new(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![update.clone()],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let prepared = prepare(&f.repo, vec![update]);
+    assert_eq!(prepared.object_count(), full.object_count());
+    assert_eq!(prepared.pack_bytes(), full.pack_bytes());
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
 }

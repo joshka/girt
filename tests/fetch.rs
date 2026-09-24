@@ -405,3 +405,235 @@ fn retries_after_index_publication_failure() {
         2
     );
 }
+
+fn known(repo: &Repository, roots: &[ObjectId]) -> girt::fetch::KnownHistory {
+    girt::fetch::KnownHistory::new(
+        &repo.objects(PackLimits::default()).unwrap(),
+        roots,
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+}
+fn negotiated(path: &Path, known: &girt::fetch::KnownHistory) -> ReceivedFetch {
+    girt::fetch::receive_local_with_known(
+        path,
+        select_all,
+        known,
+        FetchLimits::default(),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+    )
+    .unwrap()
+}
+fn child(fixture: &Fixture, parents: &[ObjectId], message: &[u8]) -> ObjectId {
+    let tree = git(fixture.root.path(), &["rev-parse", "main^{tree}"], b"");
+    let mut args = vec![
+        "commit-tree".to_owned(),
+        String::from_utf8(tree).unwrap().trim().to_owned(),
+    ];
+    for parent in parents {
+        args.extend(["-p".to_owned(), parent.to_string()]);
+    }
+    let args: Vec<_> = args.iter().map(String::as_str).collect();
+    String::from_utf8(git(fixture.root.path(), &args, message))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+fn set_main(fixture: &Fixture, id: ObjectId) {
+    git(
+        fixture.root.path(),
+        &["update-ref", "refs/heads/main", &id.to_string()],
+        b"",
+    );
+}
+fn main_id(fixture: &Fixture) -> ObjectId {
+    String::from_utf8(git(fixture.root.path(), &["rev-parse", "main"], b""))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn negotiated_initial_noop_and_incremental_preserve_connectivity() {
+    let fixture = Fixture::new(true, 16);
+    let (_root, repo) = destination();
+    let initial = negotiated(fixture.root.path(), &girt::fetch::KnownHistory::default());
+    initial.install(&repo, &AtomicBool::new(false)).unwrap();
+    let known = known(&repo, initial.wants());
+    let noop = negotiated(fixture.root.path(), &known);
+    assert_eq!(noop.object_count(), 0);
+    assert_eq!(noop.pack_bytes(), 0);
+    assert_eq!(noop.wants(), initial.wants());
+    noop.install(&repo, &AtomicBool::new(false)).unwrap();
+    let next = child(&fixture, &[main_id(&fixture)], b"incremental\n");
+    set_main(&fixture, next);
+    let full = fetch(fixture.root.path());
+    let incremental = negotiated(fixture.root.path(), &known);
+    assert_eq!(incremental.object_count(), 1);
+    assert!(incremental.pack_bytes() < full.pack_bytes());
+    incremental.install(&repo, &AtomicBool::new(false)).unwrap();
+    verify_contents(&fixture, &repo);
+    git(
+        repo.git_dir(),
+        &["fsck", "--strict", &next.to_string()],
+        b"",
+    );
+    eprintln!(
+        "fetch comparison initial={}/{} noop={}/{} incremental={}/{} full={}/{}",
+        initial.object_count(),
+        initial.pack_bytes(),
+        noop.object_count(),
+        noop.pack_bytes(),
+        incremental.object_count(),
+        incremental.pack_bytes(),
+        full.object_count(),
+        full.pack_bytes()
+    );
+}
+
+#[rstest]
+#[case::divergent(false)]
+#[case::merge(true)]
+fn negotiated_shared_history_and_merge(#[case] merge: bool) {
+    let fixture = Fixture::new(true, 4);
+    let old = main_id(&fixture);
+    let left = child(&fixture, &[old], b"left\n");
+    let right = child(&fixture, &[old], b"right\n");
+    let parents = merge_parents(merge, left, right);
+    let next = child(&fixture, &parents, b"next\n");
+    // The left tip is local knowledge; only its common ancestor is shared in the divergent case.
+    let known = known(&fixture.repo, &[left]);
+    set_main(&fixture, next);
+    let full = fetch(fixture.root.path());
+    let received = negotiated(fixture.root.path(), &known);
+    assert!(received.object_count() < full.object_count());
+    assert!(received.pack_bytes() < full.pack_bytes());
+    received
+        .install(&fixture.repo, &AtomicBool::new(false))
+        .unwrap();
+    git(
+        fixture.repo.git_dir(),
+        &["fsck", "--strict", &next.to_string()],
+        b"",
+    );
+}
+
+#[test]
+fn disconnected_haves_fall_back_to_complete_transfer() {
+    let fixture = Fixture::new(true, 4);
+    let (_root, local) = destination();
+    let loose = local.loose_objects().unwrap();
+    let tree = loose.write_tree(&girt::Tree::new(vec![]).unwrap()).unwrap();
+    let template = girt::Commit::parse(&fixture.records[fixture.records.len() - 2].2).unwrap();
+    let mut fields = template.fields().clone();
+    fields.tree = tree;
+    fields.message = b"Disconnected local history".to_vec();
+    let commit = loose
+        .write_commit(&girt::Commit::new(fields).unwrap())
+        .unwrap();
+    let known = known(&local, &[commit]);
+    let full = fetch(fixture.root.path());
+    let received = negotiated(fixture.root.path(), &known);
+    assert_eq!(received.object_count(), full.object_count());
+    received.install(&local, &AtomicBool::new(false)).unwrap();
+    verify_contents(&fixture, &local);
+}
+
+#[rstest]
+#[case::missing(false)]
+#[case::corrupt(true)]
+fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool) {
+    let fixture = Fixture::new(true, 4);
+    let (_root, local) = destination();
+    let loose = local.loose_objects().unwrap();
+    copy_loose(&fixture, &loose);
+    let blob = fixture.ordinary;
+    let known = known(&local, &[main_id(&fixture)]);
+    let next = child(
+        &fixture,
+        &[main_id(&fixture)],
+        b"incremental missing local
+",
+    );
+    set_main(&fixture, next);
+    let received = negotiated(fixture.root.path(), &known);
+    let id = blob.to_string();
+    let path = local.object_dir().join(&id[..2]).join(&id[2..]);
+    damage(&path, corrupt);
+    assert!(received.install(&local, &AtomicBool::new(false)).is_err());
+    assert_eq!(
+        fs::read_dir(local.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        local
+            .references()
+            .unwrap()
+            .resolve(&RefName::new("HEAD").unwrap(), 8)
+            .unwrap()
+            .id,
+        None
+    );
+}
+
+fn merge_parents(merge: bool, left: ObjectId, right: ObjectId) -> Vec<ObjectId> {
+    if merge {
+        vec![left, right]
+    } else {
+        vec![right]
+    }
+}
+fn damage(path: &Path, corrupt: bool) {
+    if corrupt {
+        fs::write(path, b"corrupt").unwrap();
+    } else {
+        fs::remove_file(path).unwrap();
+    }
+}
+fn copy_loose(fixture: &Fixture, loose: &girt::LooseObjects) {
+    for (_, kind, bytes) in &fixture.records {
+        match kind {
+            girt::ObjectKind::Blob => loose.write_blob(bytes).unwrap(),
+            girt::ObjectKind::Tree => loose
+                .write_tree(&girt::Tree::parse(bytes).unwrap())
+                .unwrap(),
+            girt::ObjectKind::Commit => loose
+                .write_commit(&girt::Commit::parse(bytes).unwrap())
+                .unwrap(),
+            girt::ObjectKind::Tag => loose.write_tag(&girt::Tag::parse(bytes).unwrap()).unwrap(),
+        };
+    }
+}
+
+#[test]
+fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
+    let fixture = Fixture::new(true, 4);
+    let tag = fixture.records.last().unwrap().0;
+    let known = known(&fixture.repo, &[tag]);
+    let next = child(&fixture, &[main_id(&fixture)], b"no have budget\n");
+    set_main(&fixture, next);
+    let received = girt::fetch::receive_local_with_known(
+        fixture.root.path(),
+        select_all,
+        &known,
+        FetchLimits {
+            max_haves: 0,
+            ..FetchLimits::default()
+        },
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+    )
+    .unwrap();
+    // Complete branch history plus its new commit; the already-known tag is still selected.
+    assert_eq!(received.object_count(), fixture.records.len());
+    assert!(received.wants().contains(&tag));
+    received
+        .install(&fixture.repo, &AtomicBool::new(false))
+        .unwrap();
+}

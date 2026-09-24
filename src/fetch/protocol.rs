@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 
-use super::{FetchError as Error, FetchLimits, ReceivedFetch, check_cancelled};
+use super::{FetchError as Error, FetchLimits, KnownHistory, ReceivedFetch, check_cancelled};
 use crate::ObjectId;
 use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
@@ -58,8 +58,54 @@ pub fn receive(
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     limits: FetchLimits,
     cancel: &AtomicBool,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, Error> {
+    receive_with_known(
+        reader,
+        writer,
+        select,
+        &KnownHistory::default(),
+        limits,
+        cancel,
+        progress,
+    )
+}
+
+/// Receives a pack negotiated against explicitly verified local history.
+///
+/// Uses the same stream, cancellation and capability contract as [`receive`]. Sends at most
+/// `min(max_haves, 32)` verified commits in one batch followed immediately by `done`, requesting
+/// `multi_ack` when advertised. Without it, sends at most one have. ACKs must name offered IDs;
+/// duplicate continuation ACKs, unsupported states and excess replies fail. No extra rounds or
+/// unbounded ancestry walks occur. Selected IDs already verified locally are omitted from wire
+/// wants; an entirely known selection sends only a flush. Tags and blobs can therefore be no-ops
+/// too. Pack delta bases must remain internal; connectivity is checked across received and known
+/// objects. [`ReceivedFetch::install`] rechecks local dependencies in the destination.
+///
+/// # Errors
+///
+/// Returns [`receive`]'s errors, including invalid ACKs and combined-graph connectivity failures.
+/// Knowledge exceeding this call's local count or byte limits is rejected before transmission.
+pub fn receive_with_known(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
+    check_cancelled(cancel)?;
+    if known.objects.len() > limits.max_known_objects {
+        return Err(Error::Limit("known objects"));
+    }
+    let mut remaining = limits.max_known_bytes;
+    for object in known.objects.values() {
+        check_cancelled(cancel)?;
+        remaining = remaining
+            .checked_sub(object.data().len())
+            .ok_or(Error::Limit("known bytes"))?;
+    }
     let mut wire = Wire {
         reader,
         remaining: limits.max_wire_bytes,
@@ -87,16 +133,24 @@ pub fn receive(
             wants.push(id);
         }
     }
-    if wants.is_empty() {
+    let wire_wants: Vec<_> = wants
+        .iter()
+        .filter(|id| !known.objects.contains_key(id))
+        .copied()
+        .collect();
+    if wire_wants.is_empty() {
         put(writer, b"0000", cancel)?;
         writer.flush()?;
         wire.end()?;
-        return Ok(ReceivedFetch::empty(advertisement));
+        return ReceivedFetch::without_pack(advertisement, wants, known, limits, cancel);
     }
     if !advertisement.has(b"side-band-64k") {
         return Err(Error::Unsupported("side-band-64k is required"));
     }
-    for (i, id) in wants.iter().enumerate() {
+    let multi_ack =
+        !known.haves.is_empty() && limits.max_haves != 0 && advertisement.has(b"multi_ack");
+    let have_count = limits.max_haves.min(if multi_ack { 32 } else { 1 });
+    for (i, id) in wire_wants.iter().enumerate() {
         let caps = if i != 0 {
             ""
         } else if advertisement.has(b"ofs-delta") {
@@ -104,17 +158,25 @@ pub fn receive(
         } else {
             " side-band-64k"
         };
-        packet(writer, format!("want {id}{caps}\n").as_bytes(), cancel)?;
+        let ack_cap = if i == 0 && multi_ack {
+            " multi_ack"
+        } else {
+            ""
+        };
+        packet(
+            writer,
+            format!("want {id}{caps}{ack_cap}\n").as_bytes(),
+            cancel,
+        )?;
     }
     put(writer, b"0000", cancel)?;
+    let haves: HashSet<_> = known.haves.iter().take(have_count).copied().collect();
+    for id in known.haves.iter().take(have_count) {
+        packet(writer, format!("have {id}\n").as_bytes(), cancel)?;
+    }
     packet(writer, b"done\n", cancel)?;
     writer.flush()?;
-    let nak = wire
-        .packet()?
-        .ok_or(Error::Protocol("flush instead of NAK"))?;
-    if line(&nak) != b"NAK" {
-        return Err(Error::Protocol("expected NAK without haves"));
-    }
+    read_ack(&mut wire, &haves, multi_ack)?;
     let mut pack = Vec::new();
     while let Some(bytes) = wire.packet()? {
         match bytes.split_first() {
@@ -134,7 +196,44 @@ pub fn receive(
         }
     }
     wire.end()?;
-    ReceivedFetch::validate(advertisement, wants, pack, limits, cancel)
+    ReceivedFetch::validate_known(advertisement, wants, pack, known, limits, cancel)
+}
+
+// One batch of at most 32 haves keeps both directions below ordinary pipe capacity. Reading
+// the bounded ACK sequence after done avoids assuming a flush/NAK boundary in single-ACK mode.
+fn read_ack(
+    wire: &mut Wire<'_, impl Read>,
+    haves: &HashSet<ObjectId>,
+    multi_ack: bool,
+) -> Result<(), Error> {
+    let mut continued = HashSet::new();
+    for _ in 0..=haves.len() {
+        let packet = wire
+            .packet()?
+            .ok_or(Error::Protocol("flush instead of ACK/NAK"))?;
+        let bytes = line(&packet);
+        if bytes == b"NAK" && continued.is_empty() {
+            return Ok(());
+        }
+        let (raw, more) = if multi_ack && bytes.ends_with(b" continue") {
+            (&bytes[..bytes.len() - 9], true)
+        } else {
+            (bytes, false)
+        };
+        let id = raw
+            .strip_prefix(b"ACK ")
+            .and_then(|id| std::str::from_utf8(id).ok())
+            .and_then(|id| id.parse::<ObjectId>().ok())
+            .filter(|id| haves.contains(id))
+            .ok_or(Error::Protocol("expected ACK of an offered have"))?;
+        if !more {
+            return Ok(());
+        }
+        if !continued.insert(id) {
+            return Err(Error::Protocol("duplicate ACK continue"));
+        }
+    }
+    Err(Error::Limit("negotiation acknowledgements"))
 }
 
 impl Advertisement {
@@ -236,4 +335,58 @@ fn split_byte(bytes: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
 
 fn line(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\n").unwrap_or(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn acknowledgements(lines: &[&str], multi: bool) -> Result<(), Error> {
+        let cancel = AtomicBool::new(false);
+        let mut bytes = Vec::new();
+        for line in lines {
+            packet(&mut bytes, line.as_bytes(), &cancel).unwrap();
+        }
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 1024,
+            cancel: &cancel,
+        };
+        let id = "1111111111111111111111111111111111111111".parse().unwrap();
+        read_ack(&mut wire, &HashSet::from([id]), multi)
+    }
+
+    #[rstest]
+    #[case::nak(&["NAK"])]
+    #[case::plain(&["ACK 1111111111111111111111111111111111111111"])]
+    #[case::multi(&["ACK 1111111111111111111111111111111111111111 continue", "ACK 1111111111111111111111111111111111111111"])]
+    fn accepts_supported_ack_sequences(#[case] lines: &[&str]) {
+        assert!(acknowledgements(lines, true).is_ok());
+    }
+
+    #[rstest]
+    #[case::unknown(&["ACK 2222222222222222222222222222222222222222"])]
+    #[case::ready(&["ACK 1111111111111111111111111111111111111111 ready"])]
+    #[case::common(&["ACK 1111111111111111111111111111111111111111 common"])]
+    #[case::truncated(&["ACK 1111111111111111111111111111111111111111 continue"])]
+    #[case::nak_after_continue(&["ACK 1111111111111111111111111111111111111111 continue", "NAK"])]
+    #[case::duplicate(&["ACK 1111111111111111111111111111111111111111 continue", "ACK 1111111111111111111111111111111111111111 continue"])]
+    #[case::empty(&[])]
+    fn rejects_invalid_or_unbounded_ack_sequences(#[case] lines: &[&str]) {
+        assert!(acknowledgements(lines, true).is_err());
+    }
+
+    #[test]
+    fn rejects_unrequested_multi_ack() {
+        assert!(
+            acknowledgements(
+                &["ACK 1111111111111111111111111111111111111111 continue"],
+                false
+            )
+            .is_err()
+        );
+    }
 }

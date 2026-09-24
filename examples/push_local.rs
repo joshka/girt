@@ -93,5 +93,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         prepared.object_count(),
         prepared.pack_bytes()
     );
+    let repeated = PreparedPush::new_excluding(
+        &objects,
+        vec![PushCommand {
+            name: RefName::new("refs/heads/main")?,
+            expected: Some(commit),
+            new: commit,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[commit],
+        PushLimits::default(),
+        &cancel,
+    )?;
+    let report = send_local_with_control(
+        destination.git_dir(),
+        &repeated,
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(30)),
+        },
+    )?;
+    if !report.all_succeeded() {
+        return Err(format!("repeat rejected: {report:?}").into());
+    }
+    assert_eq!(repeated.object_count(), 0);
+    println!(
+        "Repeated push: {} objects, {} pack bytes",
+        repeated.object_count(),
+        repeated.pack_bytes()
+    );
     Ok(())
 }

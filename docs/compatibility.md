@@ -655,7 +655,8 @@ flush and expects EOF. Nonempty selection requires `side-band-64k`, requests `of
 advertised, sends no haves, then sends `done` and requires NAK. This deliberately simple negotiation
 requests complete history on every fetch, including incremental fetches. It sacrifices bandwidth to
 keep the received graph independent of destination state. Thin/shallow/filter features, include-tag,
-and multi-ACK are never requested. v1/v2 and non-SHA-1 advertisements fail explicitly.
+are never requested by the full-transfer entry point. The incremental entry point below also
+supports bounded multi-ACK. v1/v2 and non-SHA-1 advertisements fail explicitly.
 
 Packet lengths, aggregate wire bytes, advertisements, refs, wants, and pack bytes have explicit
 bounds. Channel 1 carries pack data, channel 2 reaches the caller's progress callback, and channel 3
@@ -767,21 +768,23 @@ equivalence.
 
 The existing writer emits ordinary zlib entries and a complete pack with no deltas or external
 bases. Its companion index is generated into a sink, not sent or installed. Repeated and incremental
-pushes retransmit full selected histories. Preparation releases selected payloads after buffering
-the pack; the caller can drop its object reader before connecting. Inputs, graph
-objects/bytes/edges, cumulative ancestry visits/parent edges, individual reads, pack/index output,
-command bytes, advertisement bytes/entries and status bytes have explicit bounds. These bounds
-exclude allocator overhead, the caller's preexisting snapshot, and server memory. Read decoding
-budgets apply per object, not across the selection.
+pushes using `new` retransmit full selected histories; `new_excluding` can reduce them as described
+below. Preparation releases selected payloads after buffering the pack; the caller can drop its
+object reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry
+visits/parent edges, individual reads, pack/index output, command bytes, advertisement bytes/entries
+and status bytes have explicit bounds. These bounds exclude allocator overhead, the caller's
+preexisting snapshot, and server memory. Read decoding budgets apply per object, not across the
+selection.
 
 ### Status, Failure and Transport Boundaries
 
 Nonempty pushes require and request `report-status`. Unknown optional capabilities are ignored.
 Protocol v1/v2 advertisements, SHA-256, shallow advertisements and report-status-v2-only servers are
 rejected. No atomic, sideband, deletion, push-options, signed-push or report-status-v2 capability is
-requested. Receive-pack `.have` entries are validated and counted but do not shorten the object set;
-fetch peeling hints are not accepted as receive-pack refs. The wire framing implementation is shared
-with fetch, while service-specific negotiation and parsing remain separate.
+requested. Receive-pack `.have` entries are validated and counted and can confirm an explicit
+receiver root used for exclusion; fetch peeling hints are not accepted as receive-pack refs. The
+wire framing implementation is shared with fetch, while service-specific negotiation and parsing
+remain separate.
 
 A complete `PushReport` preserves unpack status and one result per command in caller order,
 retaining rejection messages as bytes. `Ok(report)` can contain complete rejection or partial
@@ -899,3 +902,62 @@ markdownlint-cli2. Warning-denying library Clippy cross-checks passed for
 checks, not target runtime checks.
 [Owned transport benchmark evidence](benchmarks.md#owned-transport-baseline) retains local
 process/import/cleanup measurements and source fingerprints.
+
+## Bounded Incremental Transfers
+
+The full-transfer entry points remain available as reproducible baselines. Fetch adds
+`KnownHistory::new`, `receive_with_known` and `receive_local_with_known`. Explicit local roots are
+read with verified identities and complete typed connectivity before use. Trees, commit parents and
+tag targets are followed; gitlinks remain external. Missing, corrupt or mistyped local history fails
+preparation. No local refs are inferred and no shallow or partial history is accepted.
+
+Negotiation follows the public [pack protocol](https://git-scm.com/docs/pack-protocol) and
+[capability specification](https://git-scm.com/docs/protocol-capabilities), implemented
+independently. The client sends one batch of at most 32 verified commits followed by `done`,
+requesting `multi_ack` when advertised. Without that capability it sends at most one have. Each
+continuation must name a unique offered ID, followed by a plain ACK of an offered ID; NAK is
+accepted when no continuation was received. Unsupported states, truncation and excess replies fail.
+The fixed small batch avoids mutually blocked pipes while both peers write negotiation packets. This
+is a bounded strategy, not an optimal ancestry search: distant shared history outside the batch can
+be retransmitted.
+
+Locally known wants are omitted from wire wants. An entirely known selection sends a flush and
+receives no pack, retaining selected IDs and dependency evidence. Received delta bases must still be
+internal, including when a matching local object exists. Connectivity checks traverse the union of
+received and verified local objects. The result retains IDs only for local objects actually used by
+that traversal. Installation reopens the destination with default `PackLimits` and rechecks their
+identities before creating pack artifacts, including on no-op fetches. GC/pruning must remain
+coordinated through installation and separate ref publication; this API takes no retention lock.
+
+Local verification separately bounds root occurrences, unique objects, retained payload bytes, edge
+occurrences and decoding per read. Decoding work is at most the object-count bound times the
+per-read bound. Receive/import budgets remain separate, and the connectivity edge limit now covers
+the combined graph. Installation rechecks at most the retained local dependency count and payload
+budget, with the same per-read bound. Knowledge preparation is outside the transport deadline;
+blocking local I/O, parsing and hashing retain the existing cooperative cancellation contract.
+
+Push adds `PreparedPush::new_excluding` with explicit receiver roots. It first validates the
+complete selected graph and proves force policy, then omits each usable root's entire closure. A
+usable root must itself be in that graph; missing or disconnected roots are ignored, producing a
+conservative full transfer where necessary. A rewritten receiver tip outside the selected graph
+cannot establish shared descendants in this implementation, even if that tip happens to exist
+locally. Tags and shared trees/blobs are supported; gitlinks remain external. Exclusion gets a
+separate `max_edges` allowance and at most `max_refs` root occurrences, and visits at most the
+selected object count.
+
+Every root actually used for exclusion must still appear in the live receive-pack advertisement as a
+tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can explicitly retry
+with full preparation. Command expectations are independently checked before transmission and again
+by the server when committing refs. Races after advertisement retain server rejection or uncertain
+outcome semantics; complete and partial statuses are unchanged. Server-side concurrent object
+pruning still requires coordination. Packs remain non-thin ordinary entries; no delta selection,
+HTTP/SSH, credentials, pruning, shallow/partial support or new ref features are introduced.
+
+Disposable Git tests cover initial, no-op and incremental transfers, shared/divergent and merge
+histories, branch/tag selection, gitlinks, unavailable receiver roots, corrupt/missing local
+objects, ACK states and bounds, installation failures without ref publication, expected-ref races
+and partial push status. The existing push integration helper now exercises exclusion using expected
+old tips, including the rejection and race tests. Fixtures are independently generated with Git
+plumbing and girt writers. Measurements and exact platform evidence are recorded with the
+[incremental benchmark](benchmarks.md#incremental-transfer-comparison) and
+[completion checklist](testing.md#incremental-transfer-completion).

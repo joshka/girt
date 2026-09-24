@@ -83,6 +83,98 @@ fn fetch(c: &mut Criterion) {
         )
         .unwrap();
         assert_eq!(received.object_count(), fixture.records.len());
+        let known =
+            girt::fetch::KnownHistory::new(&objects, &[tag], FetchLimits::default(), &cancel)
+                .unwrap();
+        group.bench_function(format!("transfer-knowledge-{count}"), |b| {
+            b.iter(|| {
+                girt::fetch::KnownHistory::new(
+                    black_box(&objects),
+                    &[tag],
+                    FetchLimits::default(),
+                    &cancel,
+                )
+                .unwrap()
+            })
+        });
+        let old = fixture.records[fixture.records.len() - 2].0;
+        let commit = girt::Commit::parse(
+            objects
+                .read(old, ReadLimits::default())
+                .unwrap()
+                .unwrap()
+                .data(),
+        )
+        .unwrap();
+        let mut fields = commit.fields().clone();
+        fields.parents = vec![old];
+        fields.message = b"Incremental transfer benchmark\n".to_vec();
+        let next = fixture
+            .repo
+            .loose_objects()
+            .unwrap()
+            .write_commit(&girt::Commit::new(fields).unwrap())
+            .unwrap();
+        pack_git::git(
+            fixture.root.path(),
+            &["update-ref", "refs/heads/incremental", &next.to_string()],
+            b"",
+        );
+        let full = girt::fetch::receive_local(
+            fixture.root.path(),
+            |_| vec![next],
+            FetchLimits::default(),
+            &cancel,
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+        let reduced = girt::fetch::receive_local_with_known(
+            fixture.root.path(),
+            |_| vec![next],
+            &known,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+        eprintln!(
+            "fetch-incremental,{count},{},{},{},{}",
+            full.object_count(),
+            full.pack_bytes(),
+            reduced.object_count(),
+            reduced.pack_bytes()
+        );
+        group.bench_function(format!("transfer-full-{count}"), |b| {
+            b.iter(|| {
+                girt::fetch::receive_local_with_control(
+                    fixture.root.path(),
+                    |_| vec![next],
+                    FetchLimits::default(),
+                    TransportControl {
+                        cancel: &cancel,
+                        deadline: Some(Instant::now() + Duration::from_secs(30)),
+                    },
+                    |_| ControlFlow::Continue(()),
+                )
+                .unwrap()
+            })
+        });
+        group.bench_function(format!("transfer-known-{count}"), |b| {
+            b.iter(|| {
+                girt::fetch::receive_local_with_known(
+                    fixture.root.path(),
+                    |_| vec![next],
+                    &known,
+                    FetchLimits::default(),
+                    TransportControl {
+                        cancel: &cancel,
+                        deadline: Some(Instant::now() + Duration::from_secs(30)),
+                    },
+                    |_| ControlFlow::Continue(()),
+                )
+                .unwrap()
+            })
+        });
         group.bench_function(format!("local-process-import-connectivity-{count}"), |b| {
             b.iter(|| {
                 girt::fetch::receive_local_with_control(

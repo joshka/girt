@@ -3,7 +3,9 @@ use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use girt::fetch::{FetchLimits, receive_local_with_control};
+use girt::fetch::{
+    FetchLimits, KnownHistory, receive_local_with_control, receive_local_with_known,
+};
 use girt::refs::{Expected, RefName, Target};
 use girt::transport::TransportControl;
 use girt::{
@@ -88,6 +90,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Fetched {} objects ({} pack bytes); published {commit} without a reflog",
         result.objects,
         received.pack_bytes()
+    );
+    let known = KnownHistory::new(&fetched, &[commit], FetchLimits::default(), &cancel)?;
+    let repeated = receive_local_with_known(
+        source.git_dir(),
+        |_| vec![commit],
+        &known,
+        FetchLimits::default(),
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(30)),
+        },
+        |_| ControlFlow::Continue(()),
+    )?;
+    // Recheck known dependencies in the destination even when no pack was needed.
+    repeated.install(&destination, &cancel)?;
+    assert_eq!(repeated.pack_bytes(), 0);
+    println!(
+        "Repeated fetch: {} objects, {} pack bytes",
+        repeated.object_count(),
+        repeated.pack_bytes()
     );
     Ok(())
 }

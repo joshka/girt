@@ -7,10 +7,11 @@ use super::{PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects, PackObject, write_pack};
 
-/// An immutable command list and complete non-thin SHA-1 pack ready for one receive-pack session.
+/// An immutable command list and non-thin SHA-1 pack ready for one receive-pack session.
 ///
 /// Keeps exact caller expectations; remote advertisement checking occurs in [`super::send`].
-/// Complete histories are sent even if the server already has them. The source object reader can
+/// [`Self::new`] sends complete histories; [`Self::new_excluding`] omits explicit receiver history
+/// after validating its selected closure. The source object reader can
 /// be dropped after preparation. Reuse is permitted but each session rechecks the same
 /// expectations.
 #[derive(Debug)]
@@ -20,6 +21,7 @@ pub struct PreparedPush {
     pub(super) pack: Vec<u8>,
     pub(super) limits: PushLimits,
     objects: u32,
+    pub(super) receiver_roots: Vec<ObjectId>,
 }
 impl PreparedPush {
     /// Validates commands, selects all reachable objects, proves permitted branch ancestry, and
@@ -46,6 +48,36 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        Self::new_excluding(objects, commands, &[], limits, cancel)
+    }
+
+    /// Prepares a non-thin pack excluding complete histories of explicit receiver roots.
+    ///
+    /// Each usable root must belong to the fully validated selected graph. Its complete reachable
+    /// closure (including trees and tags, excluding gitlinks) is omitted. Missing roots and roots
+    /// outside that graph are ignored: arbitrary local possession never proves remote possession.
+    /// This deliberately sends a complete pack for many disconnected/rewritten histories.
+    /// [`super::send`] requires every root used for exclusion to appear in the live advertisement
+    /// as a ref tip or `.have`, independently of command expectations. If a root has disappeared,
+    /// prepare a full transfer or retry using fresh knowledge. Coordinate with server pruning/GC;
+    /// advertisements cannot guarantee object retention against concurrent deletion.
+    ///
+    /// Selection and force proofs use the same full-graph budgets as [`Self::new`]. Exclusion has
+    /// a separate `max_edges` allowance, visits at most the selected object count, and accepts at
+    /// most `max_refs` root occurrences. Preparation can therefore cost more despite a smaller
+    /// wire pack. Pack limits still bound the full selected payload/count before exclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::new`]'s errors or exhausted receiver-root/exclusion bounds. Missing objects
+    /// in the selected history fail even if expected remotely. No commands are transmitted.
+    pub fn new_excluding(
+        objects: &Objects,
+        commands: Vec<PushCommand>,
+        receiver_roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
         check_cancelled(cancel)?;
         let request = encode_commands(&commands, limits, cancel)?;
         if commands.is_empty() {
@@ -55,9 +87,11 @@ impl PreparedPush {
                 pack: vec![],
                 limits,
                 objects: 0,
+                receiver_roots: vec![],
             });
         }
-        let graph = Graph::select(objects, &commands, limits, cancel)?;
+        let mut graph = Graph::select(objects, &commands, limits, cancel)?;
+        let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
         let inputs: Vec<_> = graph
             .objects
             .iter()
@@ -80,10 +114,11 @@ impl PreparedPush {
             pack: pack.bytes,
             limits,
             objects: written.objects,
+            receiver_roots,
         })
     }
 
-    /// Number of distinct reachable objects in the buffered pack.
+    /// Number of objects in the buffered pack after any receiver-history exclusion.
     pub fn object_count(&self) -> u32 {
         self.objects
     }

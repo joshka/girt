@@ -3,7 +3,9 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use super::{Advertisement, FetchError, FetchLimits, ReceivedFetch, receive};
+use super::{
+    Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch, receive_with_known,
+};
 use crate::ObjectId;
 use crate::transport::{Server, TransportControl};
 
@@ -21,8 +23,9 @@ use crate::transport::{Server, TransportControl};
 ///
 /// # Errors
 ///
-/// Returns [`receive`]'s failures, path/spawn/pipe errors, or an unsuccessful server exit status.
-/// Waits for a successful exit before returning validated objects. No destination is touched.
+/// Returns [`super::receive`]'s failures, path/spawn/pipe errors, or an unsuccessful server exit
+/// status. Waits for a successful exit before returning validated objects. No destination is
+/// touched.
 pub fn receive_local(
     source: impl AsRef<Path>,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
@@ -54,6 +57,33 @@ pub fn receive_local_with_control(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
+    receive_local_with_known(
+        source,
+        select,
+        &KnownHistory::default(),
+        limits,
+        control,
+        progress,
+    )
+}
+
+/// Negotiates a local fetch using verified local history and owned transport controls.
+///
+/// Combines [`super::receive_with_known`]'s knowledge and validation contract with
+/// [`receive_local_with_control`]'s process, deadline and trust contract. Knowledge preparation
+/// is separate and is not covered by the transport deadline.
+///
+/// # Errors
+///
+/// Returns protocol/knowledge validation, interruption, path, process and storage failures.
+pub fn receive_local_with_known(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, FetchError> {
     control.check()?;
     let source = std::fs::canonicalize(source)?;
     let mut command = Command::new("git");
@@ -69,9 +99,10 @@ pub fn receive_local_with_control(
         )
         .args(["-c", "protocol.version=0", "upload-pack", "--strict"])
         .arg(source);
-    receive_server(&mut command, select, limits, control, progress)
+    receive_server_with_known(&mut command, select, known, limits, control, progress)
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 fn receive_server(
     command: &mut Command,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
@@ -79,13 +110,32 @@ fn receive_server(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
+    receive_server_with_known(
+        command,
+        select,
+        &KnownHistory::default(),
+        limits,
+        control,
+        progress,
+    )
+}
+
+fn receive_server_with_known(
+    command: &mut Command,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, FetchError> {
     let mut child = Server::spawn(command, control)?;
     let received = {
         let (mut reader, mut writer) = child.streams();
-        receive(
+        receive_with_known(
             &mut reader,
             &mut writer,
             select,
+            known,
             limits,
             control.cancel,
             progress,

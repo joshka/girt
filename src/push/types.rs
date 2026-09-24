@@ -54,7 +54,7 @@ pub struct PushLimits {
     /// aggregate pack input bytes so preparation cannot retain more than that payload budget.
     pub read: ReadLimits,
     /// Selected count/payload and generated artifact bounds. The index is generated into a sink;
-    /// its bound still applies. No pack is omitted on repeated or incremental updates.
+    /// its bound still applies. Full selected count/payload bounds apply before exclusion.
     pub pack: PackWriteLimits,
 }
 impl Default for PushLimits {
@@ -178,6 +178,9 @@ pub enum PushFailure {
         /// Advertised value, with `None` meaning unadvertised.
         actual: Option<ObjectId>,
     },
+    /// A root used for exclusion is no longer advertised. No commands were sent.
+    #[error("receiver history root is not advertised: {0}")]
+    KnowledgeChanged(ObjectId),
     /// Duplicate destination, zero ID, or other invalid command.
     #[error("invalid push command: {0}")]
     Command(&'static str),

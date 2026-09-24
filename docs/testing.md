@@ -382,3 +382,34 @@ examples, and Markdown lint. Linux GNU and Windows GNU/MSVC library Clippy cross
 warnings rejected. The [owned transport baseline](benchmarks.md#owned-transport-baseline) records
 actual process/transfer/cleanup measurements on macOS. Linux runtime tests for this change and
 Windows transport support remain outside this evidence.
+
+## Incremental Transfer Completion
+
+- [x] Explicit verified local history supports bounded upload-pack have/ACK negotiation, known-only
+  no-ops and combined received/local connectivity; delta bases remain pack-internal.
+- [x] Explicit push receiver roots exclude only closures inside the fully validated selected graph,
+  with live advertisement confirmation and unchanged force/expected-ref policy. Unavailable or
+  disconnected roots preserve full transfer; changed advertised knowledge fails before commands.
+- [x] Unit coverage includes local count/byte/edge/root bounds, cancellation, missing/corrupt local
+      objects, gitlinks, typed closure validation, ACK states/truncation/repetition and `.have`
+      proof.
+- [x] Disposable Git comparisons cover initial/no-op/incremental fetch and push, shared/divergent
+  histories and merges, tags, unavailable receiver roots, and failed dependency rechecks before
+  publication. Existing push rejection, ref-race and partial-status cases now use exclusion.
+- [x] Both local examples demonstrate explicit knowledge and a repeated operation with no objects.
+- [x] Criterion compares full and reduced preparation/transfers at two sizes, measuring local
+  knowledge preparation separately. Original fixtures, source fingerprints, transfer sizes and
+  cached-storage timing evidence are retained in the incremental benchmark section.
+
+The supported boundary remains SHA-1 protocol v0 with non-thin packs. A single have batch is not an
+optimal graph negotiation algorithm. Full graph validation and local dependency rechecks
+intentionally retain traversal costs; default pack-snapshot limits apply when installation opens the
+destination. No GC retention lock or whole-call deadline is added. Runtime evidence for this
+increment is macOS arm64 with Git 2.55.0; earlier platform CI does not establish Linux runtime
+coverage for it.
+
+Validation passed 855 unit, integration and documentation tests, formatting, all-target Clippy,
+docs.rs and private Rustdoc with warnings rejected. The affected suites passed again after final
+boundary and merge/divergence cases were added. Both disposable examples completed, and Markdown
+passed rumdl and markdownlint-cli2 with the global 100-column configuration. Linux GNU and Windows
+GNU/MSVC library Clippy cross-checks passed; these are compile checks, not runtime evidence.

@@ -803,3 +803,72 @@ fn incomplete_multi_ref_report_keeps_unknown_distinct_from_rejected() {
     assert_eq!(report.refs[1].status, None);
     assert!(!report.all_succeeded());
 }
+
+#[test]
+fn excludes_nested_tags_and_skips_external_gitlinks() {
+    let f = Fixture::new();
+    let tree = f.tree(ObjectId::for_blob(b"external"), EntryMode::Gitlink);
+    let inner = f.tag(tree, ObjectKind::Tree);
+    let outer = f.tag(inner, ObjectKind::Tag);
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![tag_command(outer)],
+        &[inner, inner],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert_eq!(prepared.receiver_roots, vec![inner]);
+}
+
+#[test]
+fn exclusion_requires_selected_graph_to_be_complete() {
+    let f = Fixture::new();
+    let tree = f.tree(ObjectId::for_blob(b"missing"), EntryMode::Blob);
+    let result = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![tag_command(tree)],
+        &[tree],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(PushFailure::Missing(_))));
+}
+
+#[test]
+fn bounds_receiver_root_occurrences() {
+    let f = Fixture::new();
+    let blob = f.blob();
+    let result = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![tag_command(blob)],
+        &[blob, blob],
+        PushLimits {
+            max_refs: 1,
+            ..PushLimits::default()
+        },
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(PushFailure::Limit("receiver roots"))));
+}
+
+#[test]
+fn advertised_have_can_prove_exclusion_without_matching_a_command() {
+    let f = Fixture::new();
+    let blob = f.blob();
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![tag_command(blob)],
+        &[blob],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let mut bytes = pkt(format!("{blob} .have\0report-status\n").as_bytes());
+    bytes.extend(b"0000");
+    bytes.extend(pkt(b"unpack ok"));
+    bytes.extend(pkt(b"ok refs/tags/test"));
+    bytes.extend(b"0000");
+    assert!(run(&bytes, &prepared).unwrap().all_succeeded());
+}

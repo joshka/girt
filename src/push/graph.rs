@@ -108,6 +108,68 @@ impl Graph {
         Ok(graph)
     }
 
+    /// Only roots inside the validated selected graph can prove a complete exclusion closure.
+    /// Unavailable/disconnected roots are ignored rather than read from arbitrary local history.
+    pub fn exclude(
+        &mut self,
+        roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<ObjectId>, Error> {
+        if roots.len() > limits.max_refs {
+            return Err(Error::Limit("receiver roots"));
+        }
+        let mut proven = Vec::new();
+        let mut seen = HashSet::new();
+        let mut pending = VecDeque::new();
+        for &id in roots {
+            check_cancelled(cancel)?;
+            if self.objects.contains_key(&id) && seen.insert(id) {
+                proven.push(id);
+                pending.push_back(id);
+            }
+        }
+        let mut edges = limits.max_edges;
+        while let Some(id) = pending.pop_front() {
+            check_cancelled(cancel)?;
+            let object = &self.objects[&id];
+            let mut edge = |target| {
+                check_cancelled(cancel)?;
+                edges = edges
+                    .checked_sub(1)
+                    .ok_or(Error::Limit("exclusion edges"))?;
+                if seen.insert(target) {
+                    pending.push_back(target);
+                }
+                Ok::<_, Error>(())
+            };
+            match object.kind() {
+                ObjectKind::Blob => {}
+                ObjectKind::Commit => {
+                    let commit = Commit::parse(object.data())?;
+                    edge(commit.fields().tree)?;
+                    for &parent in &commit.fields().parents {
+                        edge(parent)?;
+                    }
+                }
+                ObjectKind::Tree => {
+                    let tree = Tree::parse(object.data())?;
+                    for entry in tree.entries() {
+                        if entry.mode != EntryMode::Gitlink {
+                            edge(entry.id)?;
+                        }
+                    }
+                }
+                ObjectKind::Tag => edge(Tag::parse(object.data())?.fields().target)?,
+            }
+        }
+        for id in seen {
+            check_cancelled(cancel)?;
+            self.objects.remove(&id);
+        }
+        Ok(proven)
+    }
+
     fn is_ancestor(
         &self,
         old: ObjectId,

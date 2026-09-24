@@ -508,3 +508,54 @@ These are initial end-to-end baselines, not a comparison with the former blockin
 poll can add up to one 20-ms polling interval, subject to scheduling. No numerical performance gate
 is imposed. Stall/cleanup tests establish interruption behavior; these throughput measurements do
 not establish worst-case latency or Linux runtime behavior.
+
+## Incremental Transfer Comparison
+
+The `transfer-*` workloads in `benches/fetch.rs` and `benches/push.rs` use the existing
+independently Git-generated 16/256-blob fixtures, then add one child commit sharing its parent's
+tree. Sources are packed and cached; the new commit is loose. Fixture construction, local snapshot
+opening and Git reference setup stay outside sampling. Run sequentially to avoid measurement
+contention:
+
+```sh
+cargo bench --bench push -- transfer-
+cargo bench --bench fetch -- transfer-
+```
+
+Push measures full selection/read/validation/ancestry/pack construction against the same operation
+with the old commit supplied for exclusion. Both validate the entire selected history. Fetch
+measures local server startup, protocol/import/combined-connectivity and cleanup with and without
+preverified knowledge. Knowledge construction is measured separately and is not included in the
+negotiated fetch time; installation/dependency rechecks and separate ref publication are excluded.
+These are cached microbenchmarks, not network bandwidth or cold-disk predictions. Thirty Criterion
+samples follow a one-second warmup and target five seconds of measurement. No numerical acceptance
+gate is imposed.
+
+Measurements use macOS arm64, Rust 1.98.1 and Git 2.55.0. The retained CSV and source fingerprints
+identify the measured code and fixtures. Full and reduced pack bytes are wire pack contents,
+excluding pkt-line framing, advertisements, acknowledgements and progress. Reduced push packs have
+ordinary entries; fetch continues to accept self-contained Git-selected deltas.
+
+Pack columns show objects / bytes; timing columns use milliseconds. Workload sizes count blobs.
+
+| Workload    | Full pack     | Reduced pack | Full ms | Reduced ms | Prep ms  |
+| ----------- | ------------- | ------------ | ------- | ---------- | -------- |
+| Push (16)   | 19 / 39,222   | 1 / 193      | 4.407   | 1.839      | Included |
+| Push (256)  | 259 / 622,141 | 1 / 194      | 67.522  | 27.570     | Included |
+| Fetch (16)  | 19 / 3,646    | 1 / 193      | 24.247  | 23.591     | 1.740    |
+| Fetch (256) | 259 / 19,584  | 1 / 194      | 37.630  | 24.689     | 26.937   |
+
+Times above are Criterion's reported slope estimates where available and mean estimates otherwise;
+[incremental-baseline.csv](benchmarks/incremental-baseline.csv) retains means and 95% confidence
+intervals for every workload. [Source fingerprints](benchmarks/incremental-baseline.sha256) cover
+source, harnesses, fixtures, manifest and lockfile. Push saves compression work while retaining full
+selection validation. Fetch saves transfer/import work, but rebuilding knowledge for each local
+fetch costs more than the full transfer at these sizes. Reused knowledge amortizes preparation; real
+network effects are unmeasured. Dependency revalidation during installation adds local reads and is
+not included in the table.
+
+The disposable integration test also compares initial fetch (19 objects / 3,697 bytes), known-only
+repeat (zero objects / zero pack bytes), and a child-commit fetch (one object / 182 bytes versus 20
+objects / 3,763 bytes for the full branch/tag selection). Repeated conditional push sends an empty
+32-byte pack and still receives server status. Different fixture messages/selections explain the
+small byte differences from the timed workloads.

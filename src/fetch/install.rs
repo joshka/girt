@@ -3,14 +3,15 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use super::{Advertisement, FetchError, FetchLimits, check_cancelled, connectivity};
+use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::pack::Imported;
 use crate::{ObjectId, Repository};
 
-/// A complete protocol response with a verified self-contained pack and selected-tip connectivity.
+/// A validated protocol response with internal delta bases and selected-tip connectivity.
 ///
 /// Owns the original pack and generated index, but no repository files. Drop it to discard a
 /// transfer. Payloads used during validation are released before this result is returned.
+/// Incremental results retain IDs of known-local dependencies; installation rechecks them.
 #[derive(Debug)]
 pub struct ReceivedFetch {
     advertisement: Advertisement,
@@ -19,6 +20,8 @@ pub struct ReceivedFetch {
     index: Vec<u8>,
     checksum: Option<ObjectId>,
     objects: usize,
+    dependencies: Vec<ObjectId>,
+    limits: FetchLimits,
 }
 
 impl ReceivedFetch {
@@ -30,18 +33,48 @@ impl ReceivedFetch {
             index: vec![],
             checksum: None,
             objects: 0,
+            dependencies: vec![],
+            limits: FetchLimits::default(),
         }
     }
 
-    pub(super) fn validate(
+    pub(super) fn without_pack(
+        advertisement: Advertisement,
+        wants: Vec<ObjectId>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, FetchError> {
+        let dependencies = connectivity::validate_with_known(
+            &Default::default(),
+            &known.objects,
+            &wants,
+            limits,
+            cancel,
+        )?;
+        let mut result = Self::empty(advertisement);
+        result.dependencies = dependencies;
+        result.wants = wants;
+        result.limits = limits;
+        Ok(result)
+    }
+
+    pub(super) fn validate_known(
         advertisement: Advertisement,
         wants: Vec<ObjectId>,
         pack: Vec<u8>,
+        known: &KnownHistory,
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
         let imported = Imported::read(&pack, limits, cancel)?;
-        connectivity::validate(&imported.objects, &wants, limits, cancel)?;
+        let dependencies = connectivity::validate_with_known(
+            &imported.objects,
+            &known.objects,
+            &wants,
+            limits,
+            cancel,
+        )?;
         check_cancelled(cancel)?;
         Ok(Self {
             advertisement,
@@ -50,6 +83,8 @@ impl ReceivedFetch {
             index: imported.index,
             checksum: Some(imported.checksum),
             objects: imported.objects.len(),
+            dependencies,
+            limits,
         })
     }
 
@@ -68,7 +103,8 @@ impl ReceivedFetch {
         self.objects
     }
 
-    /// Original received pack size, including framing and checksum; zero for an empty selection.
+    /// Original pack size, including pack header/checksum; zero for an empty or known-only
+    /// selection.
     pub fn pack_bytes(&self) -> usize {
         self.pack.len()
     }
@@ -82,6 +118,13 @@ impl ReceivedFetch {
     /// artifacts are reused; different bytes at either final path fail. Concurrent
     /// deletion/repacking by other tools can still make opening fail and requires retry. The
     /// object directory and ancestors must be trusted.
+    ///
+    /// Before creating artifacts, reopens the destination with [`crate::PackLimits::default`] and
+    /// identity-checks every local object used for connectivity, under the receive call's local
+    /// byte/count and per-read bounds. This also applies to a known-only result with no pack.
+    /// Objects must remain available through subsequent reference publication; GC coordination
+    /// remains the caller's responsibility. Installing into a different repository works only if
+    /// its verified local objects satisfy those same dependencies.
     ///
     /// No references or reflogs change. After success, callers can reopen objects and perform
     /// individual conditional updates through [`crate::refs::References::update_without_reflog`],
@@ -109,6 +152,19 @@ impl ReceivedFetch {
             checksum: self.checksum,
             objects: self.objects,
         };
+        if !self.dependencies.is_empty() {
+            let objects = repository.objects(crate::PackLimits::default())?;
+            let mut bytes = self.limits.max_known_bytes;
+            for &id in &self.dependencies {
+                check_cancelled(cancel)?;
+                let mut read = self.limits.known_read;
+                read.max_object_bytes = read.max_object_bytes.min(bytes);
+                let object = objects.read(id, read)?.ok_or(FetchError::Missing(id))?;
+                bytes = bytes
+                    .checked_sub(object.data().len())
+                    .ok_or(FetchError::Limit("known bytes"))?;
+            }
+        }
         let Some(checksum) = self.checksum else {
             return Ok(result);
         };
@@ -132,7 +188,7 @@ impl ReceivedFetch {
 /// Object publication completed; it says nothing about reference changes or reflogs.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchInstalled {
-    /// Installed/reused pack checksum, or `None` for an empty selection.
+    /// Installed/reused pack checksum, or `None` when no pack was needed.
     pub checksum: Option<ObjectId>,
     /// Verified object count (not the count of objects new to this repository).
     pub objects: usize,

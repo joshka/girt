@@ -66,6 +66,75 @@ fn push(c: &mut Criterion) {
                 .unwrap()
             })
         });
+        let old = fixture.records[fixture.records.len() - 2].0;
+        let commit = girt::Commit::parse(
+            objects
+                .read(old, ReadLimits::default())
+                .unwrap()
+                .unwrap()
+                .data(),
+        )
+        .unwrap();
+        let mut fields = commit.fields().clone();
+        fields.parents = vec![old];
+        fields.message = b"Incremental transfer benchmark\n".to_vec();
+        let next = fixture
+            .repo
+            .loose_objects()
+            .unwrap()
+            .write_commit(&girt::Commit::new(fields).unwrap())
+            .unwrap();
+        let update = PushCommand {
+            name: RefName::new("refs/heads/main").unwrap(),
+            expected: Some(old),
+            new: next,
+            force: ForcePolicy::FastForwardOnly,
+        };
+        let full = PreparedPush::new(
+            &objects,
+            vec![update.clone()],
+            PushLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let reduced = PreparedPush::new_excluding(
+            &objects,
+            vec![update.clone()],
+            &[old],
+            PushLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        eprintln!(
+            "push-incremental,{count},{},{},{},{}",
+            full.object_count(),
+            full.pack_bytes(),
+            reduced.object_count(),
+            reduced.pack_bytes()
+        );
+        group.bench_function(format!("transfer-full-{count}"), |b| {
+            b.iter(|| {
+                PreparedPush::new(
+                    black_box(&objects),
+                    vec![update.clone()],
+                    PushLimits::default(),
+                    &cancel,
+                )
+                .unwrap()
+            })
+        });
+        group.bench_function(format!("transfer-excluding-{count}"), |b| {
+            b.iter(|| {
+                PreparedPush::new_excluding(
+                    black_box(&objects),
+                    vec![update.clone()],
+                    &[old],
+                    PushLimits::default(),
+                    &cancel,
+                )
+                .unwrap()
+            })
+        });
         let mut response = vec![];
         packet(
             &mut response,
