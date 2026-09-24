@@ -160,3 +160,11 @@ required-features = ["http", "ssh"]
 [[example]]
 name = "init_repository"
 doc-scrape-examples = true
+
+[[bench]]
+name = "remotes"
+harness = false
+
+[[example]]
+name = "remote_plan"
+doc-scrape-examples = true

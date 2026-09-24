@@ -780,3 +780,27 @@ Retained [CSV estimates](benchmarks/reference-transaction-baseline.csv) and
 [source fingerprints](benchmarks/reference-transaction-baseline.sha256) identify the measured
 implementation. Samples include concurrent machine activity and are an initial baseline, not a claim
 of isolated-system latency or improved performance.
+
+## Refspec Mapping
+
+`cargo bench --bench remotes` measures `Refspecs::map` over 10 and 10,000 generated full branch
+names. Two positive wildcard specifications map each source to separate tracking/tag destinations,
+and two negative patterns exclude names beginning with `1` or `3`. This returns 16 and 15,556 unique
+mappings, respectively. Parsing, source construction and ID hashing are outside the timed operation.
+Mapping includes input checks, pattern expansion/exclusion, destination validation,
+duplicate/conflict checks, owned plan allocation and destruction. No filesystem or transfer
+operation is measured.
+
+The 2026-09-24 baseline uses Criterion 0.8.2, 30 samples, one-second warmup and two-second target
+measurement per size, the default optimized Cargo bench profile, Rust 1.98.1, and macOS arm64 on
+Apple M2 Max. Inputs are warm in memory; no CPU affinity, frequency or background-work controls were
+applied. The command was `cargo bench --bench remotes > /tmp/girt-remotes-bench.log 2>&1`.
+
+The [CSV](benchmarks/refspec-baseline.csv) retains Criterion median estimates and their 95%
+confidence intervals in nanoseconds. The [source manifest](benchmarks/refspec-baseline.sha256)
+identifies the measured harness and relevant sources; verify with
+`shasum -a 256 -c docs/benchmarks/refspec-baseline.sha256`. Estimates describe this workload and
+host, not a transfer latency, hard memory bound or cross-platform guarantee. No numerical gate is
+set. The implementation scans sources for each positive spec and exclusions for each match; callers
+must bound configuration/input sizes. Retained memory scales with source count and unique plan
+entries.

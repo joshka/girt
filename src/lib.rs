@@ -16,6 +16,13 @@
 //! directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive ancestor.
 //! Discovery stops at malformed or unsupported metadata rather than selecting an outer repository.
 //!
+//! # Planning from remote configuration
+//!
+//! [`remote::Remote::find`] reads named URLs and fetch/push refspecs from [`Repository::config`].
+//! Map explicit resolved sources with [`remote::Refspecs::map`], or select advertised fetch tips
+//! with [`remote::Refspecs::map_advertisement`]. Plans preserve force intent but require separate
+//! endpoint selection, update authorization and conditional publication. No transfer is initiated.
+//!
 //! # Fetching and publishing references
 //!
 //! Build optional [`fetch::KnownHistory`] from verified local objects before negotiation. Local
@@ -54,6 +61,7 @@
 //!   conditional transactions with explicit reflogs, and single-reference operations without
 //!   reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
+//! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
 //! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
@@ -95,6 +103,7 @@ pub mod pack;
 mod packet;
 pub mod push;
 pub mod refs;
+pub mod remote;
 mod repository;
 mod tag;
 pub mod transport;

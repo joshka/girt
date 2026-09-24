@@ -55,7 +55,10 @@ packs, deltas, identities, and selected-tip connectivity before explicit index-l
 Explicit `fetch::KnownHistory` enables bounded have/ACK negotiation and known-only no-op fetches;
 installation rechecks the required local objects. Reference updates remain separate conditional
 operations without reflogs. Run `cargo run --example fetch_local` for a complete disposable example.
-Credential discovery, remote/refspec policy, shallow/partial fetches, automatic tags, and pruning
+`remote::Remote` reads named raw URLs and refspecs from the repository configuration snapshot;
+`remote::Refspecs` maps explicit source refs without executing transfers or authorizing updates. Run
+`cargo run --example remote_plan` for fetch selection and conditional push preparation. Credential
+discovery, implicit remote/branch selection, shallow/partial fetches, automatic tags, and pruning
 are not implemented. See
 [fetch compatibility](docs/compatibility.md#upload-pack-fetch).
 

@@ -624,3 +624,33 @@ workflow, private Rustdoc with warnings rejected, rendered transaction documenta
 Markdown checks also passed. This increment adds no dependencies or platform support. Runtime
 validation on Linux/Windows, reflog removal/expiry, streaming logs, recovery journals and
 filesystem-wide atomicity are deferred.
+
+### Remote Configuration and Refspec Mapping Completion
+
+- [x] Named remote interpretation preserves byte values, occurrence order, URL resets and pushURL
+      fallback. Missing remotes/keys and malformed values have explicit outcomes. Only four keys are
+      interpreted; global sources, rewriting and implicit orchestration policies are deferred.
+- [x] Seventy-seven focused named unit cases exercise direction-specific syntax, unsupported forms,
+      wildcard captures, exclusions, force intent, deletion, ordering, duplicates, collisions,
+      missing sources, byte names, zero IDs and advertisement hints. Mapping returns no partial
+      plan, reads no objects and performs no I/O; storage races and recovery are inapplicable.
+- [x] Twenty-seven independent Git CLI integration cases verify configuration and actual local
+      fetch/push mappings in disposable repositories, including annotated tags and symbolic HEAD. No
+      upstream implementation/test source or copyright-audit material is used.
+- [x] `remote_plan` demonstrates configuration snapshots, fetch callback selection/error retention
+      and explicit-policy push preparation without sending a transfer.
+- [x] Criterion measures two wildcard mappings and two exclusions at 10 and 10,000 sources, with
+      source fingerprints and median intervals retained in the
+      [mapping baseline](benchmarks.md#refspec-mapping). No hard resource or performance gate is
+      claimed; input sizes remain caller-bounded.
+- [x] [Compatibility contracts](compatibility.md#remote-configuration-and-refspec-mapping)
+      distinguish supported syntax, syntactic force from authorization, deletion planning from
+      transport support, duplicate conflict policy and deferred consumer policy.
+
+On macOS arm64 with Rust 1.98.1 and Git 2.55.0, `just check` passed: 853 unit tests, 366 integration
+cases and 14 doctests, all-target/all-feature Clippy and docs.rs with warnings rejected. The
+runnable example, private-item Rustdoc, rumdl and markdownlint-cli2 also passed. Generated
+HTML/navigation anchors were inspected; browser security policy blocked local-file rendering, so
+visual Rustdoc review remains unperformed. No dependency, platform-support, transfer, or
+reference-storage changes are included. Linux and Windows runtime evidence for this increment
+remains uncollected.

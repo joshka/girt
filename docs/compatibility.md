@@ -9,10 +9,10 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
-explicit reflog policy. The single-reference no-reflog operations remain available. HTTP and SSH
-downloads share owned validation state. Installation takes explicit destination snapshot limits.
-Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
-implied.
+explicit reflog policy, plus named remote configuration and pure refspec mapping. The
+single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
+validation state. Installation takes explicit destination snapshot limits. Read and operation limits
+remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
@@ -1339,3 +1339,66 @@ post-preparation filesystem failures exercise packed replacement, loose publicat
 first/later log failures; an injected short writer verifies retained append byte counts. Runtime
 evidence for this increment is macOS arm64 with Git 2.55.0; no new platform support is claimed.
 Expiry/GC, reflog removal, remote/refspec policy, reftable and recovery journals are deferred.
+
+## Remote Configuration and Refspec Mapping
+
+`remote::Remote::find(repository.config(), name)` reads an owned snapshot of four remote keys:
+`url`, `pushurl`, `fetch`, and `push`. Names compare exact bytes; key names ignore ASCII case.
+Repeated sections and keys retain file order. Empty URLs clear the preceding list for that key;
+fetch uses the first remaining URL, and push uses all remaining pushURLs or falls back to all URLs.
+Duplicates remain visible. URLs are opaque bytes, not validated transport endpoints or rewritten
+addresses. Missing keys give empty lists; a missing named subsection with entries returns `None`.
+Empty section headers are not retained by `Config`. Implicit boolean values fail with key and
+occurrence diagnostics. Both refspec lists are parsed eagerly, and empty refspec values fail.
+
+`remote::Refspecs` supports explicit full `refs/` names, exact source `HEAD`, one-star mappings
+(including partial components, empty captures, slash-containing captures and non-UTF-8 bytes),
+leading force intent, negative fetch exclusions, source-only fetch selection, same-name push and
+explicit push deletion. Fetch exclusions apply regardless of position. Missing explicit positive
+sources fail, including excluded ones; unmatched patterns and exclusions do not. Empty lists produce
+empty plans with no implicit HEAD or branch selection.
+
+Plans follow positive-spec order and then source-input order. Exact duplicate mappings collapse at
+first occurrence. Distinct sources targeting the same destination fail even if IDs agree; differing
+force intent for one destination also fails. This deliberately conservative conflict rule does not
+attempt Git's CLI conflict resolution in every duplicate case. Source-only selections may coexist
+with destination mappings. Duplicate input names and zero IDs fail even when unselected. Wildcard
+substitutions are revalidated as full names before returning a plan. Errors return no partial plan.
+
+Advertisement mapping discards peeled hints and preserves each advertised tip name/ID, including
+symbolic HEAD. It neither follows capability aliases nor creates a symbolic local ref. Callers
+resolve local symbolic refs before supplying push inputs. A `+` flag records syntax only; ancestry,
+expected old values, object kinds, namespace restrictions, destination prefix conflicts and force
+authorization remain separate. Mapping can describe push deletion even though current `push`
+transports cannot send it. Push preparation may reject namespaces accepted by this general mapper.
+
+No network, object lookup, config editing or reference mutation occurs in these APIs. System/global
+configuration, includes, URL rewriting, credential discovery, `push.default`, branch selection,
+matching push, shorthand names, arbitrary revision expressions, raw object-ID sources, empty/default
+fetch forms and `tag <name>` shorthand are outside the supported slice. Other configuration options
+are uninterpreted, including mirror, pruning, tag following, partial clone, custom service commands
+and transport options. Their presence does not change the four-key interpretation. Consumers must
+choose their own orchestration policy rather than treat the result as all of Git's remote behavior.
+
+`examples/remote_plan.rs` reads disposable repository config, selects IDs from a supplied
+advertisement, retains destination mappings, and prepares a conditional creation push with an
+explicit no-force policy. It sends nothing. Existing fetch selection callbacks cannot directly
+return mapping errors: a caller can save the mapping result, return an empty selection on failure,
+and inspect that result before accepting the transfer outcome. Reference publication follows
+validated object installation as a separate operation with explicit expectations and reflog policy.
+
+Independent fixtures in `tests/remotes.rs` create bare SHA-1 repositories using Git `init`,
+`mktree`, `commit-tree`, `update-ref`, `tag` and `config`, then compare actual `fetch`, `push`,
+`ls-remote`, `remote get-url`, `for-each-ref` and `rev-parse` behavior. They exercise wildcard and
+explicit mappings, exclusion position, empty/partial captures, same-name push, HEAD, annotated tag
+identity, duplicate mappings, missing sources, collisions, deletion and URL reset/fallback. Fixtures
+use throwaway local paths and isolated Git config; no upstream source, test data or copyright-audit
+material informed implementation. Format references are the public
+[fetch refspec documentation](https://git-scm.com/docs/git-fetch),
+[push refspec documentation](https://git-scm.com/docs/git-push), and
+[remote configuration documentation](https://git-scm.com/docs/git-config#Documentation/git-config.txt-remotenameurl).
+
+The [Criterion baseline](benchmarks.md#refspec-mapping) measures expansion over 10 and 10,000 source
+refs. Input sizes are caller-bounded; the mapper has no cancellation or hard memory limit. Runtime
+interoperability evidence for this increment is macOS arm64 with Git 2.55.0; Linux and Windows
+runtime checks have not been performed for this increment.
