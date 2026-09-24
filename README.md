@@ -19,15 +19,16 @@ opaque extra headers, and message bytes, including embedded signatures. Storing 
 not create a tag reference. Explicit-path repository opening supports ordinary, bare, separate Git
 directories, and linked worktrees, deriving SHA-1 storage from repository-local configuration.
 Unsupported configuration sources and repository extensions return errors. Files-backend references
-support byte-preserving names, loose/packed reads, symbolic resolution, and conditional single-ref
-updates explicitly without reflogs. HEAD and per-worktree refs use the detected layout. Repository
-object reads combine live loose storage with bounded snapshots of SHA-1 pack/index v2 pairs,
-including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is experimental.
+support byte-preserving names, loose/packed enumeration and reads, symbolic resolution, and
+conditional single-ref updates and deletion explicitly without reflogs. HEAD and per-worktree refs
+use the detected layout. Repository object reads combine live loose storage with bounded snapshots
+of SHA-1 pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is
+experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
 dependencies and [platform validation](docs/compatibility.md#platform-and-git-version-validation).
-SHA-256, reflogs, reference deletion, multi-ref transactions, and a CLI are not implemented.
+SHA-256, reflogs, multi-ref transactions, and a CLI are not implemented.
 
 Repository discovery searches physical ancestors, with an optional inclusive ceiling. Initialization
 creates ordinary or bare SHA-1 repositories with unborn `main` and refuses reinitialization. See the

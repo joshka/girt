@@ -8,10 +8,10 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 ## Current Capabilities and Evidence
 
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
-fetch, conditional branch/tag push, and explicit reference updates without reflogs. HTTP and SSH
-downloads share owned validation state. Installation takes explicit destination snapshot limits.
-Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
-implied.
+fetch, conditional branch/tag push, and reference enumeration and explicit updates/deletion without
+reflogs. HTTP and SSH downloads share owned validation state. Installation takes explicit
+destination snapshot limits. Read and operation limits remain per phase; no process-wide heap or
+hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
@@ -501,16 +501,17 @@ An empty or absent packed-refs file is accepted. Nonempty files use LF-terminate
 optionally starting with `# pack-refs with:` and space-separated `peeled`, `fully-peeled`, and/or
 `sorted` traits. Unknown traits are unsupported. Each direct record contains 40 hexadecimal digits,
 one space and a validated shared reference name. A single `^` record with a nonzero 40-digit ID may
-immediately follow a direct record. Peeled IDs are checked syntactically and discarded; the traits
-do not prove object type, existence, or correctness of the peel. Resolution returns the direct
-tag-object ID.
+immediately follow a direct record. Peeled IDs are checked syntactically and omitted from lookup
+results; the traits do not prove object type, existence, or correctness of the peel. Resolution
+returns the direct tag-object ID.
 
 Both headerless/unsorted records and Git-generated sorted/peeled files are supported. Claimed sorted
 order is checked bytewise. Duplicate names, misplaced headers, orphan/repeated peel lines, blank
 lines, unknown comments, invalid names/IDs, missing final LF and packed per-worktree names fail.
 Whenever packed fallback is needed, the entire file is read and validated, including unrelated
-records; a loose hit does not open it. Every update validates packed-refs. Reads allocate in
-proportion to file size without a configurable limit. There is no packed cache or indexing yet.
+records; a loose hit does not open it. Every update, deletion, and enumeration validates
+packed-refs. Reads allocate in proportion to file size without a configurable limit. There is no
+packed cache or indexing yet.
 
 ### Conditional Publication and Reflogs
 
@@ -529,8 +530,7 @@ Existing locks cause an immediate error, with no retry or lock stealing. Ancesto
 conflicts in packed refs are checked before publication; filesystem conflicts reject loose
 namespaces, including empty directories. A successful write renames its complete owned lock over the
 loose destination. This shadows an existing packed value without changing packed-refs or unrelated
-reference data. Deletion is deferred because removing only a loose file would expose an older packed
-value.
+reference data. Conditional deletion removes packed data first, as described below.
 
 These methods deliberately omit all reflog writes regardless of `core.logAllRefUpdates` and leave
 existing logs unchanged. Git normally creates/appends relevant logs and records old/new IDs and
@@ -573,8 +573,64 @@ succeeds. These cover cooperating writers, not arbitrary direct file rewrites or
 The runnable `publish_branch` example stores two commits, publishes an unborn branch through HEAD,
 and conditionally advances it while preserving HEAD's symbolic value. Criterion measures warm loose
 reads, HEAD resolution, no-reflog updates, and packed lookups over 10 and 10,000 refs; see the
-[reference baseline](benchmarks.md#reference-baseline). Reflogs, multi-ref transactions, deletion,
-reftable, object packs, graph traversal, discovery and transport remain outside this capability.
+[reference baseline](benchmarks.md#reference-baseline). Reflogs and multi-ref transactions remain
+outside reference storage. Later increments add enumeration/deletion and the other repository
+capabilities documented separately below.
+
+### Reference Enumeration and Deletion
+
+`References::list` returns owned `Reference { name, target }` values in bytewise name order. It
+includes all `refs/` namespaces visible to the opened worktree, with shared refs from the common
+directory and private refs from the current worktree. HEAD and other pseudorefs are excluded. Use
+`list_namespace` with `refs/heads` or `refs/tags` to select branches or tags; a namespace selects
+the exact name and its slash-delimited descendants. Missing namespaces are empty. Symbolic targets
+are returned as stored, including dangling targets and cycles; tags are not peeled. Loose values
+shadow packed values. Invalid loose data fails instead of falling back, and conflicting effective
+names are rejected. Empty directories, dot-prefixed entries and `.lock` entries are ignored.
+
+Enumeration validates all packed data once and visits selected loose paths without locking. It
+allocates for the packed data, effective names and pending directories. There is no configurable
+size limit or point-in-time snapshot. Concurrent additions/deletions may be missed or included; a
+vanished loose ref can leave a previously read packed value in the result. An owned list stays
+unchanged after return, but callers must pass an expected value when acting on its observations.
+Malformed selected loose files and filesystem symlinks are errors; unselected loose files are not
+read. Packed errors anywhere fail even a filtered enumeration.
+
+`delete_without_reflog` compares and deletes the named stored target. A symbolic name is removed
+without following it. `delete_resolved_without_reflog` locks up to 32 symbolic hops and deletes only
+the terminal name; HEAD can remain unborn and aliases can remain dangling. Both require an explicit
+`Expected`: `Value` checks the effective current value, `Absent` accepts only absence, and `Any`
+accepts a valid value or absence. Deleting an absent name with `Absent` or `Any` succeeds without
+changing reference contents. Conditions and existing data are checked before any reference mutation.
+
+Deletion holds `packed-refs.lock` and the selected name's lock (or the entire symbolic chain). It
+stages a replacement packed file in the common directory and atomically publishes it while retaining
+the packed lock, then unlinks the loose file. Removing the packed record first prevents loose
+removal from exposing an older packed value. Only the selected record and its following peel line
+are removed: unrelated bytes, header spacing/traits, ordering, hexadecimal case and peel records are
+retained. Loose-only deletion does not create packed storage. Parent directories, reflogs and
+objects are left in place. No hooks or reflog writes occur.
+
+This is not a two-file transaction or crash recovery protocol. A precondition failure preserves both
+reference files. Packed publication failure leaves both values intact. If packed removal succeeds
+and loose removal fails, `ReferenceError::PackedDeleted` reports partial completion: the current
+loose ref remains while its packed copy has been removed. No rollback is attempted. Locks and
+temporary files have best-effort cleanup; empty directories or stale cleanup files may remain. No
+fsync is performed. Cooperating writers are excluded while the locks are held, but readers holding
+old packed data can observe stale values, and later writers can recreate a deleted name. The
+Unix/local/trusted-filesystem assumptions above remain in force.
+
+Original unit and integration fixtures cover namespace boundaries and ordering, loose/symbolic
+shadowing, malformed input, exact expectations and absence, symbolic-name versus terminal deletion,
+cycle/depth failures, lock contention, temporary publication failure and partial unlink failure.
+Git-created branches and annotated tags exercise packed removal with unrelated peel preservation;
+Git `show-ref`, `rev-parse`, `symbolic-ref` and `for-each-ref` observe the results. Linked worktrees
+exercise all three private namespaces alongside shared packed branches, and a separate Git directory
+exercises gitfile routing. Races with Git conditional updates and `pack-refs --all` exercise writer
+coordination; a retained-lock experiment confirms that Git packing refuses the reserved packed file
+after independent replacement. These tests validate observable behavior without Git source or
+upstream fixtures. They do not establish arbitrary crash recovery or reader snapshot isolation. The
+`publish_branch` example now enumerates and conditionally deletes the branch it published.
 
 ## SHA-1 Pack Reading
 

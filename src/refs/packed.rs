@@ -68,6 +68,24 @@ pub(super) fn parse(bytes: &[u8], path: &Path) -> Result<Packed, ReferenceError>
     Ok(entries)
 }
 
+/// Removes one direct record and its immediately following peel from already validated bytes.
+/// Retain unrelated representation exactly, including header spacing and hexadecimal case.
+pub(super) fn without_ref(bytes: &[u8], name: &RefName) -> Vec<u8> {
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut removed = false;
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if line.starts_with(b"^") && removed {
+            continue;
+        }
+        removed =
+            line.get(40) == Some(&b' ') && line.get(41..line.len() - 1) == Some(name.as_bytes());
+        if !removed {
+            result.extend_from_slice(line);
+        }
+    }
+    result
+}
+
 pub(super) fn parse_id(bytes: &[u8], path: &Path) -> Result<ObjectId, ReferenceError> {
     let id = std::str::from_utf8(bytes)
         .ok()
@@ -94,6 +112,39 @@ mod tests {
         assert_eq!(
             entries[&RefName::new(b"refs/tags/z").unwrap()],
             ID.parse().unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::first(
+        "refs/tags/z",
+        "2222222222222222222222222222222222222222 refs/heads/a\n"
+    )]
+    #[case::last(
+        "refs/heads/a",
+        "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD refs/tags/z\n^1111111111111111111111111111111111111111\n"
+    )]
+    fn deletion_preserves_unsorted_headerless_representation(
+        #[case] name: &str,
+        #[case] expected: &str,
+    ) {
+        let bytes = b"ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD refs/tags/z\n^1111111111111111111111111111111111111111\n2222222222222222222222222222222222222222 refs/heads/a\n";
+        parse(bytes, Path::new("packed-refs")).unwrap();
+        assert_eq!(
+            without_ref(bytes, &RefName::new(name).unwrap()),
+            expected.as_bytes()
+        );
+    }
+
+    #[test]
+    fn removing_final_record_leaves_valid_empty_packed_file() {
+        let bytes = format!("{ID} refs/heads/a\n");
+        let remaining = without_ref(bytes.as_bytes(), &RefName::new(b"refs/heads/a").unwrap());
+        assert!(remaining.is_empty());
+        assert!(
+            parse(&remaining, Path::new("packed-refs"))
+                .unwrap()
+                .is_empty()
         );
     }
 

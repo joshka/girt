@@ -559,3 +559,39 @@ was performed for this revision.
 - [x] Local checks pass on macOS arm64 with Git 2.55.0 and Rust 1.98.1: `just check`, the executable
       example, private-item Rustdoc, and Markdown lint. Linux, Windows, and actual mount-point
       crossing remain untested for this increment.
+
+### Reference Enumeration and Conditional Deletion Completion
+
+- [x] `list` and `list_namespace` return ordered stored values with loose-over-packed precedence,
+      current-worktree routing and explicit live-read semantics. HEAD is read separately; selected
+      namespaces use exact-or-descendant matching rather than arbitrary byte prefixes.
+- [x] Local tests cover filtering, malformed data, byte names, conflicts, ignored lock/dot entries,
+      symbolic shadowing, packed metadata retention, expected-value mismatch and absence,
+      cycle/depth failures, lock ownership, failed packed publication and partial unlink failure.
+- [x] `publish_branch` and the namespace doctest show enumeration followed by conditional deletion;
+      resolved deletion preserves symbolic HEAD and leaves the branch unborn.
+- [x] Git-created branches and annotated tags exercise both packed-only and loose-over-packed
+      deletion. Git verifies absence, surviving tag peeling, symbolic names, and later
+      updates/repacking. Linked worktrees cover shared and all three private namespaces; a gitfile
+      covers separate metadata.
+- [x] Conditional-writer and packed-writer races exercise Git coordination. An independent
+      retained-lock experiment checks Git packing across packed-file replacement. Precondition
+      failures preserve reference contents; later unlink errors explicitly report partial packed
+      deletion.
+- [x] The existing Criterion reference harness includes packed enumeration/deletion at 10 and 10,000
+      tags and traversal of 1,000 loose tags, each alongside one loose branch. Source fingerprints
+      and estimates are retained in the
+      [enumeration/deletion baseline](benchmarks.md#reference-enumeration-and-deletion).
+- [x] Public contracts and
+      [compatibility evidence](compatibility.md#reference-enumeration-and-deletion) describe the
+      no-reflog, no-snapshot, partial-I/O-failure and best-effort cleanup boundaries.
+- [x] `just check` passes on macOS arm64 with Rust 1.98.1 and Git 2.55.0: 744 unit tests, 332
+      integration tests and 14 doctests, plus all-target/all-feature Clippy and docs.rs with
+      warnings rejected. Reference coverage includes 96 unit tests and 42 integration tests. No new
+      platform support is claimed; these deletion/enumeration tests have not been executed on Linux
+      or Windows.
+
+The implementation uses no Git source, upstream tests, or copyright-audit material. Packed-first
+ordering follows the independently reasoned storage invariant and the maintainer's chosen contract.
+No batch transactions, reflog policy, remote/refspec policy, crash recovery, or new dependencies are
+included. Benchmark results describe warm local storage, not reader isolation or crash durability.

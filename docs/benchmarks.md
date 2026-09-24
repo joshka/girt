@@ -712,3 +712,38 @@ These are small-payload ordering measurements, not large-payload or peak-memory 
 resolver and defaults remain unchanged: their existing work bound is explicit, and no required
 consumer workload currently justifies a ready-queue redesign. A future need to accept larger
 deep-forward packs should revisit the algorithm rather than silently raise the work allowance.
+
+## Reference Enumeration and Deletion
+
+The existing reference harness measures the new whole-store traversal and packed-file rewriting
+paths because their work scales with the number of refs. Run:
+
+```sh
+cargo bench --bench references -- 'enumerate|delete-shadowed' --measurement-time 4
+```
+
+The original fixture has 10 or 10,000 packed tag refs alongside one loose branch. Enumeration reads
+and validates packed records, traverses loose files and returns owned ordered values. Deletion
+removes the last packed tag and a loose copy of the same tag, including locks, full packed parsing,
+replacement-file publication, unlink and cleanup. Criterion `iter_batched` with `PerIteration`
+resets both files outside the timed deletion. A separate enumeration workload has 1,000 loose tags
+plus the loose branch. IDs are independently chosen nonzero bytes; no object lookup is measured.
+
+These are warm-cache local filesystem measurements on macOS arm64, Rust 1.98.1 and Git 2.55.0,
+collected on 2026-09-24 with 30 samples, one-second warmup and a four-second measurement target.
+They measure neither cold storage nor concurrent writers, peak memory, fsync or crash durability. No
+numerical regression gate or general performance improvement is claimed.
+
+| Operation                      | Estimate (ms) | 95% interval (ms) |
+| ------------------------------ | ------------: | ----------------: |
+| Enumerate 10 packed tags       |        0.0752 |     0.0744–0.0761 |
+| Delete from 10 packed tags     |        0.5341 |     0.5167–0.5641 |
+| Enumerate 10,000 packed tags   |        3.8744 |     3.8582–3.8942 |
+| Delete from 10,000 packed tags |        3.9309 |     3.8738–4.0002 |
+| Enumerate 1,000 loose tags     |       26.1378 |   25.8339–26.5265 |
+
+Retained [CSV estimates](benchmarks/reference-enumeration-baseline.csv) and
+[source fingerprints](benchmarks/reference-enumeration-baseline.sha256) identify the measured
+implementation and fixture. All workloads include the additional loose branch. Enumeration of many
+loose files pays for individual filesystem reads; the packed workloads parse a single file. The
+measurements establish a baseline, without a claim about other filesystems or platforms.

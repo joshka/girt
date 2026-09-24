@@ -625,3 +625,378 @@ fn symbolic_head_cannot_point_outside_refs() {
     assert!(!root.path().join("packed-refs.lock").exists());
     assert!(Repository::open(root.path()).is_ok());
 }
+
+#[test]
+fn enumerates_git_refs_and_deletes_shadowed_branch_and_packed_tag() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["tag", "-a", "keep", "-m", "keep", &first.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["tag", "-a", "remove", "-m", "remove", &first.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let packed_tags = fs::read(root.path().join("packed-refs")).unwrap();
+    let keep = oid(&git(root.path(), &["rev-parse", "refs/tags/keep"], b""));
+    let second = second_commit(root.path(), first);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &second.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["symbolic-ref", "refs/heads/alias", "refs/heads/main"],
+        b"",
+    );
+    let refs = repo.references().unwrap();
+    let entries = refs.list().unwrap();
+    let names: Vec<_> = entries.iter().map(|entry| entry.name.as_bytes()).collect();
+    assert_eq!(
+        names,
+        vec![
+            b"refs/heads/alias".as_slice(),
+            b"refs/heads/main",
+            b"refs/tags/keep",
+            b"refs/tags/remove"
+        ]
+    );
+    assert_eq!(entries[0].target, Target::Symbolic(name("refs/heads/main")));
+    assert_eq!(entries[1].target, Target::Direct(second));
+    assert_eq!(
+        git(root.path(), &["for-each-ref", "--format=%(refname)"], b""),
+        b"refs/heads/alias\nrefs/heads/main\nrefs/tags/keep\nrefs/tags/remove\n"
+    );
+    let keep_peel = git(root.path(), &["rev-parse", "refs/tags/keep^{}"], b"");
+    let tags = refs.list_namespace(&name("refs/tags")).unwrap();
+    refs.delete_without_reflog(
+        &name("refs/tags/remove"),
+        Expected::Value(tags[1].target.clone()),
+    )
+    .unwrap();
+    refs.delete_without_reflog(
+        &name("refs/heads/main"),
+        Expected::Value(Target::Direct(second)),
+    )
+    .unwrap();
+    assert_eq!(refs.read(&name("refs/heads/main")).unwrap(), None);
+    assert!(
+        !git_attempt(
+            root.path(),
+            &["show-ref", "--verify", "refs/heads/main"],
+            b""
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !git_attempt(
+            root.path(),
+            &["show-ref", "--verify", "refs/tags/remove"],
+            b""
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        git(root.path(), &["rev-parse", "refs/tags/keep^{}"], b""),
+        keep_peel
+    );
+    assert_eq!(
+        git(root.path(), &["symbolic-ref", "refs/heads/alias"], b""),
+        b"refs/heads/main\n"
+    );
+    let remaining = fs::read(root.path().join("packed-refs")).unwrap();
+    let header = packed_tags
+        .split_inclusive(|byte| *byte == b'\n')
+        .next()
+        .unwrap();
+    let keep_record = format!("{keep} refs/tags/keep\n^{first}\n");
+    assert_eq!(remaining, [header, keep_record.as_bytes()].concat());
+    // Git can publish and repack after girt releases its locks; deletion left no stale old tip.
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string(), ""],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        Some(Target::Direct(first))
+    );
+}
+
+#[rstest]
+#[case::bisect("refs/bisect/test")]
+#[case::rewritten("refs/rewritten/test")]
+#[case::worktree("refs/worktree/test")]
+fn lists_and_deletes_current_worktree_refs_without_touching_other_worktree(#[case] private: &str) {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["update-ref", private, &first.to_string()],
+        b"",
+    );
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("linked");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            worktree.to_str().unwrap(),
+            &first.to_string(),
+        ],
+        b"",
+    );
+    let second = second_commit(root.path(), first);
+    git(
+        &worktree,
+        &["update-ref", private, &second.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let linked = Repository::open(&worktree).unwrap();
+    let refs = linked.references().unwrap();
+    assert_eq!(
+        refs.list_namespace(&name(private)).unwrap()[0].target,
+        Target::Direct(second)
+    );
+    refs.delete_without_reflog(&name(private), Expected::Value(Target::Direct(second)))
+        .unwrap();
+    refs.delete_without_reflog(
+        &name("refs/heads/main"),
+        Expected::Value(Target::Direct(first)),
+    )
+    .unwrap();
+    assert!(refs.list().unwrap().is_empty());
+    assert!(
+        !git_attempt(&worktree, &["rev-parse", "--verify", private], b"")
+            .status
+            .success()
+    );
+    assert_eq!(oid(&git(root.path(), &["rev-parse", private], b"")), first);
+    assert_eq!(
+        repo.references().unwrap().list().unwrap()[0].target,
+        Target::Direct(first)
+    );
+    assert!(
+        !git_attempt(
+            root.path(),
+            &["show-ref", "--verify", "refs/heads/main"],
+            b""
+        )
+        .status
+        .success()
+    );
+}
+
+#[test]
+fn ordinary_gitdir_file_layout_lists_and_deletes_refs() {
+    let parent = tempfile::tempdir().unwrap();
+    let worktree = parent.path().join("worktree");
+    let metadata = parent.path().join("metadata");
+    git(
+        parent.path(),
+        &[
+            "init",
+            "--template=",
+            "--initial-branch=main",
+            "--object-format=sha1",
+            "--separate-git-dir",
+            metadata.to_str().unwrap(),
+            worktree.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let tree = git(&worktree, &["mktree"], b"");
+    let first = oid(&git(
+        &worktree,
+        &["commit-tree", std::str::from_utf8(&tree).unwrap().trim()],
+        b"First\n",
+    ));
+    git(
+        &worktree,
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(&worktree, &["pack-refs", "--all"], b"");
+    let repo = Repository::open(&worktree).unwrap();
+    assert_eq!(
+        repo.references().unwrap().list().unwrap()[0].target,
+        Target::Direct(first)
+    );
+    repo.references()
+        .unwrap()
+        .delete_resolved_without_reflog(&name("HEAD"), Expected::Value(Target::Direct(first)))
+        .unwrap();
+    assert_eq!(
+        git(&worktree, &["symbolic-ref", "HEAD"], b""),
+        b"refs/heads/main\n"
+    );
+    assert!(
+        !git_attempt(&worktree, &["rev-parse", "--verify", "HEAD"], b"")
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn git_conditional_update_racing_girt_deletion_cannot_both_succeed() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let second = second_commit(root.path(), first);
+    let barrier = std::sync::Barrier::new(2);
+    let (ours, theirs) = std::thread::scope(|scope| {
+        let ours = scope.spawn(|| {
+            barrier.wait();
+            repo.references().unwrap().delete_without_reflog(
+                &name("refs/heads/main"),
+                Expected::Value(Target::Direct(first)),
+            )
+        });
+        let theirs = scope.spawn(|| {
+            barrier.wait();
+            git_attempt(
+                root.path(),
+                &[
+                    "update-ref",
+                    "refs/heads/main",
+                    &second.to_string(),
+                    &first.to_string(),
+                ],
+                b"",
+            )
+        });
+        (ours.join().unwrap(), theirs.join().unwrap())
+    });
+    assert_ne!(ours.is_ok(), theirs.status.success());
+    assert_ne!(
+        repo.references()
+            .unwrap()
+            .read(&name("refs/heads/main"))
+            .unwrap(),
+        Some(Target::Direct(first))
+    );
+}
+
+#[test]
+fn git_packing_racing_deletion_does_not_resurrect_the_branch() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let second = second_commit(root.path(), first);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &second.to_string()],
+        b"",
+    );
+    let barrier = std::sync::Barrier::new(2);
+    let (deleted, packed) = std::thread::scope(|scope| {
+        let deleted = scope.spawn(|| {
+            barrier.wait();
+            repo.references().unwrap().delete_without_reflog(
+                &name("refs/heads/main"),
+                Expected::Value(Target::Direct(second)),
+            )
+        });
+        let packed = scope.spawn(|| {
+            barrier.wait();
+            git_attempt(root.path(), &["pack-refs", "--all"], b"")
+        });
+        (deleted.join().unwrap(), packed.join().unwrap())
+    });
+    assert!(deleted.is_ok() || packed.status.success());
+    let actual = repo
+        .references()
+        .unwrap()
+        .read(&name("refs/heads/main"))
+        .unwrap();
+    assert_eq!(actual.is_none(), deleted.is_ok());
+    assert_ne!(actual, Some(Target::Direct(first)));
+}
+
+#[test]
+fn git_packed_writer_honors_lock_retained_across_replacement() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let second = second_commit(root.path(), first);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &second.to_string()],
+        b"",
+    );
+    // Independently exercise the publication protocol against Git: the reservation remains
+    // present after a separate file replaces packed-refs. No Git implementation is consulted.
+    fs::write(root.path().join("packed-refs.lock"), b"reservation").unwrap();
+    fs::write(
+        root.path().join("replacement"),
+        b"# pack-refs with: sorted\n",
+    )
+    .unwrap();
+    fs::rename(
+        root.path().join("replacement"),
+        root.path().join("packed-refs"),
+    )
+    .unwrap();
+    let blocked = git_attempt(
+        root.path(),
+        &["-c", "core.packedRefsTimeout=0", "pack-refs", "--all"],
+        b"",
+    );
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("packed-refs.lock"));
+    assert_eq!(
+        fs::read(root.path().join("packed-refs.lock")).unwrap(),
+        b"reservation"
+    );
+    assert_eq!(
+        fs::read(root.path().join("packed-refs")).unwrap(),
+        b"# pack-refs with: sorted\n"
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .read(&name("refs/heads/main"))
+            .unwrap(),
+        Some(Target::Direct(second))
+    );
+    fs::remove_file(root.path().join("packed-refs.lock")).unwrap();
+    git(root.path(), &["pack-refs", "--all"], b"");
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .read(&name("refs/heads/main"))
+            .unwrap(),
+        Some(Target::Direct(second))
+    );
+}

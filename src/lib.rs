@@ -48,8 +48,8 @@
 //!
 //! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
 //!   initialization of bare or ordinary SHA-1 repositories.
-//! - [`refs`]: validated reference names, loose/packed reads, symbolic resolution, and conditional
-//!   single-reference updates explicitly without reflogs.
+//! - [`refs`]: validated reference names, loose/packed enumeration and reads, symbolic resolution,
+//!   and conditional single-reference updates/deletion explicitly without reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
@@ -76,7 +76,8 @@
 //! and push accept v0 streams or local Git server adapters. The optional `http` feature adds async
 //! smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a
 //! caller-owned Tokio runtime; fetch pack validation remains an explicit synchronous step.
-//! Files references support reads, symbolic resolution, and explicit no-reflog updates.
+//! Files references support enumeration, reads, symbolic resolution, and explicit no-reflog updates
+//! and deletion.
 //! The working-tree index and working-tree conversion are not implemented.
 
 mod commit;

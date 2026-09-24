@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use girt::refs::{Expected, RefName, Target};
 use girt::{ObjectId, Repository};
 
@@ -38,12 +38,41 @@ fn references(c: &mut Criterion) {
         for index in 0..count {
             packed.extend_from_slice(format!("{id} refs/tags/tag-{index:05}\n").as_bytes());
         }
-        std::fs::write(root.path().join("packed-refs"), packed).unwrap();
+        std::fs::write(root.path().join("packed-refs"), &packed).unwrap();
         let last = RefName::new(format!("refs/tags/tag-{:05}", count - 1)).unwrap();
+        let last_path = root.path().join(format!("refs/tags/tag-{:05}", count - 1));
         c.bench_function(&format!("references/read-packed-warm-{count}"), |b| {
             b.iter(|| refs.read(black_box(&last)).unwrap())
         });
+        c.bench_function(&format!("references/enumerate-packed-warm-{count}"), |b| {
+            b.iter(|| refs.list().unwrap())
+        });
+        c.bench_function(&format!("references/delete-shadowed-packed-{count}"), |b| {
+            b.iter_batched(
+                || {
+                    std::fs::write(root.path().join("packed-refs"), &packed).unwrap();
+                    std::fs::create_dir_all(root.path().join("refs/tags")).unwrap();
+                    std::fs::write(&last_path, format!("{id}\n")).unwrap();
+                },
+                |()| {
+                    refs.delete_without_reflog(&last, Expected::Value(Target::Direct(id)))
+                        .unwrap()
+                },
+                BatchSize::PerIteration,
+            )
+        });
     }
+    std::fs::remove_file(root.path().join("packed-refs")).unwrap();
+    for index in 0..1000 {
+        std::fs::write(
+            root.path().join(format!("refs/tags/tag-{index:05}")),
+            format!("{id}\n"),
+        )
+        .unwrap();
+    }
+    c.bench_function("references/enumerate-loose-warm-1000", |b| {
+        b.iter(|| refs.list().unwrap())
+    });
 }
 criterion_group! {
     name = benches;

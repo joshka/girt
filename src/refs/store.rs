@@ -23,7 +23,7 @@ use crate::{ObjectId, Repository};
 /// handle is in use are outside this contract.
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
-    repository: &'a Repository,
+    pub(super) repository: &'a Repository,
 }
 
 /// The stored value of one reference, before symbolic resolution.
@@ -38,11 +38,11 @@ pub enum Target {
 /// A precondition checked under locks against the destination's stored value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Expected {
-    /// Replace any valid current value, or create a missing reference.
+    /// Accept any valid current value or absence.
     Any,
-    /// Create only if neither a loose nor a packed value exists.
+    /// Require neither a loose nor a packed value; deletion then succeeds without a change.
     Absent,
-    /// Replace only this exact direct ID or symbolic name (without dereferencing it).
+    /// Require this exact direct ID or symbolic name (without dereferencing it).
     Value(Target),
 }
 
@@ -64,6 +64,16 @@ pub enum ReferenceError {
         /// Affected file or directory.
         path: PathBuf,
         /// Underlying filesystem error.
+        #[source]
+        source: io::Error,
+    },
+    /// Packed deletion succeeded, but removing the loose file failed. Packed bytes are not
+    /// restored.
+    #[error("packed reference removed, but loose deletion failed at {path}: {source}")]
+    PackedDeleted {
+        /// Loose reference that could not be removed.
+        path: PathBuf,
+        /// Underlying unlink failure. The current loose value remains under the writer contract.
         #[source]
         source: io::Error,
     },
@@ -99,7 +109,7 @@ pub enum ReferenceError {
     /// Symbolic HEAD must point into `refs/`, not back to the pseudoref HEAD.
     #[error("symbolic HEAD must point into refs/")]
     InvalidHeadTarget,
-    /// Zero IDs represent deletion in Git's CLI; this API does not implement deletion.
+    /// Zero IDs cannot be stored; use an explicit deletion method instead.
     #[error("zero reference IDs are not supported")]
     ZeroId,
 }
@@ -181,7 +191,7 @@ impl<'a> References<'a> {
     /// It ignores `core.logAllRefUpdates`, leaves existing reflogs unchanged, and runs no hooks.
     /// Prior tips gain no new reflog retention or recovery entry; reflog selectors may be stale,
     /// and old objects can become eligible for pruning. Callers must deliberately accept that
-    /// behavior. There is no deletion or multi-reference transaction API.
+    /// behavior. There is no multi-reference transaction API.
     ///
     /// Locks `packed-refs.lock`, then `<name>.lock`, using exclusive creation. Checks the
     /// precondition and packed namespace while locked, writes the owned lock, and atomically
@@ -238,6 +248,89 @@ impl<'a> References<'a> {
         validate_target(&target)?;
         let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let packed = self.packed()?;
+        let (current, actual, mut locks) = self.lock_resolution(name, &packed)?;
+        check_expected(actual, expected)?;
+        locks.last_mut().unwrap().publish(&target)?;
+        Ok(current)
+    }
+
+    /// Deletes the named reference itself, without dereferencing it or changing reflogs.
+    ///
+    /// Compares `expected` with the stored loose-over-packed target under `packed-refs.lock`
+    /// and the name's lock. `Any` and `Absent` permit an already absent name. A symbolic value
+    /// is compared and removed as a name; its target is untouched. Use
+    /// [`Self::delete_resolved_without_reflog`] to delete the terminal ref instead.
+    ///
+    /// Removes the packed record and its peel line before unlinking the loose file, so deletion
+    /// cannot uncover an older packed value. Unrelated packed bytes (including header traits,
+    /// order and peel records) are preserved. A separate temporary file publishes packed data
+    /// while the packed lock remains held through loose deletion. Both locks are held until
+    /// completion. Empty parent directories and existing reflogs remain; hooks are not run.
+    /// The no-reflog and filesystem assumptions of [`Self::update_without_reflog`] apply.
+    ///
+    /// Reads remain live: a reader with previously read packed data can observe a stale value.
+    /// This is not a snapshot, multi-ref transaction, or crash-durable operation. A subsequent
+    /// writer can recreate the name after locks are released.
+    ///
+    /// # Errors
+    ///
+    /// Lock, namespace, malformed-data and expectation failures preserve reference bytes.
+    /// Lock acquisition may leave empty parent directories. Packed publication failure preserves
+    /// both values. If packed publication succeeds but loose removal fails, returns
+    /// [`ReferenceError::PackedDeleted`]: the loose value remains, with no rollback of packed
+    /// storage. Other I/O failures use [`ReferenceError::Io`]. Lock/temporary cleanup is best
+    /// effort, including after success; cleanup failure or termination can leave stale files.
+    /// No fsync, retries, reflog cleanup, or object deletion is performed.
+    pub fn delete_without_reflog(
+        &self,
+        name: &RefName,
+        expected: Expected,
+    ) -> Result<(), ReferenceError> {
+        let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
+        let packed = packed::parse(&bytes, &packed_lock.destination)?;
+        self.check_packed_namespace(name, &packed)?;
+        let lock = Lock::acquire(self.path(name)?)?;
+        check_expected(self.read_locked(name, &packed)?, expected)?;
+        delete_locked(&packed_lock, &lock, name, &bytes, &packed)
+    }
+
+    /// Deletes the terminal direct/missing ref while preserving every symbolic name in its chain.
+    ///
+    /// `expected` applies to the terminal stored value. Holds the packed lock and every visited
+    /// name's lock through deletion; at most 32 symbolic hops are allowed. Returns the terminal
+    /// name, including when already absent. Deleting a branch through HEAD leaves HEAD unborn;
+    /// deleting through an alias leaves the alias dangling.
+    ///
+    /// # Errors
+    ///
+    /// Reports cycle/depth failures or errors from [`Self::delete_without_reflog`], with the same
+    /// packed-first ordering, partial-failure, cleanup, live-reader and no-reflog contracts.
+    pub fn delete_resolved_without_reflog(
+        &self,
+        name: &RefName,
+        expected: Expected,
+    ) -> Result<RefName, ReferenceError> {
+        let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
+        let packed = packed::parse(&bytes, &packed_lock.destination)?;
+        let (current, actual, locks) = self.lock_resolution(name, &packed)?;
+        check_expected(actual, expected)?;
+        delete_locked(
+            &packed_lock,
+            locks.last().unwrap(),
+            &current,
+            &bytes,
+            &packed,
+        )?;
+        Ok(current)
+    }
+
+    fn lock_resolution(
+        &self,
+        name: &RefName,
+        packed: &packed::Packed,
+    ) -> Result<(RefName, Option<Target>, Vec<Lock>), ReferenceError> {
         let mut current = name.clone();
         let mut seen = Vec::new();
         let mut locks = Vec::new();
@@ -246,21 +339,16 @@ impl<'a> References<'a> {
                 return Err(ReferenceError::Cycle(current));
             }
             seen.push(current.clone());
-            self.check_packed_namespace(&current, &packed)?;
-            let lock = Lock::acquire(self.path(&current)?)?;
-            locks.push(lock);
-            match self.read_locked(&current, &packed)? {
+            self.check_packed_namespace(&current, packed)?;
+            locks.push(Lock::acquire(self.path(&current)?)?);
+            match self.read_locked(&current, packed)? {
                 Some(Target::Symbolic(next)) => {
                     if seen.len() > 32 {
                         return Err(ReferenceError::Depth(32));
                     }
                     current = next;
                 }
-                actual => {
-                    check_expected(actual, expected)?;
-                    locks.last_mut().unwrap().publish(&target)?;
-                    return Ok(current);
-                }
+                actual => return Ok((current, actual, locks)),
             }
         }
     }
@@ -281,13 +369,13 @@ impl<'a> References<'a> {
             .map(Target::Direct))
     }
 
-    fn packed(&self) -> Result<packed::Packed, ReferenceError> {
+    pub(super) fn packed(&self) -> Result<packed::Packed, ReferenceError> {
         let path = self.repository.common_dir().join("packed-refs");
         let bytes = read_optional(&path)?.unwrap_or_default();
         packed::parse(&bytes, &path)
     }
 
-    fn path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
+    pub(super) fn path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
         let base = if name.per_worktree() {
             self.repository.git_dir()
         } else {
@@ -322,6 +410,35 @@ impl<'a> References<'a> {
     }
 }
 
+// Publish packed removal while the loose value still masks the old packed value. Keeping the
+// packed lock separate from the replacement file excludes packed writers through both steps.
+fn delete_locked(
+    packed_lock: &Lock,
+    loose_lock: &Lock,
+    name: &RefName,
+    bytes: &[u8],
+    packed: &packed::Packed,
+) -> Result<(), ReferenceError> {
+    let packed_changed = packed.contains_key(name);
+    if packed_changed {
+        let replacement = packed::without_ref(bytes, name);
+        packed_lock.publish_retaining_lock(&replacement)?;
+    }
+    remove_loose(&loose_lock.destination, packed_changed)
+}
+
+fn remove_loose(path: &Path, packed_changed: bool) -> Result<(), ReferenceError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) if packed_changed => Err(ReferenceError::PackedDeleted {
+            path: path.into(),
+            source,
+        }),
+        Err(source) => Err(io_error(path, source)),
+    }
+}
+
 fn conflicts(a: &[u8], b: &[u8]) -> bool {
     a.strip_prefix(b).is_some_and(|rest| rest.starts_with(b"/"))
         || b.strip_prefix(a).is_some_and(|rest| rest.starts_with(b"/"))
@@ -350,7 +467,7 @@ fn check_expected(actual: Option<Target>, expected: Expected) -> Result<(), Refe
     Ok(())
 }
 
-fn parse_loose(bytes: &[u8], path: &Path) -> Result<Target, ReferenceError> {
+pub(super) fn parse_loose(bytes: &[u8], path: &Path) -> Result<Target, ReferenceError> {
     // Git accepts trailing ASCII whitespace, including no final newline.
     let end = bytes
         .iter()
@@ -364,7 +481,7 @@ fn parse_loose(bytes: &[u8], path: &Path) -> Result<Target, ReferenceError> {
     packed::parse_id(bytes, path).map(Target::Direct)
 }
 
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, ReferenceError> {
+pub(super) fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, ReferenceError> {
     check_path(path)?;
     match fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
@@ -434,6 +551,31 @@ impl Lock {
             published: false,
         })
     }
+    fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+        let parent = self.destination.parent().unwrap();
+        let mut temporary = tempfile::Builder::new()
+            .prefix(".girt-packed-")
+            .tempfile_in(parent)
+            .map_err(|source| io_error(parent, source))?;
+        // Match ordinary lock creation permissions, including the process umask.
+        let permissions = self
+            .file
+            .metadata()
+            .map_err(|source| io_error(&self.path, source))?
+            .permissions();
+        temporary
+            .as_file()
+            .set_permissions(permissions)
+            .map_err(|source| io_error(temporary.path(), source))?;
+        temporary
+            .write_all(bytes)
+            .map_err(|source| io_error(temporary.path(), source))?;
+        temporary
+            .persist(&self.destination)
+            .map_err(|error| io_error(&self.destination, error.error))?;
+        Ok(())
+    }
+
     fn publish(&mut self, target: &Target) -> Result<(), ReferenceError> {
         let mut bytes = match target {
             Target::Direct(id) => id.to_string().into_bytes(),
@@ -460,7 +602,7 @@ impl Drop for Lock {
         }
     }
 }
-fn io_error(path: &Path, source: io::Error) -> ReferenceError {
+pub(super) fn io_error(path: &Path, source: io::Error) -> ReferenceError {
     ReferenceError::Io {
         path: path.into(),
         source,
@@ -707,6 +849,27 @@ mod chain_tests {
     }
 
     #[test]
+    fn deletion_depth_failure_preserves_chain() {
+        let root = tempfile::tempdir().unwrap();
+        chain(root.path(), 33);
+        let repo = Repository::open(root.path()).unwrap();
+        assert!(matches!(
+            repo.references()
+                .unwrap()
+                .delete_resolved_without_reflog(&RefName::new(b"HEAD").unwrap(), Expected::Any),
+            Err(ReferenceError::Depth(32))
+        ));
+        assert_eq!(
+            fs::read_dir(root.path().join("refs/heads"))
+                .unwrap()
+                .count(),
+            33
+        );
+        assert!(!root.path().join("HEAD.lock").exists());
+        assert!(!root.path().join("packed-refs.lock").exists());
+    }
+
+    #[test]
     fn locked_terminal_preserves_symbolic_chain() {
         let root = tempfile::tempdir().unwrap();
         chain(root.path(), 1);
@@ -734,3 +897,7 @@ mod chain_tests {
         assert!(!root.path().join("packed-refs.lock").exists());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "delete_tests.rs"]
+mod delete_tests;
