@@ -743,3 +743,56 @@ fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
         Err(FetchError::Limit("delta resolution steps"))
     ));
 }
+
+/// Copy identical valid pairs under distinct filenames to exercise snapshot-count policy
+/// without allocating hundreds of large payloads. Girt discovers pairs by extension.
+fn repeat_snapshot_pair(repo: &Repository, checksum: ObjectId, count: usize) {
+    let directory = repo.object_dir().join("pack");
+    let basename = directory.join(format!("pack-{checksum}"));
+    for copy in 1..count {
+        fs::copy(
+            basename.with_extension("idx"),
+            directory.join(format!("copy-{copy}.idx")),
+        )
+        .unwrap();
+        fs::copy(
+            basename.with_extension("pack"),
+            directory.join(format!("copy-{copy}.pack")),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn known_only_installation_can_exceed_default_snapshot_count() {
+    let fixture = Fixture::new(true, 4);
+    let (_root, repo) = destination();
+    let initial = fetch(fixture.root.path());
+    let installed = initial
+        .install(&repo, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let snapshot = PackLimits {
+        max_packs: 257,
+        ..PackLimits::default()
+    };
+    repeat_snapshot_pair(&repo, installed.checksum.unwrap(), snapshot.max_packs);
+    let objects = repo.objects(snapshot).unwrap();
+    let known = girt::fetch::KnownHistory::new(
+        &objects,
+        initial.wants(),
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let received = negotiated(fixture.root.path(), &known);
+    assert_eq!(received.pack_bytes(), 0);
+    assert!(matches!(
+        received.install(&repo, PackLimits::default(), &AtomicBool::new(false)),
+        Err(FetchError::Destination(girt::ObjectReadError::Limit(
+            "pack count"
+        )))
+    ));
+    received
+        .install(&repo, snapshot, &AtomicBool::new(false))
+        .unwrap();
+}
