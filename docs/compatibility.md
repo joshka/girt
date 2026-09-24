@@ -8,10 +8,11 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 ## Current Capabilities and Evidence
 
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
-fetch, conditional branch/tag push, and reference enumeration and explicit updates/deletion without
-reflogs. HTTP and SSH downloads share owned validation state. Installation takes explicit
-destination snapshot limits. Read and operation limits remain per phase; no process-wide heap or
-hard CPU-latency guarantee is implied.
+fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
+explicit reflog policy. The single-reference no-reflog operations remain available. HTTP and SSH
+downloads share owned validation state. Installation takes explicit destination snapshot limits.
+Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
+implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
@@ -1282,3 +1283,59 @@ features), the disposable initialization example, private-item Rustdoc with warn
 Markdown lint with the repository's 100-column policy. This increment has not been executed on Linux
 or Windows; earlier platform results do not establish its runtime behavior there. Mount-point
 crossing follows the ancestor algorithm but was not exercised with a separately mounted filesystem.
+
+## Reference Transactions and Reflogs
+
+`References::transaction` accepts stored direct/symbolic edits and resolved direct updates/deletion.
+All stored values and preconditions are checked with the selected names locked. Symbolic discovery
+is rechecked after acquiring locks; changes fail preparation instead of redirecting the operation.
+Duplicate names, intersecting chains, and ancestor/descendant batches (including delete/create
+namespace swaps) are rejected. A stored symbolic edit can preserve logs; logging a symbolic
+replacement is explicitly unsupported. A resolved HEAD edit preserves HEAD and logs the visited
+chain with terminal old/new IDs. Direct branch updates do not discover or log aliases/HEAD.
+
+Preparation takes the common packed lock, ref locks in byte-name order, then log locks in byte-name
+order. It validates existing logs selected for append. A preparation failure preserves reference and
+log contents, although empty directories can remain. Publication removes all selected packed records
+before loose deletion, preserving unrelated packed bytes and peel records. It then processes
+operations in input order, publishing each ref before its logs. Locks remain held through return.
+Packed-only refs can already be absent when a later operation fails.
+
+`TransactionError::Publish` retains a result for every input: reference unchanged, packed record
+removed, or publication complete; each requested log is unattempted, appended, or failed with a byte
+count. This permits a published ref with an absent/incomplete log. Failures stop further work and do
+not roll back successful publication. Short appends can leave malformed tails. There is no snapshot
+for readers, filesystem-wide atomicity, fsync, automatic retry, or crash recovery.
+
+`Reflog::Preserve` leaves logs untouched, including malformed logs and deletion. `Reflog::Append`
+creates missing logs and appends even on same-ID updates. Deletion retains the log and appends a
+zero new ID; it does not adopt Git's CLI log-removal policy. Identity, nonnegative Unix seconds,
+offset, and exact single-line message bytes come from the caller. Config, environment, hooks,
+fast-forward policy, and object existence/type checks are not consulted. CR, LF and NUL messages and
+tab-containing identities are rejected. Ref and log paths share ordinary, bare, separate-gitdir, and
+current linked-worktree routing.
+
+Logs are appended, never replaced wholesale. Git's automatic HEAD appends need not honor a HEAD or
+log lock, so ordering with those independent appends is unspecified. Callers must exclude reflog
+rewrites, expiry and deletion during transactions. The reader accepts Git's omitted separator for an
+empty message, preserves non-UTF-8 identity/message bytes, and returns oldest-first records. Numeric
+formatting and negative-zero timezone spelling are normalized; arbitrary malformed or legacy
+identity forms are rejected. Reads allocate for the complete file and are live, including possible
+incomplete concurrent tails. There is no configurable log-size bound or streaming API.
+
+The [workflow example](../examples/reference_transaction.rs) publishes a branch through HEAD and a
+tag, handles preparation versus publication errors, and deletes the tag with retained history. The
+[benchmark baseline](benchmarks.md#reference-transactions-and-reflogs) measures batch publication
+and existing-log validation separately.
+
+Independent fixtures use Git CLI observable behavior and the
+[update-ref documentation](https://git-scm.com/docs/git-update-ref) and
+[repository layout documentation](https://git-scm.com/docs/gitrepository-layout). No Git source,
+upstream tests or copyright-audit material was used. Git reads exact generated records, reflog
+selectors, identities, timestamps and ordering; girt reads subsequent Git appends, including empty
+messages. Tests cover packed-only/shadowed deletion, linked-worktree private namespaces, and
+separate metadata directories. A conditional Git writer races a two-ref batch. Controlled
+post-preparation filesystem failures exercise packed replacement, loose publication/unlink, and
+first/later log failures; an injected short writer verifies retained append byte counts. Runtime
+evidence for this increment is macOS arm64 with Git 2.55.0; no new platform support is claimed.
+Expiry/GC, reflog removal, remote/refspec policy, reftable and recovery journals are deferred.

@@ -595,3 +595,32 @@ The implementation uses no Git source, upstream tests, or copyright-audit materi
 ordering follows the independently reasoned storage invariant and the maintainer's chosen contract.
 No batch transactions, reflog policy, remote/refspec policy, crash recovery, or new dependencies are
 included. Benchmark results describe warm local storage, not reader isolation or crash durability.
+
+### Reference Transactions and Reflogs Completion
+
+- [x] Conditional batches validate every stored chain/precondition before publication, retain sorted
+      ref/log locks, and distinguish preparation failure from per-ref/per-log publication outcomes.
+      Packed removals precede loose deletion without rollback.
+- [x] Tests cover overlapping names/chains, namespace conflicts, symbolic cycles, malformed logs,
+      explicit preservation, invalid messages, lock ownership/cleanup, whole-batch mismatch, and
+      retained deletion history. Controlled failures cover packed replacement, loose unlink and
+      replacement, first/later log appends, and byte progress after short writes.
+- [x] The disposable `reference_transaction` example publishes HEAD/branch and tag records, handles
+      failure reports, and conditionally deletes the tag while retaining its history.
+- [x] Independent Git fixtures verify exact identities/times/messages and old/new IDs, subsequent
+      Git appends and selectors, empty-message records, packed/shadowed deletion, detached/symbolic
+      HEAD, separate metadata and linked-worktree/private log routing. A Git conditional writer
+      races a two-ref transaction.
+- [x] Criterion measures publication at 1/32 refs and parsing at 10/10,000 records. Estimates and
+      measured source fingerprints are retained in the
+      [transaction baseline](benchmarks.md#reference-transactions-and-reflogs).
+- [x] API contracts and [scope/evidence](compatibility.md#reference-transactions-and-reflogs) state
+      sequential visibility, partial reflog writes, explicit creation/deletion policy, live reads,
+      whole-log allocation and external-writer boundaries.
+
+Validation on macOS arm64 with Rust 1.98.1 and Git 2.55.0 passed `just check`: 776 unit tests, 339
+integration tests and 14 doctests, plus all-target/all-feature Clippy and docs.rs. The runnable
+workflow, private Rustdoc with warnings rejected, rendered transaction documentation review, and
+Markdown checks also passed. This increment adds no dependencies or platform support. Runtime
+validation on Linux/Windows, reflog removal/expiry, streaming logs, recovery journals and
+filesystem-wide atomicity are deferred.

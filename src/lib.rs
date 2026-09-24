@@ -28,7 +28,9 @@
 //! rechecks local dependencies before publishing a pack/index pair. It leaves references unchanged.
 //! Coordinate with pruning until a separate conditional [`refs::References::update_without_reflog`]
 //! publishes the intended tip. Pack installation and each reference update have separate failure
-//! and retry contracts; multiple reference updates are not a transaction.
+//! and retry contracts. Use [`refs::References::transaction`] to check a whole batch before
+//! sequential publication and choose explicit reflog policy; inspect partial outcomes on
+//! publication failure.
 //!
 //! # Preparing and sending a push
 //!
@@ -49,7 +51,8 @@
 //! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
 //!   initialization of bare or ordinary SHA-1 repositories.
 //! - [`refs`]: validated reference names, loose/packed enumeration and reads, symbolic resolution,
-//!   and conditional single-reference updates/deletion explicitly without reflogs.
+//!   conditional transactions with explicit reflogs, and single-reference operations without
+//!   reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
@@ -77,7 +80,7 @@
 //! smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a
 //! caller-owned Tokio runtime; fetch pack validation remains an explicit synchronous step.
 //! Files references support enumeration, reads, symbolic resolution, and explicit no-reflog updates
-//! and deletion.
+//! and deletion, plus conditional batches and caller-controlled reflog appends.
 //! The working-tree index and working-tree conversion are not implemented.
 
 mod commit;

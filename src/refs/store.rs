@@ -191,7 +191,7 @@ impl<'a> References<'a> {
     /// It ignores `core.logAllRefUpdates`, leaves existing reflogs unchanged, and runs no hooks.
     /// Prior tips gain no new reflog retention or recovery entry; reflog selectors may be stale,
     /// and old objects can become eligible for pruning. Callers must deliberately accept that
-    /// behavior. There is no multi-reference transaction API.
+    /// behavior. See [`Self::transaction`] for conditional batches with explicit reflog policy.
     ///
     /// Locks `packed-refs.lock`, then `<name>.lock`, using exclusive creation. Checks the
     /// precondition and packed namespace while locked, writes the owned lock, and atomically
@@ -353,7 +353,7 @@ impl<'a> References<'a> {
         }
     }
 
-    fn read_locked(
+    pub(super) fn read_locked(
         &self,
         name: &RefName,
         packed: &packed::Packed,
@@ -394,7 +394,7 @@ impl<'a> References<'a> {
         Ok(base.join(relative))
     }
 
-    fn check_packed_namespace(
+    pub(super) fn check_packed_namespace(
         &self,
         name: &RefName,
         packed: &packed::Packed,
@@ -427,7 +427,7 @@ fn delete_locked(
     remove_loose(&loose_lock.destination, packed_changed)
 }
 
-fn remove_loose(path: &Path, packed_changed: bool) -> Result<(), ReferenceError> {
+pub(super) fn remove_loose(path: &Path, packed_changed: bool) -> Result<(), ReferenceError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -439,7 +439,7 @@ fn remove_loose(path: &Path, packed_changed: bool) -> Result<(), ReferenceError>
     }
 }
 
-fn conflicts(a: &[u8], b: &[u8]) -> bool {
+pub(super) fn conflicts(a: &[u8], b: &[u8]) -> bool {
     a.strip_prefix(b).is_some_and(|rest| rest.starts_with(b"/"))
         || b.strip_prefix(a).is_some_and(|rest| rest.starts_with(b"/"))
 }
@@ -449,13 +449,16 @@ fn direct_id(target: Option<Target>) -> Option<ObjectId> {
         _ => None,
     }
 }
-fn validate_target(target: &Target) -> Result<(), ReferenceError> {
+pub(super) fn validate_target(target: &Target) -> Result<(), ReferenceError> {
     if matches!(target, Target::Direct(id) if id.as_bytes() == &[0; 20]) {
         return Err(ReferenceError::ZeroId);
     }
     Ok(())
 }
-fn check_expected(actual: Option<Target>, expected: Expected) -> Result<(), ReferenceError> {
+pub(super) fn check_expected(
+    actual: Option<Target>,
+    expected: Expected,
+) -> Result<(), ReferenceError> {
     let matches = match expected {
         Expected::Any => true,
         Expected::Absent => actual.is_none(),
@@ -492,7 +495,7 @@ pub(super) fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, ReferenceErr
 
 // The opened roots are canonical. Refuse symlink traversal below them, and symlink files.
 // This is a trusted-directory check, not a race-proof sandbox against malicious path swaps.
-fn check_path(path: &Path) -> Result<(), ReferenceError> {
+pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -519,14 +522,14 @@ fn check_path(path: &Path) -> Result<(), ReferenceError> {
     Ok(())
 }
 
-struct Lock {
-    destination: PathBuf,
+pub(super) struct Lock {
+    pub(super) destination: PathBuf,
     path: PathBuf,
     file: File,
     published: bool,
 }
 impl Lock {
-    fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
+    pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
         check_path(&destination)?;
         let parent = destination.parent().unwrap();
         fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
@@ -551,7 +554,7 @@ impl Lock {
             published: false,
         })
     }
-    fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+    pub(super) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
         let parent = self.destination.parent().unwrap();
         let mut temporary = tempfile::Builder::new()
             .prefix(".girt-packed-")

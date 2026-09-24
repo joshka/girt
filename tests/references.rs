@@ -1000,3 +1000,375 @@ fn git_packed_writer_honors_lock_retained_across_replacement() {
         Some(Target::Direct(second))
     );
 }
+
+fn transaction_log(message: &[u8]) -> girt::refs::Reflog {
+    girt::refs::Reflog::Append {
+        committer: girt::Signature {
+            name: b"C. Recorder".to_vec(),
+            email: b"committer@example.com".to_vec(),
+            seconds: 1700000123,
+            offset_minutes: -420,
+        },
+        message: message.to_vec(),
+    }
+}
+
+fn logged_edit(
+    reference: &str,
+    target: Option<ObjectId>,
+    expected: Expected,
+) -> girt::refs::RefEdit {
+    girt::refs::RefEdit {
+        name: name(reference),
+        dereference: reference == "HEAD",
+        target: target.map(Target::Direct),
+        expected,
+        reflog: transaction_log(b"transaction"),
+    }
+}
+
+#[test]
+fn git_reads_transaction_records_and_girt_reads_git_appends() {
+    let (root, repo, first) = fixture();
+    let refs = repo.references().unwrap();
+    refs.transaction(&[
+        logged_edit("HEAD", Some(first), Expected::Absent),
+        logged_edit("refs/tags/batch", Some(first), Expected::Absent),
+    ])
+    .unwrap();
+    assert_eq!(oid(&git(root.path(), &["rev-parse", "HEAD"], b"")), first);
+    let bytes = fs::read(root.path().join("logs/HEAD")).unwrap();
+    assert_eq!(
+        bytes,
+        format!(
+            "{} {first} C. Recorder <committer@example.com> 1700000123 -0700\ttransaction\n",
+            ObjectId::from_bytes([0; 20])
+        )
+        .as_bytes()
+    );
+    let shown = git(
+        root.path(),
+        &["reflog", "show", "--format=%H|%gn|%ge|%gs", "HEAD"],
+        b"",
+    );
+    assert_eq!(
+        shown,
+        format!("{first}|C. Recorder|committer@example.com|transaction\n").as_bytes()
+    );
+    let tree = git(root.path(), &["mktree"], b"");
+    let second = oid(&git(
+        root.path(),
+        &[
+            "commit-tree",
+            std::str::from_utf8(&tree).unwrap().trim(),
+            "-p",
+            &first.to_string(),
+        ],
+        b"Second\n",
+    ));
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "git append",
+            "HEAD",
+            &second.to_string(),
+            &first.to_string(),
+        ],
+        b"",
+    );
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].old, first);
+    assert_eq!(entries[1].new, second);
+    assert_eq!(entries[1].message, b"git append");
+    assert_eq!(entries[1].committer.seconds, 1700000123);
+    assert_eq!(entries[1].committer.offset_minutes, -420);
+    assert_eq!(
+        oid(&git(root.path(), &["rev-parse", "HEAD@{1}"], b"")),
+        first
+    );
+    assert_eq!(
+        refs.reflog(&name("refs/heads/main")).unwrap(),
+        refs.reflog(&name("HEAD")).unwrap()
+    );
+}
+
+#[test]
+fn transaction_deletes_packed_and_shadowed_refs_without_resurrection() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/a", &first.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/b", &first.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all", "--prune"], b"");
+    repo.references()
+        .unwrap()
+        .update_without_reflog(&name("refs/tags/b"), Target::Direct(first), Expected::Any)
+        .unwrap();
+    repo.references()
+        .unwrap()
+        .transaction(&[
+            logged_edit("refs/tags/a", None, Expected::Value(Target::Direct(first))),
+            logged_edit("refs/tags/b", None, Expected::Value(Target::Direct(first))),
+        ])
+        .unwrap();
+    assert!(
+        !git_attempt(root.path(), &["show-ref", "--verify", "refs/tags/a"], b"")
+            .status
+            .success()
+    );
+    assert!(
+        !git_attempt(root.path(), &["show-ref", "--verify", "refs/tags/b"], b"")
+            .status
+            .success()
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .reflog(&name("refs/tags/b"))
+            .unwrap()
+            .unwrap()[0]
+            .new,
+        ObjectId::from_bytes([0; 20])
+    );
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "recreate",
+            "refs/tags/b",
+            &first.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .reflog(&name("refs/tags/b"))
+            .unwrap()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn git_empty_message_reflog_is_readable() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "refs/tags/a",
+            &first.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .reflog(&name("refs/tags/a"))
+            .unwrap()
+            .unwrap()[0]
+            .message,
+        b""
+    );
+}
+
+#[test]
+fn linked_worktree_transaction_routes_head_branch_and_private_logs() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    let linked = root.path().join("linked");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+            "main",
+        ],
+        b"",
+    );
+    let linked_repo = Repository::open(&linked).unwrap();
+    let refs = linked_repo.references().unwrap();
+    refs.transaction(&[
+        logged_edit("HEAD", Some(first), Expected::Value(Target::Direct(first))),
+        logged_edit("refs/bisect/good", Some(first), Expected::Absent),
+        logged_edit("refs/rewritten/a", Some(first), Expected::Absent),
+        logged_edit("refs/worktree/a", Some(first), Expected::Absent),
+    ])
+    .unwrap();
+    assert!(linked_repo.git_dir().join("logs/HEAD").is_file());
+    assert!(repo.common_dir().join("logs/refs/heads/linked").is_file());
+    assert!(
+        linked_repo
+            .git_dir()
+            .join("logs/refs/bisect/good")
+            .is_file()
+    );
+    assert!(
+        linked_repo
+            .git_dir()
+            .join("logs/refs/rewritten/a")
+            .is_file()
+    );
+    assert!(linked_repo.git_dir().join("logs/refs/worktree/a").is_file());
+    assert!(!repo.common_dir().join("logs/refs/bisect/good").exists());
+    let shown = git(
+        &linked,
+        &["reflog", "show", "-1", "--format=%gs", "HEAD"],
+        b"",
+    );
+    assert_eq!(shown, b"transaction\n");
+    assert_eq!(
+        oid(&git(&linked, &["rev-parse", "refs/worktree/a"], b"")),
+        first
+    );
+}
+
+#[test]
+fn separate_git_directory_routes_transaction_logs() {
+    let root = tempfile::tempdir().unwrap();
+    let metadata = root.path().join("metadata");
+    let worktree = root.path().join("worktree");
+    git(
+        root.path(),
+        &[
+            "init",
+            "--template=",
+            "--object-format=sha1",
+            "--initial-branch=main",
+            "--separate-git-dir",
+            metadata.to_str().unwrap(),
+            worktree.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let tree = git(&worktree, &["mktree"], b"");
+    let first = oid(&git(
+        &worktree,
+        &["commit-tree", std::str::from_utf8(&tree).unwrap().trim()],
+        b"First\n",
+    ));
+    let repo = Repository::open(&worktree).unwrap();
+    repo.references()
+        .unwrap()
+        .transaction(&[logged_edit("HEAD", Some(first), Expected::Absent)])
+        .unwrap();
+    assert!(metadata.join("logs/HEAD").is_file());
+    assert_eq!(
+        git(&worktree, &["reflog", "show", "-1", "--format=%gs"], b""),
+        b"transaction\n"
+    );
+}
+
+#[test]
+fn git_conditional_writer_racing_transaction_cannot_both_succeed() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    let second = second_commit(root.path(), first);
+    let barrier = std::sync::Barrier::new(2);
+    let (batch, other) = std::thread::scope(|scope| {
+        let batch = scope.spawn(|| {
+            barrier.wait();
+            repo.references().unwrap().transaction(&[
+                logged_edit(
+                    "refs/heads/main",
+                    Some(second),
+                    Expected::Value(Target::Direct(first)),
+                ),
+                logged_edit("refs/tags/batch", Some(second), Expected::Absent),
+            ])
+        });
+        let other = scope.spawn(|| {
+            barrier.wait();
+            git_attempt(
+                root.path(),
+                &[
+                    "update-ref",
+                    "-m",
+                    "Git race",
+                    "refs/heads/main",
+                    &second.to_string(),
+                    &first.to_string(),
+                ],
+                b"",
+            )
+        });
+        (batch.join().unwrap(), other.join().unwrap())
+    });
+    assert_eq!(
+        usize::from(batch.is_ok()) + usize::from(other.status.success()),
+        1
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .read(&name("refs/tags/batch"))
+            .unwrap()
+            .is_some(),
+        batch.is_ok()
+    );
+    assert!(!root.path().join("packed-refs.lock").exists());
+    assert!(!root.path().join("refs/heads/main.lock").exists());
+}
+
+#[test]
+fn detached_head_transaction_records_previous_tip() {
+    let (root, repo, first) = fixture();
+    git(
+        root.path(),
+        &["update-ref", "--no-deref", "HEAD", &first.to_string()],
+        b"",
+    );
+    let second = second_commit(root.path(), first);
+    repo.references()
+        .unwrap()
+        .transaction(&[logged_edit(
+            "HEAD",
+            Some(second),
+            Expected::Value(Target::Direct(first)),
+        )])
+        .unwrap();
+    assert_eq!(
+        repo.references().unwrap().read(&name("HEAD")).unwrap(),
+        Some(Target::Direct(second))
+    );
+    let entries = repo
+        .references()
+        .unwrap()
+        .reflog(&name("HEAD"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(entries.last().unwrap().old, first);
+    assert_eq!(entries.last().unwrap().new, second);
+    assert_eq!(
+        git(
+            root.path(),
+            &["reflog", "show", "-1", "--format=%gs", "HEAD"],
+            b""
+        ),
+        b"transaction\n"
+    );
+}

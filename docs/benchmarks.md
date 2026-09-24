@@ -747,3 +747,36 @@ Retained [CSV estimates](benchmarks/reference-enumeration-baseline.csv) and
 implementation and fixture. All workloads include the additional loose branch. Enumeration of many
 loose files pays for individual filesystem reads; the packed workloads parse a single file. The
 measurements establish a baseline, without a claim about other filesystems or platforms.
+
+## Reference Transactions and Reflogs
+
+The reference Criterion harness measures conditional publication with explicit log appends for 1 and
+32 refs, and parses original in-memory reflogs with 10 and 10,000 records. Run:
+
+```sh
+cargo bench --bench references -- 'transactions/'
+```
+
+Publication includes packed/ref/log locking, precondition reads, ref replacement, append and
+cleanup. Each iteration resets logs to empty outside timing with `iter_batched(PerIteration)`;
+reference and log directories already exist and refs are warm after the first iteration. Parsing
+includes full validation and owned record allocation. Transaction preparation likewise validates
+each complete existing log, so append cost grows with existing log length; this baseline separates
+parsing from filesystem publication instead of claiming constant-time updates.
+
+These are warm local-storage/in-memory measurements on macOS arm64, Rust 1.98.1, using 30 samples,
+one-second warmup and a two-second measurement target. They do not establish cold-storage latency,
+peak memory, concurrent-writer performance or crash durability. No numerical performance gate is
+imposed. Retained estimates and source fingerprints accompany the results below.
+
+| Workload            | Estimate (ms) | 95% interval (ms) |
+| ------------------- | ------------: | ----------------: |
+| parse-log-10        |        0.0037 |     0.0037–0.0038 |
+| parse-log-10000     |        3.7310 |     3.5886–3.9692 |
+| publish-with-log-1  |        0.9251 |     0.8575–0.9784 |
+| publish-with-log-32 |       17.8705 |   17.5210–18.2388 |
+
+Retained [CSV estimates](benchmarks/reference-transaction-baseline.csv) and
+[source fingerprints](benchmarks/reference-transaction-baseline.sha256) identify the measured
+implementation. Samples include concurrent machine activity and are an initial baseline, not a claim
+of isolated-system latency or improved performance.

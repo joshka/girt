@@ -1,0 +1,400 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::OpenOptions;
+use std::io::{self, Write};
+
+use super::store::{
+    Lock, check_expected, conflicts, io_error, read_optional, remove_loose, validate_target,
+};
+use super::{
+    Expected, RefName, ReferenceError, References, Reflog, ReflogEntry, Target, packed, reflog,
+};
+use crate::ObjectId;
+
+/// A conditional change to one stored name or one symbolic chain's terminal name.
+#[derive(Clone, Debug)]
+pub struct RefEdit {
+    /// Initial name; also the destination when `dereference` is false.
+    pub name: RefName,
+    /// Follow up to 32 symbolic hops, keeping the chain unchanged.
+    ///
+    /// Only direct updates or deletion can be dereferenced. Preconditions apply to the terminal
+    /// stored value. Overlapping chains/destinations in a batch are rejected.
+    pub dereference: bool,
+    /// Replacement, or `None` to delete. Object existence/type is not checked.
+    pub target: Option<Target>,
+    /// Compared under locks before any publication.
+    pub expected: Expected,
+    /// Explicit history policy.
+    pub reflog: Reflog,
+}
+
+/// Reference publication state at the time a transaction returns.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefOutcome {
+    /// No reference publication was attempted successfully for this operation.
+    Unchanged,
+    /// Its packed record was removed; loose publication/deletion has not succeeded.
+    ///
+    /// A packed-only reference is already absent. A loose shadow, if present, remains.
+    PackedRemoved,
+    /// Replacement or deletion completed, including deleting an already absent ref.
+    Published,
+}
+
+/// Reflog append state at the time a transaction returns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LogOutcome {
+    /// No append was attempted.
+    NotAttempted,
+    /// The complete record was appended.
+    Appended,
+    /// Append failed; this many record bytes were written before the failure.
+    ///
+    /// Zero can still mean an empty log was created. A nonzero count can leave a malformed tail.
+    Failed {
+        /// Bytes from this record written before the error.
+        bytes_written: usize,
+    },
+}
+
+/// Effects for one input operation, retained in input order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefEditOutcome {
+    /// Terminal destination (or original name for a stored edit).
+    pub name: RefName,
+    /// Reference publication result.
+    pub reference: RefOutcome,
+    /// Requested logs in symbolic traversal order; empty for `Preserve`.
+    pub logs: Vec<(RefName, LogOutcome)>,
+}
+
+/// Failure before publication or a report of effects already made.
+#[derive(Debug, thiserror::Error)]
+pub enum TransactionError {
+    /// No reference or log contents were changed. Empty directories can remain.
+    #[error("reference transaction preparation failed: {source}")]
+    Prepare {
+        /// Input index when the failure belongs to one operation; otherwise a batch/lock failure.
+        operation: Option<usize>,
+        /// Validation, precondition, lock, or read failure.
+        #[source]
+        source: ReferenceError,
+    },
+    /// Publication stopped at the first error, without rollback.
+    #[error("reference transaction publication failed: {source}")]
+    Publish {
+        /// Exact completed effects in caller order; later operations can have packed removals.
+        outcomes: Vec<RefEditOutcome>,
+        /// Underlying error. A loose unlink after packed removal retains `PackedDeleted`.
+        #[source]
+        source: ReferenceError,
+    },
+}
+
+impl References<'_> {
+    /// Applies a conditional batch with explicit reflog policy.
+    ///
+    /// Preparation holds `packed-refs.lock`, discovers symbolic chains, locks their union in
+    /// name-byte order, and rechecks every stored chain value and precondition. Reflog locks follow
+    /// in name-byte order. Duplicate/overlapping chains and ancestor/descendant names are rejected,
+    /// including delete/create namespace swaps. Existing packed conflicts are rejected. Contention
+    /// fails immediately; locks are never stolen. A changed chain fails rather than being retried.
+    ///
+    /// Publication first removes all selected packed records in one replacement. It then publishes
+    /// refs in caller order, appending each operation's requested logs after its ref succeeds.
+    /// All owned locks remain held until return. Readers can observe any intermediate state.
+    /// An I/O error stops publication, returning per-ref and per-log effects; no rollback occurs.
+    /// In particular, a ref can advance with a missing or partial reflog entry.
+    ///
+    /// Logs use append writes, never whole-file replacement. Ref locks coordinate writers of the
+    /// same destination; log locks coordinate girt transactions. Git can append automatic HEAD logs
+    /// without honoring those log locks, so ordering against such appends is not promised. Reflog
+    /// deletion/expiry and external log rewriting must be excluded by the caller while writing.
+    /// Direct branch edits do not automatically log HEAD or discover aliases; use a resolved HEAD
+    /// edit to log that chain. Stored symbolic edits require `Reflog::Preserve`.
+    ///
+    /// No hooks, config/environment policy, object validation, fsync, crash recovery, or
+    /// filesystem-wide atomic visibility is provided. Cleanup is best effort; termination or
+    /// cleanup failure can leave locks/temporary files. See [`References`] for filesystem trust.
+    ///
+    /// # Errors
+    ///
+    /// [`TransactionError::Prepare`] preserves ref/log contents on malformed data, invalid edits,
+    /// precondition mismatch, namespace conflicts, or lock failure. [`TransactionError::Publish`]
+    /// reports effects at meaningful publication boundaries. An empty batch is a successful no-op.
+    pub fn transaction(&self, edits: &[RefEdit]) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        if edits.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.prepare_transaction(edits)?.publish()
+    }
+
+    fn prepare_transaction(&self, edits: &[RefEdit]) -> Result<Prepared, TransactionError> {
+        let batch_error = |source| TransactionError::Prepare {
+            operation: None,
+            source,
+        };
+        let packed_lock =
+            Lock::acquire(self.repository.common_dir().join("packed-refs")).map_err(batch_error)?;
+        let bytes = read_optional(&packed_lock.destination)
+            .map_err(batch_error)?
+            .unwrap_or_default();
+        let packed = packed::parse(&bytes, &packed_lock.destination).map_err(batch_error)?;
+        let mut plans = Vec::new();
+        let mut names = BTreeSet::new();
+        for (index, edit) in edits.iter().enumerate() {
+            let error = |source| TransactionError::Prepare {
+                operation: Some(index),
+                source,
+            };
+            validate_edit(edit).map_err(error)?;
+            let chain = self.discover_chain(edit, &packed).map_err(error)?;
+            for (name, _) in &chain {
+                if !names.insert(name.clone())
+                    || names
+                        .iter()
+                        .any(|other: &RefName| conflicts(name.as_bytes(), other.as_bytes()))
+                {
+                    return Err(error(ReferenceError::Conflict(
+                        self.path(name).map_err(error)?,
+                    )));
+                }
+            }
+            plans.push(chain);
+        }
+
+        let mut locks = BTreeMap::new();
+        for name in names {
+            self.check_packed_namespace(&name, &packed)
+                .map_err(batch_error)?;
+            locks.insert(
+                name.clone(),
+                Lock::acquire(self.path(&name).map_err(batch_error)?).map_err(batch_error)?,
+            );
+        }
+        let mut operations = Vec::new();
+        let mut log_names = BTreeSet::new();
+        for (index, (edit, chain)) in edits.iter().zip(plans).enumerate() {
+            let error = |source| TransactionError::Prepare {
+                operation: Some(index),
+                source,
+            };
+            for (name, observed) in &chain {
+                check_expected(
+                    self.read_locked(name, &packed).map_err(error)?,
+                    match observed {
+                        Some(target) => Expected::Value(target.clone()),
+                        None => Expected::Absent,
+                    },
+                )
+                .map_err(error)?;
+            }
+            let (name, actual) = chain.last().unwrap();
+            check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
+            let mut logs = Vec::new();
+            if let Reflog::Append { committer, message } = &edit.reflog {
+                let old = log_id(actual.as_ref()).map_err(error)?;
+                let new = log_id(edit.target.as_ref()).map_err(error)?;
+                let record = ReflogEntry {
+                    old,
+                    new,
+                    committer: committer.clone(),
+                    message: message.clone(),
+                };
+                let record = record.encode().map_err(error)?;
+                for (log_name, _) in &chain {
+                    log_names.insert(log_name.clone());
+                    logs.push((log_name.clone(), record.clone()));
+                }
+            }
+            operations.push(Operation {
+                name: name.clone(),
+                target: edit.target.clone(),
+                packed_removed: edit.target.is_none() && packed.contains_key(name),
+                logs,
+            });
+        }
+        let mut log_locks = BTreeMap::new();
+        for name in log_names {
+            let path = self.reflog_path(&name).map_err(batch_error)?;
+            let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
+            if let Some(bytes) = read_optional(&path).map_err(batch_error)? {
+                reflog::parse(&bytes, &path).map_err(batch_error)?;
+            }
+            log_locks.insert(name, lock);
+        }
+        let mut replacement = bytes;
+        for operation in &operations {
+            if operation.packed_removed {
+                replacement = packed::without_ref(&replacement, &operation.name);
+            }
+        }
+        Ok(Prepared {
+            packed_lock,
+            replacement,
+            locks,
+            log_locks,
+            operations,
+        })
+    }
+
+    fn discover_chain(
+        &self,
+        edit: &RefEdit,
+        packed: &packed::Packed,
+    ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
+        let mut chain = Vec::new();
+        let mut name = edit.name.clone();
+        loop {
+            if chain.iter().any(|(seen, _)| seen == &name) {
+                return Err(ReferenceError::Cycle(name));
+            }
+            let target = self.read_locked(&name, packed)?;
+            chain.push((name.clone(), target.clone()));
+            match target {
+                Some(Target::Symbolic(next)) if edit.dereference => {
+                    if chain.len() > 32 {
+                        return Err(ReferenceError::Depth(32));
+                    }
+                    name = next;
+                }
+                _ => return Ok(chain),
+            }
+        }
+    }
+}
+
+fn validate_edit(edit: &RefEdit) -> Result<(), ReferenceError> {
+    if let Some(target) = &edit.target {
+        validate_target(target)?;
+        if edit.name.as_bytes() == b"HEAD"
+            && matches!(target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
+        {
+            return Err(ReferenceError::InvalidHeadTarget);
+        }
+        if edit.dereference && matches!(target, Target::Symbolic(_)) {
+            return Err(ReferenceError::Unsupported("resolved symbolic replacement"));
+        }
+    }
+    if let Reflog::Append { committer, message } = &edit.reflog {
+        reflog::validate(committer, message)?;
+    }
+    Ok(())
+}
+
+fn log_id(target: Option<&Target>) -> Result<ObjectId, ReferenceError> {
+    match target {
+        None => Ok(ObjectId::from_bytes([0; 20])),
+        Some(Target::Direct(id)) => Ok(*id),
+        Some(Target::Symbolic(_)) => Err(ReferenceError::Unsupported(
+            "stored symbolic edits with reflogs",
+        )),
+    }
+}
+
+struct Operation {
+    name: RefName,
+    target: Option<Target>,
+    packed_removed: bool,
+    logs: Vec<(RefName, Vec<u8>)>,
+}
+
+struct Prepared {
+    packed_lock: Lock,
+    replacement: Vec<u8>,
+    locks: BTreeMap<RefName, Lock>,
+    log_locks: BTreeMap<RefName, Lock>,
+    operations: Vec<Operation>,
+}
+
+impl Prepared {
+    fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        let mut outcomes: Vec<_> = self
+            .operations
+            .iter()
+            .map(|op| RefEditOutcome {
+                name: op.name.clone(),
+                reference: RefOutcome::Unchanged,
+                logs: op
+                    .logs
+                    .iter()
+                    .map(|(name, _)| (name.clone(), LogOutcome::NotAttempted))
+                    .collect(),
+            })
+            .collect();
+        if self.operations.iter().any(|op| op.packed_removed) {
+            self.packed_lock
+                .publish_retaining_lock(&self.replacement)
+                .map_err(|source| TransactionError::Publish {
+                    outcomes: outcomes.clone(),
+                    source,
+                })?;
+            for (operation, outcome) in self.operations.iter().zip(&mut outcomes) {
+                if operation.packed_removed {
+                    outcome.reference = RefOutcome::PackedRemoved;
+                }
+            }
+        }
+        for (index, operation) in self.operations.iter().enumerate() {
+            let lock = &self.locks[&operation.name];
+            let result = match &operation.target {
+                Some(target) => {
+                    let bytes = match target {
+                        Target::Direct(id) => format!("{id}\n").into_bytes(),
+                        Target::Symbolic(name) => {
+                            let mut bytes = b"ref: ".to_vec();
+                            bytes.extend_from_slice(name.as_bytes());
+                            bytes.push(b'\n');
+                            bytes
+                        }
+                    };
+                    lock.publish_retaining_lock(&bytes)
+                }
+                None => remove_loose(&lock.destination, operation.packed_removed),
+            };
+            if let Err(source) = result {
+                return Err(TransactionError::Publish { outcomes, source });
+            }
+            outcomes[index].reference = RefOutcome::Published;
+            for (log_index, (name, record)) in operation.logs.iter().enumerate() {
+                let path = &self.log_locks[name].destination;
+                let result = append(path, record);
+                match result {
+                    Ok(()) => outcomes[index].logs[log_index].1 = LogOutcome::Appended,
+                    Err((bytes_written, source)) => {
+                        outcomes[index].logs[log_index].1 = LogOutcome::Failed { bytes_written };
+                        return Err(TransactionError::Publish { outcomes, source });
+                    }
+                }
+            }
+        }
+        Ok(outcomes)
+    }
+}
+
+fn append(path: &std::path::Path, record: &[u8]) -> Result<(), (usize, ReferenceError)> {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .map_err(|source| (0, io_error(path, source)))?;
+    append_record(&mut file, record).map_err(|(count, source)| (count, io_error(path, source)))
+}
+
+// Keep byte progress explicit: write_all discards it on a short write followed by an error.
+fn append_record(writer: &mut impl Write, record: &[u8]) -> Result<(), (usize, io::Error)> {
+    let mut count = 0;
+    while count < record.len() {
+        match writer.write(&record[count..]) {
+            Ok(0) => return Err((count, io::Error::from(io::ErrorKind::WriteZero))),
+            Ok(written) => count += written,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err((count, error)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+#[path = "transaction_tests.rs"]
+mod tests;

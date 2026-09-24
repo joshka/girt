@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use girt::refs::{Expected, RefName, Target};
+use girt::refs::{Expected, RefEdit, RefName, Reflog, ReflogEntry, Target};
 use girt::{ObjectId, Repository};
 
 fn references(c: &mut Criterion) {
@@ -63,6 +63,7 @@ fn references(c: &mut Criterion) {
         });
     }
     std::fs::remove_file(root.path().join("packed-refs")).unwrap();
+    std::fs::create_dir_all(root.path().join("refs/tags")).unwrap();
     for index in 0..1000 {
         std::fs::write(
             root.path().join(format!("refs/tags/tag-{index:05}")),
@@ -77,6 +78,56 @@ fn references(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(2));
-    targets = references
+    targets = references, transactions
 }
 criterion_main!(benches);
+
+fn transactions(c: &mut Criterion) {
+    for count in [1, 32] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(root.path().join("repo"), girt::InitKind::Bare).unwrap();
+        let edits: Vec<_> = (0..count)
+            .map(|index| RefEdit {
+                name: RefName::new(format!("refs/tags/batch-{index:03}")).unwrap(),
+                dereference: false,
+                target: Some(Target::Direct(ObjectId::from_bytes([1; 20]))),
+                expected: Expected::Any,
+                reflog: Reflog::Append {
+                    committer: girt::Signature {
+                        name: b"Benchmark".to_vec(),
+                        email: b"bench@example.com".to_vec(),
+                        seconds: 1700000000,
+                        offset_minutes: 0,
+                    },
+                    message: b"benchmark publication".to_vec(),
+                },
+            })
+            .collect();
+        let refs = repo.references().unwrap();
+        c.bench_function(&format!("transactions/publish-with-log-{count}"), |b| {
+            b.iter_batched(
+                || {
+                    for edit in &edits {
+                        let relative = std::str::from_utf8(edit.name.as_bytes()).unwrap();
+                        let path = repo.git_dir().join("logs").join(relative);
+                        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                        std::fs::write(path, b"").unwrap();
+                    }
+                },
+                |()| refs.transaction(black_box(&edits)).unwrap(),
+                BatchSize::PerIteration,
+            )
+        });
+    }
+    for count in [10, 10000] {
+        let record = format!(
+            "{} {} Benchmark <bench@example.com> 1700000000 +0000\tbenchmark publication\n",
+            ObjectId::from_bytes([1; 20]),
+            ObjectId::from_bytes([2; 20])
+        );
+        let bytes = record.repeat(count).into_bytes();
+        c.bench_function(&format!("transactions/parse-log-{count}"), |b| {
+            b.iter(|| ReflogEntry::parse(black_box(&bytes)).unwrap())
+        });
+    }
+}
