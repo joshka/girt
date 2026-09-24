@@ -201,7 +201,8 @@ pub(crate) fn write_controlled(
     compression: PackCompression,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<PackWritten, PackWriteError> {
-    let objects = validate(objects, limits)?;
+    let objects = validate(objects, limits, check)?;
+    check()?;
     let count = objects.len() as u32;
     let mut pack = Output::new(pack, limits.max_pack_bytes, "pack bytes");
     pack.put(b"PACK")?;
@@ -337,12 +338,15 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
 fn validate<'a>(
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<Vec<PackObject<'a>>, PackWriteError> {
+    check()?;
     if objects.len() as u64 > u64::from(limits.max_objects) {
         return Err(PackWriteError::Limit("input occurrences"));
     }
     let mut total = 0u64;
     for object in objects {
+        check()?;
         let length = object.data.len() as u64;
         if length > limits.max_object_bytes {
             return Err(PackWriteError::Limit("object bytes"));
@@ -354,9 +358,11 @@ fn validate<'a>(
             return Err(PackWriteError::Limit("input bytes"));
         }
     }
+    check()?;
     let mut sorted = objects.to_vec();
     sorted.sort_unstable_by_key(|object| object.id);
     for pair in sorted.windows(2) {
+        check()?;
         if pair[0].id == pair[1].id
             && (pair[0].kind != pair[1].kind || pair[0].data != pair[1].data)
         {
@@ -365,6 +371,7 @@ fn validate<'a>(
     }
     sorted.dedup_by_key(|object| object.id);
     for object in &sorted {
+        check()?;
         let actual = ObjectId::for_object(object.kind.as_str(), object.data);
         if actual != object.id {
             return Err(PackWriteError::Identity {
@@ -1096,6 +1103,49 @@ mod compression_tests {
             PackCompression::Delta(DeltaOptions::default()),
         );
         assert!(matches!(result, Err(PackWriteError::Identity { .. })));
+        assert!(pack.is_empty());
+        assert!(index.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn prevalidation_cancellation_leaves_both_outputs_untouched() {
+        let objects = [
+            PackObject {
+                id: ObjectId::for_blob(b"first"),
+                kind: ObjectKind::Blob,
+                data: b"first",
+            },
+            PackObject {
+                id: ObjectId::from_bytes([255; 20]),
+                kind: ObjectKind::Blob,
+                data: b"invalid identity",
+            },
+        ];
+        let mut checks = 0;
+        let (mut pack, mut index) = (vec![], vec![]);
+        let result = write_controlled(
+            &objects,
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            PackCompression::Ordinary,
+            &mut || {
+                checks += 1;
+                if checks == 7 {
+                    Err(PackWriteError::Io(io::Error::other("cancelled")))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(
+            matches!(result, Err(PackWriteError::Io(error)) if error.to_string() == "cancelled")
+        );
         assert!(pack.is_empty());
         assert!(index.is_empty());
     }

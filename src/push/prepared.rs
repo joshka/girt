@@ -33,8 +33,9 @@ impl PreparedPush {
     /// new history requires explicit force; it need not be present locally when force is allowed.
     /// Unchanged IDs are sent as conditional commands and remain subject to server policy.
     ///
-    /// Cancellation is checked between graph steps, pack writes, candidates and every 4096 search
-    /// units, but cannot interrupt a single storage read, hash, parse or compression call. Read
+    /// Cancellation is checked between graph steps, pack input checks and hashes, pack writes,
+    /// candidates and every 4096 search units. A single storage read, hash, parse, sort or
+    /// compression call cannot be interrupted. Read
     /// limits bound decoding per object, not aggregate decoding across objects. Sources must
     /// meet [`Objects`]'s storage assumptions.
     ///
