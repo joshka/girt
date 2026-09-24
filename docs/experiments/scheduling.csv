@@ -1,0 +1,17 @@
+storage_touch,mode,concurrency,batch_ms,request_p50_ms,operation_p50_ms,timer_p95_ms,timer_max_ms,timer_samples,peak_running,peak_queued
+loose-first-touch,inline,1,136.343,86.640,16.580,135.349,135.349,1,1,8
+loose-warm,inline,1,131.374,81.191,16.392,130.379,130.379,1,1,8
+loose-first-touch,inline,4,143.288,91.667,16.946,142.297,142.297,1,1,8
+loose-warm,inline,4,132.631,82.129,16.803,131.636,131.636,1,1,8
+loose-first-touch,workers,1,135.319,87.650,16.114,2.103,2.378,55,1,8
+loose-warm,workers,1,129.806,81.246,16.625,1.544,1.917,53,1,8
+loose-first-touch,workers,4,66.645,65.768,35.757,1.522,1.823,28,4,8
+loose-warm,workers,4,61.504,61.191,31.794,1.528,1.837,27,4,8
+packed-first-touch,inline,1,89.294,57.553,11.418,88.301,88.301,1,1,8
+packed-warm,inline,1,90.038,55.360,11.338,89.046,89.046,1,1,8
+packed-first-touch,inline,4,88.934,56.607,11.303,87.940,87.940,1,1,8
+packed-warm,inline,4,91.100,57.981,11.534,90.109,90.109,1,1,8
+packed-first-touch,workers,1,94.332,59.652,12.133,1.524,1.528,41,1,8
+packed-warm,workers,1,91.452,57.364,11.476,1.529,1.591,39,1,8
+packed-first-touch,workers,4,31.778,30.538,15.402,1.577,1.789,13,4,8
+packed-warm,workers,4,30.936,28.959,14.901,1.520,1.523,14,4,8

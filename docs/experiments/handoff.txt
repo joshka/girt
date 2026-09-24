@@ -1,0 +1,6 @@
+HttpFetch/borrowed: expected rejection: error[E0521]: borrowed data escapes outside of function
+HttpFetch/external-arc: expected rejection: error[E0597]: `known` does not live long enough
+HttpFetch/workarounds: compiled
+SshFetch/borrowed: expected rejection: error[E0521]: borrowed data escapes outside of function
+SshFetch/external-arc: expected rejection: error[E0597]: `known` does not live long enough
+SshFetch/workarounds: compiled
