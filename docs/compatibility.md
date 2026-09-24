@@ -15,15 +15,53 @@ implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Latest transport and ownership tests run locally.           |
-| Linux x86_64   | Earlier runtime evidence; current revision awaits CI.       |
-| Windows x86_64 | Earlier portable tests; repository support remains limited. |
+| macOS arm64    | Architecture revision: full runtime suite and examples.     |
+| Linux x86_64   | Architecture revision: full runtime suite and examples.     |
+| Windows x86_64 | Architecture revision: portable units and doctests only.    |
 
-The configured CI checks core-only, HTTP-only, and SSH-only library compilation independently.
-Configuration is not evidence of a successful run. Historical run IDs, counts and environments below
-apply only to their stated revisions.
+The architecture validation below records native runtime results and independent core-only,
+HTTP-only, and SSH-only library compilation. Run IDs, counts and environments apply only to their
+stated revisions; later code changes require new evidence.
 
 ## Platform and Git-Version Validation
+
+### Architecture Revision Validation
+
+[Run 36043376324](https://github.com/joshka/girt/actions/runs/36043376324) passed on 2026-09-24 at
+revision `c948ec24c56cdb6ac585f32b8a3fcc655f1c9846`, after the architecture fixes.
+
+| Native runner       | Runtime results                               |
+| ------------------- | --------------------------------------------- |
+| Ubuntu 22.04 x86_64 | 685 units, 316 integration tests, 12 doctests |
+| Ubuntu 24.04 x86_64 | 685 units, 316 integration tests, 12 doctests |
+| macOS 14 arm64      | 685 units, 314 integration tests, 12 doctests |
+| Windows 2022 x86_64 | 609 portable units, 12 doctests               |
+
+All runners passed core-only, HTTP-only, and SSH-only library compilation and all-target Clippy. All
+runners used Rust 1.98.1. Unix runners used Git 2.55.0; Windows used Git 2.55.0.windows.5 with the
+MSVC toolchain. Unix suites enabled all features and included real loopback HTTP/HTTPS and SSH
+interoperability, owned network handoff, transport interruption, incremental transfers, and delta
+compression. Local fetch, local push, and HTTP examples passed. Clippy enabled all features and
+rejected warnings; Unix private Rustdoc also rejected warnings. Windows runtime commands used
+default features, so HTTP compilation is not HTTP runtime evidence.
+
+Windows reference storage and local/SSH process adapters remain unsupported. These portable tests do
+not establish Windows repository integration, HTTP runtime compatibility, crash durability,
+network-filesystem behavior, or hostile-path safety. Isolated feature checks compile libraries; they
+do not execute independent feature-specific runtime suites.
+
+Local `just check` also passed on the published implementation, including formatting, 1,011 tests,
+all-feature/all-target Clippy, and docs.rs. Earlier capability sections retain their original
+revision-specific limitations; this run supplies later platform evidence without changing those
+historical results.
+
+[Run 36043806070](https://github.com/joshka/girt/actions/runs/36043806070) also passed all four jobs
+at revision `e26c36345a340292cb5fe04c74e2e09e484f556e`, with unchanged library and test code. This
+workflow revision gives each isolated feature check its own step so a later PowerShell command
+cannot hide an earlier failure, and adds the disposable SSH example on all Unix runners. Test counts
+and toolchains match the preceding run; all four Unix examples now pass on each Unix runner.
+`actionlint` passed for the workflow. This evidence document is a later Markdown-only change,
+checked with rumdl and markdownlint-cli2; the CI results above identify the tested code exactly.
 
 ### Historical Cross-Platform Runs
 
