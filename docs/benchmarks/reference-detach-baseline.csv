@@ -1,0 +1,4 @@
+workload,median_ns,lower_95_ns,upper_95_ns
+transactions_detach-unborn-with-log,846303.6666666667,840711.6283482143,851461.99375
+transactions_publish-with-log-1,720593.1187169312,709343.2066666667,732102.4583333334
+transactions_publish-with-log-32,17317109.375,17073036.5,17717979.25

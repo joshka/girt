@@ -1034,7 +1034,7 @@ fn clone_download_finishes_on_owned_worker_without_checkout() {
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");
-    let request = girt::clone::CloneRequest::prepare(
+    let request = girt::clone::CloneRequest::prepare_tracking(
         &path,
         girt::InitKind::Worktree,
         server.url.as_bytes(),
@@ -1089,7 +1089,7 @@ fn clone_validation_cancellation_leaves_destination_absent() {
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");
-    let request = girt::clone::CloneRequest::prepare(
+    let request = girt::clone::CloneRequest::prepare_tracking(
         &path,
         girt::InitKind::Bare,
         server.url.as_bytes(),

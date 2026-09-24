@@ -47,7 +47,7 @@ use crate::{InitKind, ObjectKind, Repository};
 /// let root = tempfile::tempdir()?;
 /// let source = std::fs::canonicalize("/path/to/source")?;
 /// let url = source.to_str().ok_or("example needs a UTF-8 path")?;
-/// let request = CloneRequest::prepare(
+/// let request = CloneRequest::prepare_tracking(
 ///     root.path().join("copy"),
 ///     InitKind::Worktree,
 ///     url.as_bytes(),
@@ -90,7 +90,14 @@ impl std::fmt::Debug for CloneRequest {
 }
 
 impl CloneRequest {
-    /// Checks destination absence and explicit policy, without creating files or connecting.
+    /// Prepares a clone with all branches in `refs/remotes/origin/*`, all tags, and at most one
+    /// local branch. Checks destination absence without creating files or connecting.
+    ///
+    /// `kind` selects metadata placement only. In particular, `InitKind::Bare` uses this tracking
+    /// layout too: enumerating or serving `refs/heads/*` exposes only the selected local branch
+    /// (none for detached or unborn HEAD). Conventional bare copies with every remote branch under
+    /// `refs/heads/*` are unsupported. Subsequent fetch can update the configured tracking refs
+    /// without allowing branch destinations or weakening worktree safeguards.
     ///
     /// `url` preserves bytes through quoted Git configuration. Empty values, NUL and carriage
     /// returns are rejected. The library does not infer whether supplied bytes contain secrets.
@@ -98,7 +105,7 @@ impl CloneRequest {
     /// # Errors
     ///
     /// Returns invalid branch/URL policy or filesystem/destination errors without mutation.
-    pub fn prepare(
+    pub fn prepare_tracking(
         destination: impl AsRef<Path>,
         kind: InitKind,
         url: &[u8],
@@ -353,7 +360,7 @@ fn head_edits(head: &CloneHead, reflog: &Reflog) -> Vec<RefEdit> {
         name: RefName::new("HEAD").unwrap(),
         dereference: false,
         target: Some(target),
-        expected: Expected::Value(Target::Symbolic(RefName::new("refs/heads/main").unwrap())),
+        expected: Expected::Value(Target::Symbolic(crate::repository::initial_branch())),
         reflog: head_reflog,
     });
     edits

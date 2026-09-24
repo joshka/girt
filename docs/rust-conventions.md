@@ -14,6 +14,9 @@ maintainability and testing guidance.
   arriving directly at a type should not need the crate overview to understand its obligations.
 - Keep filesystem assumptions and storage errors with loose storage; link to those contracts from
   the crate root.
+- Keep defaults and serialized initial metadata owned by their initializer. Composing workflows
+  should reuse those values for exact-byte or expected-value preconditions instead of reconstructing
+  them; otherwise a formatting or default change can break a later workflow phase.
 
 ## Domain Types at API Boundaries
 

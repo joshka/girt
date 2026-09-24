@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use super::discover::has_marker;
 use super::{OpenError, Repository};
+use crate::refs::RefName;
 
 /// Layout to create with [`Repository::init`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,11 +128,25 @@ fn populate(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
     ] {
         create_directory(&git_dir.join(name))?;
     }
-    let bare = kind == InitKind::Bare;
-    let config = format!("[core]\n\trepositoryformatversion = 0\n\tbare = {bare}\n");
-    create_file(&git_dir.join("config"), config.as_bytes())?;
+    create_file(&git_dir.join("config"), &initial_config(kind))?;
     // HEAD is last so a partially initialized directory does not look ready to open.
-    create_file(&git_dir.join("HEAD"), b"ref: refs/heads/main\n")
+    let mut head = b"ref: ".to_vec();
+    head.extend_from_slice(initial_branch().as_bytes());
+    head.push(b'\n');
+    create_file(&git_dir.join("HEAD"), &head)
+}
+
+// Initialization owns these defaults, including exact bytes used by clone's config precondition.
+pub(crate) fn initial_config(kind: InitKind) -> Vec<u8> {
+    format!(
+        "[core]\n\trepositoryformatversion = 0\n\tbare = {}\n",
+        kind == InitKind::Bare
+    )
+    .into_bytes()
+}
+
+pub(crate) fn initial_branch() -> RefName {
+    RefName::new("refs/heads/main").expect("fixed initial branch")
 }
 
 fn create_directory(path: &Path) -> Result<(), InitError> {

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 pub use init::{InitError, InitKind};
+pub(crate) use init::{initial_branch, initial_config};
 use thiserror::Error;
 
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};

@@ -484,3 +484,248 @@ fn resolved_cycle_is_rejected_without_publication() {
     ));
     clean(&repo);
 }
+
+fn detach() -> RefEdit {
+    RefEdit {
+        name: name("HEAD"),
+        dereference: false,
+        target: Some(Target::Direct(id(1))),
+        expected: Expected::Value(Target::Symbolic(name("refs/heads/main"))),
+        reflog: log(),
+    }
+}
+fn old_branch(repo: &Repository, old: Option<ObjectId>) {
+    if let Some(id) = old {
+        repo.references()
+            .unwrap()
+            .update_without_reflog(
+                &name("refs/heads/main"),
+                Target::Direct(id),
+                Expected::Absent,
+            )
+            .unwrap();
+    }
+}
+
+#[rstest]
+#[case::unborn(None, id(0))]
+#[case::born(Some(id(2)), id(2))]
+fn stored_detachment_logs_resolved_old_identity_only_on_head(
+    #[case] old: Option<ObjectId>,
+    #[case] expected: ObjectId,
+) {
+    let (_temp, repo) = fixture();
+    old_branch(&repo, old);
+    let refs = repo.references().unwrap();
+    let outcomes = refs.transaction(&[detach()]).unwrap();
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Direct(id(1)))
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        old.map(Target::Direct)
+    );
+    assert_eq!(outcomes[0].name, name("HEAD"));
+    assert_eq!(outcomes[0].logs, vec![(name("HEAD"), LogOutcome::Appended)]);
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].old, expected);
+    assert_eq!(entries[0].new, id(1));
+    assert_eq!(refs.reflog(&name("refs/heads/main")).unwrap(), None);
+    clean(&repo);
+}
+
+#[test]
+fn detachment_resolves_multiple_hops_to_packed_old_tip() {
+    let (_temp, repo) = fixture();
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/main"),
+        Target::Symbolic(name("refs/heads/old")),
+        Expected::Absent,
+    )
+    .unwrap();
+    fs::write(
+        repo.git_dir().join("packed-refs"),
+        format!("{} refs/heads/old\n", id(2)),
+    )
+    .unwrap();
+    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    assert!(prepared.locks.contains_key(&name("HEAD")));
+    assert!(prepared.locks.contains_key(&name("refs/heads/main")));
+    assert!(prepared.locks.contains_key(&name("refs/heads/old")));
+    let outcomes = prepared.publish().unwrap();
+    assert_eq!(outcomes[0].logs, vec![(name("HEAD"), LogOutcome::Appended)]);
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old, id(2));
+    assert_eq!(
+        refs.read(&name("refs/heads/old")).unwrap(),
+        Some(Target::Direct(id(2)))
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/old")))
+    );
+    clean(&repo);
+}
+
+#[test]
+fn detachment_checks_stored_symbolic_value_not_resolved_identity() {
+    let (_temp, repo) = fixture();
+    old_branch(&repo, Some(id(2)));
+    let refs = repo.references().unwrap();
+    let mut operation = detach();
+    operation.expected = Expected::Value(Target::Direct(id(2)));
+    assert!(matches!(
+        refs.transaction(&[operation]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Mismatch { .. },
+            ..
+        })
+    ));
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap(), None);
+    clean(&repo);
+}
+
+#[test]
+fn detachment_locks_unborn_dependency_against_concurrent_creation() {
+    let (_temp, repo) = fixture();
+    let refs = repo.references().unwrap();
+    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    let writer = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                repo.references().unwrap().update_without_reflog(
+                    &name("refs/heads/main"),
+                    Target::Direct(id(2)),
+                    Expected::Absent,
+                )
+            })
+            .join()
+            .unwrap()
+    });
+    assert!(matches!(writer, Err(ReferenceError::Locked(_))));
+    prepared.publish().unwrap();
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old, id(0));
+    assert_eq!(refs.read(&name("refs/heads/main")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+#[case::old_branch("refs/heads/main.lock")]
+#[case::head_log("logs/HEAD.lock")]
+fn detachment_dependency_or_log_lock_preserves_head(#[case] path: &str) {
+    let (_temp, repo) = fixture();
+    let path = repo.git_dir().join(path);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"foreign").unwrap();
+    let refs = repo.references().unwrap();
+    assert!(matches!(
+        refs.transaction(&[detach()]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Locked(_),
+            ..
+        })
+    ));
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap(), None);
+    assert_eq!(fs::read(&path).unwrap(), b"foreign");
+    fs::remove_file(path).unwrap();
+    clean(&repo);
+}
+
+#[test]
+fn failed_detachment_log_reports_published_head_without_changing_old_branch() {
+    let (_temp, repo) = fixture();
+    old_branch(&repo, Some(id(2)));
+    let refs = repo.references().unwrap();
+    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    fs::create_dir(repo.git_dir().join("logs/HEAD")).unwrap();
+    let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
+        panic!("expected append failure")
+    };
+    assert_eq!(outcomes[0].name, name("HEAD"));
+    assert_eq!(outcomes[0].reference, RefOutcome::Published);
+    assert_eq!(
+        outcomes[0].logs,
+        vec![(name("HEAD"), LogOutcome::Failed { bytes_written: 0 })]
+    );
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Direct(id(1)))
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        Some(Target::Direct(id(2)))
+    );
+    clean(&repo);
+}
+
+#[test]
+fn detachment_rejects_old_chain_cycle_before_publication() {
+    let (_temp, repo) = fixture();
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/main"),
+        Target::Symbolic(name("HEAD")),
+        Expected::Absent,
+    )
+    .unwrap();
+    assert!(matches!(
+        refs.transaction(&[detach()]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Cycle(_),
+            ..
+        })
+    ));
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap(), None);
+    clean(&repo);
+}
+
+#[test]
+fn detachment_rejects_batch_edit_of_old_identity_dependency() {
+    let (_temp, repo) = fixture();
+    let refs = repo.references().unwrap();
+    assert!(matches!(
+        refs.transaction(&[detach(), edit("refs/heads/main")]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Conflict(_),
+            ..
+        })
+    ));
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(refs.read(&name("refs/heads/main")).unwrap(), None);
+    clean(&repo);
+}
+
+#[test]
+fn detachment_does_not_read_or_append_old_branch_log() {
+    let (_temp, repo) = fixture();
+    old_branch(&repo, Some(id(2)));
+    fs::create_dir_all(repo.git_dir().join("logs/refs/heads")).unwrap();
+    fs::write(
+        repo.git_dir().join("logs/refs/heads/main"),
+        b"opaque old branch log",
+    )
+    .unwrap();
+    repo.references().unwrap().transaction(&[detach()]).unwrap();
+    assert_eq!(
+        fs::read(repo.git_dir().join("logs/refs/heads/main")).unwrap(),
+        b"opaque old branch log"
+    );
+    clean(&repo);
+}

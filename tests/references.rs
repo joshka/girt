@@ -1372,3 +1372,67 @@ fn detached_head_transaction_records_previous_tip() {
         b"transaction\n"
     );
 }
+
+#[test]
+fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch() {
+    let (root, repo, first) = fixture();
+    let second = second_commit(root.path(), first);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    let operation = girt::refs::RefEdit {
+        name: name("HEAD"),
+        dereference: false,
+        target: Some(Target::Direct(second)),
+        expected: Expected::Value(Target::Symbolic(name("refs/heads/main"))),
+        reflog: transaction_log(b"detach"),
+    };
+    let outcomes = repo
+        .references()
+        .unwrap()
+        .transaction(&[operation])
+        .unwrap();
+    let (git_root, _git_repo, git_first) = fixture();
+    let git_second = second_commit(git_root.path(), git_first);
+    git(
+        git_root.path(),
+        &["update-ref", "refs/heads/main", &git_first.to_string()],
+        b"",
+    );
+    git(
+        git_root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "--no-deref",
+            "-m",
+            "detach",
+            "HEAD",
+            &git_second.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        fs::read(root.path().join("logs/HEAD")).unwrap(),
+        fs::read(git_root.path().join("logs/HEAD")).unwrap()
+    );
+    assert_eq!(
+        fs::read(root.path().join("HEAD")).unwrap(),
+        fs::read(git_root.path().join("HEAD")).unwrap()
+    );
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .read(&name("refs/heads/main"))
+            .unwrap(),
+        Some(Target::Direct(first))
+    );
+    assert!(!root.path().join("logs/refs/heads/main").exists());
+    assert_eq!(
+        outcomes[0].logs,
+        vec![(name("HEAD"), girt::refs::LogOutcome::Appended)]
+    );
+    git(root.path(), &["fsck", "--strict"], b"");
+}

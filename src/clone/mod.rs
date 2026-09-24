@@ -1,6 +1,7 @@
 //! Clone into a new bare repository or an ordinary repository without checkout.
 //!
-//! [`CloneRequest`] selects all branches and tags from the actual transfer advertisement.
+//! [`CloneRequest::prepare_tracking`] explicitly chooses a remote-tracking reference layout,
+//! selecting all branches and tags from the actual transfer advertisement.
 //! [`CloneReady::finish`] exclusively creates the destination, installs the validated transfer,
 //! saves `origin` configuration, and sets the selected branch/HEAD. Both layouts use
 //! `refs/remotes/origin/*`; bare clone does not copy every branch into `refs/heads/*`.

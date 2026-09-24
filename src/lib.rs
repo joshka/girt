@@ -18,13 +18,13 @@
 //!
 //! # Cloning without checkout
 //!
-//! [`clone::CloneRequest::prepare`] selects a new destination, layout, stored origin URL, branch
-//! policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any owned
-//! network download on a caller-controlled worker, then call [`clone::CloneReady::finish`]. Both
-//! layouts retain all remote-tracking branches and tags, with one selected local branch or detached
-//! HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout state.
-//! Inspect [`clone::CloneError`] for initialized, installed, configured and published state after
-//! failure. Run `cargo run --example clone_repository` for the lifecycle.
+//! [`clone::CloneRequest::prepare_tracking`] selects a new destination, layout, stored origin URL,
+//! branch policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any
+//! owned network download on a caller-controlled worker, then call [`clone::CloneReady::finish`].
+//! Both layouts retain all remote-tracking branches and tags, with one selected local branch or
+//! detached HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout
+//! state. Inspect [`clone::CloneError`] for initialized, installed, configured and published state
+//! after failure. Run `cargo run --example clone_repository` for the lifecycle.
 //!
 //! # Planning from remote configuration
 //!

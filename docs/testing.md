@@ -12,7 +12,9 @@ risks involved; one test can satisfy several criteria without duplicating assert
   implementation. Include meaningful boundaries, rejected inputs, and promised absence of side
   effects. Assert observable behavior rather than implementation steps or derived traits.
 - **Public API:** Demonstrate a usable operation through an executable example or integration test.
-  Exercise ownership, errors, and setup as a library consumer would.
+  Exercise ownership, errors, and setup as a library consumer would. For workflows composing
+  existing primitives, cover supported policy combinations through the public workflow API;
+  component tests alone do not establish that the policies compose.
 - **Git compatibility:** Compare with Git when reading, writing, or interpreting Git data. Exercise
   both directions where applicable. Round trips alone can hide a bug shared by reader and writer;
   include independent expected values or Git-generated input.
@@ -729,3 +731,38 @@ nightly formatting, rumdl, Markdown lint and the planning benchmark passed. Rend
 and its example/navigation were inspected through a temporary loopback preview. Linux/Windows
 runtime evidence remains uncollected; finish retains the existing Unix reference backend
 requirement.
+
+### Clone Reflog Composition Remediation
+
+The architecture checkpoint demonstrated that detached clone with `Reflog::Append` failed after
+fetch/config publication: the reference primitive could not derive a log identity from the
+initializer's symbolic HEAD. The transaction now locks and rechecks that old chain for a stored
+direct replacement, logs its resolved old ID (zero when unborn), and publishes/logs only the named
+ref. Exact stored-value preconditions remain in force. Symbolic new targets and stored symbolic
+deletion still require preserved logs; clone's symbolic branch/unborn HEAD remains unlogged while
+its created direct refs honor the caller's policy.
+
+- Twelve public clone cases cover branch/detached/unborn selection with Preserve/Append in both bare
+  and ordinary layouts. They assert exact HEAD/log bytes, reported log effects, no index and Git
+  fsck.
+- Transaction unit tests cover born/unborn and multi-hop packed old identities, stored-value
+  mismatch, dependency/log lock failure, concurrent creation refused by an owned dependency lock,
+  cycle/batch overlap rejection, preservation of the old branch's opaque log, and published-HEAD
+  outcomes when its subsequent append fails.
+- An independent Git CLI comparison checks exact symbolic-to-direct HEAD log bytes and preservation
+  of the former branch. A clone failure test retains completed fetch/config while an old-branch lock
+  prevents detachment and preserves the initial symbolic HEAD.
+- Initialization now owns the exact initial config bytes and branch identity used by clone's
+  preconditions. `CloneRequest::prepare_tracking` makes the reference-layout choice explicit;
+  `InitKind` still selects only physical placement. Serving/enumerating local branches sees at most
+  the selected branch in both layouts, and conventional all-local-branch bare copies remain outside
+  scope. The unreleased constructor was renamed and all in-repository callers were updated.
+
+`just check` passed 919 unit tests, 426 integration cases and 15 doctests, plus
+all-target/all-feature Clippy and docs.rs on macOS arm64 with Rust 1.98.1 and Git 2.55.0. The clone
+example also passed. Core-only compilation, warning-denying private Rustdoc, final all-target
+Clippy, nightly formatting, rumdl and Markdown lint passed. The existing reference harness now
+includes unborn detachment with append logging;
+[retained measurements](benchmarks.md#symbolic-head-detachment-with-reflog) record that path and
+direct-ref publication. Native Linux/Windows evidence is still outstanding; no platform support or
+fetch safeguards were changed.

@@ -18,7 +18,9 @@ pub struct RefEdit {
     /// Follow up to 32 symbolic hops, keeping the chain unchanged.
     ///
     /// Only direct updates or deletion can be dereferenced. Preconditions apply to the terminal
-    /// stored value. Overlapping chains/destinations in a batch are rejected.
+    /// stored value. With `false`, a direct replacement with append logging still locks and
+    /// resolves the old symbolic chain for the log identity, but edits/logs only `name` and checks
+    /// the precondition against its stored value. Overlapping chains/destinations are rejected.
     pub dereference: bool,
     /// Replacement, or `None` to delete. Object existence/type is not checked.
     pub target: Option<Target>,
@@ -111,7 +113,11 @@ impl References<'_> {
     /// without honoring those log locks, so ordering against such appends is not promised. Reflog
     /// deletion/expiry and external log rewriting must be excluded by the caller while writing.
     /// Direct branch edits do not automatically log HEAD or discover aliases; use a resolved HEAD
-    /// edit to log that chain. Stored symbolic edits require `Reflog::Preserve`.
+    /// edit to log that chain. A stored direct replacement with append logging locks and resolves
+    /// the old symbolic chain, recording its terminal ID (zero when unborn) in only the edited
+    /// name's log. Its precondition still compares the original stored value, and the old branch
+    /// and its log remain unchanged. Creating symbolic targets and deleting stored symbolic values
+    /// require `Reflog::Preserve`.
     ///
     /// No hooks, config/environment policy, object validation, fsync, crash recovery, or
     /// filesystem-wide atomic visibility is provided. Cleanup is best effort; termination or
@@ -189,11 +195,17 @@ impl References<'_> {
                 )
                 .map_err(error)?;
             }
-            let (name, actual) = chain.last().unwrap();
+            let (name, actual) = if edit.dereference {
+                chain.last().unwrap()
+            } else {
+                chain.first().unwrap()
+            };
             check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
             let mut logs = Vec::new();
             if let Reflog::Append { committer, message } = &edit.reflog {
-                let old = log_id(actual.as_ref()).map_err(error)?;
+                // Discovery includes the old chain for a stored direct replacement. All its
+                // values have now been rechecked under locks; only the edited name is published.
+                let old = log_id(chain.last().unwrap().1.as_ref()).map_err(error)?;
                 let new = log_id(edit.target.as_ref()).map_err(error)?;
                 let record = ReflogEntry {
                     old,
@@ -202,7 +214,12 @@ impl References<'_> {
                     message: message.clone(),
                 };
                 let record = record.encode().map_err(error)?;
-                for (log_name, _) in &chain {
+                let logged_chain = if edit.dereference {
+                    &chain[..]
+                } else {
+                    &chain[..1]
+                };
+                for (log_name, _) in logged_chain {
                     log_names.insert(log_name.clone());
                     logs.push((log_name.clone(), record.clone()));
                 }
@@ -243,6 +260,9 @@ impl References<'_> {
         edit: &RefEdit,
         packed: &packed::Packed,
     ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
+        let resolve_old = edit.dereference
+            || (matches!(edit.target, Some(Target::Direct(_)))
+                && matches!(edit.reflog, Reflog::Append { .. }));
         let mut chain = Vec::new();
         let mut name = edit.name.clone();
         loop {
@@ -252,7 +272,7 @@ impl References<'_> {
             let target = self.read_locked(&name, packed)?;
             chain.push((name.clone(), target.clone()));
             match target {
-                Some(Target::Symbolic(next)) if edit.dereference => {
+                Some(Target::Symbolic(next)) if resolve_old => {
                     if chain.len() > 32 {
                         return Err(ReferenceError::Depth(32));
                     }

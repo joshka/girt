@@ -119,6 +119,41 @@ fn transactions(c: &mut Criterion) {
             )
         });
     }
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(root.path().join("detach"), girt::InitKind::Bare).unwrap();
+    let refs = repo.references().unwrap();
+    let head = RefName::new("HEAD").unwrap();
+    let unborn = Target::Symbolic(RefName::new("refs/heads/main").unwrap());
+    let detach = RefEdit {
+        name: head.clone(),
+        dereference: false,
+        target: Some(Target::Direct(ObjectId::from_bytes([1; 20]))),
+        expected: Expected::Value(unborn.clone()),
+        reflog: Reflog::Append {
+            committer: girt::Signature {
+                name: b"Benchmark".to_vec(),
+                email: b"bench@example.com".to_vec(),
+                seconds: 1700000000,
+                offset_minutes: 0,
+            },
+            message: b"detach unborn HEAD".to_vec(),
+        },
+    };
+    std::fs::create_dir(repo.git_dir().join("logs")).unwrap();
+    c.bench_function("transactions/detach-unborn-with-log", |b| {
+        b.iter_batched(
+            || {
+                refs.update_without_reflog(&head, unborn.clone(), Expected::Any)
+                    .unwrap();
+                std::fs::write(repo.git_dir().join("logs/HEAD"), b"").unwrap();
+            },
+            |()| {
+                refs.transaction(black_box(std::slice::from_ref(&detach)))
+                    .unwrap()
+            },
+            BatchSize::PerIteration,
+        );
+    });
     for count in [10, 10000] {
         let record = format!(
             "{} {} Benchmark <bench@example.com> 1700000000 +0000\tbenchmark publication\n",

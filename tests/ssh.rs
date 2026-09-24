@@ -932,7 +932,7 @@ fn clone_download_finishes_on_owned_worker_without_checkout() {
     let remote = server.remote("config");
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");
-    let request = girt::clone::CloneRequest::prepare(
+    let request = girt::clone::CloneRequest::prepare_tracking(
         &path,
         girt::InitKind::Worktree,
         b"ssh://fixture/repository",
@@ -987,7 +987,7 @@ fn clone_validation_cancellation_leaves_destination_absent() {
     let remote = server.remote("config");
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");
-    let request = girt::clone::CloneRequest::prepare(
+    let request = girt::clone::CloneRequest::prepare_tracking(
         &path,
         girt::InitKind::Bare,
         b"ssh://fixture/repository",
@@ -1019,7 +1019,7 @@ fn clone_malformed_transfer_leaves_destination_absent() {
     let server = Server::new(f.root.path(), "malformed");
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");
-    let request = girt::clone::CloneRequest::prepare(
+    let request = girt::clone::CloneRequest::prepare_tracking(
         &path,
         girt::InitKind::Bare,
         b"ssh://fixture/repository",

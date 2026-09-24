@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = source_path
         .to_str()
         .ok_or("example needs a UTF-8 temporary path")?;
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &destination_path,
         InitKind::Worktree,
         url.as_bytes(),

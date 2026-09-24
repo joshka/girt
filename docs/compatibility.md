@@ -9,16 +9,20 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
-explicit reflog policy, named remote/refspec mapping, and explicit fetch orchestration. The
-single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
-validation state. Installation takes explicit destination snapshot limits. Read and operation limits
-remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
+explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
+tracking-layout clone into bare or ordinary no-checkout repositories. The single-reference no-reflog
+operations remain available. HTTP and SSH downloads share owned validation state. Installation takes
+explicit destination snapshot limits. Read and operation limits remain per phase; no process-wide
+heap or hard CPU-latency guarantee is implied.
 
-| Platform       | Current evidence boundary                                   |
-| -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Architecture revision: full runtime suite and examples.     |
-| Linux x86_64   | Architecture revision: full runtime suite and examples.     |
-| Windows x86_64 | Architecture revision: portable units and doctests only.    |
+| Platform       | Current evidence boundary                                             |
+| -------------- | --------------------------------------------------------------------- |
+| macOS arm64    | Clone remediation: full runtime suite; see completion evidence below. |
+| Linux x86_64   | Architecture revision: full runtime suite and examples.               |
+| Windows x86_64 | Architecture revision: portable units and doctests only.              |
+
+The latest [clone remediation evidence](testing.md#clone-reflog-composition-remediation) is
+macOS-only; Linux/Windows runtime results below predate recent reference/fetch/clone increments.
 
 The architecture validation below records native runtime results and independent core-only,
 HTTP-only, and SSH-only library compilation. Run IDs, counts and environments apply only to their
@@ -1290,9 +1294,12 @@ crossing follows the ancestor algorithm but was not exercised with a separately 
 All stored values and preconditions are checked with the selected names locked. Symbolic discovery
 is rechecked after acquiring locks; changes fail preparation instead of redirecting the operation.
 Duplicate names, intersecting chains, and ancestor/descendant batches (including delete/create
-namespace swaps) are rejected. A stored symbolic edit can preserve logs; logging a symbolic
-replacement is explicitly unsupported. A resolved HEAD edit preserves HEAD and logs the visited
-chain with terminal old/new IDs. Direct branch updates do not discover or log aliases/HEAD.
+namespace swaps) are rejected. A stored direct replacement with append logging resolves and locks
+its old symbolic chain for the previous log ID, using zero when unborn. It compares the precondition
+against the original stored value, then edits and logs only the named ref; the old branch and its
+log remain unchanged. Creating a symbolic target or deleting a stored symbolic value still requires
+preserved logs. A resolved HEAD edit preserves HEAD and logs the visited chain with terminal old/new
+IDs. Direct branch updates do not discover or log aliases/HEAD.
 
 Preparation takes the common packed lock, ref locks in byte-name order, then log locks in byte-name
 order. It validates existing logs selected for append. A preparation failure preserves reference and
@@ -1483,13 +1490,13 @@ new workflow paths.
 
 ## Clone Without Checkout
 
-`clone::CloneRequest` composes exclusive destination initialization with existing local/HTTP/SSH
-fetch, validation, installation and conditional references. The destination must be absent,
-including empty directories and dangling symlinks, and its parent must exist. Downloads and
-validation precede all destination writes. No hardlinks, alternates, index, checkout,
-shallow/partial clone, recursive submodules, mirror behavior or credential discovery are included.
-Ordinary clones contain only `.git`; Git can report staged deletions until a later checkout
-populates the index and files.
+`clone::CloneRequest::prepare_tracking` explicitly selects the remote-tracking reference layout and
+composes exclusive destination initialization with existing local/HTTP/SSH fetch, validation,
+installation and conditional references. The destination must be absent, including empty directories
+and dangling symlinks, and its parent must exist. Downloads and validation precede all destination
+writes. No hardlinks, alternates, index, checkout, shallow/partial clone, recursive submodules,
+mirror behavior or credential discovery are included. Ordinary clones contain only `.git`; Git can
+report staged deletions until a later checkout populates the index and files.
 
 Both bare and ordinary layouts store every advertised branch under `refs/remotes/origin/*` and all
 tags under `refs/tags/*`. A selected branch additionally gets one `refs/heads/*` ref and symbolic
@@ -1498,6 +1505,10 @@ all-local-branch layout, so later `FetchRequest` calls can use the persisted ref
 weakening its branch and worktree safeguards. No `origin/HEAD` alias, pruning or `FETCH_HEAD` is
 written. All configured refspecs are unforced; later replacement policy stays explicit at the fetch
 boundary.
+
+`prepare_tracking` names the reference-layout choice; `InitKind` selects storage placement only.
+Consumers enumerating or serving `refs/heads/*` see only the selected local branch, or none for
+detached/unborn selection. Conventional copies with every branch in `refs/heads/*` are unsupported.
 
 Default selection honors one consistent `symref=HEAD:refs/heads/...` capability. Without a symbolic
 hint, an advertised HEAD remains detached even when one or several branches share its ID. A missing
@@ -1517,8 +1528,10 @@ tracking refs/tags, verifies branch object kinds, saves config under an exclusiv
 then conditionally publishes the local branch and HEAD in that order. Config replacement compares
 the exact initializer contents and refuses other writers' edits. A final reopen supplies a fresh
 config snapshot before success is returned. Direct refs use the caller's reflog policy; stored
-symbolic HEAD uses preservation because symbolic replacements cannot append reflogs through this
-primitive.
+symbolic HEAD uses preservation because symbolic targets cannot append reflogs through this
+primitive. Detached HEAD honors append policy: its old unborn branch is locked while recording zero
+as the prior ID, then HEAD is made direct and its log is appended. A failed append retains the
+published HEAD and an explicit partial-log outcome.
 
 Errors retain reservation/initialization flags, a completed fetch report or its detailed nested
 failure, config completion and final reference outcomes. Initialization can leave partial metadata;

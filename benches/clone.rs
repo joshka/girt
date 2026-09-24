@@ -9,7 +9,7 @@ use girt::{InitKind, ObjectId};
 
 fn clone_plan(c: &mut Criterion) {
     let root = tempfile::tempdir().unwrap();
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         root.path().join("copy"),
         InitKind::Bare,
         b"benchmark",

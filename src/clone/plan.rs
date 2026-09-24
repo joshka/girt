@@ -110,7 +110,7 @@ pub(super) fn plan(
                 [] => match head {
                     Some(r) => CloneHead::Detached(r.id),
                     None if tips.is_empty() => {
-                        CloneHead::Unborn(RefName::new("refs/heads/main").unwrap())
+                        CloneHead::Unborn(crate::repository::initial_branch())
                     }
                     None => return Err(ClonePlanError::MissingHead),
                 },

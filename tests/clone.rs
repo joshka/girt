@@ -128,7 +128,7 @@ fn clone(
     kind: InitKind,
     selection: BranchSelection,
 ) -> girt::clone::CloneReport {
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         path,
         kind,
         source.root.path().as_os_str().as_encoded_bytes(),
@@ -344,7 +344,7 @@ fn empty_repository_has_unborn_head_and_persistent_remote(
         b"",
     );
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Worktree,
         source.as_os_str().as_encoded_bytes(),
@@ -381,7 +381,7 @@ fn missing_remote_head_requires_branch_selection_without_destination_effects() {
     );
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -413,7 +413,7 @@ fn existing_destinations_are_never_accepted(#[case] directory: bool) {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
     create_existing(&path, directory);
-    let result = CloneRequest::prepare(
+    let result = CloneRequest::prepare_tracking(
         &path,
         InitKind::Worktree,
         b"source",
@@ -436,7 +436,7 @@ fn dangling_destination_symlink_is_not_followed() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
     std::os::unix::fs::symlink(root.path().join("absent"), &path).unwrap();
-    let result = CloneRequest::prepare(
+    let result = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -453,7 +453,7 @@ fn receive_cancellation_leaves_no_destination() {
     let source = Source::new();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -479,7 +479,7 @@ fn changed_remote_after_download_does_not_change_published_id() {
     let source = Source::new();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -515,7 +515,7 @@ fn noncommit_branch_is_rejected_after_install_without_final_head_or_config() {
     .unwrap();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -549,7 +549,7 @@ fn git_reads_exact_quoted_remote_metadata() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
     let url = b" /literal/\"quote\\tab\tline\n\xff ";
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         url,
@@ -579,7 +579,7 @@ fn transfer_object_limit_leaves_destination_absent() {
     let source = Source::new();
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         &path,
         InitKind::Bare,
         b"source",
@@ -602,4 +602,187 @@ fn transfer_object_limit_leaves_destination_absent() {
         Err(CloneTransferError::Transfer(FetchError::Limit(_)))
     ));
     assert!(!path.exists());
+}
+
+#[derive(Clone, Copy)]
+enum PolicyHead {
+    Branch,
+    Detached,
+    Unborn,
+}
+
+fn policy_source(head: PolicyHead) -> Source {
+    let source = Source::new();
+    match head {
+        PolicyHead::Branch => (),
+        PolicyHead::Detached => {
+            fs::write(
+                source.root.path().join("HEAD"),
+                format!("{}\n", source.second),
+            )
+            .unwrap();
+        }
+        PolicyHead::Unborn => {
+            git(
+                source.root.path(),
+                &["update-ref", "-d", "refs/heads/main"],
+                b"",
+            );
+            git(
+                source.root.path(),
+                &["update-ref", "-d", "refs/heads/topic"],
+                b"",
+            );
+            git(
+                source.root.path(),
+                &["update-ref", "-d", "refs/heads/private"],
+                b"",
+            );
+            git(
+                source.root.path(),
+                &["update-ref", "-d", "refs/tags/v1"],
+                b"",
+            );
+        }
+    }
+    source
+}
+fn append_policy() -> Reflog {
+    Reflog::Append {
+        committer: girt::Signature {
+            name: b"Clone Policy".to_vec(),
+            email: b"policy@example.com".to_vec(),
+            seconds: 1700000000,
+            offset_minutes: 0,
+        },
+        message: b"clone policy".to_vec(),
+    }
+}
+fn symbolic_head(_: &Source) -> Vec<u8> {
+    b"ref: refs/heads/main\n".to_vec()
+}
+fn detached_head(source: &Source) -> Vec<u8> {
+    format!("{}\n", source.second).into_bytes()
+}
+fn no_logs(_: &Source) -> Vec<(&'static str, ObjectId)> {
+    vec![]
+}
+fn branch_logs(source: &Source) -> Vec<(&'static str, ObjectId)> {
+    vec![
+        ("refs/heads/main", source.first),
+        ("refs/remotes/origin/main", source.first),
+        ("refs/remotes/origin/private", source.second),
+        ("refs/remotes/origin/topic", source.second),
+        ("refs/tags/v1", source.tag),
+    ]
+}
+fn detached_logs(source: &Source) -> Vec<(&'static str, ObjectId)> {
+    vec![
+        ("HEAD", source.second),
+        ("refs/remotes/origin/main", source.first),
+        ("refs/remotes/origin/private", source.second),
+        ("refs/remotes/origin/topic", source.second),
+        ("refs/tags/v1", source.tag),
+    ]
+}
+fn stored_logs(repo: &Repository) -> Vec<String> {
+    fn visit(path: &Path, prefix: &str, result: &mut Vec<String>) {
+        if !path.exists() {
+            return;
+        }
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let name = format!("{prefix}{}", entry.file_name().to_str().unwrap());
+            if entry.file_type().unwrap().is_dir() {
+                visit(&entry.path(), &format!("{name}/"), result);
+            } else {
+                result.push(name);
+            }
+        }
+    }
+    let mut names = Vec::new();
+    visit(&repo.git_dir().join("logs"), "", &mut names);
+    names.sort();
+    names
+}
+fn assert_log_bytes(repo: &Repository, expected: &[(&str, ObjectId)]) {
+    for (name, id) in expected {
+        let bytes = fs::read(repo.git_dir().join("logs").join(name)).unwrap();
+        assert_eq!(
+            bytes,
+            format!(
+                "{} {id} Clone Policy <policy@example.com> 1700000000 +0000\tclone policy\n",
+                "0".repeat(40)
+            )
+            .as_bytes()
+        );
+    }
+}
+
+#[rstest]
+#[case::branch_preserve(PolicyHead::Branch, Reflog::Preserve, symbolic_head, no_logs)]
+#[case::branch_append(PolicyHead::Branch, append_policy(), symbolic_head, branch_logs)]
+#[case::detached_preserve(PolicyHead::Detached, Reflog::Preserve, detached_head, no_logs)]
+#[case::detached_append(PolicyHead::Detached, append_policy(), detached_head, detached_logs)]
+#[case::unborn_preserve(PolicyHead::Unborn, Reflog::Preserve, symbolic_head, no_logs)]
+#[case::unborn_append(PolicyHead::Unborn, append_policy(), symbolic_head, no_logs)]
+fn head_and_reflog_policies_compose_in_each_layout(
+    #[values(InitKind::Bare, InitKind::Worktree)] kind: InitKind,
+    #[case] head: PolicyHead,
+    #[case] reflog: Reflog,
+    #[case] head_bytes: fn(&Source) -> Vec<u8>,
+    #[case] logs: fn(&Source) -> Vec<(&'static str, ObjectId)>,
+) {
+    let source = policy_source(head);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("copy");
+    let request = CloneRequest::prepare_tracking(
+        &path,
+        kind,
+        b"policy-source",
+        BranchSelection::Default,
+        reflog,
+    )
+    .unwrap();
+    let ready = request
+        .receive_local(
+            source.root.path(),
+            FetchLimits::default(),
+            TransportControl::new(&AtomicBool::new(false)),
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+    let report = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let repo = report.repository.as_ref().unwrap();
+    assert_eq!(
+        fs::read(repo.git_dir().join("HEAD")).unwrap(),
+        head_bytes(&source)
+    );
+    let expected_logs = logs(&source);
+    assert_eq!(
+        stored_logs(repo),
+        expected_logs
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_log_bytes(repo, &expected_logs);
+    let effects = report
+        .references
+        .iter()
+        .chain(&report.fetch.as_ref().unwrap().references);
+    let mut appended: Vec<_> = effects.flat_map(|effect| &effect.logs).cloned().collect();
+    appended.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        appended,
+        expected_logs
+            .iter()
+            .map(|(n, _)| (name(n), girt::refs::LogOutcome::Appended))
+            .collect::<Vec<_>>()
+    );
+    assert!(report.configured);
+    assert!(!repo.git_dir().join("index").exists());
+    git(repo.git_dir(), &["fsck", "--strict", "--full"], b"");
 }

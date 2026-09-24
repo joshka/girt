@@ -2,18 +2,11 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 
 use super::CloneHead;
+use crate::repository::initial_config;
 use crate::{InitKind, Repository};
 
-pub(super) fn initial(kind: InitKind) -> Vec<u8> {
-    format!(
-        "[core]\n\trepositoryformatversion = 0\n\tbare = {}\n",
-        kind == InitKind::Bare
-    )
-    .into_bytes()
-}
-
 pub(super) fn contents(kind: InitKind, url: &[u8], head: &CloneHead) -> Vec<u8> {
-    let mut bytes = initial(kind);
+    let mut bytes = initial_config(kind);
     bytes.extend_from_slice(b"[remote \"origin\"]\n\turl = ");
     quoted(&mut bytes, url);
     bytes.extend_from_slice(
@@ -56,7 +49,7 @@ pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Re
         .create_new(true)
         .open(&lock)?;
     let result = (|| {
-        if fs::read(&destination)? != initial(kind) {
+        if fs::read(&destination)? != initial_config(kind) {
             return Err(io::Error::other(
                 "clone initialization configuration changed",
             ));

@@ -867,3 +867,36 @@ unchanged. These are baseline operation estimates, not latency percentiles, a re
 or a numerical acceptance threshold. Retained plans and temporary source lists scale with
 advertisement size; transfer limits bound advertisements/wants, while arbitrary preview callers
 bound their own inputs. Peak RSS and other platforms were not measured.
+
+## Symbolic HEAD Detachment With Reflog
+
+The reference harness now measures a stored symbolic-to-direct HEAD transaction with append logging.
+Each iteration starts with an unborn branch, symbolic HEAD and an empty HEAD log. Resetting HEAD and
+truncating the log happen outside timing with `iter_batched(PerIteration)`. The measured transaction
+locks and rechecks HEAD and its absent branch dependency, publishes direct HEAD, appends its log and
+releases locks. It performs no object lookup or clone transfer. Existing 1/32-direct-ref publication
+cases run alongside it; their empty-log resets are also outside timing.
+
+```sh
+cargo bench --bench references -- 'transactions/(publish-with-log|detach-unborn)'
+```
+
+The 2026-09-24 run used Criterion 0.8.2, 30 samples, one-second warmup and two-second measurement
+targets, with the checked-in lockfile and default optimized bench profile. Hardware was Apple M2
+Max, 96 GiB RAM, on macOS 26.6.2 (25G83), rustc 1.98.1 and Cargo 1.98.1. Temporary filesystem
+metadata was warm, without cache eviction. No agent-started builds or tests overlapped sampling;
+background desktop activity and CPU placement/thermal state were uncontrolled.
+
+| Operation                        | Median ms | 95% CI, ms      |
+| -------------------------------- | --------- | --------------- |
+| Detach unborn HEAD and log       | 0.8463    | 0.8407–0.8515   |
+| Publish 1 direct ref with log    | 0.7206    | 0.7093–0.7321   |
+| Publish 32 direct refs with logs | 17.3171   | 17.0730–17.7180 |
+
+The [CSV estimates](benchmarks/reference-detach-baseline.csv) retain medians and 95% intervals in
+nanoseconds. The [source manifest](benchmarks/reference-detach-baseline.sha256) fingerprints library
+sources, the harness and Cargo files; verify with
+`shasum -a 256 -c docs/benchmarks/reference-detach-baseline.sha256`. These are sampled warm-storage
+operation baselines, not tail latency, peak-memory evidence or a numerical regression gate. The
+historical transaction measurements were not collected as a controlled before/after comparison. No
+Linux/Windows performance or end-to-end clone speed claim is made.

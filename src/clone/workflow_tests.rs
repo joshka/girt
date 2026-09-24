@@ -34,7 +34,7 @@ fn ready() -> (tempfile::TempDir, CloneReady) {
             Expected::Absent,
         )
         .unwrap();
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         root.path().join("copy"),
         InitKind::Bare,
         b"fixture",
@@ -75,7 +75,7 @@ fn invalid_url_has_no_effects(#[case] url: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
     assert!(matches!(
-        CloneRequest::prepare(
+        CloneRequest::prepare_tracking(
             &path,
             InitKind::Bare,
             url,
@@ -243,7 +243,7 @@ fn transfer_error_before_selection_keeps_original_cause() {
 #[test]
 fn urls_are_not_in_request_debug() {
     let root = tempfile::tempdir().unwrap();
-    let request = CloneRequest::prepare(
+    let request = CloneRequest::prepare_tracking(
         root.path().join("copy"),
         InitKind::Bare,
         b"secret-token",
@@ -316,4 +316,55 @@ fn missing_destination_parent_is_not_created() {
     assert!(!error.report.reserved);
     assert!(!error.report.initialized);
     assert!(!error.report.destination.parent().unwrap().exists());
+}
+
+#[test]
+fn detached_append_dependency_lock_failure_keeps_initial_head_and_completed_fetch() {
+    let (_root, mut ready) = ready();
+    let CloneHead::Branch { id, .. } = ready.head else {
+        panic!("fixture branch")
+    };
+    ready.head = CloneHead::Detached(id);
+    ready.request.reflog = Reflog::Append {
+        committer: Signature {
+            name: b"Clone".to_vec(),
+            email: b"clone@example.com".to_vec(),
+            seconds: 1700000000,
+            offset_minutes: 0,
+        },
+        message: b"detach".to_vec(),
+    };
+    let (repo, mut report) = initialized(&ready);
+    fs::write(
+        repo.git_dir().join("refs/heads/main.lock"),
+        b"foreign writer",
+    )
+    .unwrap();
+    let result = ready.finish_in(
+        repo,
+        FetchUpdateLimits::default(),
+        &AtomicBool::new(false),
+        &mut report,
+    );
+    assert!(matches!(
+        result,
+        Err(CloneFailure::Publication(
+            crate::refs::TransactionError::Prepare {
+                source: crate::refs::ReferenceError::Locked(_),
+                ..
+            }
+        ))
+    ));
+    assert!(report.configured);
+    assert!(report.fetch.as_ref().unwrap().installed.is_some());
+    assert!(report.repository.is_none());
+    assert_eq!(
+        fs::read(report.destination.join("HEAD")).unwrap(),
+        b"ref: refs/heads/main\n"
+    );
+    assert!(!report.destination.join("logs/HEAD").exists());
+    assert_eq!(
+        fs::read(report.destination.join("refs/heads/main.lock")).unwrap(),
+        b"foreign writer"
+    );
 }

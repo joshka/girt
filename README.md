@@ -37,10 +37,10 @@ creates ordinary or bare SHA-1 repositories with unborn `main` and refuses reini
 [initialization example](examples/init_repository.rs) and
 [discovery and initialization boundaries](docs/compatibility.md#repository-discovery-and-initialization).
 
-Clone supports new bare repositories and ordinary repositories without checkout through explicit
-local, HTTP or SSH endpoints. Both layouts retain remote-tracking branches, tags and a selected
-local branch or detached HEAD, with persistent `origin` configuration. See the
-[clone example](examples/clone_repository.rs) and
+`CloneRequest::prepare_tracking` prepares new bare repositories and ordinary repositories without
+checkout through explicit local, HTTP or SSH endpoints. Both layouts retain remote-tracking
+branches, tags and a selected local branch or detached HEAD, with persistent `origin` configuration.
+See the [clone example](examples/clone_repository.rs) and
 [scope and failure contracts](docs/compatibility.md#clone-without-checkout).
 
 Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, and
