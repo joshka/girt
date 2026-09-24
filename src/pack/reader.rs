@@ -148,7 +148,7 @@ fn inflate(input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
     Ok(data)
 }
 
-pub(super) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u8>, usize), Error> {
+pub(crate) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u8>, usize), Error> {
     let mut inflater = Decompress::new(true);
     let mut output = [0; 8192];
     let mut data = Vec::new();

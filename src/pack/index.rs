@@ -3,7 +3,7 @@ use sha1::{Digest, Sha1};
 use crate::{ObjectId, ObjectReadError as Error};
 
 #[derive(Debug)]
-pub(super) struct Entry {
+pub(crate) struct Entry {
     pub id: ObjectId,
     pub offset: usize,
     pub end: usize,
@@ -130,14 +130,14 @@ impl Index {
     }
 }
 
-pub(super) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
+pub(crate) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
     let word = bytes
         .get(position..position + 4)
         .ok_or(Error::Corrupt("truncated integer"))?;
     Ok(u32::from_be_bytes(word.try_into().unwrap()))
 }
 
-pub(super) fn verify_hash(bytes: &[u8], reason: &'static str) -> Result<(), Error> {
+pub(crate) fn verify_hash(bytes: &[u8], reason: &'static str) -> Result<(), Error> {
     let end = bytes.len().checked_sub(20).ok_or(Error::Corrupt(reason))?;
     if Sha1::digest(&bytes[..end])[..] != bytes[end..] {
         return Err(Error::Corrupt(reason));

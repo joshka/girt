@@ -1,11 +1,14 @@
+//! Imports received pack bytes for fetch validation, retaining decoded objects until
+//! connectivity is checked. Storage-format primitives remain in the pack module.
+
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 
-use super::delta::{apply, byte, charge, size};
-use super::index::{verify_hash, word};
-use super::reader::inflate_prefix;
-use super::write::{Entry, encode_index};
-use crate::fetch::{FetchError, FetchLimits, check_cancelled};
+use super::{FetchError, FetchLimits, check_cancelled};
+use crate::pack::delta::{apply, byte, charge, size};
+use crate::pack::index::{verify_hash, word};
+use crate::pack::reader::inflate_prefix;
+use crate::pack::write::{Entry, encode_index};
 use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error};
 
 /// Fully decoded objects are retained until connectivity has been checked. All inflation and

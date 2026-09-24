@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
+use super::import::Imported;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
-use crate::pack::Imported;
 use crate::{ObjectId, Repository};
 
 /// A validated protocol response with internal delta bases and selected-tip connectivity.

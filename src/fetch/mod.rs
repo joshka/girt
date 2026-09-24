@@ -39,6 +39,7 @@ mod download;
 pub use download::DownloadedFetch;
 
 mod connectivity;
+mod import;
 mod install;
 mod known;
 mod local;

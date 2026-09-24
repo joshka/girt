@@ -406,13 +406,13 @@ fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     bytes
 }
 
-pub(super) struct Entry {
+pub(crate) struct Entry {
     pub id: ObjectId,
     pub offset: u64,
     pub crc: u32,
 }
 
-pub(super) fn encode_index(
+pub(crate) fn encode_index(
     entries: &[Entry],
     checksum: ObjectId,
 ) -> Result<Vec<u8>, PackWriteError> {

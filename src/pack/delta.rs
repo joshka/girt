@@ -1,7 +1,7 @@
 use crate::ObjectReadError as Error;
 
 /// Advances a borrowed byte cursor; all pack/delta integers use checked arithmetic.
-pub(super) fn byte(input: &mut &[u8]) -> Result<u8, Error> {
+pub(crate) fn byte(input: &mut &[u8]) -> Result<u8, Error> {
     let (&value, tail) = input
         .split_first()
         .ok_or(Error::Corrupt("truncated delta or entry"))?;
@@ -9,7 +9,7 @@ pub(super) fn byte(input: &mut &[u8]) -> Result<u8, Error> {
     Ok(value)
 }
 
-pub(super) fn size(
+pub(crate) fn size(
     input: &mut &[u8],
     mut value: usize,
     mut shift: u32,
@@ -28,7 +28,7 @@ pub(super) fn size(
     Ok(value)
 }
 
-pub(super) fn apply(
+pub(crate) fn apply(
     base: &[u8],
     mut program: &[u8],
     max_size: usize,
@@ -89,7 +89,7 @@ pub(super) fn apply(
     Ok(result)
 }
 
-pub(super) fn charge(remaining: &mut usize, size: usize) -> Result<(), Error> {
+pub(crate) fn charge(remaining: &mut usize, size: usize) -> Result<(), Error> {
     *remaining = remaining
         .checked_sub(size)
         .ok_or(Error::Limit("cumulative decode bytes"))?;
