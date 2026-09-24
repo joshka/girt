@@ -177,6 +177,8 @@ fn opens_linked_worktree(#[case] input: &str) {
 #[case::crlf(b"\xef\xbb\xbf[TeST]\r\nVaLuE = one\r\n", b"one\0")]
 #[case::whitespace(b"[test] value= a  b\t c  \n", b"a  b\t c\0")]
 #[case::bytes(b"[test]\nvalue = \xff\n", b"\xff\0")]
+#[case::empty_quote_prefix(b"[test]\nvalue = \"\"  value\n", b"value\0")]
+#[case::continued_prefix(b"[test]\nvalue = \\\n  value\n", b"value\0")]
 fn config_values_agree_with_git(#[case] bytes: &[u8], #[case] expected: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("config"), bytes).unwrap();
@@ -510,6 +512,7 @@ fn missing_config_uses_layout_defaults() {
 
 #[rstest]
 #[case::bad_escape(b"[core]\nx=\\q\n")]
+#[case::double_cr_escape(b"[core]\nx=a\\\r\r\nb\n")]
 #[case::unclosed_quote(b"[core]\nx=\"value\n")]
 #[case::missing_subsection_space(b"[core\"sub\"]\nx=value\n")]
 fn malformed_syntax_is_rejected_by_git_and_girt(#[case] bytes: &[u8]) {

@@ -264,10 +264,6 @@ impl Parser<'_> {
                 b'\\' => {
                     let escaped = match self.take() {
                         Some(b'\n') => continue,
-                        Some(b'\r') if self.peek() == Some(b'\n') => {
-                            self.take();
-                            continue;
-                        }
                         Some(b'n') => b'\n',
                         Some(b't') => b'\t',
                         Some(b'b') => 8,
@@ -278,6 +274,7 @@ impl Parser<'_> {
                     value.push(escaped);
                     keep = value.len();
                 }
+                b' ' | b'\t' if !quoted && value.is_empty() => {}
                 byte => {
                     value.push(byte);
                     if quoted || !matches!(byte, b' ' | b'\t') {
@@ -304,6 +301,8 @@ mod tests {
     #[case::continuation(b"[core]\nx = ab\\\ncd\n", b"abcd")]
     #[case::escapes(b"[core]\nx = \\n\\t\\b\\\\\\\"\n", b"\n\t\x08\\\"")]
     #[case::bytes(b"[core]\nx = \xff\n", b"\xff")]
+    #[case::empty_quote_prefix(b"[core]\nx = \"\"  value\n", b"value")]
+    #[case::continued_prefix(b"[core]\nx = \\\n  value\n", b"value")]
     fn parses_values(#[case] input: &[u8], #[case] expected: &[u8]) {
         let config = Config::parse(input).unwrap();
         assert_eq!(config.value("CORE", None, "X"), Some(Some(expected)));
@@ -314,6 +313,7 @@ mod tests {
     #[case::quote(b"[core]\nx = \"no")]
     #[case::nul(b"[core]\nx = \0")]
     #[case::dotted(b"[remote.origin]\nx=y")]
+    #[case::double_cr_escape(b"[core]\nx = a\\\r\r\nb\n")]
     fn rejects_syntax(#[case] input: &[u8]) {
         assert!(Config::parse(input).is_err());
     }

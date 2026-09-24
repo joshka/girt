@@ -5,6 +5,61 @@ caller can supply an object directory and its known `ObjectFormat::Sha1` format,
 to open an explicit repository path and detect the format from local configuration. SHA-256 storage
 is recognized and rejected. Crate Rustdoc owns the API examples and complete limitations.
 
+## Platform and Git-Version Validation
+
+The current runtime evidence covers macOS arm64. Linux remains a validation target; Windows
+repository operations are unsupported. Earlier capability sections below record their original
+baseline environments, rather than a separate support promise.
+
+| Target                  | Local evidence               | Runtime status                |
+| ----------------------- | ---------------------------- | ----------------------------- |
+| macOS arm64             | Full suite, two Git versions | Validated on local filesystem |
+| Linux x86_64            | Library cross-check          | Unverified                    |
+| Windows x86_64 GNU/MSVC | Library cross-check          | Unsupported                   |
+
+Native checks used macOS 26.6.2 arm64 and rustc 1.98.1 with Git 2.55.0 and Apple Git 2.54.0.
+Filesystem contracts still require trusted paths; crash durability and network filesystems are
+outside the supported boundary.
+
+Native validation commands were `just check`, `PATH=/usr/bin:$PATH cargo test --locked`,
+`RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items`, and
+`cargo run --locked --example fetch_local` / `cargo run --locked --example push_local`. The final
+native suite contains 788 tests, including doctests. Cross-checks use
+`cargo check --locked --lib --target <target>` for `x86_64-unknown-linux-gnu`,
+`x86_64-pc-windows-gnu`, and `x86_64-pc-windows-msvc`; compilation does not test filesystem or
+process behavior. Windows all-target checking on this Mac stopped in Criterion's `alloca` dependency
+because `x86_64-w64-mingw32-gcc` is absent. No dependency requirement was changed to hide this
+toolchain gap.
+
+Local Linux execution was attempted using existing VM installations. Docker had no running daemon;
+`limactl start default --tty=false` failed because the saved qcow2 disk is incompatible with the vz
+driver. `colima start --profile default` and its `--disk 60` retry failed on an attempted disk
+shrink. The existing Podman VM did not establish its SSH connection. Repairing those saved
+environments is outside this library change. Linux filesystem, non-UTF-8 loose-ref, process and hook
+behavior remain unverified here.
+
+[Platform CI](../.github/workflows/validation.yml) runs the full suite, all-target Clippy, private
+Rustdoc and disposable fetch/push examples on Ubuntu 22.04, Ubuntu 24.04 and macOS 14. A separate
+Windows 2022 job checks all targets without declaring runtime support. Each job records Rust and Git
+versions. The workflow has not been run remotely as part of this review. Windows support still needs
+reference path/locking semantics and local-process environment validation, as well as runnable
+integration tests; several current consumer tests require Unix reference storage.
+
+Git 2.54.0 and 2.55.0 were exercised, not a minimum supported version. Fixture commands rely on
+`init --object-format=sha1`, `--initial-branch`, `mktag --no-strict`, pack/index commands and local
+upload-pack/receive-pack v0. CI's installed Git versions must be retained with results; runner
+labels alone do not establish compatibility with an older Git release.
+
+The independent review traced object framing/identity and pack/delta bounds, ref locks and
+publication, repository/config interpretation, ancestry queries, and transfer validation/status
+paths. It found and fixed two config parser discrepancies: leading unquoted whitespace after empty
+quotes or a continued line was retained, and a backslash followed by CR CR LF was incorrectly
+treated as a continuation. New unit and Git-comparison cases cover both; the unit cases failed
+before the fix. Existing corruption, concurrency, namespace, graph and partial-push tests were
+rerun. This is a correctness review within the documented capabilities, not proof of complete Git
+fsck equivalence or an exhaustive security audit. No performance claim or processing-path redesign
+was introduced.
+
 ## References and Provenance
 
 The format references are [Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)

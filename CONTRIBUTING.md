@@ -47,6 +47,12 @@ For performance-sensitive changes, run `just bench`. See
 [Blob Performance Baseline](docs/benchmarks.md) for workloads, measured operations, cache
 conditions, and recorded results.
 
+The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
+checks on macOS and Linux, with a separate Windows compile gate. See
+[platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
+making support claims. Local cross-compilation does not replace executing the test suite on the
+target OS.
+
 ## Implementation and Tests
 
 Use [Testing and Completion Criteria](docs/testing.md) to define acceptance evidence for each
