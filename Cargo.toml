@@ -8,7 +8,16 @@ license = "MIT OR Apache-2.0"
 keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
 
+[features]
+http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
+tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] }
 flate2 = "1"
 crc32fast = "1"
 sha1 = "0.10"
@@ -121,3 +130,12 @@ harness = false
 [[bench]]
 name = "pack_delta"
 harness = false
+
+[[bench]]
+name = "http"
+harness = false
+required-features = ["http"]
+
+[[example]]
+name = "http_local"
+required-features = ["http"]

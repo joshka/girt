@@ -646,9 +646,10 @@ arm64 was exercised; other platforms and actual multi-gigabyte output remain unt
 ## Upload-Pack Fetch
 
 `fetch::receive` implements a single protocol v0 upload-pack session over blocking `Read`/`Write`
-streams. `fetch::receive_local` is the available transport adapter: it starts a trusted local
+streams. `fetch::receive_local` is the local transport adapter: it starts a trusted local
 `git upload-pack` server. It does not use `git fetch`, `fetch-pack`, `index-pack`, or Git parsers on
-the client path. HTTP/SSH connections and credential discovery are not provided.
+the client path. The optional [HTTP adapter](#smart-http-and-https) is separate; SSH and credential
+discovery are not provided.
 
 The client exposes complete byte-preserving advertisements, capability tokens, and peeled tag hints.
 The caller selects explicit advertised tip IDs; peeled hints are not wants. Empty selection sends a
@@ -810,10 +811,10 @@ waits, including stalled hooks. Caller-owned streams must provide interruption/d
 and must be closed after errors. Streams are one-shot and must end at EOF after the final status
 flush.
 
-HTTP/SSH adapters, authentication, remote/refspec configuration, automatic force, pruning, thin
-packs, deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and server
-infrastructure remain deferred. Empty command lists exchange only advertisement and flush, with no
-pack or status report.
+SSH, credential discovery, remote/refspec configuration, automatic force, pruning, thin packs,
+deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and server infrastructure
+remain deferred. Empty command lists exchange only advertisement and flush, with no pack or status
+report.
 
 ### Push Evidence and Provenance
 
@@ -1016,3 +1017,42 @@ syntax. Existing malformed-delta reader tests remain applicable. Evidence is mac
 packs, GC, and repacking remain outside this change.
 [Measurements](benchmarks.md#bounded-delta-comparison) retain size, timing, search-count, and
 source-fingerprint evidence.
+
+## Smart HTTP and HTTPS
+
+The optional `http` feature adds explicit v0 discovery and upload-pack/receive-pack RPCs. Requests
+use exact smart service media types and service preludes. A fetch sends the complete want/have/done
+batch in one POST; no-op fetches and empty pushes use discovery only. Full/incremental graph
+validation, receiver-history exclusion and optional internal delta compression keep their existing
+contracts. HTTP fetch returns a bounded download for explicit synchronous validation and
+installation; HTTP push consumes a previously prepared pack. See [HTTP contracts](http.md) for
+runtime, authentication, TLS, resource and failure semantics.
+
+Original loopback fixtures invoke actual Git `http-backend` as a CGI service in private
+repositories. Git generates the source history, branch, annotated tag and delta pack. Tests compare
+girt reads, Git `cat-file` bytes, selected IDs and published refs. Initial fetch/push, a one-commit
+incremental transfer, known-only fetch and empty push all succeed; recorded request methods verify
+when a POST is omitted. HTTP push also exercises explicit supplied authorization and mixed
+accepted/rejected refs through an original update hook.
+
+Independent fixture modes cover authentication rejection, redirects, HTTP 503, malformed/duplicate
+headers, wrong media types, content encoding, malformed service prelude, protocol v2, body
+truncation and decoded/wire limits. Truncated receive-pack responses retain completed
+acknowledgements while unknown refs remain uncertain even when the server has updated them. Complete
+Git status followed by incomplete HTTP framing also remains uncertain. Deadlines/cancellation
+interrupt stalled discovery, TLS handshakes, a large incompressible upload and status bodies;
+partial acknowledgements are retained. Request counts establish that failures do not trigger
+retries.
+
+TLS fixtures generate an isolated CA and localhost leaf with OpenSSL, exercise real HTTPS push and
+fetch, and reject untrusted chains and hostname mismatch. No real remotes or global trust stores are
+used or modified. Fixture code is original; behavior was guided by Git's
+[HTTP protocol specification](https://git-scm.com/docs/http-protocol), rather than copied Git
+implementation or tests.
+
+New runtime evidence is macOS arm64, Rust 1.98.1, Git 2.55.0, Python 3.14.7 and OpenSSL 3.6.4 on
+2026-09-23. Earlier CI for other capabilities does not validate this adapter. Linux workflow
+coverage is configured but has not been run for this change; Windows HTTP runtime remains untested.
+SSH, credential discovery, proxy use, redirects, protocol v2, shallow/partial repositories and
+remote/refspec policy remain outside this change. The HTTP fixture is test infrastructure, not a
+supported server.

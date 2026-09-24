@@ -447,3 +447,28 @@ Validation on 2026-09-23 passed `just fmt` and `just check` (650 unit tests, 234
 also passed. `cargo bench --bench pack_delta` completed all seven ordinary/delta comparisons;
 retained source fingerprints verify successfully. Runtime evidence remains macOS arm64 and Git
 2.55.0; the earlier Linux CI runs do not validate this change.
+
+## Smart HTTP Completion
+
+- [x] SHA-1 protocol v0 discovery and single stateless RPC boundaries preserve stream/local APIs.
+  Full/incremental fetch, receiver-history exclusion and optional delta push remain explicit.
+- [x] Focused unit tests reject unsafe URLs and protocol/routing header overrides, prevent header
+  injection and verify sanitized errors. Existing protocol tests exercise the extracted phases.
+- [x] `http_local` demonstrates disposable push/download/validation with a caller-owned runtime.
+- [x] Loopback Git `http-backend` tests compare actual Git/girt objects and refs for full,
+  incremental, no-op, branch, tag and delta transfers. Mixed ref outcomes remain visible.
+- [x] Authentication, framing/media types, statuses, redirects, truncation, wire/decode limits,
+  stalled discovery/TLS/upload/status waits and uncertain reports have failure tests. Local CA
+  fixtures validate HTTPS trust and hostname checks and perform real HTTPS fetch/push.
+- [x] Criterion separates full, incremental and known-only loopback transfers with setup excluded;
+      [retained evidence](benchmarks.md#smart-http-loopback-baseline) includes limits of
+      interpretation.
+- [x] [HTTP contracts](http.md) explain runtime/lifetime/concurrency, explicit synchronous CPU work,
+  credentials, trust, interruption, memory, unsupported cases and fixture setup.
+- [x] `just check` passes: 665 unit tests, 271 integration tests (32 HTTP), 12 doctests,
+  all-target/all-feature Clippy and docs.rs. Core-only `cargo check --no-default-features`,
+  warning-denying private Rustdoc, the disposable HTTP example and Markdown lint also pass.
+
+The adapter is opt-in. `just check` now tests/clippies all features and docs.rs enables all
+features; core-only compilation is checked separately. New runtime evidence is limited to macOS
+arm64. Earlier Linux CI is not HTTP validation, and HTTP integration fixtures remain Unix-gated.

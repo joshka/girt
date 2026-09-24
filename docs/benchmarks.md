@@ -614,3 +614,34 @@ The policy compares complete entry costs, so delta output cannot exceed ordinary
 set. It deliberately uses REF_DELTA's 20-byte base identity rather than OFS_DELTA, preserving
 compatibility with receive-pack servers that do not advertise `ofs-delta`. Benchmark values do not
 include receiver reconstruction time, network latency, or the cost of selecting a push graph.
+
+## Smart HTTP Loopback Baseline
+
+`cargo bench --features http --bench http` runs Criterion against a persistent loopback Python
+bridge invoking Git `http-backend` per request. Fixture generation, server startup, client/runtime
+construction and local knowledge preparation occur outside sampling. Each sample includes service
+discovery, any RPC, server process work, HTTP buffering and synchronous response validation; it
+excludes installation. Filesystem caches are warm. These measurements describe this local stack, not
+WAN latency, raw TLS throughput or a memory/RSS bound.
+
+The independently generated workload contains 16 similar blobs plus a tree, commit and annotated tag
+(574,362 payload bytes in the original 19 objects), then a new commit reusing the tree. Full fetch
+selects the new commit, incremental fetch offers the previously verified history, and the known-only
+case selects the existing tag. The incremental RPC transfers one new commit; it still pays
+discovery, process startup and connectivity costs. No numerical acceptance threshold is set.
+
+The 2026-09-23 run used macOS arm64, Rust 1.98.1, Git 2.55.0 and Python 3.14.7. Criterion used ten
+samples, one-second warmup and a two-second target measurement period. Its 95% intervals were:
+
+| Operation                       | Lower (ms) | Estimate (ms) | Upper (ms) |
+| ------------------------------- | ---------: | ------------: | ---------: |
+| Full download/validation        |     75.262 |        75.828 |     76.381 |
+| Incremental download/validation |     73.671 |        74.219 |     74.763 |
+| Known-only discovery/validation |     32.211 |        33.513 |     34.887 |
+
+The full and incremental transfers differ by less than two milliseconds in this sample; server
+startup, negotiation and local validation dominate the saved loopback bytes. Outliers and ten
+samples do not support a general speedup/regression claim. TLS performance is not measured. Retained
+CSV and source fingerprints in `docs/benchmarks/http-baseline.*` identify the measured
+implementation and fixture. Fingerprints were recorded after formatting and minimum-version
+corrections; resolved dependency versions and benchmark behavior did not change.

@@ -10,8 +10,14 @@
 //! while selected-tip connectivity can depend on verified local objects. Installation rechecks
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
 //! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
-//! requests, automatic tags, refspecs, pruning, protocol v1/v2, HTTP, SSH, and credentials are
-//! outside this slice. Peeling hints are exposed separately from selectable reference tips.
+//! requests, automatic tags, refspecs, pruning, protocol v1/v2 and SSH are outside this slice.
+//! The `http` feature adds async smart-HTTP downloads with separate synchronous validation. Peeling
+//! hints are exposed separately from selectable reference tips.
+
+#[cfg(feature = "http")]
+mod http;
+#[cfg(feature = "http")]
+pub use http::{HttpFetch, receive_http};
 
 mod connectivity;
 mod install;
@@ -104,6 +110,10 @@ impl Default for FetchLimits {
 /// Transfer, validation, or installation failed. No references have been changed.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
+    /// Sanitized smart HTTP exchange failure.
+    #[cfg(feature = "http")]
+    #[error("{0}")]
+    Http(#[source] crate::transport::http::HttpError),
     /// Stream or filesystem failure; protocol I/O propagates interruption without retrying.
     #[error("fetch I/O: {0}")]
     Io(#[source] std::io::Error),
@@ -188,6 +198,17 @@ impl From<std::io::Error> for FetchError {
             Some(crate::transport::Interruption::Cancelled) => Self::Cancelled,
             Some(crate::transport::Interruption::Deadline) => Self::Deadline,
             None => Self::Io(error),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl From<crate::transport::http::HttpError> for FetchError {
+    fn from(error: crate::transport::http::HttpError) -> Self {
+        match error {
+            crate::transport::http::HttpError::Cancelled => Self::Cancelled,
+            crate::transport::http::HttpError::Deadline => Self::Deadline,
+            error => Self::Http(error),
         }
     }
 }

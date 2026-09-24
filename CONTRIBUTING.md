@@ -33,9 +33,9 @@ just fmt
 just check
 ```
 
-`just check` runs formatting checks, tests (including doctests), Clippy across all targets, and
-`cargo +nightly docs-rs`. Clippy and Rustdoc warnings fail the checks. Run `just test`,
-`just clippy`, or `just docs-rs` for individual checks. The
+`just check` runs formatting checks, tests (including doctests), Clippy across all targets with all
+features enabled, and `cargo +nightly docs-rs`. Clippy and Rustdoc warnings fail the checks. Run
+`just test`, `just clippy`, or `just docs-rs` for individual checks. The
 [docs.rs check](https://docs.rs/about/builds) uses the crate's docs.rs metadata to approximate the
 hosted build; it does not reproduce the hosted sandbox.
 
@@ -88,3 +88,11 @@ specification references and fixture provenance, and check dependency licenses b
 Explain the problem, resulting behavior, validation performed, and remaining limitations. Link
 relevant issues and call out public API changes, new dependencies, and compatibility assumptions.
 Keep documentation consistent with what the library actually implements.
+
+## HTTP Fixtures
+
+The optional `http` feature uses a caller-owned Tokio runtime. Its Unix interoperability tests need
+Git, Python 3 and OpenSSL on PATH and use only disposable loopback servers. `just check` enables
+this feature; also run `cargo check --no-default-features` when changing feature gates. See
+[HTTP setup and contracts](docs/http.md) for the example, TLS fixtures and async processing
+boundary.

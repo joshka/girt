@@ -93,8 +93,57 @@ pub fn receive_with_known(
     known: &KnownHistory,
     limits: FetchLimits,
     cancel: &AtomicBool,
-    mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
+    validate_known(known, limits, cancel)?;
+    let mut wire = Wire {
+        reader,
+        remaining: limits.max_wire_bytes,
+        cancel,
+    };
+    let advertisement = advertise(&mut wire, limits)?;
+    check_cancelled(cancel)?;
+    let negotiation = request(
+        writer,
+        &advertisement,
+        select(&advertisement),
+        known,
+        limits,
+        cancel,
+    )?;
+    if !negotiation.needs_pack {
+        wire.end()?;
+        return ReceivedFetch::without_pack(
+            advertisement,
+            negotiation.wants,
+            known,
+            limits,
+            cancel,
+        );
+    }
+    response(
+        &mut wire,
+        advertisement,
+        negotiation,
+        known,
+        limits,
+        cancel,
+        progress,
+    )
+}
+
+pub(super) struct Negotiation {
+    pub(super) wants: Vec<ObjectId>,
+    haves: HashSet<ObjectId>,
+    multi_ack: bool,
+    pub(super) needs_pack: bool,
+}
+
+pub(super) fn validate_known(
+    known: &KnownHistory,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<(), Error> {
     check_cancelled(cancel)?;
     if known.objects.len() > limits.max_known_objects {
         return Err(Error::Limit("known objects"));
@@ -106,14 +155,18 @@ pub fn receive_with_known(
             .checked_sub(object.data().len())
             .ok_or(Error::Limit("known bytes"))?;
     }
-    let mut wire = Wire {
-        reader,
-        remaining: limits.max_wire_bytes,
-        cancel,
-    };
-    let advertisement = advertise(&mut wire, limits)?;
+    Ok(())
+}
+
+pub(super) fn request(
+    writer: &mut impl Write,
+    advertisement: &Advertisement,
+    selected: Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<Negotiation, Error> {
     check_cancelled(cancel)?;
-    let selected = select(&advertisement);
     if selected.len() > limits.max_wants {
         return Err(Error::Limit("wants"));
     }
@@ -141,8 +194,12 @@ pub fn receive_with_known(
     if wire_wants.is_empty() {
         put(writer, b"0000", cancel)?;
         writer.flush()?;
-        wire.end()?;
-        return ReceivedFetch::without_pack(advertisement, wants, known, limits, cancel);
+        return Ok(Negotiation {
+            wants,
+            haves: HashSet::new(),
+            multi_ack: false,
+            needs_pack: false,
+        });
     }
     if !advertisement.has(b"side-band-64k") {
         return Err(Error::Unsupported("side-band-64k is required"));
@@ -176,7 +233,24 @@ pub fn receive_with_known(
     }
     packet(writer, b"done\n", cancel)?;
     writer.flush()?;
-    read_ack(&mut wire, &haves, multi_ack)?;
+    Ok(Negotiation {
+        wants,
+        haves,
+        multi_ack,
+        needs_pack: true,
+    })
+}
+
+pub(super) fn response(
+    wire: &mut Wire<'_, impl Read>,
+    advertisement: Advertisement,
+    negotiation: Negotiation,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, Error> {
+    read_ack(wire, &negotiation.haves, negotiation.multi_ack)?;
     let mut pack = Vec::new();
     while let Some(bytes) = wire.packet()? {
         match bytes.split_first() {
@@ -196,7 +270,14 @@ pub fn receive_with_known(
         }
     }
     wire.end()?;
-    ReceivedFetch::validate_known(advertisement, wants, pack, known, limits, cancel)
+    ReceivedFetch::validate_known(
+        advertisement,
+        negotiation.wants,
+        pack,
+        known,
+        limits,
+        cancel,
+    )
 }
 
 // One batch of at most 32 haves keeps both directions below ordinary pipe capacity. Reading
@@ -242,7 +323,10 @@ impl Advertisement {
     }
 }
 
-fn advertise(wire: &mut Wire<'_, impl Read>, limits: FetchLimits) -> Result<Advertisement, Error> {
+pub(super) fn advertise(
+    wire: &mut Wire<'_, impl Read>,
+    limits: FetchLimits,
+) -> Result<Advertisement, Error> {
     let mut advertisement = Advertisement {
         refs: vec![],
         capabilities: vec![],
@@ -377,6 +461,28 @@ mod tests {
     #[case::empty(&[])]
     fn rejects_invalid_or_unbounded_ack_sequences(#[case] lines: &[&str]) {
         assert!(acknowledgements(lines, true).is_err());
+    }
+
+    #[test]
+    fn cancellation_after_advertisement_skips_selection() {
+        struct CancelOnRead<'a>(&'a AtomicBool);
+        impl Read for CancelOnRead<'_> {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                out.copy_from_slice(b"0000");
+                self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(4)
+            }
+        }
+        let cancel = AtomicBool::new(false);
+        let result = receive(
+            &mut CancelOnRead(&cancel),
+            &mut Vec::new(),
+            |_| panic!("selection after cancellation"),
+            FetchLimits::default(),
+            &cancel,
+            |_| ControlFlow::Continue(()),
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
     }
 
     #[test]

@@ -79,7 +79,10 @@ fn transmit(
     Ok(())
 }
 
-fn advertise(wire: &mut Wire<'_, impl Read>, prepared: &PreparedPush) -> Result<(), Error> {
+pub(super) fn advertise(
+    wire: &mut Wire<'_, impl Read>,
+    prepared: &PreparedPush,
+) -> Result<(), Error> {
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
@@ -160,7 +163,10 @@ fn advertise(wire: &mut Wire<'_, impl Read>, prepared: &PreparedPush) -> Result<
     Ok(())
 }
 
-fn read_status(wire: &mut Wire<'_, impl Read>, report: &mut PushReport) -> Result<(), Error> {
+pub(super) fn read_status(
+    wire: &mut Wire<'_, impl Read>,
+    report: &mut PushReport,
+) -> Result<(), Error> {
     let unpack = wire
         .packet()?
         .ok_or(Error::Protocol("missing unpack status"))?;

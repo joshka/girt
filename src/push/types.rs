@@ -151,6 +151,10 @@ pub enum PushError {
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
+    /// Sanitized smart HTTP exchange failure.
+    #[cfg(feature = "http")]
+    #[error("{0}")]
+    Http(#[source] crate::transport::http::HttpError),
     /// I/O failure; protocol interruption is returned without retrying.
     #[error("push I/O: {0}")]
     Io(#[source] std::io::Error),
@@ -234,6 +238,17 @@ impl From<std::io::Error> for PushFailure {
             Some(crate::transport::Interruption::Cancelled) => Self::Cancelled,
             Some(crate::transport::Interruption::Deadline) => Self::Deadline,
             None => Self::Io(error),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl From<crate::transport::http::HttpError> for PushFailure {
+    fn from(error: crate::transport::http::HttpError) -> Self {
+        match error {
+            crate::transport::http::HttpError::Cancelled => Self::Cancelled,
+            crate::transport::http::HttpError::Deadline => Self::Deadline,
+            error => Self::Http(error),
         }
     }
 }

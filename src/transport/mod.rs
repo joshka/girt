@@ -1,6 +1,8 @@
 //! Caller control for owned transports; protocol streams remain caller-owned and cooperative.
 
 mod control;
+#[cfg(feature = "http")]
+pub mod http;
 pub use control::TransportControl;
 pub(crate) use control::{Interruption, interruption};
 

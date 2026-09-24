@@ -2,7 +2,11 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-/// Cancellation and an optional absolute deadline for an owned local transport.
+/// Cancellation and an optional absolute deadline for an owned transport.
+///
+/// The following process/pipe guarantees apply to local adapters. With the `http` feature, the
+/// HTTP adapter polls this same control during async network waits; its module documents the
+/// network-specific scope, runtime requirements and separate synchronous validation step.
 ///
 /// Set `cancel` from another thread and leave it set until the operation returns. The deadline
 /// expires at the caller's chosen [`Instant`] and is never reset by traffic. Checks begin before

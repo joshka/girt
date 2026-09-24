@@ -7,8 +7,14 @@
 //!
 //! Only SHA-1 branches and tags are supported. `report-status` is required; no atomic, sideband,
 //! deletion, push-options, signed-push or report-status-v2 features are requested. Multiple
-//! commands can partially succeed. HTTP/SSH, credentials, refspecs, pruning and automatic force are
-//! deferred.
+//! commands can partially succeed. The `http` feature adds async smart-HTTP sending with explicit
+//! caller-supplied authorization headers. SSH, credential discovery, refspecs, pruning and
+//! automatic force are deferred.
+
+#[cfg(feature = "http")]
+mod http;
+#[cfg(feature = "http")]
+pub use http::send_http;
 
 mod graph;
 mod local;

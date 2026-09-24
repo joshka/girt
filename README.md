@@ -48,8 +48,8 @@ packs, deltas, identities, and selected-tip connectivity before explicit index-l
 Explicit `fetch::KnownHistory` enables bounded have/ACK negotiation and known-only no-op fetches;
 installation rechecks the required local objects. Reference updates remain separate conditional
 operations without reflogs. Run `cargo run --example fetch_local` for a complete disposable example.
-HTTP/SSH adapters, credentials, remote/refspec policy, shallow/partial fetches, automatic tags, and
-pruning are not implemented. See
+SSH adapters, credential discovery, remote/refspec policy, shallow/partial fetches, automatic tags,
+and pruning are not implemented. See
 [fetch compatibility](docs/compatibility.md#upload-pack-fetch).
 
 `push::PreparedPush` validates complete reachable histories and builds a non-thin pack.
@@ -59,9 +59,15 @@ over receive-pack v0 streams; `push::send_local` supplies a local Git server ada
 and tag replacement require explicit force policy. Results preserve unpack and per-ref status,
 including partial success; connection failures after transmission are distinguished as uncertain.
 Local tracking refs remain unchanged. Run `cargo run --example push_local` for a disposable
-branch/tag publication example. Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred.
-See
+branch/tag publication example. Deletion, atomic multi-ref push and SSH adapters are deferred. See
 [push compatibility](docs/compatibility.md#receive-pack-push).
+
+Enable the `http` feature for async smart-HTTP(S) fetch and push using a caller-owned Tokio runtime.
+`fetch::receive_http` downloads a response; its `HttpFetch::validate` step performs synchronous pack
+validation before installation. `push::send_http` consumes an already prepared push. Authentication
+headers and additional trust roots are explicit; redirects, proxies and automatic retries are
+rejected or disabled. Run `cargo run --features http --example http_local` for a disposable loopback
+example. See [HTTP setup and contracts](docs/http.md).
 
 Local adapters on macOS/Linux interrupt pipe and server-exit waits when cancelled. Their
 `*_with_control` entry points also accept an absolute deadline; see

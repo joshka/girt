@@ -28,7 +28,8 @@
 //!
 //! The current API is experimental and supports SHA-1 loose objects, pack/index v2 reads,
 //! caller-owned pack/index v2 exports, object-only fetch, and conditional branch/tag push. Fetch
-//! and push accept v0 streams or local Git server adapters.
+//! and push accept v0 streams or local Git server adapters. The optional `http` feature adds async
+//! smart-HTTP(S) network adapters; fetch pack validation remains an explicit synchronous step.
 //! Files references support reads, symbolic resolution, and explicit no-reflog updates.
 //! The working-tree index, upward discovery, and working-tree conversion are
 //! not implemented.

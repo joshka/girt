@@ -7,7 +7,7 @@ check: fmt-check test clippy docs-rs
 
 # Run unit, integration, and documentation tests.
 test:
-    cargo test
+    cargo test --all-features
 
 # Measure object and repository baselines (not a CI performance gate).
 bench:
@@ -15,7 +15,7 @@ bench:
 
 # Reject Clippy warnings across all targets.
 clippy:
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-features --all-targets -- -D warnings
 
 # Check documentation with docs.rs options and reject Rustdoc warnings.
 docs-rs:
