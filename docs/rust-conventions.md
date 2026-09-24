@@ -78,12 +78,12 @@ Keep the runtime owned by the caller; isolate network dependencies behind the `h
 features. Do not make object formats, hashing, graph algorithms or local storage async solely
 because a network caller uses them.
 
-Separate potentially substantial synchronous work from async network calls. HTTP fetch returns a
-bounded download whose explicit `validate` method imports the pack and checks connectivity. Push
-preparation remains synchronous and precedes sending; sending consumes the prepared buffers without
-copying the pack. This keeps executor scheduling and CPU concurrency under caller control without
-creating detached blocking jobs whose cancellation and resource lifetime would be hidden. Callers
-should use a bounded worker pool for large validation/preparation/install operations. Broader async
-storage APIs remain deferred until a consumer needs remote object lookup or a concrete storage
-responsiveness guarantee. See [HTTP contracts](http.md) and [SSH contracts](ssh.md) for current
-boundaries.
+Separate potentially substantial synchronous work from async network calls. HTTP and SSH fetch
+return an owned bounded download whose explicit `validate` method imports the pack and checks
+connectivity. Push preparation remains synchronous and precedes sending; sending consumes the
+prepared buffers without copying the pack. This keeps executor scheduling and CPU concurrency under
+caller control without creating detached blocking jobs whose cancellation and resource lifetime
+would be hidden. Callers should use a bounded worker pool for large validation/preparation/install
+operations. Broader async storage APIs remain deferred until a consumer needs remote object lookup
+or a concrete storage responsiveness guarantee. See [HTTP contracts](http.md) and
+[SSH contracts](ssh.md) for current boundaries.

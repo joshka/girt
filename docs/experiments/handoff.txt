@@ -1,3 +1,6 @@
+Historical borrowed-API probe results from experiment revision a35f3005.
+The current check_handoff.py instead requires owned handoffs to compile.
+
 HttpFetch/borrowed: expected rejection: error[E0521]: borrowed data escapes outside of function
 HttpFetch/external-arc: expected rejection: error[E0597]: `known` does not live long enough
 HttpFetch/workarounds: compiled

@@ -5,6 +5,7 @@ mod ssh_git;
 mod supported {
     use std::ops::ControlFlow;
     use std::process::Command;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
     use girt::fetch::{FetchLimits, KnownHistory, receive_ssh};
@@ -80,11 +81,10 @@ mod supported {
             .build()?;
         let report = runtime.block_on(send_ssh(&remote, &prepared, control))?;
         assert!(report.all_succeeded());
-        let known = KnownHistory::default();
         let download = runtime.block_on(receive_ssh(
             &remote,
             |_| vec![id],
-            &known,
+            None,
             FetchLimits::default(),
             control,
         ))?;
@@ -92,6 +92,44 @@ mod supported {
         // pool.
         let validated = download.validate(&cancel, |_| ControlFlow::Continue(()))?;
         assert_eq!(validated.object_count(), 1);
+
+        // A second fetch can reuse verified local history without borrowing its initiating scope.
+        // Prepare history outside the executor: it reads, hashes and walks local objects.
+        let known = Arc::new(KnownHistory::new(
+            &source_repo.objects(PackLimits::default())?,
+            &[id],
+            FetchLimits::default(),
+            &cancel,
+        )?);
+        let workers = Arc::new(tokio::sync::Semaphore::new(1));
+        let validation_cancel = Arc::new(AtomicBool::new(false));
+        let validated = runtime.block_on(async {
+            let download = receive_ssh(
+                &remote,
+                |_| vec![id],
+                Some(Arc::clone(&known)),
+                FetchLimits::default(),
+                control,
+            )
+            .await?;
+            drop(known);
+            // This example submits one request, bounding both waiting downloads and running work.
+            // A service must also bound its queue and aggregate retained bytes before downloading.
+            let permit = workers.acquire_owned().await?;
+            let worker_cancel = Arc::clone(&validation_cancel);
+            let completion = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                download.validate(&worker_cancel, |_| ControlFlow::Continue(()))
+            });
+            // Keep observing completion if cancellation is requested. Dropping this handle would
+            // detach a started worker; it would not stop validation or release its permit early.
+            let result = completion.await?; // Join failure and validation failure are separate outcomes.
+            Ok::<_, Box<dyn std::error::Error>>(result?)
+        })?;
+        assert_eq!(validated.pack_bytes(), 0);
+        // Installation is an explicit blocking step outside the executor; it rechecks dependencies.
+        validated.install(&source_repo, &validation_cancel)?;
+
         println!("Pushed and fetched {id} through disposable SSH");
         Ok(())
     }

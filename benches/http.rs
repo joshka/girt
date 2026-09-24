@@ -33,7 +33,7 @@ fn http(c: &mut Criterion) {
     let cancel = AtomicBool::new(false);
     let limits = FetchLimits::default();
     let known = KnownHistory::new(&objects, &[tag], limits, &cancel).unwrap();
-    let empty = KnownHistory::default();
+    let known = Some(std::sync::Arc::new(known));
     let old = f.records[f.records.len() - 2].0;
     let tree = pack_git::git(f.root.path(), &["rev-parse", "main^{tree}"], b"");
     let new = pack_git::git(
@@ -64,9 +64,9 @@ fn http(c: &mut Criterion) {
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
     for (name, history, want) in [
-        ("full-download-validate", &empty, new),
-        ("incremental-download-validate", &known, new),
-        ("known-only-discovery-validate", &known, tag),
+        ("full-download-validate", None, new),
+        ("incremental-download-validate", known.clone(), new),
+        ("known-only-discovery-validate", known.clone(), tag),
     ] {
         group.bench_function(name, |b| {
             b.iter(|| {
@@ -74,7 +74,7 @@ fn http(c: &mut Criterion) {
                     .block_on(receive_http(
                         &remote,
                         |_| vec![want],
-                        history,
+                        history.clone(),
                         limits,
                         TransportControl::new(&cancel),
                     ))

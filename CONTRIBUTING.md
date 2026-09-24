@@ -4,6 +4,11 @@ girt is being built incrementally as an idiomatic Rust Git library. Keep contrib
 one useful capability and explain its supported behavior and limitations. Discuss substantial API or
 architecture changes before implementing them.
 
+For unreleased prototype APIs, prefer one coherent API over preserving superseded signatures. Update
+in-repository callers together instead of adding compatibility wrappers or a deprecation period for
+consumers that do not exist. Keep the revision scoped to the agreed capability; this policy does not
+authorize unrelated API expansion.
+
 ## Setup
 
 Install a stable Rust toolchain supporting edition 2024, plus the development tools:

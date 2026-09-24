@@ -1,9 +1,11 @@
 # Bounded consumer scheduling experiment
 
 Whole-operation workers kept the current-thread executor responsive for this object/history
-workload. The fetch ownership boundary, rather than synchronous storage signatures, is the immediate
-obstacle to caller-owned dispatch. Keep scheduling consumer-owned for now and make an owned fetch
-handoff the next design decision. No public API or storage implementation changes are included.
+workload. The original experiment identified borrowed fetch history as an obstacle to caller-owned
+dispatch. The subsequent ownership revision replaces that prototype API: HTTP/SSH downloads now own
+optional `Arc<KnownHistory>` history and can move directly to blocking workers. Scheduling remains
+consumer-owned; local storage stays synchronous. Timing results below describe the original run, not
+a new benchmark of network fetch or installation.
 
 ## Reproduction and scope
 
@@ -11,12 +13,13 @@ Run from the repository root:
 
 ```sh
 cargo run --release --all-features --example scheduling > docs/experiments/scheduling.csv
-python3 examples/scheduling/check_handoff.py > docs/experiments/handoff.txt
+python3 examples/scheduling/check_handoff.py
 ```
 
 The example requires Git. The compile probes use cached dependencies with `--offline`, seed their
-lockfile from this checkout, and compile temporary crates without executing network operations.
-Expected compiler rejections are checked explicitly; they are outside normal Cargo targets. The
+lockfile from this checkout, and compile temporary crates without executing network operations. The
+current probes require both owned-history and no-history handoffs to compile. The historical
+rejections in `handoff.txt` belong to the original API and are not expected from current code. The
 scheduling example enables Tokio's existing `sync` feature through a development dependency. Tokio
 is already a project dependency, licensed MIT; no new library runtime dependency is introduced.
 
@@ -26,8 +29,9 @@ Acceptance evidence:
 - Record timer lateness, operation and request wall time, batch completion, and peak work counts.
 - Prove queued cancellation prevents dispatch and started cancellation does not stop this operation.
 - Observe completion and permit recovery even when the requesting receiver is dropped.
-- Compile actual HTTP/SSH download handoffs and consumer workarounds using `KnownHistory`.
-- Use disposable fixtures, join all work before cleanup, and preserve public APIs.
+- Original run: compile actual HTTP/SSH borrowed handoffs and consumer workarounds.
+- Ownership revision: compile and execute direct owned handoffs using the current public APIs.
+- Use disposable fixtures and join all work before cleanup.
 
 This is a bounded scheduling trace, requested to test responsiveness and lifecycle behavior. It is
 not a statistical processing benchmark: Criterion baselines remain the mechanism for sustained
@@ -38,7 +42,9 @@ throughput/regression claims. No such claim or performance threshold follows fro
 Recorded on 2026-09-23, Apple M2 Max, 96 GiB RAM, macOS 26.6.2 (25G83), Rust 1.98.1 (`48a229cea`),
 Tokio 1.53.1, Git 2.55.0, release optimization. The library parent is SSH-adapter revision
 `4a0c5815cf1c0a6076f5908e215665f1b1598d5d`. Source fingerprints are in
-[scheduling.sha256](scheduling.sha256); raw observations are in [scheduling.csv](scheduling.csv).
+[scheduling.sha256](scheduling.sha256), including the original probe source and manifest at
+experiment revision `a35f3005`; those fingerprints are historical and do not describe subsequently
+edited files. Raw observations are in [scheduling.csv](scheduling.csv).
 
 Each of eight scenario fixtures is generated independently through Git fast-import: a linear
 512-commit history with one tree and one deterministic, poorly compressible 2 MiB blob. Git unpacks
@@ -121,39 +127,49 @@ permits. Fixtures are removed after all their work finishes. Panics fail the exp
 a production scheduler with durable failure reporting or shutdown recovery. No writes/publication
 are measured, and no rollback or stopped-write guarantee is implied.
 
-## Compiler evidence and ownership choices
+## Historical compiler evidence
 
-[check_handoff.py](../../examples/scheduling/check_handoff.py) compiles both real `HttpFetch` and
-`SshFetch`, their `receive_*` functions, and `KnownHistory::new`. Inputs include a selected object
-ID, a remote and verified history. No network call executes. [handoff.txt](handoff.txt) records:
+At experiment revision `a35f3005`, the probe compiled real `HttpFetch` and `SshFetch`, their
+`receive_*` functions and `KnownHistory::new`. Inputs included a selected ID, remote and verified
+history. No network call executed. [handoff.txt](handoff.txt) retains that run's results:
 
-- Passing an ordinary borrowed download into `spawn_blocking` fails with `E0521` (borrow escapes).
-- Downloading with `&Arc<KnownHistory>` and moving a cloned Arc alongside the result fails with
-  `E0597`: the download still borrows the local Arc dereference. Keeping the allocation alive does
-  not extend the compiler-visible borrow to `'static`.
-- Moving the remote and history Arc into the worker, then constructing the borrow and running
-  download plus validation there with `Handle::block_on`, compiles for both transports.
-- Validating a borrowed download in `std::thread::scope` also compiles for both transports.
+- Passing a borrowed download into `spawn_blocking` failed with `E0521` (borrow escapes).
+- Borrowing `&Arc<KnownHistory>` and moving another Arc alongside the result failed with `E0597`:
+  keeping the allocation alive did not extend the compiler-visible borrow to `'static`.
+- Moving remote/history ownership into a worker, then downloading with `Handle::block_on` and
+  validating there, compiled but occupied a worker during network waits.
+- `std::thread::scope` compiled but synchronously joined, blocking its caller.
 
-The first workaround occupies an admitted blocking worker during remote waits. Its outer runtime
-must stay driven, especially for current-thread I/O/timers; it sacrifices the clean network/CPU
-admission boundary. The second synchronously joins its scope, stalling an async executor when called
-there directly. An outer dedicated owner thread/runtime can manage scoped lifetimes, at the cost of
-another lifecycle design. Inline validation is simplest but exhibits the scheduling problem. Leaking
-history could manufacture `'static` at unbounded retention cost and is not recommended.
+These failures motivated the ownership revision. The original probe source remains in that revision;
+the current script no longer expects failures from superseded signatures. Both old fetch structs
+owned their bytes and negotiation state but borrowed history; `Send + Sync` alone did not meet
+Tokio's `'static` handoff bound. A byte-only external wrapper could not reproduce that private
+negotiation/validation association.
 
-Both fetch structs already own their download bytes and privately retain negotiation metadata,
-limits, advertisement and borrowed history. Their `Send + Sync` property is insufficient: Tokio's
-worker closure and returned result must also be `'static`. Consumers cannot safely decompose and
-reconstruct these private fields with today's API. An external byte-only wrapper would therefore not
-demonstrate the actual validation contract, so none is substituted for compiler evidence.
+## Resolved owned handoff
 
-The smallest proposed API change is an owned receive/handoff path retaining `Arc<KnownHistory>`
-inside the download along with its existing private negotiation state. This preserves the exact
-history used during negotiation, permits bounded admission after download, and needs no runtime,
-pool, storage trait or scheduling policy in girt. An owned download with history supplied later is
-another option, but must enforce its association with the negotiated history; blindly accepting
-arbitrary history at validation would weaken the contract. Neither option is implemented here.
+The existing `receive_http` and `receive_ssh` APIs now take `Option<Arc<KnownHistory>>`. Their
+results own that Arc privately, keeping the exact negotiated history available until validation
+finishes or the download is dropped. No whole-history clone is needed. `None` requests a full
+transfer without requiring or retaining a history allocation. Validation takes no replacement
+history and returns the existing owned `ReceivedFetch`; installation continues to recheck
+known-local dependencies.
+
+[check_handoff.py](../../examples/scheduling/check_handoff.py) now requires both actual transport
+results to compile as `Send + Sync + 'static`, including network download followed by
+`spawn_blocking` validation after dropping the caller's Arc, and a no-history handoff. The probes
+check types only. The HTTP/SSH integration tests execute those handoffs against disposable Git
+servers for full, incremental and known-only fetches, observe history release, and reject
+installation into a destination missing dependencies. Cancellation and decode-limit failures release
+history; discarding a download releases it without validation.
+
+[http_local.rs](../../examples/http_local.rs) and [ssh_local.rs](../../examples/ssh_local.rs) show
+caller-owned semaphore admission after async download, worker-owned permits, joined completion and
+explicit installation outside the executor. Each submits one request, bounding the queue as well as
+running work. Services need their own queue and aggregate byte budgets. Retain completion ownership
+even if cancellation is requested: dropping a Tokio blocking-task handle does not stop started work.
+Network deadlines end at download; validation still checks cancellation cooperatively and cannot
+interrupt a single hash, inflate or parse. Installation retains its existing partial-write contract.
 
 ## Recommendation and decisions
 
@@ -163,10 +179,10 @@ not require a library async operation layer. A shared facade can follow if consu
 repeated admission/completion machinery. Async filesystem signatures alone would leave pack
 verification, decoding and graph computation on the executor unless separately scheduled.
 
-Decisions requiring maintainer choice before implementation:
+Resolved choices and remaining consumer policy:
 
-- **Ownership API:** recommend an owned shared-history download path; choose additive owned APIs
-  versus revising the existing experimental borrowed APIs. Preserve negotiation/history identity.
+- **Ownership API:** replace the unreleased borrowed signatures with optional owned shared history;
+  update in-repository callers together, preserving negotiation/history identity.
 - **Scheduling owner:** recommend consumer-managed admission initially; choose a library facade only
   if a concrete consumer benefits from its policy and dependency contract.
 - **Drop/cancellation contract:** recommend explicit cancellation requests plus observed completion.
@@ -177,14 +193,22 @@ Decisions requiring maintainer choice before implementation:
 
 Limits: one machine, one synthetic shape, eight operations per batch, fixed ordering, no confidence
 intervals, no cold-cache guarantee, no RSS/retained-byte measurements, no remote network benchmark,
-no write/installation/publication cancellation, and no Linux/Windows runtime evidence. The handoff
-workarounds are compiler evidence only. No public API change or general async filesystem/storage
-trait is authorized by these results.
+no write/installation/publication cancellation, and no Linux/Windows runtime evidence. The
+historical handoff workarounds are compiler evidence only. The ownership revision does not add a
+general async filesystem/storage trait or library-managed worker pool.
 
-## Validation
+## Original experiment validation
 
 The release example completed all 16 batches and four lifecycle scenarios. Both transport probes
 produced the expected lifetime errors and compiled both workarounds. `cargo test --all-features`,
 `cargo clippy --all-features --all-targets -- -D warnings`, `just docs-rs`, `just fmt-check`, and
 `cargo check --no-default-features` passed without warnings. Markdown was checked with rumdl and
 markdownlint-cli2 using the existing 100-column user configuration. No public library code changed.
+
+## Ownership revision validation
+
+Ownership revision validation passed on macOS arm64: `just check` (681 unit tests, 301 integration
+tests, 12 doctests, all-target/all-feature Clippy and docs.rs), both disposable transport examples,
+the current compiler probes, core-only compilation, warning-denying all-feature private Rustdoc, and
+Markdown checks. No new scheduling timings were collected and no Linux/Windows runtime validation
+was performed for this revision.

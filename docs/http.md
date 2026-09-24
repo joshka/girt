@@ -11,14 +11,22 @@ Create a caller-owned Tokio runtime with I/O and time enabled. The library creat
 CPU worker pool. Existing stream and local-process APIs remain synchronous. Core-only builds have no
 Tokio, HTTP or TLS dependency.
 
-`fetch::receive_http` returns `HttpFetch`, a bounded download borrowing the supplied immutable
-`KnownHistory`. Call its synchronous `validate` method to decode/index the pack, check object
-identities and prove selected-tip connectivity. Then explicitly install the validated result. This
-keeps potentially large decompression, hashing and graph traversal off the executor unless the
-caller deliberately chooses to run them there. Even a bounded 512 MiB decode budget can take
-substantial time. Use a bounded worker pool for large operations; an owned or scoped worker must
-retain the borrowed history through validation. Installation and local history preparation are also
-synchronous. The runnable example performs validation outside `block_on`.
+`fetch::receive_http` takes `Option<Arc<KnownHistory>>` and returns an owned `HttpFetch`. Pass
+`None` for a full transfer without preparing or allocating history. With `Some`, the result
+privately retains the exact history used during negotiation, without copying its objects. Call its
+synchronous `validate` method to decode/index the pack, check identities and prove selected-tip
+connectivity, then explicitly install the validated result. Validation consumes the download and
+releases its Arc on success or failure; dropping the download releases it too. Other Arc owners may
+retain history. Installation still rechecks local dependencies; retained history does not coordinate
+with GC.
+
+Move the downloaded result into a caller-managed bounded blocking worker for large operations.
+Validation can outlive the initiating scope, remote, control and caller's Arc. Even a bounded 512
+MiB decode budget can take substantial time. Bound waiting downloads and aggregate retained bytes as
+well as running workers. Installation and local history preparation are also synchronous. The
+[runnable example](../examples/http_local.rs) shows full and known-only downloads, bounded worker
+admission, explicit completion handling and installation outside the executor. It submits only one
+worker request; it does not provide a service queue or reusable pool.
 
 `PreparedPush` validates the graph, proves force policy, applies explicit receiver-history exclusion
 and generates the ordinary or delta-compressed pack synchronously. Prepare it before calling
@@ -33,10 +41,10 @@ or slow callbacks. Pack import and filesystem operations are separate. This expl
 boundary avoids a hidden `spawn_blocking` job that would continue consuming resources after its
 await was dropped.
 
-`HttpRemote` and `HttpFetch` are `Send + Sync`; network futures are `Send` when the fetch selection
-callback is `Send`. Inputs borrowed by a future must live until it finishes. `HttpFetch` borrows
-only its history, so it can outlive the remote and network control. Concurrent operations are
-allowed, with separate resource budgets; the caller bounds concurrency and aggregate memory.
+`HttpRemote` and `HttpFetch` are `Send + Sync + 'static`; network futures are `Send` when the fetch
+selection callback is `Send`. Inputs borrowed by a future must live until it finishes. `HttpFetch`
+retains no borrows. Concurrent operations are allowed, with separate resource budgets; the caller
+bounds concurrency and aggregate memory.
 
 ## Endpoint, Authentication and TLS
 

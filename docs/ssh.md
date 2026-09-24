@@ -56,14 +56,25 @@ observes process exit. Full pipes in either direction do not require a blocking 
 yield so cancellation and other runtime work can progress. No runtime or detached task is created.
 The `ssh` feature does not enable HTTP/TLS dependencies or async filesystem operations.
 
-`receive_ssh` returns an `SshFetch` borrowing immutable verified `KnownHistory`. Validation is a
-separate synchronous step; it decodes/indexes packs, checks identities and proves connectivity
-before explicit installation. Prepare history and push packs outside the executor or on a
-caller-owned bounded worker. `send_ssh` borrows `PreparedPush` without copying its buffers. Network
-futures are `Send` when selection callbacks are `Send`; borrowed inputs must live through the
-operation. Advertisement parsing, request encoding and status parsing are synchronous work bounded
-by the configured counts/bytes. Callbacks must return promptly. There is no executor latency promise
-for arbitrarily large limits or callbacks.
+`receive_ssh` takes `Option<Arc<KnownHistory>>` and returns an owned `SshFetch`. Pass `None` for a
+full transfer without preparing or allocating history. With `Some`, the result privately retains the
+exact negotiation history without copying objects. It is `Send + Sync + 'static`: move the download
+into a caller-managed bounded blocking worker after the initiating scope drops its Arc. Validation
+consumes the download and releases its history ownership on success or failure; dropping the
+download also releases it. Other Arc owners may retain history independently. Installation still
+rechecks dependencies and requires caller coordination with GC.
+
+Validation is a separate synchronous step; it decodes/indexes packs, checks identities and proves
+connectivity before explicit installation. Prepare history and push packs outside the executor or on
+a caller-owned bounded worker. Bound waiting downloads and aggregate retained bytes as well as
+active workers. The [runnable example](../examples/ssh_local.rs) submits one worker request, holds
+its permit through validation, observes completion explicitly and installs outside the executor.
+Dropping a started worker's handle does not stop it; retain completion ownership after requesting
+cancellation. `send_ssh` borrows `PreparedPush` without copying its buffers. Network futures are
+`Send` when selection callbacks are `Send`; borrowed inputs must live through the operation.
+Advertisement parsing, request encoding and status parsing are synchronous work bounded by the
+configured counts/bytes. Callbacks must return promptly. There is no executor latency promise for
+arbitrarily large limits or callbacks.
 
 Retained fetch protocol bytes are capped by `max_wire_bytes`, including the advertisement. Push
 advertisements and responses use `max_advertisement_bytes` and `max_status_bytes`. Existing pack,
@@ -142,6 +153,6 @@ caller-selected executable with its own distribution notices, not linked or vend
 
 Supported Git scope stays SHA-1 protocol v0 and non-thin packs. Windows SSH, proxy/jump hosts,
 connection reuse, URL/refspec/remote policy, protocol v2, shallow/partial repositories and new
-credential services remain excluded. Broader async object-store/filesystem interfaces, owned buffers
-for worker dispatch and storage concurrency need a subsequent design investigation driven by a
-consumer's responsiveness requirements; this adapter does not decide them.
+credential services remain excluded. Broader async object-store/filesystem interfaces and storage
+concurrency need a subsequent design investigation driven by a consumer's responsiveness
+requirements; this adapter does not decide them.

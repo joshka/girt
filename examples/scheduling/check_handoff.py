@@ -17,50 +17,28 @@ pub fn retain_history(objects: &Objects, tip: ObjectId) -> Result<Arc<KnownHisto
     KnownHistory::new(objects, &[tip], FetchLimits::default(), &AtomicBool::new(false)).map(Arc::new)
 }
 '''
-BORROWED = '''
-pub async fn handoff(download: TYPE<'_>) -> Result<ReceivedFetch, FetchError> {
-    tokio::task::spawn_blocking(move || {
-        download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
-    }).await.unwrap()
-}
-// Keep imports exercised and check Send independently from 'static.
-pub fn send_sync<T: Send + Sync>() {}
-pub fn traits() { send_sync::<TYPE<'_>>(); }
-pub async fn download(remote: &REMOTE, known: &KnownHistory, tip: ObjectId) {
-    let cancel = AtomicBool::new(false);
-    let _ = RECEIVE(remote, |_| vec![tip], known, FetchLimits::default(), TransportControl::new(&cancel)).await;
-    let _ = Arc::new(KnownHistory::default());
-}
-'''
-ARC = '''
+OWNED = '''
 pub async fn handoff(remote: &REMOTE, known: Arc<KnownHistory>, tip: ObjectId) -> Result<ReceivedFetch, FetchError> {
-    let cancel = AtomicBool::new(false);
-    let download: TYPE<'_> = RECEIVE(remote, |_| vec![tip], &known, FetchLimits::default(), TransportControl::new(&cancel)).await?;
-    let retained = known.clone();
-    tokio::task::spawn_blocking(move || {
-        let _retained = retained;
-        download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
-    }).await.unwrap()
-}
-'''
-WORKAROUNDS = '''
-// Own the history before borrowing it INSIDE the blocking closure. This occupies a worker
-// throughout network waiting, and requires the outer runtime to remain driven until completion.
-pub async fn whole_operation(remote: REMOTE, known: Arc<KnownHistory>, tip: ObjectId) -> Result<ReceivedFetch, FetchError> {
-    let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
+    let download = {
         let cancel = AtomicBool::new(false);
-        runtime.block_on(async {
-            let download: TYPE<'_> = RECEIVE(&remote, |_| vec![tip], &known, FetchLimits::default(), TransportControl::new(&cancel)).await?;
-            download.validate(&cancel, |_| ControlFlow::Continue(()))
-        })
+        let download: TYPE = RECEIVE(remote, |_| vec![tip], Some(Arc::clone(&known)), FetchLimits::default(), TransportControl::new(&cancel)).await?;
+        drop(known);
+        download
+    };
+    tokio::task::spawn_blocking(move || {
+        download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
     }).await.unwrap()
 }
-// Scoped borrowing compiles but scope synchronously joins, blocking its calling executor.
-pub fn scoped(download: TYPE<'_>) -> Result<ReceivedFetch, FetchError> {
-    std::thread::scope(|scope| scope.spawn(move || {
+pub async fn full(remote: &REMOTE, tip: ObjectId) -> Result<ReceivedFetch, FetchError> {
+    let cancel = AtomicBool::new(false);
+    let download = RECEIVE(remote, |_| vec![tip], None, FetchLimits::default(), TransportControl::new(&cancel)).await?;
+    tokio::task::spawn_blocking(move || {
         download.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
-    }).join().unwrap())
+    }).await.unwrap()
+}
+pub fn traits() {
+    fn send_sync_static<T: Send + Sync + 'static>() {}
+    send_sync_static::<TYPE>();
 }
 '''
 
@@ -78,17 +56,11 @@ tokio = {{ version = "1.4", features = ["rt"] }}
 ''')
     env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/handoff-probe"))
     for module, remote, fetch in [("http", "HttpRemote", "HttpFetch"), ("ssh", "SshRemote", "SshFetch")]:
-        for name, source, expected in [("borrowed", BORROWED, "E0521"), ("external-arc", ARC, "E0597"), ("workarounds", WORKAROUNDS, None)]:
-            source = COMMON + source
-            for key, value in [("TYPE", fetch), ("RECEIVE", f"receive_{module}"), ("MODULE", module), ("REMOTE", remote)]:
-                source = source.replace(key, value)
-            (crate / "src/lib.rs").write_text(source)
-            result = subprocess.run(["cargo", "check", "--offline", "--manifest-path", str(crate / "Cargo.toml")], env=env, text=True, capture_output=True)
-            if expected:
-                assert result.returncode != 0 and f"error[{expected}]" in result.stderr, result.stderr
-                errors = [line for line in result.stderr.splitlines() if line.startswith("error[")]
-                print(f"{fetch}/{name}: expected rejection: {'; '.join(errors)}")
-            else:
-                assert result.returncode == 0, result.stderr
-                print(f"{fetch}/{name}: compiled")
-            assert "warning:" not in result.stderr, result.stderr
+        source = COMMON + OWNED
+        for key, value in [("TYPE", fetch), ("RECEIVE", f"receive_{module}"), ("MODULE", module), ("REMOTE", remote)]:
+            source = source.replace(key, value)
+        (crate / "src/lib.rs").write_text(source)
+        result = subprocess.run(["cargo", "check", "--offline", "--manifest-path", str(crate / "Cargo.toml")], env=env, text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert "warning:" not in result.stderr, result.stderr
+        print(f"{fetch}/owned-history and no-history spawn_blocking handoffs: compiled")

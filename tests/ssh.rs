@@ -6,6 +6,7 @@ mod pack_git;
 mod ssh_git;
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -144,13 +145,17 @@ fn real_git_full_incremental_and_known_only_fetch() {
     let control = TransportControl::new(&cancel);
     let limits = FetchLimits::default();
     let rt = runtime();
-    let empty = KnownHistory::default();
     let received = rt
-        .block_on(fetch::receive_ssh(&remote, all, &empty, limits, control))
+        .block_on(fetch::receive_ssh(&remote, all, None, limits, control))
         .unwrap();
-    let received = received
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
+    let received = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            received.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
     let (_root, dest) = destination();
     let installed = received.install(&dest, &cancel).unwrap();
     let index = dest
@@ -176,21 +181,70 @@ fn real_git_full_incremental_and_known_only_fetch() {
         &cancel,
     )
     .unwrap();
+    let known = Arc::new(known);
+    let retained = Arc::downgrade(&known);
     let noop = rt
-        .block_on(fetch::receive_ssh(&remote, all, &known, limits, control))
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            Some(Arc::clone(&known)),
+            limits,
+            control,
+        ))
         .unwrap();
-    let noop = noop
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
-    assert_eq!(noop.pack_bytes(), 0);
 
     let new = next(&f);
     let incremental = rt
-        .block_on(fetch::receive_ssh(&remote, all, &known, limits, control))
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            Some(Arc::clone(&known)),
+            limits,
+            control,
+        ))
         .unwrap();
-    let incremental = incremental
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
+    // Both downloads keep the exact history alive after its initiating owner disappears.
+    drop(known);
+    assert!(retained.upgrade().is_some());
+    let noop = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            noop.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
+    assert_eq!(noop.pack_bytes(), 0);
+    assert!(retained.upgrade().is_some());
+    let incremental = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            incremental.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
+    assert!(retained.upgrade().is_none());
+    // Owning the negotiation snapshot never exempts installation from checking local dependencies.
+    let (_missing_root, missing) = destination();
+    assert!(matches!(
+        noop.install(&missing, &cancel),
+        Err(FetchError::Missing(_))
+    ));
+    assert!(matches!(
+        incremental.install(&missing, &cancel),
+        Err(FetchError::Missing(_))
+    ));
+    assert!(
+        !missing
+            .object_dir()
+            .join("pack")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
+    noop.install(&dest, &cancel).unwrap();
     assert_eq!(incremental.object_count(), 1);
     incremental.install(&dest, &cancel).unwrap();
     assert!(
@@ -200,6 +254,82 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .unwrap()
             .is_some()
     );
+}
+
+#[rstest]
+#[case::cancelled(true, FetchLimits::default())]
+#[case::decode_limit(false, FetchLimits { max_decode_bytes: 0, ..FetchLimits::default() })]
+fn failed_worker_validation_releases_negotiated_history(
+    #[case] cancelled: bool,
+    #[case] limits: FetchLimits,
+) {
+    let f = Fixture::new(false, 2);
+    let cancel = AtomicBool::new(false);
+    let known = Arc::new(
+        KnownHistory::new(
+            &f.repo.objects(PackLimits::default()).unwrap(),
+            &[tip(&f.repo, "refs/heads/main")],
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    let retained = Arc::downgrade(&known);
+    let new = next(&f);
+    let server = Server::new(f.root.path(), "none");
+    let remote = server.remote("config");
+    let rt = runtime();
+    let download = rt
+        .block_on(fetch::receive_ssh(
+            &remote,
+            |_| vec![new],
+            Some(Arc::clone(&known)),
+            limits,
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    drop(known);
+    assert!(retained.upgrade().is_some());
+    let result = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            download.validate(&AtomicBool::new(cancelled), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+    });
+    assert!(result.is_err());
+    assert!(retained.upgrade().is_none());
+}
+
+#[test]
+fn discarding_download_releases_negotiated_history() {
+    let f = Fixture::new(false, 2);
+    let cancel = AtomicBool::new(false);
+    let limits = FetchLimits::default();
+    let known = Arc::new(
+        KnownHistory::new(
+            &f.repo.objects(PackLimits::default()).unwrap(),
+            &[tip(&f.repo, "refs/heads/main")],
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    let retained = Arc::downgrade(&known);
+    let server = Server::new(f.root.path(), "none");
+    let remote = server.remote("config");
+    let download = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            Some(known),
+            limits,
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    assert!(retained.upgrade().is_some());
+    drop(download);
+    assert!(retained.upgrade().is_none());
 }
 
 #[test]
@@ -273,7 +403,7 @@ fn rejects_untrusted_hosts_and_failed_authentication(#[case] config: &str) {
         .block_on(fetch::receive_ssh(
             &remote,
             all,
-            &KnownHistory::default(),
+            None,
             FetchLimits::default(),
             deadline(&cancel),
         ))
@@ -329,12 +459,11 @@ fn literal_repository_path_round_trips(#[case] path: &str) {
     );
     let server = Server::new(&repo, "none");
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let download = runtime()
         .block_on(fetch::receive_ssh(
             &server.remote("config"),
             all,
-            &known,
+            None,
             FetchLimits::default(),
             deadline(&cancel),
         ))
@@ -388,13 +517,12 @@ fn stderr_cannot_block_service_io(#[case] fault: &str) {
     let f = Fixture::new(false, 2);
     let server = Server::new(f.root.path(), fault);
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let remote = server.remote("config");
     let download = runtime()
         .block_on(fetch::receive_ssh(
             &remote,
             all,
-            &known,
+            None,
             FetchLimits::default(),
             deadline(&cancel),
         ))
@@ -417,7 +545,7 @@ fn stalled_service_has_a_deadline() {
         .block_on(fetch::receive_ssh(
             &server.remote("config"),
             all,
-            &KnownHistory::default(),
+            None,
             FetchLimits::default(),
             TransportControl {
                 cancel: &cancel,
@@ -534,7 +662,7 @@ fn stalled_ssh_handshake_expires_without_using_an_account() {
             .block_on(fetch::receive_ssh(
                 &remote,
                 all,
-                &KnownHistory::default(),
+                None,
                 FetchLimits::default(),
                 TransportControl {
                     cancel: &cancel,
@@ -603,7 +731,7 @@ fn caller_config_cannot_disable_host_verification_or_batch_mode() {
         .block_on(fetch::receive_ssh(
             &server.remote("unknown"),
             all,
-            &KnownHistory::default(),
+            None,
             FetchLimits::default(),
             deadline(&cancel),
         ))
@@ -621,7 +749,7 @@ fn malformed_advertisement_is_rejected() {
         .block_on(fetch::receive_ssh(
             &server.remote("config"),
             all,
-            &KnownHistory::default(),
+            None,
             FetchLimits::default(),
             deadline(&cancel),
         ))
@@ -640,7 +768,7 @@ fn download_respects_wire_budgets(#[case] limits: FetchLimits) {
         .block_on(fetch::receive_ssh(
             &server.remote("config"),
             all,
-            &KnownHistory::default(),
+            None,
             limits,
             deadline(&cancel),
         ))

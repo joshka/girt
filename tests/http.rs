@@ -6,6 +6,7 @@ mod http_git;
 mod pack_git;
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -145,13 +146,17 @@ fn real_git_full_incremental_and_known_only_fetch() {
     let control = TransportControl::new(&cancel);
     let limits = FetchLimits::default();
     let rt = runtime();
-    let empty = KnownHistory::default();
     let received = rt
-        .block_on(fetch::receive_http(&remote, all, &empty, limits, control))
+        .block_on(fetch::receive_http(&remote, all, None, limits, control))
         .unwrap();
-    let received = received
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
+    let received = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            received.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
     let (_root, dest) = destination();
     let installed = received.install(&dest, &cancel).unwrap();
     let index = dest
@@ -177,21 +182,71 @@ fn real_git_full_incremental_and_known_only_fetch() {
         &cancel,
     )
     .unwrap();
+    let known = Arc::new(known);
+    let retained = Arc::downgrade(&known);
     let noop = rt
-        .block_on(fetch::receive_http(&remote, all, &known, limits, control))
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            Some(Arc::clone(&known)),
+            limits,
+            control,
+        ))
         .unwrap();
-    let noop = noop
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
-    assert_eq!(noop.pack_bytes(), 0);
+
     assert_eq!(server.requests(), ["GET", "POST", "GET"]);
     let new = next(&f);
     let incremental = rt
-        .block_on(fetch::receive_http(&remote, all, &known, limits, control))
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            Some(Arc::clone(&known)),
+            limits,
+            control,
+        ))
         .unwrap();
-    let incremental = incremental
-        .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap();
+    // Both downloads keep the exact history alive after its initiating owner disappears.
+    drop(known);
+    assert!(retained.upgrade().is_some());
+    let noop = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            noop.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
+    assert_eq!(noop.pack_bytes(), 0);
+    assert!(retained.upgrade().is_some());
+    let incremental = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            incremental.validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    });
+    assert!(retained.upgrade().is_none());
+    // Owning the negotiation snapshot never exempts installation from checking local dependencies.
+    let (_missing_root, missing) = destination();
+    assert!(matches!(
+        noop.install(&missing, &cancel),
+        Err(FetchError::Missing(_))
+    ));
+    assert!(matches!(
+        incremental.install(&missing, &cancel),
+        Err(FetchError::Missing(_))
+    ));
+    assert!(
+        !missing
+            .object_dir()
+            .join("pack")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some()
+    );
+    noop.install(&dest, &cancel).unwrap();
     assert_eq!(incremental.object_count(), 1);
     incremental.install(&dest, &cancel).unwrap();
     assert!(
@@ -201,6 +256,82 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .unwrap()
             .is_some()
     );
+}
+
+#[rstest]
+#[case::cancelled(true, FetchLimits::default())]
+#[case::decode_limit(false, FetchLimits { max_decode_bytes: 0, ..FetchLimits::default() })]
+fn failed_worker_validation_releases_negotiated_history(
+    #[case] cancelled: bool,
+    #[case] limits: FetchLimits,
+) {
+    let f = Fixture::new(false, 2);
+    let cancel = AtomicBool::new(false);
+    let known = Arc::new(
+        KnownHistory::new(
+            &f.repo.objects(PackLimits::default()).unwrap(),
+            &[tip(&f.repo, "refs/heads/main")],
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    let retained = Arc::downgrade(&known);
+    let new = next(&f);
+    let server = Server::new(f.root.path(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let rt = runtime();
+    let download = rt
+        .block_on(fetch::receive_http(
+            &remote,
+            |_| vec![new],
+            Some(Arc::clone(&known)),
+            limits,
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    drop(known);
+    assert!(retained.upgrade().is_some());
+    let result = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            download.validate(&AtomicBool::new(cancelled), |_| ControlFlow::Continue(()))
+        })
+        .await
+        .unwrap()
+    });
+    assert!(result.is_err());
+    assert!(retained.upgrade().is_none());
+}
+
+#[test]
+fn discarding_download_releases_negotiated_history() {
+    let f = Fixture::new(false, 2);
+    let cancel = AtomicBool::new(false);
+    let limits = FetchLimits::default();
+    let known = Arc::new(
+        KnownHistory::new(
+            &f.repo.objects(PackLimits::default()).unwrap(),
+            &[tip(&f.repo, "refs/heads/main")],
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    let retained = Arc::downgrade(&known);
+    let server = Server::new(f.root.path(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let download = runtime()
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            Some(known),
+            limits,
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    assert!(retained.upgrade().is_some());
+    drop(download);
+    assert!(retained.upgrade().is_none());
 }
 
 #[test]
@@ -272,11 +403,10 @@ fn authentication_is_explicit(#[case] supplied: bool) {
     };
     let remote = HttpRemote::new(&server.url, &headers, &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let empty = KnownHistory::default();
     let result = runtime().block_on(fetch::receive_http(
         &remote,
         all,
-        &empty,
+        None,
         FetchLimits::default(),
         TransportControl::new(&cancel),
     ));
@@ -301,11 +431,10 @@ fn rejects_invalid_http_discovery(#[case] fault: &str) {
     let server = Server::new(repo.git_dir(), fault, "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let empty = KnownHistory::default();
     let result = runtime().block_on(fetch::receive_http(
         &remote,
         all,
-        &empty,
+        None,
         FetchLimits::default(),
         TransportControl::new(&cancel),
     ));
@@ -355,7 +484,6 @@ fn stalled_discovery_is_interruptible(#[case] cancellation: bool) {
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
     let begin = Instant::now();
-    let empty = KnownHistory::default();
     let result = std::thread::scope(|scope| {
         if cancellation {
             scope.spawn(|| {
@@ -370,7 +498,7 @@ fn stalled_discovery_is_interruptible(#[case] cancellation: bool) {
         runtime().block_on(fetch::receive_http(
             &remote,
             all,
-            &empty,
+            None,
             FetchLimits::default(),
             control,
         ))
@@ -464,11 +592,10 @@ fn https_validates_chain_and_hostname(
     let roots = if trust { vec![ca.as_slice()] } else { vec![] };
     let remote = HttpRemote::new(&url, &[], &roots).unwrap();
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let result = runtime().block_on(fetch::receive_http(
         &remote,
         all,
-        &known,
+        None,
         FetchLimits::default(),
         TransportControl::new(&cancel),
     ));
@@ -548,7 +675,6 @@ fn download_and_decoding_limits_are_independent() {
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let limits = FetchLimits {
         max_decode_bytes: 1,
         ..Default::default()
@@ -557,7 +683,7 @@ fn download_and_decoding_limits_are_independent() {
         .block_on(fetch::receive_http(
             &remote,
             all,
-            &known,
+            None,
             limits,
             TransportControl::new(&cancel),
         ))
@@ -575,7 +701,7 @@ fn download_and_decoding_limits_are_independent() {
         .block_on(fetch::receive_http(
             &remote,
             all,
-            &known,
+            None,
             limits,
             TransportControl::new(&cancel),
         ))
@@ -682,7 +808,6 @@ fn stalled_tls_handshake_observes_deadline() {
     )
     .unwrap();
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let start = Instant::now();
     let result = std::thread::scope(|scope| {
         scope.spawn(|| {
@@ -692,7 +817,7 @@ fn stalled_tls_handshake_observes_deadline() {
         runtime().block_on(fetch::receive_http(
             &remote,
             all,
-            &known,
+            None,
             FetchLimits::default(),
             TransportControl {
                 cancel: &cancel,
@@ -779,12 +904,11 @@ fn https_push_and_fetch_agree_with_git() {
         .all_succeeded()
     );
     assert_eq!(tip(&dest, "refs/heads/main"), id);
-    let known = KnownHistory::default();
     let download = rt
         .block_on(fetch::receive_http(
             &remote,
             all,
-            &known,
+            None,
             FetchLimits::default(),
             TransportControl::new(&cancel),
         ))
@@ -815,7 +939,6 @@ fn network_wait_leaves_single_thread_executor_responsive() {
     let server = Server::new(repo.git_dir(), "stall", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let known = KnownHistory::default();
     let result = runtime().block_on(async {
         let interrupt = async {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -824,7 +947,7 @@ fn network_wait_leaves_single_thread_executor_responsive() {
         let transfer = fetch::receive_http(
             &remote,
             all,
-            &known,
+            None,
             FetchLimits::default(),
             TransportControl::new(&cancel),
         );

@@ -11,7 +11,9 @@
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
 //! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
 //! requests, automatic tags, refspecs, pruning and protocol v1/v2 are outside this slice.
-//! The `http` and `ssh` features add async network downloads with separate synchronous validation.
+//! The `http` and `ssh` features add owned async network downloads with separate synchronous
+//! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
+//! a caller-managed blocking worker without borrowing its initiating scope.
 //! SSH requires macOS/Linux and a caller-selected OpenSSH configuration. Peeling
 //! hints are exposed separately from selectable reference tips.
 

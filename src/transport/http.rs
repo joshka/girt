@@ -374,6 +374,6 @@ mod tests {
     fn transport_types_can_move_between_workers() {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<HttpRemote>();
-        send_sync::<crate::fetch::HttpFetch<'_>>();
+        send_sync::<crate::fetch::HttpFetch>();
     }
 }

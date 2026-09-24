@@ -507,3 +507,26 @@ passed again. Linux GNU and Windows GNU library Clippy cross-checks with `ssh` p
 all-target cross-check was blocked by the existing `alloca` dev dependency requiring unavailable
 `x86_64-w64-mingw32-gcc`; no Windows runtime evidence is claimed. The concrete follow-up is to run
 all-target Clippy on the configured native Windows CI runner or provide that cross C compiler.
+
+## Owned Network Fetch Handoff Completion
+
+- HTTP/SSH receive entry points take `Option<Arc<KnownHistory>>`. Downloads privately own the exact
+  negotiation history, have no history lifetime parameter, and require no allocated history for
+  `None`. Stream and local-process signatures stay unchanged.
+- Actual Git full, incremental and known-only downloads validate in `Send + 'static` blocking
+  workers. Weak observers prove that downloads retain the initiating owner's history after it is
+  dropped and release it after success, cancellation, decode-limit failure or download disposal.
+- Known-only and incremental results still reject installation into a repository missing local
+  dependencies before publishing artifacts; installation into the original destination succeeds.
+- HTTP/SSH examples show caller-owned bounded admission, joined validation and explicit
+  installation. The current compiler probes require direct owned-history and no-history handoffs to
+  compile; the scheduling report labels earlier rejected probes as historical evidence.
+- Transport deadlines, resource limits, validation cancellation and installation semantics remain
+  covered by the existing full suites. No library runtime, worker pool or storage framework is
+  added.
+
+Ownership revision validation passed on macOS arm64: `just check` (681 unit tests, 301 integration
+tests, 12 doctests, all-target/all-feature Clippy and docs.rs), both disposable transport examples,
+the current compiler probes, core-only compilation, warning-denying all-feature private Rustdoc, and
+Markdown checks. No new scheduling timings were collected and no Linux/Windows runtime validation
+was performed for this revision.

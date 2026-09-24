@@ -1,4 +1,5 @@
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch, protocol};
 use crate::ObjectId;
@@ -18,6 +19,9 @@ use crate::transport::ssh::SshRemote;
 /// Network retention adds at most `max_wire_bytes` to ordinary fetch budgets. Selection and
 /// bounded advertisement/request parsing run synchronously; callbacks must return promptly.
 ///
+/// Takes shared ownership of `known` for negotiation and later validation; clone the Arc first
+/// if the caller also needs it. `None` requires no history preparation or allocation.
+///
 /// # Errors
 ///
 /// Returns fetch validation/preflight errors or sanitized SSH failures. Interruption covers
@@ -26,15 +30,17 @@ use crate::transport::ssh::SshRemote;
 /// # Panics
 ///
 /// Panics when polled without a Tokio runtime with I/O and time enabled.
-pub async fn receive_ssh<'a>(
+pub async fn receive_ssh(
     remote: &SshRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: &'a KnownHistory,
+    known: Option<Arc<KnownHistory>>,
     limits: FetchLimits,
     control: TransportControl<'_>,
-) -> Result<SshFetch<'a>, FetchError> {
+) -> Result<SshFetch, FetchError> {
     control.check()?;
-    protocol::validate_known(known, limits, control.cancel)?;
+    let empty = KnownHistory::default();
+    let history = known.as_deref().unwrap_or(&empty);
+    protocol::validate_known(history, limits, control.cancel)?;
     let mut session = remote.connect("git-upload-pack", control)?;
     let bytes = session
         .advertise(
@@ -57,7 +63,7 @@ pub async fn receive_ssh<'a>(
         &mut request,
         &advertisement,
         select(&advertisement),
-        known,
+        history,
         limits,
         control.cancel,
     )?;
@@ -79,20 +85,27 @@ pub async fn receive_ssh<'a>(
 
 /// A bounded SSH response awaiting synchronous pack and connectivity validation.
 ///
-/// Holds a borrow of immutable verified history, plus downloaded protocol bytes; it has no local
-/// filesystem side effects. This separation lets the caller choose its CPU worker/concurrency
-/// policy. It is `Send + Sync`, as is [`SshRemote`]; the history must outlive validation. Dropping
-/// it discards the download. A successful download is not evidence of a valid pack.
-pub struct SshFetch<'a> {
+/// Owns downloaded protocol bytes and, when supplied, an [`Arc`] retaining the exact verified
+/// history used for negotiation. History cannot be substituted during validation. It is
+/// `Send + Sync + 'static` and can move into a caller-managed blocking worker after the initiating
+/// scope ends. No history allocation is retained for a `None` input. Validation consumes this
+/// result and releases its history ownership on success or failure; dropping it does the same
+/// while discarding the bytes. Other Arc owners can keep history alive independently.
+///
+/// Downloading has no local filesystem side effects. A successful download is not evidence of a
+/// valid pack. Callers bound queued downloads, retained bytes and active workers, and observe
+/// worker completion even after requesting cancellation; dropping a worker handle does not stop its
+/// work.
+pub struct SshFetch {
     advertisement: Advertisement,
     negotiation: protocol::Negotiation,
-    known: &'a KnownHistory,
+    known: Option<Arc<KnownHistory>>,
     limits: FetchLimits,
     remaining: usize,
     body: Vec<u8>,
 }
 
-impl std::fmt::Debug for SshFetch<'_> {
+impl std::fmt::Debug for SshFetch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshFetch")
             .field("wire_bytes", &self.body.len())
@@ -100,7 +113,7 @@ impl std::fmt::Debug for SshFetch<'_> {
     }
 }
 
-impl SshFetch<'_> {
+impl SshFetch {
     /// Validates packet framing, pack objects and selected-tip connectivity synchronously.
     ///
     /// Run on a caller-managed bounded CPU worker for large inputs. This work may process up to
@@ -117,11 +130,13 @@ impl SshFetch<'_> {
         cancel: &std::sync::atomic::AtomicBool,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<ReceivedFetch, FetchError> {
+        let empty = KnownHistory::default();
+        let history = self.known.as_deref().unwrap_or(&empty);
         if !self.negotiation.needs_pack {
             return ReceivedFetch::without_pack(
                 self.advertisement,
                 self.negotiation.wants,
-                self.known,
+                history,
                 self.limits,
                 cancel,
             );
@@ -136,7 +151,7 @@ impl SshFetch<'_> {
             &mut wire,
             self.advertisement,
             self.negotiation,
-            self.known,
+            history,
             self.limits,
             cancel,
             progress,
