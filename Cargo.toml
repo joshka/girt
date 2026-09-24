@@ -82,3 +82,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "packs"
 harness = false
+
+[[example]]
+name = "history"
+doc-scrape-examples = true
+
+[[bench]]
+name = "history"
+harness = false

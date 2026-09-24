@@ -26,8 +26,12 @@ including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is experimen
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, history traversal, pack writing, reflogs, reference deletion, multi-ref
-transactions, upward repository discovery, and a CLI are not implemented.
+dependencies. SHA-256, pack writing, reflogs, reference deletion, multi-ref transactions, upward
+repository discovery, and a CLI are not implemented.
+
+Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, and
+`Objects::merge_bases`; see the [history example](examples/history.rs) and
+[completion evidence](docs/testing.md#commit-history-completion).
 
 ## Design Goals
 

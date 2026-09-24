@@ -8,6 +8,7 @@
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
+//! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
 //! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
@@ -28,6 +29,7 @@
 
 mod commit;
 pub mod config;
+mod history;
 mod loose;
 mod object;
 mod objects;
@@ -39,6 +41,7 @@ mod tree;
 
 pub use commit::{Commit, CommitError, CommitFields, CommitHeader, Signature};
 pub use config::{Config, ConfigError};
+pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
 pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};
 pub use objects::{Object, ObjectReadError, Objects, PackLimits, ReadLimits};

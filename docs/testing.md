@@ -226,5 +226,38 @@ implemented. Keep these distinctions visible in the completion report.
   workloads, measuring validated opening, indexed absence, ordinary reads, and reconstruction. Reads
   include live loose-path misses and identity verification. Pack bytes are in memory and filesystem
   caches are warm; these are not cold-storage or large-repository claims.
-- Pack v3, index v1, external/thin bases, SHA-256, multi-pack indexes, pack writing, and history
-  traversal remain unsupported. Only macOS arm64 is exercised; no performance threshold is set.
+- Pack v3, index v1, external/thin bases, SHA-256, multi-pack indexes, and pack writing remain
+  outside the pack-reading capability. Only macOS arm64 is exercised; no performance threshold is
+  set.
+
+## Commit History Completion
+
+- `Objects::walk` accepts explicit SHA-1 roots, deduplicates shared history, and returns
+  breadth-first root/parent discovery order. It is not topological; timestamps never influence
+  results.
+- `is_ancestor` includes equality; `merge_bases` returns all best common ancestors in object-ID
+  order. Both validate the complete ancestry of both endpoints, even when an early answer is
+  possible.
+- `src/history.rs` tests cycle detection, duplicate edges, pre-enqueue bounds, and iterative
+  traversal through 100,000 nodes. `tests/history.rs` covers empty/root, linear, branched, merge,
+  disconnected, identical, duplicate-parent/root, skewed-time, and criss-cross histories. Exact and
+  exhausted graph limits, per-read limits, missing parents, corruption, wrong types, and malformed
+  commits are tested.
+- Independent Git-written fixtures compare reachable sets, ancestor answers, and all merge bases.
+  Criss-cross fixtures run both loose and repacked. No Git implementation code or fixture was
+  copied. See [compatibility evidence](compatibility.md#commit-history).
+- `examples/history.rs` is a runnable consumer; [benchmarks](benchmarks.md#commit-history-baseline)
+  measure packed linear and merge-heavy traversal and merge bases with setup outside timing.
+- Operations have no writes or partial results. Memory grows with bounded commits and parent edges,
+  plus transient object parsing and the existing pack snapshot. Every distinct object is read once
+  per operation; repeated operations do not share a graph cache. Storage decoding limits apply per
+  read, not cumulatively across a walk. Caller-supplied root occurrences take linear input work.
+- Revision expressions, path history, content diff/merge, commit-graph files, shallow/partial
+  repositories, ref mutation, pack writing, and transport are outside this capability. Results are
+  eager; no streaming or topological-order option is promised. Only macOS arm64 has been exercised.
+
+Validation on 2026-09-23 passed `just check` (582 unit, integration, and documentation tests, format
+checks, all-target Clippy, and docs.rs), warning-denying private Rustdoc, and markdownlint-cli2 with
+the global 100-column configuration. The consumer example ran against this checkout with identical
+endpoints and returned that endpoint as the sole merge base. Criterion results and source
+fingerprints are retained with the benchmark evidence.

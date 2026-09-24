@@ -352,3 +352,32 @@ their programs are 28 and 27 bytes. The corresponding pack/index sizes are 3,697
 deliberately similar fixture content. This baseline does not establish deep-chain, multi-gigabyte
 pack, random cold-storage, or highly concurrent performance. Other development checks ran during
 this sample; small differences between runs should not be treated as implementation regressions.
+
+## Commit History Baseline
+
+Run `cargo bench --bench history` with the checked-in lockfile. Criterion uses 20 samples,
+one-second warmup, and four-second measurement targets. Each workload contains 256 commits: a linear
+chain or 85 successive diamonds (two branches and a merge per diamond). Fixtures are original
+Git-written commits with alternating timestamps, repacked before timing. Both traversal and
+merge-base queries include storage reads, identity checks, commit parsing, graph construction, and
+cycle validation. Pack snapshots are already in memory; decoded objects are not cached. Merge-base
+endpoints are commits 254 and 255; traversal starts at commit 255.
+
+The source fingerprint and CSV in `docs/benchmarks/history-baseline.*` retain reproducible source
+identity and median estimates with 95% confidence intervals. Measurements use rustc 1.98.1, Git
+2.55.0, macOS arm64, and warm filesystem caches, without cache eviction or CPU pinning. Other
+development checks may run concurrently. These initial measurements establish no numerical
+acceptance threshold and do not establish cold-storage or large-repository performance.
+
+Recorded on 2026-09-23 with `cargo bench --bench history`. Verify sources with
+`shasum -a 256 -c docs/benchmarks/history-baseline.sha256`.
+
+| Workload                           | Median (ms) |
+| ---------------------------------- | ----------- |
+| linear/merge-bases-packed-256      | 2.936       |
+| linear/walk-packed-256             | 2.955       |
+| merge-heavy/merge-bases-packed-256 | 2.699       |
+| merge-heavy/walk-packed-256        | 2.698       |
+
+These values describe the final diamond workload. Criterion comparisons against earlier exploratory
+fixture shapes are not implementation performance comparisons.

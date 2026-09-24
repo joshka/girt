@@ -520,3 +520,17 @@ operating systems and actual multi-gigabyte packs have not been exercised; small
 (checked in the resolved 1.5.2 package metadata); it was already transitive via flate2. A
 [Criterion baseline](benchmarks.md#pack-read-baseline) records opening, indexed misses, ordinary
 reads, and delta reconstruction. `examples/packed_repository.rs` is the runnable consumer.
+
+## Commit History
+
+`tests/support/history_git.rs` generates original commit payloads and stores them through Git
+`hash-object`, with alternating timestamps that disagree with ancestry. `tests/history.rs` compares
+reachable sets with `git rev-list`, ancestry with `git merge-base --is-ancestor`, and best common
+ancestors with `git merge-base --all`. Criss-cross graphs verify two bases in loose and packed
+storage; endpoint cases include identity and disconnection. Git 2.55.0 on macOS arm64 was exercised.
+
+Walk ordering is a girt contract, not a reproduction of Git CLI ordering: breadth-first first
+encounter, supplied root order, stored parent order, without duplicates. Commit parsing and identity
+verification reuse the existing APIs. Missing parents are errors, including when an endpoint already
+answers the query. Referenced trees are not resolved. Annotated tags must be peeled by the caller.
+Shallow/partial repositories and replacement-object semantics are not supported.
