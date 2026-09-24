@@ -65,3 +65,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "repositories"
 harness = false
+
+[[example]]
+name = "publish_branch"
+doc-scrape-examples = true
+
+[[bench]]
+name = "references"
+harness = false

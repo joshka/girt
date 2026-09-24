@@ -283,3 +283,35 @@ The retained [estimates](benchmarks/repository-baseline.csv) and
 Check fingerprints with `shasum -a 256 -c docs/benchmarks/repository-baseline.sha256` from the
 repository root. These are initial baselines without a numerical acceptance threshold or a claim
 about other platforms, large real-world configurations, or cold storage.
+
+## Reference Baseline
+
+Run `cargo bench --bench references` with the checked-in lockfile. Criterion uses 30 samples,
+one-second warmup and two-second measurement targets. Fixture setup and repository opening occur
+outside timing; reads use warm filesystem caches. The harness measures a single loose direct read,
+HEAD resolution through one symbolic hop, replacement of an existing loose ref with an exact old
+value check, and lookups in packed files with 10 or 10,000 refs. Packed lookups include whole-file
+validation and map allocation. Updates include acquiring/releasing packed and destination locks and
+renaming the complete loose value, without reflogs or fsync. They do not measure durable writes.
+
+The [CSV](benchmarks/reference-baseline.csv) retains median estimates and 95% confidence intervals
+in nanoseconds. The [source fingerprint](benchmarks/reference-baseline.sha256) identifies the
+measured sources, harness, manifest and lockfile; verify with
+`shasum -a 256 -c docs/benchmarks/reference-baseline.sha256`. Recorded on 2026-09-23 with rustc
+1.98.1, Cargo 1.98.1, macOS 26.6.2 (25G83), Apple M2 Max, and temporary directories on the internal
+APFS SSD. The command was `cargo bench --bench references > /tmp/girt-references-bench.log 2>&1`.
+There was no cache eviction, CPU pinning or control of desktop background activity. These are
+initial warm-cache measurements, without a comparison to another library or a numerical acceptance
+threshold.
+
+| Operation                       | Median (µs) |
+| ------------------------------- | ----------- |
+| Loose direct read               | 20.8        |
+| Resolve HEAD                    | 39.5        |
+| Existing update without reflogs | 359.2       |
+| Packed lookup, 10 refs          | 31.1        |
+| Packed lookup, 10,000 refs      | 2947.5      |
+
+The large packed workload exposes the cost of validating and allocating the entire file on every
+lookup. These measurements establish a baseline for a future snapshot/index design; they do not
+justify adding caching before its invalidation contract is defined.

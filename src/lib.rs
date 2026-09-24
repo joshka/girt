@@ -3,6 +3,8 @@
 //! # Library contents
 //!
 //! - [`Repository`] and [`OpenError`]: explicit-path opening with local format detection.
+//! - [`refs`]: validated reference names, loose/packed reads, symbolic resolution, and conditional
+//!   single-reference updates explicitly without reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
@@ -18,13 +20,15 @@
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
 //! The current API is experimental and supports SHA-1 loose blobs, trees, commits, and tags.
-//! References, the index, packfiles, upward repository discovery, and working-tree conversion are
+//! Files references support reads, symbolic resolution, and explicit no-reflog updates.
+//! The index, packfiles, upward repository discovery, and working-tree conversion are
 //! not implemented.
 
 mod commit;
 pub mod config;
 mod loose;
 mod object;
+pub mod refs;
 mod repository;
 mod tag;
 mod tree;

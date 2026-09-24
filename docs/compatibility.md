@@ -346,3 +346,114 @@ unsupported features have distinct error variants with source paths. Opening per
 reads and allocations without a configurable resource limit. Concurrent metadata replacement is not
 a consistent snapshot, and canonicalization is not an ownership or security check. Symlinks are
 resolved; callers must supply a trusted repository path and handle later storage changes.
+
+## Files References
+
+### Contract and Supported Boundary
+
+`Repository::references` provides a borrowed files-backend store. `RefName` owns exact bytes and
+accepts full `refs/…` names following Git's name rules, plus `HEAD`; it does not normalize or expand
+shorthand. Other pseudorefs (including multi-record FETCH_HEAD), revision expressions,
+cross-worktree aliases such as `main-worktree/HEAD`, and reftable are excluded. Repository opening
+continues to reject every refStorage extension, including an explicit `files` value; repositories
+using the implicit default files backend are supported. Unix storage is enabled, with macOS arm64
+exercised; non-Unix storage returns an explicit unsupported error.
+
+Loose refs take precedence over packed refs. A malformed loose value reports an error even when a
+valid packed value exists. Direct targets are nonzero SHA-1 IDs; symbolic records begin with `ref:`
+and a supported full name. Trailing ASCII whitespace is accepted, and writes produce one LF. The
+reader rejects zero IDs, SHA-256 IDs, invalid symbolic names and extra non-whitespace data. It
+supports regular files, rejecting filesystem symlinks (including legacy symlink HEAD) and other
+non-regular files. Parent symlinks are also rejected. Names remain bytes through parsing and Unix
+path conversion, but filesystem restrictions still apply: APFS rejects non-UTF-8 loose filenames.
+Packed byte-name reads are tested on macOS; loose byte-name writes have a Linux-only test that has
+not been exercised here. Case/Unicode aliases inherit filesystem behavior; no normalization or
+portable alias detection is provided.
+
+`HEAD`, `refs/bisect/`, `refs/rewritten/`, and `refs/worktree/` are local to the opened worktree;
+other names and packed-refs use its common directory. Resolution returns the terminal name and an
+optional ID. Missing initial refs and unborn/dangling symbolic chains return an absent ID; missing
+objects are not detected. Cycles are distinct errors, and callers set the maximum symbolic hops for
+reads. Updates through symbolic chains allow at most 32 hops. Resolution follows live reads rather
+than a snapshot and never peels tags or loads objects.
+
+### Packed Grammar
+
+An empty or absent packed-refs file is accepted. Nonempty files use LF-terminated records,
+optionally starting with `# pack-refs with:` and space-separated `peeled`, `fully-peeled`, and/or
+`sorted` traits. Unknown traits are unsupported. Each direct record contains 40 hexadecimal digits,
+one space and a validated shared reference name. A single `^` record with a nonzero 40-digit ID may
+immediately follow a direct record. Peeled IDs are checked syntactically and discarded; the traits
+do not prove object type, existence, or correctness of the peel. Resolution returns the direct
+tag-object ID.
+
+Both headerless/unsorted records and Git-generated sorted/peeled files are supported. Claimed sorted
+order is checked bytewise. Duplicate names, misplaced headers, orphan/repeated peel lines, blank
+lines, unknown comments, invalid names/IDs, missing final LF and packed per-worktree names fail.
+Whenever packed fallback is needed, the entire file is read and validated, including unrelated
+records; a loose hit does not open it. Every update validates packed-refs. Reads allocate in
+proportion to file size without a configurable limit. There is no packed cache or indexing yet.
+
+### Conditional Publication and Reflogs
+
+`update_without_reflog` replaces the named reference itself, including a symbolic reference.
+`update_resolved_without_reflog` locks and preserves each symbolic hop and writes only its terminal
+name. `Expected::Absent` requires no loose or packed value; `Value` compares the stored target;
+`Any` accepts any valid value or absence. Conditions are checked under locks. For resolved updates,
+the terminal value is direct or absent, so an expected symbolic value cannot match. Symbolic writes
+may create dangling names or cycles, but symbolic HEAD must point into `refs/`; resolution reports
+those states separately.
+
+Every write acquires common `packed-refs.lock` by exclusive creation, followed by the destination
+lock (or all visited symbolic-chain locks). Holding the packed lock stabilizes packed expectations
+and namespace checks against cooperating Git writers and serializes even unrelated girt updates.
+Existing locks cause an immediate error, with no retry or lock stealing. Ancestor/descendant
+conflicts in packed refs are checked before publication; filesystem conflicts reject loose
+namespaces, including empty directories. A successful write renames its complete owned lock over the
+loose destination. This shadows an existing packed value without changing packed-refs or unrelated
+reference data. Deletion is deferred because removing only a loose file would expose an older packed
+value.
+
+These methods deliberately omit all reflog writes regardless of `core.logAllRefUpdates` and leave
+existing logs unchanged. Git normally creates/appends relevant logs and records old/new IDs and
+identity information. girt's API names make opting out visible at the call site. Prior tips gain no
+new reflog-based retention or recovery record, old unreachable objects may become eligible for
+pruning, and history shown by `git reflog show` omits girt updates. The test confirms that Git's
+`main@{0}` can still return the current tip despite the unchanged log; this selector alone cannot
+verify logging. No hooks run, and there is no object existence/type or fast-forward check. This is
+low-level reference publication, not full Git update-ref behavior or a checkout operation.
+
+The filesystem must provide exclusive file creation and atomic rename; callers must use a trusted
+repository and cooperating lock-protocol writers. Configuration, layout, symlink and lock ownership
+must not be changed adversarially during an operation. Reads across refs/hops are not transactional.
+Failures before rename preserve old values, but empty directories may remain. Owned locks are
+removed on ordinary errors/unwind; cleanup I/O failures or process termination can leave stale
+locks. No fsync is issued, so successful visibility does not guarantee crash/power-loss durability
+for either refs or objects. Network filesystems and crash recovery have not been validated.
+
+### Evidence and Provenance
+
+Original `tests/references.rs` fixtures invoke Git 2.55.0 in isolated temporary repositories with
+ambient Git configuration and environment removed. Git `update-ref`, `symbolic-ref`, annotated
+`tag`, `pack-refs --all`, and `worktree add --detach` produce input. Git `check-ref-format`,
+`rev-parse`, `show-ref`, `symbolic-ref` and `reflog show` check results. No Git source or upstream
+test fixtures were used, and no dependencies were added. References consulted were
+[`git-check-ref-format`](https://git-scm.com/docs/git-check-ref-format),
+[`gitrepository-layout`](https://git-scm.com/docs/gitrepository-layout),
+[`git-pack-refs`](https://git-scm.com/docs/git-pack-refs) and
+[`git-update-ref`](https://git-scm.com/docs/git-update-ref).
+
+Tests cover both loose and packed input, annotated-tag peel records, loose shadowing without packed
+mutation, byte names, detached/unborn HEAD, dangling symbolic and object targets, exact conditional
+updates, and symbolic replacement versus terminal updates. Linked worktree tests compare each
+private namespace and shared branches with Git. Rejection/failure tests cover name rules, malformed
+records, unsupported backends, cycles/depth, namespace conflicts, zero IDs, symlinks, existing
+locks, failed conditions, write/rename failure, owned-lock cleanup, and preservation of unrelated
+data. Two-writer races exercise girt/girt and girt/Git conditional updates; exactly one writer
+succeeds. These cover cooperating writers, not arbitrary direct file rewrites or crash consistency.
+
+The runnable `publish_branch` example stores two commits, publishes an unborn branch through HEAD,
+and conditionally advances it while preserving HEAD's symbolic value. Criterion measures warm loose
+reads, HEAD resolution, no-reflog updates, and packed lookups over 10 and 10,000 refs; see the
+[reference baseline](benchmarks.md#reference-baseline). Reflogs, multi-ref transactions, deletion,
+reftable, object packs, graph traversal, discovery and transport remain outside this capability.

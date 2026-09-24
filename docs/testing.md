@@ -183,3 +183,26 @@ implemented. Keep these distinctions visible in the completion report.
   there is no numerical performance gate.
 - Only macOS arm64 is exercised. Initialization, upward discovery, refs, packed reads, history and
   transport are excluded. Worktree configuration, includes and unknown extensions fail explicitly.
+
+## Reference Completion
+
+- `RefName` unit cases validate full byte names and HEAD without normalization. Git name checks
+  independently cover valid and invalid names; byte names also round-trip through packed refs.
+- Loose/direct/symbolic parsing, packed headers and peeled-record validation, duplicates, malformed
+  data and unsupported backends are tested. Git-generated loose, packed and annotated-tag fixtures
+  establish precedence and distinguish resolution from peeling.
+- Missing/unborn/dangling refs, missing objects, cycles and depth limits have explicit results.
+  Linked worktree comparisons exercise HEAD, all three private namespaces and shared branches.
+- Conditional publication checks absence or an exact stored value under owned locks. Tests cover
+  symbolic replacement versus terminal updates, packed shadowing, namespace conflicts, existing
+  locks, failed conditions, write/rename failure and cleanup. girt/girt and girt/Git races permit
+  exactly one writer to replace a common expected old value.
+- `examples/publish_branch.rs` stores commits and publishes/advances a branch through HEAD in a
+  disposable repository. Reflog tests confirm both existing-log preservation and omitted new logs;
+  the [compatibility contract](compatibility.md#files-references) explains recovery/retention costs.
+- The Criterion reference harness records warm loose/packed reads, symbolic resolution and no-reflog
+  publication without claiming cold-cache or durable-write latency. No numerical gate is
+  established. Packed input allocation is proportional to file size, with no configurable limit.
+- macOS arm64 is exercised; Linux-only non-UTF-8 loose filename tests remain unrun. Non-Unix
+  storage, noncooperating writers, crash durability, reflogs, deletion and multi-ref transactions
+  are outside the supported boundary. No object-pack, history or transport capability is implied.

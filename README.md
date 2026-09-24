@@ -18,12 +18,15 @@ existing commits. Annotated tags preserve target identity and type, byte names, 
 opaque extra headers, and message bytes, including embedded signatures. Storing a tag object does
 not create a tag reference. Explicit-path repository opening supports ordinary, bare, separate Git
 directories, and linked worktrees, deriving SHA-1 storage from repository-local configuration.
-Unsupported configuration sources and repository extensions return errors. The API is experimental.
+Unsupported configuration sources and repository extensions return errors. Files-backend references
+support byte-preserving names, loose/packed reads, symbolic resolution, and conditional single-ref
+updates explicitly without reflogs. HEAD and per-worktree refs use the detected layout. The API is
+experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
-dependencies. SHA-256, history traversal, refs, packs, upward repository discovery, and a CLI are
-not implemented.
+dependencies. SHA-256, history traversal, object packs, reflogs, reference deletion, multi-ref
+transactions, upward repository discovery, and a CLI are not implemented.
 
 ## Design Goals
 
@@ -46,7 +49,8 @@ read the tree and its blobs back. Run `cargo run --example loose_commit` to stor
 and a root commit, then read the snapshot back. Run `cargo run --example loose_tag` to store an
 annotated tag of a blob and read both objects back. Run
 `cargo run --example open_repository -- /path/to/repo <blob-id>` to open an existing repository and
-read a loose blob without modifying files.
+read a loose blob without modifying files. Run `cargo run --example publish_branch` to store commits
+and publish/advance a branch through HEAD in a disposable repository, explicitly omitting reflogs.
 
 ## Development
 

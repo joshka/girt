@@ -85,6 +85,19 @@ pub enum OpenError {
 }
 
 impl Repository {
+    /// Borrows this repository's files-backend reference store.
+    ///
+    /// Uses the detected common/worktree directories. See [`crate::refs::References`] for the
+    /// byte-name, platform, read and explicit no-reflog update boundaries.
+    ///
+    /// # Errors
+    ///
+    /// Reference storage is currently unsupported on non-Unix platforms. Unsupported repository
+    /// backends such as reftable are rejected by [`Self::open`] before a handle can be constructed.
+    pub fn references(&self) -> Result<crate::refs::References<'_>, crate::refs::ReferenceError> {
+        crate::refs::References::new(self)
+    }
+
     /// Opens only the supplied location, without changing files.
     ///
     /// Reads `config` from the common directory; repeated scalar settings use the last value.
