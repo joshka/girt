@@ -9,7 +9,7 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
-explicit reflog policy, plus named remote configuration and pure refspec mapping. The
+explicit reflog policy, named remote/refspec mapping, and explicit fetch orchestration. The
 single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
 validation state. Installation takes explicit destination snapshot limits. Read and operation limits
 remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
@@ -820,11 +820,11 @@ private temporaries; crashes may leave them. Directory entries are not synced, s
 durability is not promised. Installation does not repair corrupt existing loose objects that shadow
 packed objects. Reopen and read with suitable limits before using the destination as a source.
 
-Fetch never updates refs, reflogs, or `FETCH_HEAD`. Callers may use the existing explicit
-`update_without_reflog` operations after installation, with expected old values. Each update is
-independent; failure of a later update does not undo earlier successes. No multi-ref atomicity is
-implied. Remote configuration, refspecs, automatic tag following, pruning, shallow/partial stores,
-authentication helpers and push remain outside this capability.
+The lower-level object-transfer APIs never update refs, reflogs, or `FETCH_HEAD`. Callers may use
+the existing explicit `update_without_reflog` operations after installation, with expected old
+values. Each update is independent; failure of a later update does not undo earlier successes. No
+multi-ref atomicity is implied. Remote configuration, refspecs, automatic tag following, pruning,
+shallow/partial stores, authentication helpers and push remain outside this capability.
 
 ### Fetch Evidence and Provenance
 
@@ -1402,3 +1402,81 @@ The [Criterion baseline](benchmarks.md#refspec-mapping) measures expansion over 
 refs. Input sizes are caller-bounded; the mapper has no cancellation or hard memory limit. Runtime
 interoperability evidence for this increment is macOS arm64 with Git 2.55.0; Linux and Windows
 runtime checks have not been performed for this increment.
+
+## Fetch Orchestration
+
+`fetch::FetchRequest` composes an explicit fetch refspec list (including one read from a named
+`remote::Remote`) with local, HTTP or SSH transfer and a shared install/publication path. The
+endpoint, credentials, history, scheduling, limits, force authorization and reflog policy remain
+caller inputs. `examples/fetch_remote.rs` runs against disposable repositories; network tests move
+the owned download to a caller-owned blocking worker before validation and publication.
+
+Preparation captures stored destination values before network work. Mapping uses the advertisement
+from the actual transfer session/discovery; a preview is not reusable authority for a later
+advertisement. Missing sources and mapping/policy errors request no objects. HTTP discovery and RPC
+can observe a changing server: the request retains discovered IDs and either receives their valid
+objects or fails, without silently remapping to new IDs. Publication uses conditional transactions
+for changed refs, including expected absence; no-op destinations are not locked or rewritten.
+
+Supported destination rules are deliberately narrower than full CLI fetch:
+
+| Destination      | Supported rule                                                       |
+| ---------------- | -------------------------------------------------------------------- |
+| `refs/tags/*`    | Create any kind; replace only with `+` and exact-name authorization. |
+| `refs/remotes/*` | Any kind may be created; replacements use the object rules below.    |
+| `refs/heads/*`   | Rejected, including bare repositories and forced refspecs.           |
+| Other namespaces | Rejected; symbolic destinations are also rejected.                   |
+
+For remote-tracking replacements, both tips are peeled under explicit tag/read limits. If both peel
+to commits, the old commit must be an ancestor of the new one, unless both `+` and explicit name
+authorization permit a non-fast-forward replacement. If either tip is a tree or blob after peeling,
+replacement needs no force. Missing or unreadable old objects fail closed. Ancestry uses bounded
+synchronous history queries; cancellation is observed before/after each query, not within it. Update
+limits apply per destination, so aggregate work can multiply by mapping count.
+
+The [git-fetch manual](https://git-scm.com/docs/git-fetch) describes namespace/type-dependent
+updates and force requirements for tags. Its statement about arbitrary replacements outside
+heads/tags is broader than the Git 2.55.0 behavior observed here: Git rejects remote-tracking commit
+rewinds and annotated tags peeled to older commits without force. This workflow follows those
+observed stricter rules. Independent CLI tests retain both rejected unforced and accepted forced
+cases, alongside accepted tree/blob replacements. No Git implementation or upstream test source was
+used.
+
+Branch destinations are rejected to avoid implementing a partial branch-in-use check. Main and
+registered linked-worktree HEAD chains must be detached or stay entirely in `refs/heads/*`; chains
+into otherwise supported destinations fail closed. Inaccessible/stale registrations are errors. The
+checks run at preparation and after installation. Callers must exclude checkout, symbolic
+HEAD/branch edits and worktree-registration changes throughout the operation; these checks do not
+lock worktree metadata. Ordinary destination writers remain supported through exact expectations.
+
+Validation precedes installation, and installation precedes every ref edit. After installation,
+selected-tip graphs are reread through the destination object store under explicit verification
+budgets. This catches corrupt loose objects hiding valid installed pack objects, including corrupt
+descendants, before publication. `FetchReport` separates transfer statistics, completed object
+installation and successful transaction outcomes. `FetchFinishError` retains the report and the
+original transaction error with partial ref/log effects. Installed objects remain after update
+rejection, cancellation after installation or publication failure. Installation itself can leave an
+unindexed pack on failure. No whole-fetch rollback, atomic visibility or power-loss durability is
+promised. Callers must coordinate pruning/GC until publication completes. Reflog identities/messages
+are explicit and unchanged/source-only entries do not append logs.
+
+`FETCH_HEAD`, clone, checkout, pruning, implicit tag following, credential discovery, global config
+policy, config editing and push orchestration are deferred. Existing protocol/storage limitations
+still apply. Preparation and reference metadata operations retain their existing unbounded metadata
+allocation contracts; this layer introduces no runtime or backend framework.
+
+Original fixtures in `tests/fetch_workflow.rs` generate blobs, trees, commits and annotated tags
+using Git CLI plumbing, then compare Git and girt fetch results. Tests cover initial/incremental
+fetch, multiple refs, wildcard exclusions, source-only/no-op results, tag force authorization,
+commit rewind rules, tree/blob kind replacement, destination races, cancellation, failed
+installation (including an unindexed residual pack), missing local dependencies, publication lock
+failure, explicit reflogs and main/linked-worktree HEAD aliases. `tests/http.rs` and `tests/ssh.rs`
+cover end-to-end publication on owned workers using the existing independent loopback fixtures; SSH
+also rejects malformed advertisements without installation. Existing transaction tests retain
+partial-publication evidence.
+
+This increment was exercised on 2026-09-24 on macOS arm64 with Git 2.55.0 and rustc 1.98.1; its
+[completion record](testing.md#fetch-orchestration-completion) and
+[benchmark baseline](benchmarks.md#fetch-orchestration-baseline) record the checks and retained
+measurements. Earlier Linux/Windows validation records do not establish runtime support for these
+new workflow paths.

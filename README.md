@@ -53,10 +53,13 @@ compatibility boundaries.
 `fetch::receive_local` supplies a local Git upload-pack process adapter. Fetch validates complete
 packs, deltas, identities, and selected-tip connectivity before explicit index-last installation.
 Explicit `fetch::KnownHistory` enables bounded have/ACK negotiation and known-only no-op fetches;
-installation rechecks the required local objects. Reference updates remain separate conditional
-operations without reflogs. Run `cargo run --example fetch_local` for a complete disposable example.
-`remote::Remote` reads named raw URLs and refspecs from the repository configuration snapshot;
-`remote::Refspecs` maps explicit source refs without executing transfers or authorizing updates. Run
+installation rechecks the required local objects. `fetch::FetchRequest` composes refspec selection,
+local/HTTP/SSH transfer, installation and conditional remote-tracking/tag publication, with explicit
+force authorization and reflog policy. Run `cargo run --example fetch_remote` for this workflow or
+`cargo run --example fetch_local` for the lower-level object-transfer APIs. Local branch
+destinations and `FETCH_HEAD` are outside orchestration's supported scope. `remote::Remote` reads
+named raw URLs and refspecs from the repository configuration snapshot; `remote::Refspecs` maps
+explicit source refs without executing transfers or authorizing updates. Run
 `cargo run --example remote_plan` for fetch selection and conditional push preparation. Credential
 discovery, implicit remote/branch selection, shallow/partial fetches, automatic tags, and pruning
 are not implemented. See

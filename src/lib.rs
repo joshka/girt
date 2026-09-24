@@ -25,6 +25,15 @@
 //!
 //! # Fetching and publishing references
 //!
+//! [`fetch::FetchRequest::prepare`] captures local ref values with explicit force authorization and
+//! reflog policy. Its local/HTTP/SSH adapters map the advertisement actually used for transfer.
+//! [`fetch::FetchReady::finish`] installs objects before checking update rules and conditionally
+//! publishing remote-tracking refs and tags. Local branch destinations are unsupported. Inspect
+//! [`fetch::FetchFinishError`] for installed objects and possible partial transaction effects.
+//! `FETCH_HEAD`, pruning and implicit tag following are deferred; this is not full CLI fetch.
+//! Run `cargo run --example fetch_remote` for a disposable workflow with named remote
+//! configuration.
+//!
 //! Build optional [`fetch::KnownHistory`] from verified local objects before negotiation. Local
 //! and stream fetches return [`fetch::ReceivedFetch`]. HTTP/SSH downloads instead own unvalidated
 //! bytes and the exact negotiation history; move them to a caller-managed blocking worker and
@@ -63,7 +72,7 @@
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
-//! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
+//! - [`fetch`]: upload-pack v0, validated object installation, and conditional fetch publication.
 //! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
 //! - [`transport`]: owned transport cancellation, deadlines, and process lifetime contracts.
 //! - [`write_pack`]: bounded pack/index v2 artifact generation from explicit objects.
@@ -83,12 +92,12 @@
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
 //! The current API is experimental and supports SHA-1 loose objects, pack/index v2 reads,
-//! caller-owned pack/index v2 exports, object-only fetch, and conditional branch/tag push. Fetch
-//! and push accept v0 streams or local Git server adapters. The optional `http` feature adds async
-//! smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a
-//! caller-owned Tokio runtime; fetch pack validation remains an explicit synchronous step.
-//! Files references support enumeration, reads, symbolic resolution, and explicit no-reflog updates
-//! and deletion, plus conditional batches and caller-controlled reflog appends.
+//! caller-owned pack/index v2 exports, object transfer and fetch orchestration, and conditional
+//! branch/tag push. Fetch and push accept v0 streams or local Git server adapters. The optional
+//! `http` feature adds async smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on
+//! macOS/Linux. Both use a caller-owned Tokio runtime; fetch pack validation remains an explicit
+//! synchronous step. Files references support enumeration, reads, symbolic resolution, and explicit
+//! no-reflog updates and deletion, plus conditional batches and caller-controlled reflog appends.
 //! The working-tree index and working-tree conversion are not implemented.
 
 mod commit;

@@ -824,3 +824,103 @@ fn cancellation_after_real_git_ref_commit_is_uncertain() {
     assert!(repo.git_dir().join("committed").exists());
     assert_eq!(tip(&repo, "refs/heads/main"), id);
 }
+
+#[test]
+fn orchestration_installs_and_publishes_on_owned_worker() {
+    let f = Fixture::new(true, 4);
+    let server = Server::new(f.root.path(), "none");
+    let remote = server.remote("config");
+    let (_root, dest) = destination();
+    let destination_path = dest.git_dir().to_path_buf();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        [
+            "refs/heads/*:refs/remotes/origin/*",
+            "refs/tags/*:refs/tags/*",
+        ],
+    )
+    .unwrap();
+    let request = fetch::FetchRequest::prepare(
+        dest,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let rt = runtime();
+    let download = rt
+        .block_on(request.receive_ssh(
+            &remote,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let report = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            download
+                .validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+                .unwrap()
+                .finish(fetch::FetchUpdateLimits::default(), &AtomicBool::new(false))
+                .unwrap()
+        })
+        .await
+        .unwrap()
+    });
+    let destination = Repository::open(destination_path).unwrap();
+    assert_eq!(report.references.len(), 2);
+    assert!(report.installed.is_some());
+    assert_eq!(
+        tip(&destination, "refs/remotes/origin/main"),
+        tip(&f.repo, "refs/heads/main")
+    );
+    assert_eq!(
+        tip(&destination, "refs/tags/packed"),
+        tip(&f.repo, "refs/tags/packed")
+    );
+    git(
+        destination.git_dir(),
+        &["fsck", "--full", "--no-reflogs"],
+        b"",
+    );
+}
+
+#[test]
+fn orchestration_rejects_malformed_transfer_without_installation() {
+    let f = Fixture::new(false, 2);
+    let server = Server::new(f.root.path(), "malformed");
+    let (_root, dest) = destination();
+    let path = dest.git_dir().to_path_buf();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        ["refs/heads/*:refs/remotes/origin/*"],
+    )
+    .unwrap();
+    let request = fetch::FetchRequest::prepare(
+        dest,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let result = runtime().block_on(request.receive_ssh(
+        &server.remote("config"),
+        None,
+        FetchLimits::default(),
+        deadline(&cancel),
+    ));
+    assert!(matches!(
+        result,
+        Err(fetch::FetchWorkflowError::Transfer(_))
+    ));
+    let repo = Repository::open(path).unwrap();
+    assert!(repo.references().unwrap().list().unwrap().is_empty());
+    assert_eq!(
+        std::fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}

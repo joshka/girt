@@ -1,16 +1,22 @@
-//! Object-only fetch over upload-pack protocol v0.
+//! Upload-pack v0 object transfer and explicit fetch orchestration.
 //!
-//! [`receive`] consumes a caller-owned pair of blocking streams; [`receive_local`] starts a local
-//! Git upload-pack server. Both return a validated [`ReceivedFetch`] without touching a repository.
-//! Install it explicitly, then use [`crate::refs`] for caller-selected conditional reference
-//! updates. Fetch never writes references, reflogs, remote configuration, or `FETCH_HEAD`.
+//! [`FetchRequest`] combines supported refspecs with a destination snapshot and explicit update
+//! authorization. Its local/HTTP/SSH adapters plan from their actual advertisement, then use shared
+//! validation, installation and conditional publication through [`FetchReady::finish`]. Only
+//! remote-tracking and tag destinations are supported; see [`FetchRequest`] for worktree safety
+//! and caller coordination. `FETCH_HEAD`, implicit tags and pruning remain deferred.
+//!
+//! The lower-level [`receive`] and [`receive_local`] return a validated [`ReceivedFetch`] without
+//! touching a repository. Install explicitly and choose reference policy yourself, or use
+//! [`FetchRequest`] for the supported workflow. These lower-level APIs do not write refs or
+//! reflogs.
 //!
 //! Wants must be advertised IDs. [`receive`] requests full histories; [`receive_with_known`] uses
 //! bounded [`KnownHistory`] to negotiate incremental transfers. Received delta bases stay internal,
 //! while selected-tip connectivity can depend on verified local objects. Installation rechecks
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
 //! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
-//! requests, automatic tags, refspecs, pruning and protocol v1/v2 are outside this slice.
+//! requests, automatic tags, pruning and protocol v1/v2 are outside the transfer boundary.
 //! The `http` and `ssh` features add owned async network downloads with separate synchronous
 //! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
 //! a caller-managed blocking worker without borrowing its initiating scope.
@@ -37,6 +43,25 @@ mod download;
     all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
 ))]
 pub use download::DownloadedFetch;
+
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+mod workflow_network;
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+pub use workflow_network::FetchDownload;
+mod update;
+pub use update::{FetchUpdateError, FetchUpdateLimits};
+mod workflow;
+mod worktree;
+pub use workflow::{
+    FetchFinishError, FetchFinishFailure, FetchPlanError, FetchReady, FetchReport, FetchRequest,
+    FetchUpdate, FetchUpdateKind, FetchWorkflowError,
+};
 
 mod connectivity;
 mod import;

@@ -168,3 +168,11 @@ harness = false
 [[example]]
 name = "remote_plan"
 doc-scrape-examples = true
+
+[[example]]
+name = "fetch_remote"
+doc-scrape-examples = true
+
+[[bench]]
+name = "fetch_workflow"
+harness = false

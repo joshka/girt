@@ -7,7 +7,7 @@
 //! This is not a complete interpretation of `git fetch <remote>` or `git push <remote>`.
 //!
 //! See `examples/remote_plan.rs` for configuration, advertisement selection and push-command
-//! planning.
+//! planning. [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
 
 mod config;
 mod refspec;

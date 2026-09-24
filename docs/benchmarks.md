@@ -804,3 +804,37 @@ host, not a transfer latency, hard memory bound or cross-platform guarantee. No 
 set. The implementation scans sources for each positive spec and exclusions for each match; callers
 must bound configuration/input sizes. Retained memory scales with source count and unique plan
 entries.
+
+## Fetch Orchestration Baseline
+
+Run `cargo bench --bench fetch_workflow` with the checked-in lockfile. Criterion 0.8.2 uses 30
+samples, a one-second warmup and a four-second measurement target. `plan/10` and `plan/10000` map
+advertised full tag names into absent remote-tracking destinations against a prepared snapshot.
+Setup is outside timing; mapping, decisions, allocation and result destruction are measured.
+
+`install_publish_10` starts with a validated local transfer of one 4 KiB repeated-byte blob selected
+by ten tag refs. Each iteration uses a new destination. Repository creation, destination preparation
+and local transfer/validation are outside timing. The measured operation installs the pack/index,
+checks HEAD layout, rereads selected-tip connectivity and publishes ten conditional remote-tracking
+refs without reflogs. Temporary repository destruction is outside timing. No commit ancestry query
+is needed in this creation workload; existing history benchmarks measure the underlying traversal.
+This small workflow is not a large-history, WAN, HTTP or SSH throughput measurement.
+
+Recorded on 2026-09-24 using rustc 1.98.1, Cargo 1.98.1, macOS 26.6.2 (25G83), Apple M2 Max and 96
+GiB RAM. Storage uses the default local macOS temporary directory. Filesystem reads are warm: no
+cache flush/eviction was attempted. The retained run followed the correctness checks with no
+concurrent agent-started builds/tests. Desktop background activity, CPU placement and thermal state
+were not controlled. The default optimized bench profile was used.
+
+| Operation                          | Median µs | 95% CI, µs          |
+| ---------------------------------- | --------- | ------------------- |
+| Plan 10 refs                       | 6.131     | 6.078–6.174         |
+| Plan 10,000 refs                   | 6217.531  | 6148.279–6382.637   |
+| Install/verify/publish 10 new refs | 13725.028 | 13622.090–13939.181 |
+
+The [CSV estimates](benchmarks/fetch-workflow-baseline.csv) retain median estimates and confidence
+intervals in nanoseconds. The [source manifest](benchmarks/fetch-workflow-baseline.sha256)
+fingerprints all library sources, the harness and Cargo files; verify with
+`shasum -a 256 -c docs/benchmarks/fetch-workflow-baseline.sha256`. These are sampled operation
+estimates, not latency percentiles or a performance target. Preliminary runs during implementation
+are not comparison evidence. No numerical acceptance threshold or speedup/regression claim is made.

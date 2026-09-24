@@ -965,3 +965,64 @@ fn network_wait_leaves_single_thread_executor_responsive() {
     });
     assert!(matches!(result, Err(FetchError::Cancelled)));
 }
+
+#[test]
+fn orchestration_installs_and_publishes_on_owned_worker() {
+    let f = Fixture::new(true, 4);
+    let server = Server::new(f.root.path(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let (_root, dest) = destination();
+    let destination_path = dest.git_dir().to_path_buf();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        [
+            "refs/heads/*:refs/remotes/origin/*",
+            "refs/tags/*:refs/tags/*",
+        ],
+    )
+    .unwrap();
+    let request = fetch::FetchRequest::prepare(
+        dest,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let rt = runtime();
+    let download = rt
+        .block_on(request.receive_http(
+            &remote,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let report = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            download
+                .validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+                .unwrap()
+                .finish(fetch::FetchUpdateLimits::default(), &AtomicBool::new(false))
+                .unwrap()
+        })
+        .await
+        .unwrap()
+    });
+    let destination = Repository::open(destination_path).unwrap();
+    assert_eq!(report.references.len(), 2);
+    assert!(report.installed.is_some());
+    assert_eq!(
+        tip(&destination, "refs/remotes/origin/main"),
+        tip(&f.repo, "refs/heads/main")
+    );
+    assert_eq!(
+        tip(&destination, "refs/tags/packed"),
+        tip(&f.repo, "refs/tags/packed")
+    );
+    git(
+        destination.git_dir(),
+        &["fsck", "--full", "--no-reflogs"],
+        b"",
+    );
+}

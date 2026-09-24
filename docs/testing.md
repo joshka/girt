@@ -654,3 +654,39 @@ HTML/navigation anchors were inspected; browser security policy blocked local-fi
 visual Rustdoc review remains unperformed. No dependency, platform-support, transfer, or
 reference-storage changes are included. Linux and Windows runtime evidence for this increment
 remains uncollected.
+
+### Fetch Orchestration Completion
+
+Acceptance for this increment is remote-tracking/tag publication through explicit local/HTTP/SSH
+endpoints, preserving transfer/installation/transaction failure boundaries:
+
+- Supported namespace/object/force rules are documented in
+  [fetch orchestration](compatibility.md#fetch-orchestration). Local branch destinations and
+  `FETCH_HEAD` are explicitly deferred; protected HEAD chains include linked worktrees.
+- Focused workflow/update unit tests cover mapping/exclusion, source-only/no-op decisions, symbolic
+  and unsupported destination rejection, changed advertisements, and independent force intent and
+  authorization requirements.
+- `examples/fetch_remote.rs` demonstrates named configuration, explicit endpoint policy, validated
+  transfer, installation, conditional publication, reflog identity and failure reports.
+- Independent Git CLI tests compare initial/incremental multi-ref fetches, exclusions, tags and
+  object-kind/non-fast-forward decisions, including the observed stricter remote-tracking behavior
+  than the manual describes.
+- Failure tests cover destination races, cancellation, malformed SSH input, installation failure,
+  residual unindexed packs, lost known dependencies, corrupt loose shadows,
+  verification/ancestry/peeling limits, publication locks and worktree aliases. Existing reference
+  transaction tests cover exact partial reference/log effects retained by the workflow.
+- HTTP and SSH loopback fixtures exercise owned download handoff, synchronous validation and shared
+  publication. No synchronous storage work is introduced inside network polling.
+- `benches/fetch_workflow.rs` measures mapping/planning at 10 and 10,000 refs and validated
+  installation plus ten-ref publication, with setup and transfer outside the measured finish
+  operation. Existing history traversal and object-transfer benchmarks remain the underlying
+  processing baselines.
+
+Validation for this increment on 2026-09-24, macOS arm64, rustc 1.98.1 and Git 2.55.0:
+`cargo test --all-features` passed 1,279 tests, including 23 workflow integration tests and the
+HTTP/SSH loopback cases. All-target/all-feature Clippy, docs.rs and private Rustdoc builds with
+warnings denied, `cargo check --no-default-features`, and `cargo run --example fetch_remote` passed.
+Nightly formatting, rumdl and markdownlint-cli2 (100-column configuration) passed for changed prose.
+The [Criterion baseline](benchmarks.md#fetch-orchestration-baseline) retains estimates and source
+fingerprints. Linux runtime and Windows portability were not rerun for this increment; the workflow
+unit/integration tests needing reference storage are Unix-gated.
