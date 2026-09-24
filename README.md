@@ -56,6 +56,10 @@ unchanged. Run `cargo run --example push_local` for a disposable branch/tag publ
 Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred. See
 [push compatibility](docs/compatibility.md#receive-pack-push).
 
+Local adapters on macOS/Linux interrupt pipe and server-exit waits when cancelled. Their
+`*_with_control` entry points also accept an absolute deadline; see
+[transport interruption](docs/compatibility.md#owned-transport-interruption) for scope and cleanup.
+
 ## Design Goals
 
 - Model objects, trees, commits, references, the index, and repositories directly.

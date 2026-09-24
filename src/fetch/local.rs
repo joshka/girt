@@ -1,24 +1,23 @@
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use super::{Advertisement, FetchError, FetchLimits, ReceivedFetch, check_cancelled, receive};
+use super::{Advertisement, FetchError, FetchLimits, ReceivedFetch, receive};
 use crate::ObjectId;
+use crate::transport::{Server, TransportControl};
 
 /// Receives from a local repository through `git upload-pack`, without invoking a Git client.
 ///
 /// Canonicalizes the explicit repository path, starts `git` from PATH with an empty environment
 /// except PATH and system configuration disabled, forces v0, and uses binary stdin/stdout pipes.
-/// The server has a 30-second idle timeout. Server stderr is inherited; protocol progress is sent
-/// to the callback. The caller must trust the executable and source repository/configuration.
-/// This adapter does not accept URLs or perform authentication. All client framing, pack decoding,
-/// indexing, and validation are implemented in girt.
+/// The caller must trust the executable and source repository/configuration. This adapter does
+/// not accept URLs or perform authentication. All client framing, pack decoding, indexing, and
+/// validation are implemented in girt.
 ///
-/// Cancellation has the same between-I/O granularity as [`receive`]; a blocked local pipe read
-/// cannot be interrupted by setting the flag alone. On ordinary failure or unwinding the direct
-/// upload-pack child is killed and reaped. This does not promise process-group cancellation or a
-/// wall-clock deadline for a server performing computation.
+/// Uses interruptible owned pipes on macOS/Linux, with no deadline. See [`TransportControl`] for
+/// cancellation, diagnostic disposal, process-group cleanup, and platform requirements. Use
+/// [`receive_local_with_control`] to impose an absolute transport deadline.
 ///
 /// # Errors
 ///
@@ -31,7 +30,31 @@ pub fn receive_local(
     cancel: &AtomicBool,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
-    check_cancelled(cancel)?;
+    receive_local_with_control(
+        source,
+        select,
+        limits,
+        TransportControl::new(cancel),
+        progress,
+    )
+}
+
+/// Receives objects from a local server with caller-controlled interruption.
+///
+/// Same protocol and trust contract as [`receive_local`]. See [`TransportControl`] for deadline
+/// scope, races, cleanup, and OS support. No destination is touched, even on interruption.
+///
+/// # Errors
+///
+/// Returns [`receive_local`]'s failures, [`FetchError::Cancelled`], or [`FetchError::Deadline`].
+pub fn receive_local_with_control(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, FetchError> {
+    control.check()?;
     let source = std::fs::canonicalize(source)?;
     let mut command = Command::new("git");
     command.env_clear();
@@ -44,35 +67,36 @@ pub fn receive_local(
             "GIT_CONFIG_GLOBAL",
             if cfg!(windows) { "NUL" } else { "/dev/null" },
         )
-        .args([
-            "-c",
-            "protocol.version=0",
-            "upload-pack",
-            "--strict",
-            "--timeout=30",
-        ])
-        .arg(source)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    let mut child = Server(command.spawn()?);
-    let mut reader = child.0.stdout.take().expect("piped stdout");
-    let mut writer = child.0.stdin.take().expect("piped stdin");
-    let received = receive(&mut reader, &mut writer, select, limits, cancel, progress)?;
-    drop(writer);
-    drop(reader);
-    let status = child.0.wait()?;
+        .args(["-c", "protocol.version=0", "upload-pack", "--strict"])
+        .arg(source);
+    receive_server(&mut command, select, limits, control, progress)
+}
+
+fn receive_server(
+    command: &mut Command,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, FetchError> {
+    let mut child = Server::spawn(command, control)?;
+    let received = {
+        let (mut reader, mut writer) = child.streams();
+        receive(
+            &mut reader,
+            &mut writer,
+            select,
+            limits,
+            control.cancel,
+            progress,
+        )?
+    };
+    let status = child.wait()?;
     if !status.success() {
         return Err(FetchError::Process(status));
     }
-    check_cancelled(cancel)?;
     Ok(received)
 }
 
-struct Server(Child);
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests;

@@ -9,6 +9,7 @@
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`fetch`]: upload-pack v0, a local server adapter, and validated object installation.
 //! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
+//! - [`transport`]: owned transport cancellation, deadlines, and process lifetime contracts.
 //! - [`write_pack`]: bounded pack/index v2 artifact generation from explicit objects.
 //! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
 //! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
@@ -45,6 +46,7 @@ pub mod push;
 pub mod refs;
 mod repository;
 mod tag;
+pub mod transport;
 mod tree;
 
 pub use commit::{Commit, CommitError, CommitFields, CommitHeader, Signature};

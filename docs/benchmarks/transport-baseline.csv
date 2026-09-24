@@ -1,0 +1,3 @@
+operation,median_ns,ci95_low_ns,ci95_high_ns
+local-process-import-connectivity-16,23169526.0625,22974705.6875,23658757.875
+local-process-import-connectivity-256,36761104.1,36453062.5,36902250.0

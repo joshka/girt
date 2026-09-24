@@ -314,8 +314,9 @@ windows; results and source fingerprints are retained with the benchmark evidenc
   with fixture construction and server execution outside timing. No numerical acceptance gate is
   imposed.
 - [Compatibility](compatibility.md#upload-pack-fetch) and [benchmarks](benchmarks.md#fetch-baseline)
-  state limitations: redundant full-history transfer, between-I/O cancellation, trusted paths,
-  caller coordination with GC, no power-loss guarantee, and macOS-only validation.
+  state limitations: redundant full-history transfer, cooperative generic-stream cancellation,
+  trusted paths, caller coordination with GC, and no power-loss guarantee. Later platform and
+  owned-transport evidence is recorded separately.
 
 Validation on 2026-09-23 passed `just check` (710 unit, integration and documentation tests,
 formatting, all-target Clippy and docs.rs), warning-denying private Rustdoc, and markdownlint-cli2
@@ -353,3 +354,31 @@ with the global 100-column configuration. The disposable local-push example publ
 and read its blob back. Rendered push module/function documentation and error links were inspected.
 Criterion completed both preparation and protocol workloads; medians, confidence intervals and
 source fingerprints are retained. Validation is limited to macOS arm64 and Git 2.55.0.
+
+## Owned Transport Interruption Completion
+
+- [x] macOS/Linux owned pipes support cancellation and absolute deadlines; other OSes reject local
+  adapters. Caller-owned streams remain cooperative. Blocking filesystem/CPU/callback work and
+  kernel-delayed cleanup are excluded from a hard whole-call bound.
+- [x] Unit fixtures cover silent advertisement, blocked reads/writes, EOF/exit stalls, full
+  stdout/stderr, acknowledged push prefixes, complete reports awaiting EOF/exit, cancellation
+  precedence, child reaping, unwinding and group cleanup that preserves an unrelated child.
+- [x] Disposable Git hooks demonstrate cancellation, deadlines before ref commit and after ref
+  commit, and uncertainty after transmission. Pre-spawn interruption changes no destination refs
+  or objects. Existing fetch/push interoperability covers normal transfers and rejections.
+- [x] Consumer examples use the new control with a 30-second deadline and disposable repositories.
+- [x] The fetch Criterion harness includes actual local server startup, pipe transfer, validation,
+      and exit/cleanup at two sizes; fixture setup stays outside timing. No performance gate is
+      imposed.
+- [x] Canonical compatibility and Rustdoc contracts record race precedence, diagnostic disposal,
+  process ownership, caller SIGCHLD obligations, escaped-descendant exclusions, and OS evidence.
+
+Stalls have finite fallback exits or an independent in-group watchdog. Tests assert error/status and
+cleanup outcomes, not tight elapsed-time thresholds. Test controller threads are scoped and joined.
+The new transport requires its own Linux runtime validation; parent CI results do not establish it.
+
+Validation passed `just check` with 817 tests, private Rustdoc with warnings rejected, both local
+examples, and Markdown lint. Linux GNU and Windows GNU/MSVC library Clippy cross-checks passed with
+warnings rejected. The [owned transport baseline](benchmarks.md#owned-transport-baseline) records
+actual process/transfer/cleanup measurements on macOS. Linux runtime tests for this change and
+Windows transport support remain outside this evidence.

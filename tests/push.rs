@@ -475,3 +475,128 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
     assert!(push(&f.repo, &dest, vec![forced]).unwrap().all_succeeded());
     assert_eq!(tip(&dest, "refs/tags/published"), Some(new));
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[rstest]
+#[case::before_commit("pre-receive", None)]
+#[case::after_commit("post-receive", Some(true))]
+fn deadline_interrupts_stalled_hook_with_uncertain_outcome(
+    #[case] hook_name: &str,
+    #[case] committed: Option<bool>,
+) {
+    use std::time::{Duration, Instant};
+
+    use girt::push::send_local_with_control;
+    use girt::transport::TransportControl;
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    // A finite fallback prevents a broken cancellation path from leaving a hanging hook.
+    hook(
+        &dest,
+        hook_name,
+        "#!/bin/sh\ncat >/dev/null\nprintf ready >hook-ready\nsleep 5\n",
+    );
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(false);
+    let result = send_local_with_control(
+        dest.git_dir(),
+        &prepared,
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(2)),
+        },
+    );
+    let PushError::Uncertain { cause, .. } = result.unwrap_err() else {
+        panic!("expected uncertain push")
+    };
+    assert!(matches!(cause, PushFailure::Deadline));
+    assert!(dest.git_dir().join("hook-ready").exists());
+    assert_eq!(tip(&dest, "refs/heads/main"), committed.map(|_| main(&f)));
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn cancellation_interrupts_stalled_hook() {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    use girt::push::send_local_with_control;
+    use girt::transport::TransportControl;
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\ncat >/dev/null\nprintf ready >hook-ready\nsleep 5\n",
+    );
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(false);
+    let marker = dest.git_dir().join("hook-ready");
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let until = Instant::now() + Duration::from_secs(3);
+            while !marker.exists() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancel.store(true, Ordering::Relaxed);
+        });
+        send_local_with_control(
+            dest.git_dir(),
+            &prepared,
+            TransportControl {
+                cancel: &cancel,
+                deadline: Some(Instant::now() + Duration::from_secs(4)),
+            },
+        )
+    });
+    let PushError::Uncertain { cause, report } = result.unwrap_err() else {
+        panic!("expected uncertain push")
+    };
+    assert!(matches!(cause, PushFailure::Cancelled));
+    assert!(marker.exists());
+    assert_eq!(report.refs[0].status, None);
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[rstest]
+#[case::cancelled(true)]
+#[case::expired(false)]
+fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bool) {
+    use std::time::Instant;
+
+    use girt::push::send_local_with_control;
+    use girt::transport::TransportControl;
+    let f = Fixture::new(true, 4);
+    let (_root, dest) = destination(true);
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(cancelled);
+    let result = send_local_with_control(
+        dest.git_dir(),
+        &prepared,
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now()),
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(
+            PushFailure::Cancelled | PushFailure::Deadline
+        ))
+    ));
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fs::read_dir(dest.git_dir().join("objects/pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}

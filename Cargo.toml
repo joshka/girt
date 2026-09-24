@@ -15,6 +15,9 @@ sha1 = "0.10"
 tempfile = "3"
 thiserror = "2"
 
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rustix = { version = "1", features = ["fs", "event", "process"] }
+
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rstest = { version = "0.27.0", default-features = false }

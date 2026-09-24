@@ -149,7 +149,7 @@ pub enum PushError {
 pub enum PushFailure {
     /// I/O failure; protocol interruption is returned without retrying.
     #[error("push I/O: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[source] std::io::Error),
     /// Malformed or unexpected receive-pack framing or state.
     #[error("invalid receive-pack response: {0}")]
     Protocol(&'static str),
@@ -165,6 +165,9 @@ pub enum PushFailure {
     /// Cancellation observed between operations.
     #[error("push cancelled")]
     Cancelled,
+    /// The owned transport reached its caller-supplied deadline.
+    #[error("transport deadline expired")]
+    Deadline,
     /// Advertisement disagreed with the explicit expectation. No commands were sent.
     #[error("stale expectation for {name:?}: expected {expected:?}, advertised {actual:?}")]
     Stale {
@@ -209,11 +212,21 @@ pub enum PushFailure {
 impl From<crate::packet::Error> for PushFailure {
     fn from(error: crate::packet::Error) -> Self {
         match error {
-            crate::packet::Error::Io(e) => Self::Io(e),
+            crate::packet::Error::Io(e) => Self::from(e),
             crate::packet::Error::Protocol(e) => Self::Protocol(e),
             crate::packet::Error::Limit(e) => Self::Limit(e),
             crate::packet::Error::Cancelled => Self::Cancelled,
             crate::packet::Error::Remote(e) => Self::Remote(e),
+        }
+    }
+}
+
+impl From<std::io::Error> for PushFailure {
+    fn from(error: std::io::Error) -> Self {
+        match crate::transport::interruption(&error) {
+            Some(crate::transport::Interruption::Cancelled) => Self::Cancelled,
+            Some(crate::transport::Interruption::Deadline) => Self::Deadline,
+            None => Self::Io(error),
         }
     }
 }

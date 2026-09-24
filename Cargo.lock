@@ -278,6 +278,7 @@ dependencies = [
  "criterion",
  "flate2",
  "rstest",
+ "rustix",
  "sha1",
  "tempfile",
  "thiserror",

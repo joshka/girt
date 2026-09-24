@@ -2,10 +2,11 @@ use std::hint::black_box;
 use std::io;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use girt::fetch::{FetchLimits, receive};
+use girt::transport::TransportControl;
 use girt::{PackLimits, ReadLimits};
 
 #[path = "../tests/support/pack_git.rs"]
@@ -82,6 +83,21 @@ fn fetch(c: &mut Criterion) {
         )
         .unwrap();
         assert_eq!(received.object_count(), fixture.records.len());
+        group.bench_function(format!("local-process-import-connectivity-{count}"), |b| {
+            b.iter(|| {
+                girt::fetch::receive_local_with_control(
+                    fixture.root.path(),
+                    |_| vec![tag],
+                    FetchLimits::default(),
+                    TransportControl {
+                        cancel: &cancel,
+                        deadline: Some(Instant::now() + Duration::from_secs(30)),
+                    },
+                    |_| ControlFlow::Continue(()),
+                )
+                .unwrap()
+            })
+        });
     }
     let id = girt::ObjectId::for_blob(b"advertisement benchmark");
     let mut advertisement = Vec::new();

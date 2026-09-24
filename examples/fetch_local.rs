@@ -1,9 +1,11 @@
 //! Run `cargo run --example fetch_local`; all repositories are disposable and local.
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
-use girt::fetch::{FetchLimits, receive_local};
+use girt::fetch::{FetchLimits, receive_local_with_control};
 use girt::refs::{Expected, RefName, Target};
+use girt::transport::TransportControl;
 use girt::{
     Commit, CommitFields, EntryMode, PackLimits, ReadLimits, Repository, Signature, Tree, TreeEntry,
 };
@@ -50,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let cancel = AtomicBool::new(false);
-    let received = receive_local(
+    let received = receive_local_with_control(
         source.git_dir(),
         |advertisement| {
             advertisement
@@ -61,7 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect()
         },
         FetchLimits::default(),
-        &cancel,
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(30)),
+        },
         |_| ControlFlow::Continue(()),
     )?;
     let result = received.install(&destination, &cancel)?;

@@ -16,7 +16,7 @@ mod prepared;
 mod protocol;
 mod types;
 
-pub use local::send_local;
+pub use local::{send_local, send_local_with_control};
 pub use prepared::PreparedPush;
 pub use protocol::send;
 pub use types::{

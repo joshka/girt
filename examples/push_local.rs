@@ -1,8 +1,10 @@
 //! Run `cargo run --example push_local`; both repositories are disposable and local.
 use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
-use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local};
+use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local_with_control};
 use girt::refs::RefName;
+use girt::transport::TransportControl;
 use girt::{
     Commit, CommitFields, EntryMode, ObjectKind, PackLimits, ReadLimits, Repository, Signature,
     Tag, TagFields, Tree, TreeEntry,
@@ -66,7 +68,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
     let prepared = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel)?;
-    let report = send_local(destination.git_dir(), &prepared, &cancel)?;
+    let report = send_local_with_control(
+        destination.git_dir(),
+        &prepared,
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(30)),
+        },
+    )?;
     // A complete protocol exchange can still contain rejection or partial success.
     if !report.all_succeeded() {
         return Err(format!("receive-pack rejected updates: {report:?}").into());

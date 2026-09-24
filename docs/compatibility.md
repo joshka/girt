@@ -7,9 +7,10 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 
 ## Platform and Git-Version Validation
 
-The documented repository capabilities have runtime evidence on macOS arm64 and Linux x86_64.
-Windows reference storage remains unsupported. Earlier capability sections below retain their
-original baseline environments; this section records the later cross-platform validation.
+The repository capabilities preceding transport interruption have runtime evidence on macOS arm64
+and Linux x86_64. The [owned transport change](#owned-transport-interruption) records its evidence
+separately. Windows reference storage remains unsupported. Earlier capability sections below retain
+their original baseline environments; this section records the later cross-platform validation.
 
 | Target                    | Runtime evidence                 | Boundary                 |
 | ------------------------- | -------------------------------- | ------------------------ |
@@ -646,8 +647,7 @@ arm64 was exercised; other platforms and actual multi-gigabyte output remain unt
 `fetch::receive` implements a single protocol v0 upload-pack session over blocking `Read`/`Write`
 streams. `fetch::receive_local` is the available transport adapter: it starts a trusted local
 `git upload-pack` server. It does not use `git fetch`, `fetch-pack`, `index-pack`, or Git parsers on
-the client path. HTTP/SSH connections and credential discovery are not provided. No new dependencies
-were added.
+the client path. HTTP/SSH connections and credential discovery are not provided.
 
 The client exposes complete byte-preserving advertisements, capability tokens, and peeled tag hints.
 The caller selects explicit advertised tip IDs; peeled hints are not wants. Empty selection sends a
@@ -682,9 +682,9 @@ copy structured payloads. These are input/work bounds, not an allocator or proce
 
 Cancellation is checked between I/O calls, packets, objects, and graph steps, and a progress
 callback can cancel. Interrupted I/O is returned without retrying. A flag cannot interrupt a blocked
-stream read or one inflation/hash; a caller needing deadlines must supply interruptible streams. The
-local server's 30-second idle timeout is not a wall-clock deadline. Failure kills and reaps the
-direct upload-pack child; descendant process-group termination is not promised.
+caller-owned stream read or one inflation/hash. The local adapter now provides
+[owned transport interruption](#owned-transport-interruption), including absolute deadlines and
+process-group cleanup on macOS/Linux. Generic streams must provide their own interruption.
 
 ### Installation and Reference Policy
 
@@ -800,10 +800,11 @@ independent side effects.
 
 Cancellation is checked between I/O calls, packets, graph steps and pack writes. Interrupted
 protocol I/O is propagated without retrying. A flag cannot interrupt a blocked stream, a single
-storage read, hash, parse or compression call. The local adapter has no idle or wall-clock timeout,
-and hooks may block. On failure or unwinding it kills and reaps the direct child, without a
-process-group guarantee. Caller-owned streams must provide interruption/deadlines if needed and must
-be closed after errors. Streams are one-shot and must end at EOF after the final status flush.
+storage read, hash, parse or compression call. The local adapter provides
+[owned transport interruption](#owned-transport-interruption) for blocked pipe and server-exit
+waits, including stalled hooks. Caller-owned streams must provide interruption/deadlines if needed
+and must be closed after errors. Streams are one-shot and must end at EOF after the final status
+flush.
 
 HTTP/SSH adapters, authentication, remote/refspec configuration, automatic force, pruning, thin or
 delta-selected packs, deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and
@@ -833,4 +834,68 @@ tag, checks the report and reads the transferred blob. The
 [Criterion baseline](benchmarks.md#push-baseline) separates reachable selection/read/validation/pack
 construction from prepared-protocol replay. Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64 and Apple
 M2 Max were exercised. Other platforms, multi-gigabyte packs, concurrent source GC, hostile
-filesystems and blocked-I/O cancellation are not established by this evidence.
+filesystems and blocked-I/O cancellation are not established by this original push baseline. Later
+platform and transport evidence is recorded separately.
+
+## Owned Transport Interruption
+
+`TransportControl` carries a borrowed cancellation flag and an optional absolute monotonic deadline.
+`fetch::receive_local_with_control` and `push::send_local_with_control` use it for owned local Git
+servers. Existing `receive_local` / `send_local` signatures remain usable and now interrupt blocked
+pipes when their flag is set. Generic `receive` / `send` streams retain cooperative cancellation:
+only their owner can arrange to unblock an arbitrary `Read` or `Write` implementation.
+
+The deadline expires at the caller's chosen `Instant`, includes time already elapsed before entry,
+and is never reset by traffic. Checks run before path resolution/spawn, at each owned pipe
+operation, and during server-exit waits. Waiting polls use at most 20 ms, subject to scheduler
+delays. Path resolution, spawn, callbacks, decoding, hashing and other synchronous computation
+remain outside forced interruption; no whole-call hard real-time bound is claimed. Push preparation
+and subsequent fetch installation are separate operations. Cleanup and kernel-delayed child reaping
+can extend elapsed time beyond the deadline.
+
+Cancellation takes precedence if both controls are observed together. Already-returned protocol
+errors are not overwritten during cleanup. Each pipe attempt checks control before reading/writing;
+bytes merely buffered by the OS do not count as known status. At the final server-exit wait, an
+already observable exit wins over a racing cancellation/deadline. Otherwise interruption returns
+`Cancelled` or `Deadline`, distinct from peer rejections. Push failures after attempted transmission
+are uncertain, preserving every valid unpack/ref acknowledgement, including a complete report if EOF
+or exit is still pending. Killing a server cannot roll back ref updates or hook side effects.
+
+On macOS/Linux, servers start in their own process group. Nonblocking pipes and polling run on the
+calling thread; there are no background I/O workers to detach or join. Stderr is drained with
+bounded work and discarded so a full diagnostic sink cannot block the operation. Protocol
+progress/status remains available. On completion, error or unwinding, cleanup sends SIGKILL to the
+owned group before reaping the direct child. Exit observation uses `waitid(WNOWAIT)` to reserve the
+leader's PID until the group is signalled. Callers must not reap these children globally or enable
+automatic SIGCHLD reaping. Descendants which deliberately leave the group are outside this
+trusted-server contract; girt signals remaining group members but cannot reap grandchildren.
+Unrelated process groups are never intentionally signalled. Windows and other OSes explicitly return
+unsupported before spawn.
+
+Material compatibility changes are interruptible local flags, discarded rather than inherited
+stderr, group cleanup even on success, removal of upload-pack's implicit 30-second idle timeout in
+favor of caller-controlled deadlines, new deadline error variants, and explicit unsupported local
+adapters outside macOS/Linux. The examples use 30-second absolute deadlines. The target-specific
+`rustix = "1"` dependency supplies safe nonblocking/poll/wait/signal operations; its MIT or
+Apache-2.0 license options are compatible with this crate (already a transitive dependency through
+tempfile).
+
+Original finite shell servers exercise silent advertisement, stalled reads/writes, final EOF and
+exit waits, partial/complete push acknowledgements, full stderr/stdout pipes, cancellation races,
+pre-spawn interruption, child reaping, unwinding and descendant cleanup without harming an unrelated
+child. Scripted servers are independent fixtures, not copied Git implementations. Disposable Git
+pre-/post-receive hooks establish cancellation after transmission, unchanged refs before commit, and
+already-changed refs after commit. Pre-spawn push interruption leaves refs and objects absent. No
+transfer contacts a network or a real remote.
+
+Runtime evidence for this change is macOS arm64 with Git 2.55.0. The parent revision's Linux/Windows
+CI evidence above does not cover these new paths; this change has not been published or run
+remotely.
+
+Validation passed `just check` (817 unit, integration and documentation tests, formatting,
+all-target Clippy and docs.rs), warning-denying private Rustdoc, both local examples and
+markdownlint-cli2. Warning-denying library Clippy cross-checks passed for
+`x86_64-unknown-linux-gnu`, `x86_64-pc-windows-gnu` and `x86_64-pc-windows-msvc`. These are compile
+checks, not target runtime checks.
+[Owned transport benchmark evidence](benchmarks.md#owned-transport-baseline) retains local
+process/import/cleanup measurements and source fingerprints.

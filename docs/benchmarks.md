@@ -417,11 +417,13 @@ exploratory runs are not evidence of implementation regressions.
 ## Fetch Baseline
 
 Run `cargo bench --bench fetch` with the checked-in lockfile. Criterion uses 30 samples, one-second
-warmup and five-second target measurement windows. Fixture construction and one real local
-upload-pack transfer per fixture occur outside timing. The measured receive operation replays an
-in-memory v0 response through girt's advertisement parser, want encoding, sideband decoding, pack
-validation, delta reconstruction, index generation, and selected-tip connectivity. No server,
-network, disk publication, or ref update latency is included.
+warmup and five-second target measurement windows. In the replay workloads below, fixture
+construction and one real local upload-pack transfer per fixture occur outside timing. The measured
+receive operation replays an in-memory v0 response through girt's advertisement parser, want
+encoding, sideband decoding, pack validation, delta reconstruction, index generation, and
+selected-tip connectivity. No server, network, disk publication, or ref update latency is included
+in those replay measurements. The added local-process workloads are documented
+[separately](#owned-transport-baseline).
 
 The pack fixtures contain 16 or 256 similar, independently Git-generated blobs, plus a tree, commit
 and annotated tag. Git's pack-objects chooses actual deltas. Respective uncompressed payload totals
@@ -480,3 +482,29 @@ with no numerical acceptance gate; they do not establish multi-gigabyte, deep-hi
 large-advertisement, network or concurrent-push throughput. Protocol replay mostly measures
 framing/status bookkeeping because sink writes discard pack bytes. Resource-bound tests provide
 separate work and memory evidence.
+
+## Owned Transport Baseline
+
+Run `cargo bench --locked --bench fetch -- local-process-import-connectivity --noplot`. The same
+19-/259-object fixtures as the fetch baseline above are created outside timing. Each iteration
+starts a real local Git upload-pack, reads its advertisement, selects the tag, transfers and
+validates the pack, and waits for exit/cleans up its process group. A fresh 30-second deadline
+covers each iteration. No destination installation or reference update is measured. This measures
+the owned transport path as a consumer uses it, including process startup and server work.
+
+Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, the
+optimized bench profile, and the checked-in lockfile. Criterion uses 30 samples, a one-second warmup
+and five-second target windows. Filesystem caches are warm; no CPU pinning or cold-cache
+measurements were performed, and desktop activity may overlap sampling. The
+[CSV](benchmarks/transport-baseline.csv) retains medians and 95% confidence intervals. Verify the
+measured source identity with `shasum -a 256 -c docs/benchmarks/transport-baseline.sha256`.
+
+| Operation                                      | Median (ms) |
+| ---------------------------------------------- | ----------- |
+| Local process/import/connectivity, 19 objects  | 23.170      |
+| Local process/import/connectivity, 259 objects | 36.761      |
+
+These are initial end-to-end baselines, not a comparison with the former blocking adapter. The exit
+poll can add up to one 20-ms polling interval, subject to scheduling. No numerical performance gate
+is imposed. Stall/cleanup tests establish interruption behavior; these throughput measurements do
+not establish worst-case latency or Linux runtime behavior.

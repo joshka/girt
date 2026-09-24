@@ -19,7 +19,7 @@ mod protocol;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use install::{FetchInstalled, ReceivedFetch};
-pub use local::receive_local;
+pub use local::{receive_local, receive_local_with_control};
 pub use protocol::{AdvertisedRef, Advertisement, receive};
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
@@ -82,7 +82,7 @@ impl Default for FetchLimits {
 pub enum FetchError {
     /// Stream or filesystem failure; protocol I/O propagates interruption without retrying.
     #[error("fetch I/O: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[source] std::io::Error),
     /// Invalid or unexpected protocol framing or state.
     #[error("invalid upload-pack response: {0}")]
     Protocol(&'static str),
@@ -101,6 +101,9 @@ pub enum FetchError {
     /// The cancellation flag was set or the progress callback requested cancellation.
     #[error("fetch cancelled")]
     Cancelled,
+    /// The owned transport reached its caller-supplied deadline.
+    #[error("transport deadline expired")]
+    Deadline,
     /// Pack framing, checksum, delta reconstruction, or storage validation failed.
     #[error("received pack: {0}")]
     Pack(#[from] crate::ObjectReadError),
@@ -146,11 +149,21 @@ mod tests;
 impl From<crate::packet::Error> for FetchError {
     fn from(error: crate::packet::Error) -> Self {
         match error {
-            crate::packet::Error::Io(e) => Self::Io(e),
+            crate::packet::Error::Io(e) => Self::from(e),
             crate::packet::Error::Protocol(e) => Self::Protocol(e),
             crate::packet::Error::Limit(e) => Self::Limit(e),
             crate::packet::Error::Cancelled => Self::Cancelled,
             crate::packet::Error::Remote(e) => Self::Remote(e),
+        }
+    }
+}
+
+impl From<std::io::Error> for FetchError {
+    fn from(error: std::io::Error) -> Self {
+        match crate::transport::interruption(&error) {
+            Some(crate::transport::Interruption::Cancelled) => Self::Cancelled,
+            Some(crate::transport::Interruption::Deadline) => Self::Deadline,
+            None => Self::Io(error),
         }
     }
 }

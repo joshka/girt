@@ -1,22 +1,22 @@
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use super::{PreparedPush, PushError, PushFailure, PushReport, send};
-use crate::packet::check_cancelled;
+use crate::transport::{Server, TransportControl};
 
 /// Sends to a trusted explicit local repository using Git receive-pack as the server.
 ///
 /// Canonicalizes the destination path and starts `git` from PATH with an empty environment except
-/// PATH and system/global configuration disabled. Uses binary stdin/stdout pipes, inherits stderr,
-/// and forces v0. All client framing, policy, graph selection and pack writing are girt code.
-/// URLs, SSH, HTTP and credentials are not accepted. Trust both the executable and the destination
-/// configuration/hooks: the server may run hooks and update its refs/reflogs as usual.
+/// PATH and system/global configuration disabled. Uses binary stdin/stdout pipes, drains and
+/// discards stderr, and forces v0. All client framing, policy, graph selection and pack writing are
+/// girt code. URLs, SSH, HTTP and credentials are not accepted. Trust both the executable and the
+/// destination configuration/hooks: the server may run hooks and update its refs/reflogs as usual.
 ///
-/// Cancellation has [`send`]'s between-I/O granularity. There is no idle or wall-clock timeout;
-/// receive-pack and hooks can block. On error or unwinding the direct child is killed and reaped;
-/// descendant process-group termination is not promised. Killing the process cannot roll back
-/// already committed ref updates. A complete report is retained if waiting for the child fails.
+/// Uses interruptible owned pipes on macOS/Linux, with no deadline. See [`TransportControl`] for
+/// cancellation, diagnostic disposal, process-group cleanup, and platform requirements. Use
+/// [`send_local_with_control`] to impose an absolute deadline. Killing the server cannot roll
+/// back committed updates. A complete report is retained if waiting for the child fails.
 ///
 /// # Errors
 ///
@@ -28,7 +28,25 @@ pub fn send_local(
     prepared: &PreparedPush,
     cancel: &AtomicBool,
 ) -> Result<PushReport, PushError> {
-    check_cancelled(cancel).map_err(|e| PushError::NotSent(e.into()))?;
+    send_local_with_control(destination, prepared, TransportControl::new(cancel))
+}
+
+/// Sends a prepared push with caller-controlled transport interruption.
+///
+/// Same protocol and trust contract as [`send_local`]. See [`TransportControl`] for deadline
+/// scope, races, cleanup, and OS support. The deadline does not cover push preparation.
+///
+/// # Errors
+///
+/// Before transmission interruption is [`PushError::NotSent`]. Once commands are attempted it is
+/// [`PushError::Uncertain`], retaining valid acknowledgements; unknown refs may have changed.
+/// The cause distinguishes [`PushFailure::Cancelled`] and [`PushFailure::Deadline`] from rejection.
+pub fn send_local_with_control(
+    destination: impl AsRef<Path>,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+) -> Result<PushReport, PushError> {
+    control.check().map_err(|e| PushError::NotSent(e.into()))?;
     let destination =
         std::fs::canonicalize(destination).map_err(|e| PushError::NotSent(e.into()))?;
     let mut command = Command::new("git");
@@ -43,27 +61,27 @@ pub fn send_local(
             if cfg!(windows) { "NUL" } else { "/dev/null" },
         )
         .args(["-c", "protocol.version=0", "receive-pack"])
-        .arg(destination)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    let mut child = Server(command.spawn().map_err(|e| PushError::NotSent(e.into()))?);
-    let mut reader = child.0.stdout.take().expect("piped stdout");
-    let mut writer = child.0.stdin.take().expect("piped stdin");
-    let report = send(&mut reader, &mut writer, prepared, cancel)?;
-    drop(writer);
-    drop(reader);
-    let result = child
-        .0
-        .wait()
-        .map_err(PushFailure::from)
-        .and_then(|status| {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(PushFailure::Process(status))
-            }
-        });
+        .arg(destination);
+    send_server(&mut command, prepared, control)
+}
+
+fn send_server(
+    command: &mut Command,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+) -> Result<PushReport, PushError> {
+    let mut child = Server::spawn(command, control).map_err(|e| PushError::NotSent(e.into()))?;
+    let report = {
+        let (mut reader, mut writer) = child.streams();
+        send(&mut reader, &mut writer, prepared, control.cancel)?
+    };
+    let result = child.wait().map_err(PushFailure::from).and_then(|status| {
+        if status.success() {
+            Ok(())
+        } else {
+            Err(PushFailure::Process(status))
+        }
+    });
     match result {
         Ok(()) => Ok(report),
         Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
@@ -73,10 +91,6 @@ pub fn send_local(
         }),
     }
 }
-struct Server(Child);
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests;
