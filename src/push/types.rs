@@ -291,3 +291,13 @@ impl From<crate::transport::ssh::SshError> for PushFailure {
         }
     }
 }
+
+impl From<crate::edges::Error> for PushFailure {
+    fn from(error: crate::edges::Error) -> Self {
+        match error {
+            crate::edges::Error::Commit { id, source } => Self::Commit { id, source },
+            crate::edges::Error::Tree { id, source } => Self::Tree { id, source },
+            crate::edges::Error::Tag { id, source } => Self::Tag { id, source },
+        }
+    }
+}

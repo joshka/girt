@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError, FetchLimits, check_cancelled};
-use crate::{Commit, EntryMode, Object, ObjectId, ObjectKind, Tag, Tree};
+use crate::{Object, ObjectId};
 
 /// Follow typed edges from every selected tip. Gitlinks refer to independent submodule stores.
 #[cfg(test)]
@@ -40,7 +40,8 @@ pub(super) fn validate_with_known(
         if !objects.contains_key(&id) {
             dependencies.push(id);
         }
-        let mut edge = |id, kind| {
+        let edge = |id, kind| {
+            check_cancelled(cancel)?;
             remaining = remaining
                 .checked_sub(1)
                 .ok_or(FetchError::Limit("connectivity edges"))?;
@@ -56,35 +57,7 @@ pub(super) fn validate_with_known(
             }
             Ok(())
         };
-        match object.kind() {
-            ObjectKind::Blob => {}
-            ObjectKind::Commit => {
-                let commit = Commit::parse(object.data())
-                    .map_err(|source| FetchError::Commit { id, source })?;
-                edge(commit.fields().tree, ObjectKind::Tree)?;
-                for &parent in &commit.fields().parents {
-                    edge(parent, ObjectKind::Commit)?;
-                }
-            }
-            ObjectKind::Tree => {
-                let tree =
-                    Tree::parse(object.data()).map_err(|source| FetchError::Tree { id, source })?;
-                tree.validate()
-                    .map_err(|source| FetchError::Tree { id, source })?;
-                for entry in tree.entries() {
-                    match entry.mode {
-                        EntryMode::Gitlink => {}
-                        EntryMode::Tree => edge(entry.id, ObjectKind::Tree)?,
-                        _ => edge(entry.id, ObjectKind::Blob)?,
-                    }
-                }
-            }
-            ObjectKind::Tag => {
-                let tag =
-                    Tag::parse(object.data()).map_err(|source| FetchError::Tag { id, source })?;
-                edge(tag.fields().target, tag.fields().target_kind)?;
-            }
-        }
+        crate::edges::visit(id, object, edge)?;
     }
     Ok(dependencies)
 }
@@ -94,7 +67,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{CommitFields, Signature, TagFields, TreeEntry};
+    use crate::{
+        Commit, CommitFields, EntryMode, ObjectKind, Signature, Tag, TagFields, Tree, TreeEntry,
+    };
 
     fn object(kind: ObjectKind, data: Vec<u8>) -> Object {
         Object { kind, data }

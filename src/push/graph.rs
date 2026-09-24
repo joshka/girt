@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::{ForcePolicy, PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::check_cancelled;
-use crate::{Commit, EntryMode, Object, ObjectId, ObjectKind, Objects, Tag, Tree};
+use crate::{Object, ObjectId, ObjectKind, Objects};
 
 /// Own selected objects once; preserve parent edges for per-command ancestry proofs.
 pub(super) struct Graph {
@@ -49,7 +49,11 @@ impl Graph {
             bytes = bytes
                 .checked_sub(object.data().len() as u64)
                 .ok_or(Error::Limit("selected bytes"))?;
-            let mut edge = |target, kind| {
+            let mut parents = Vec::new();
+            let edge = |target, kind| {
+                if object.kind() == ObjectKind::Commit && kind == ObjectKind::Commit {
+                    parents.push(target);
+                }
                 check_cancelled(cancel)?;
                 edges = edges
                     .checked_sub(1)
@@ -60,35 +64,9 @@ impl Graph {
                 }
                 enqueue(target, Some(kind), &mut expected, &mut pending, limits)
             };
-            match object.kind() {
-                ObjectKind::Blob => {}
-                ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())
-                        .map_err(|source| Error::Commit { id, source })?;
-                    edge(commit.fields().tree, ObjectKind::Tree)?;
-                    for &parent in &commit.fields().parents {
-                        edge(parent, ObjectKind::Commit)?;
-                    }
-                    graph.parents.insert(id, commit.fields().parents.clone());
-                }
-                ObjectKind::Tree => {
-                    let tree =
-                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
-                    tree.validate()
-                        .map_err(|source| Error::Tree { id, source })?;
-                    for entry in tree.entries() {
-                        match entry.mode {
-                            EntryMode::Gitlink => {}
-                            EntryMode::Tree => edge(entry.id, ObjectKind::Tree)?,
-                            _ => edge(entry.id, ObjectKind::Blob)?,
-                        }
-                    }
-                }
-                ObjectKind::Tag => {
-                    let tag =
-                        Tag::parse(object.data()).map_err(|source| Error::Tag { id, source })?;
-                    edge(tag.fields().target, tag.fields().target_kind)?;
-                }
+            crate::edges::visit(id, &object, edge)?;
+            if object.kind() == ObjectKind::Commit {
+                graph.parents.insert(id, parents);
             }
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));
@@ -140,7 +118,7 @@ impl Graph {
         while let Some(id) = pending.pop_front() {
             check_cancelled(cancel)?;
             let object = &self.objects[&id];
-            let mut edge = |target| {
+            let edge = |target, _kind| {
                 check_cancelled(cancel)?;
                 edges = edges
                     .checked_sub(1)
@@ -150,32 +128,7 @@ impl Graph {
                 }
                 Ok::<_, Error>(())
             };
-            match object.kind() {
-                ObjectKind::Blob => {}
-                ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())
-                        .map_err(|source| Error::Commit { id, source })?;
-                    edge(commit.fields().tree)?;
-                    for &parent in &commit.fields().parents {
-                        edge(parent)?;
-                    }
-                }
-                ObjectKind::Tree => {
-                    let tree =
-                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
-                    for entry in tree.entries() {
-                        if entry.mode != EntryMode::Gitlink {
-                            edge(entry.id)?;
-                        }
-                    }
-                }
-                ObjectKind::Tag => edge(
-                    Tag::parse(object.data())
-                        .map_err(|source| Error::Tag { id, source })?
-                        .fields()
-                        .target,
-                )?,
-            }
+            crate::edges::visit(id, object, edge)?;
         }
         for id in seen {
             check_cancelled(cancel)?;

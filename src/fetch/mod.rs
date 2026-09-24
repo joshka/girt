@@ -265,3 +265,13 @@ impl From<crate::transport::ssh::SshError> for FetchError {
         }
     }
 }
+
+impl From<crate::edges::Error> for FetchError {
+    fn from(error: crate::edges::Error) -> Self {
+        match error {
+            crate::edges::Error::Commit { id, source } => Self::Commit { id, source },
+            crate::edges::Error::Tree { id, source } => Self::Tree { id, source },
+            crate::edges::Error::Tag { id, source } => Self::Tag { id, source },
+        }
+    }
+}

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, check_cancelled};
-use crate::{Commit, EntryMode, Object, ObjectId, ObjectKind, Objects, Tag, Tree};
+use crate::{Object, ObjectId, ObjectKind, Objects};
 
 /// Verified local history offered to upload-pack as knowledge of complete commit ancestry.
 ///
@@ -63,7 +63,7 @@ impl KnownHistory {
             bytes = bytes
                 .checked_sub(object.data().len())
                 .ok_or(Error::Limit("known bytes"))?;
-            let mut edge = |target, kind| {
+            let edge = |target, kind| {
                 check_cancelled(cancel)?;
                 edges = edges.checked_sub(1).ok_or(Error::Limit("known edges"))?;
                 if result
@@ -75,37 +75,9 @@ impl KnownHistory {
                 }
                 enqueue(target, Some(kind), &mut expected, &mut pending, limits)
             };
-            match object.kind() {
-                ObjectKind::Blob => {}
-                ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())
-                        .map_err(|source| Error::Commit { id, source })?;
-                    edge(commit.fields().tree, ObjectKind::Tree)?;
-                    for &parent in &commit.fields().parents {
-                        edge(parent, ObjectKind::Commit)?;
-                    }
-                    if result.haves.len() < limits.max_haves {
-                        result.haves.push(id);
-                    }
-                }
-                ObjectKind::Tree => {
-                    let tree =
-                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
-                    tree.validate()
-                        .map_err(|source| Error::Tree { id, source })?;
-                    for entry in tree.entries() {
-                        match entry.mode {
-                            EntryMode::Gitlink => {}
-                            EntryMode::Tree => edge(entry.id, ObjectKind::Tree)?,
-                            _ => edge(entry.id, ObjectKind::Blob)?,
-                        }
-                    }
-                }
-                ObjectKind::Tag => {
-                    let tag =
-                        Tag::parse(object.data()).map_err(|source| Error::Tag { id, source })?;
-                    edge(tag.fields().target, tag.fields().target_kind)?;
-                }
+            crate::edges::visit(id, &object, edge)?;
+            if object.kind() == ObjectKind::Commit && result.haves.len() < limits.max_haves {
+                result.haves.push(id);
             }
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));
@@ -155,7 +127,10 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{CommitFields, LooseObjects, ObjectFormat, PackLimits, Signature, TreeEntry};
+    use crate::{
+        Commit, CommitFields, EntryMode, LooseObjects, ObjectFormat, PackLimits, Signature, Tree,
+        TreeEntry,
+    };
 
     fn graph() -> (tempfile::TempDir, Objects, ObjectId, ObjectId) {
         let root = tempfile::tempdir().unwrap();

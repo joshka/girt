@@ -37,6 +37,7 @@
 
 mod commit;
 pub mod config;
+mod edges;
 pub mod fetch;
 mod history;
 mod loose;
