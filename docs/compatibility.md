@@ -7,43 +7,46 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 
 ## Platform and Git-Version Validation
 
-The current runtime evidence covers macOS arm64. Linux remains a validation target; Windows
-repository operations are unsupported. Earlier capability sections below record their original
-baseline environments, rather than a separate support promise.
+The documented repository capabilities have runtime evidence on macOS arm64 and Linux x86_64.
+Windows reference storage remains unsupported. Earlier capability sections below retain their
+original baseline environments; this section records the later cross-platform validation.
 
-| Target                  | Local evidence               | Runtime status                |
-| ----------------------- | ---------------------------- | ----------------------------- |
-| macOS arm64             | Full suite, two Git versions | Validated on local filesystem |
-| Linux x86_64            | Library cross-check          | Unverified                    |
-| Windows x86_64 GNU/MSVC | Library cross-check          | Unsupported                   |
+| Target                    | Runtime evidence                 | Boundary                 |
+| ------------------------- | -------------------------------- | ------------------------ |
+| macOS arm64               | Full suite and transfer examples | Trusted local filesystem |
+| Ubuntu 22.04/24.04 x86_64 | Full suite and transfer examples | Trusted local filesystem |
+| Windows 2022 x86_64       | 537 units, 11 doctests           | References unsupported   |
 
 Native checks used macOS 26.6.2 arm64 and rustc 1.98.1 with Git 2.55.0 and Apple Git 2.54.0.
-Filesystem contracts still require trusted paths; crash durability and network filesystems are
-outside the supported boundary.
-
-Native validation commands were `just check`, `PATH=/usr/bin:$PATH cargo test --locked`,
+Commands were `just check`, `PATH=/usr/bin:$PATH cargo test --locked`,
 `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items`, and
 `cargo run --locked --example fetch_local` / `cargo run --locked --example push_local`. The final
-native suite contains 788 tests, including doctests. Cross-checks use
+native suite contains 788 tests, including doctests. The final malformed-config regression also
+passed separately with Apple Git using
+`PATH=/usr/bin:$PATH cargo test --locked --test repositories malformed_syntax_is_rejected_by_git_and_girt`.
+
+[GitHub Actions run 35944395649](https://github.com/joshka/girt/actions/runs/35944395649) passed at
+revision `ca01ec99e01bc6c257c76e26876b90a7f25e04d4`. Both Ubuntu hosts ran 790 tests, including the
+Linux-only non-UTF-8 path/ref cases; macOS 14 arm64 ran 788. All three passed all-target Clippy,
+private Rustdoc and disposable local fetch/push examples. All used rustc 1.98.1 and Git 2.55.0.
+Windows 2022 MSVC passed all-target compilation with rustc 1.98.1 and Git 2.55.0.windows.5.
+[Run 35944525644](https://github.com/joshka/girt/actions/runs/35944525644), revision
+`92856caf9dc8bc4e15480a291b2da58a938b456a`, also passed 537 Windows library-unit tests and 11
+doctests using `cargo +stable test --locked --lib` and `cargo +stable test --locked --doc`. An
+unused Unix-only test import warning was subsequently fixed; the Windows job now also rejects
+all-target Clippy warnings. These checks do not establish Windows repository support: reference
+storage explicitly rejects non-Unix platforms, and several integration tests require it. Local
+server process/environment and filesystem semantics still need Windows integration coverage before
+expanding that contract.
+
+[Platform CI](../.github/workflows/validation.yml) records toolchain and Git versions and repeats
+those checks. Native Linux VM attempts on the development Mac failed to boot/connect, so the Linux
+runtime evidence comes from CI. Library cross-checks also passed using
 `cargo check --locked --lib --target <target>` for `x86_64-unknown-linux-gnu`,
-`x86_64-pc-windows-gnu`, and `x86_64-pc-windows-msvc`; compilation does not test filesystem or
-process behavior. Windows all-target checking on this Mac stopped in Criterion's `alloca` dependency
-because `x86_64-w64-mingw32-gcc` is absent. No dependency requirement was changed to hide this
-toolchain gap.
-
-Local Linux execution was attempted using existing VM installations. Docker had no running daemon;
-`limactl start default --tty=false` failed because the saved qcow2 disk is incompatible with the vz
-driver. `colima start --profile default` and its `--disk 60` retry failed on an attempted disk
-shrink. The existing Podman VM did not establish its SSH connection. Repairing those saved
-environments is outside this library change. Linux filesystem, non-UTF-8 loose-ref, process and hook
-behavior remain unverified here.
-
-[Platform CI](../.github/workflows/validation.yml) runs the full suite, all-target Clippy, private
-Rustdoc and disposable fetch/push examples on Ubuntu 22.04, Ubuntu 24.04 and macOS 14. A separate
-Windows 2022 job checks all targets without declaring runtime support. Each job records Rust and Git
-versions. The workflow has not been run remotely as part of this review. Windows support still needs
-reference path/locking semantics and local-process environment validation, as well as runnable
-integration tests; several current consumer tests require Unix reference storage.
+`x86_64-pc-windows-gnu`, and `x86_64-pc-windows-msvc`. Windows all-target cross-checking on the Mac
+was blocked by missing MinGW for Criterion's `alloca` dependency; the native Windows CI compile
+succeeded. Cross-compilation alone does not establish runtime behavior. Crash durability, network
+filesystems, hostile path mutation and multi-gigabyte workloads remain outside this evidence.
 
 Git 2.54.0 and 2.55.0 were exercised, not a minimum supported version. Fixture commands rely on
 `init --object-format=sha1`, `--initial-branch`, `mktag --no-strict`, pack/index commands and local

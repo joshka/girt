@@ -20,7 +20,7 @@ use crate::{ObjectId, Repository};
 /// Writes require a trusted repository on a local filesystem with exclusive file creation and
 /// atomic rename semantics. Cooperating writers must honor Git's `.lock` protocol; adversarial
 /// path replacement, network filesystems, and changing repository configuration/layout while a
-/// handle is in use are outside this contract. Only macOS has been exercised.
+/// handle is in use are outside this contract.
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
     repository: &'a Repository,

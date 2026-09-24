@@ -45,9 +45,9 @@ jobs:
           persist-credentials: false
       - name: Toolchain and environment
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component clippy
           rustc +stable -Vv
           git --version
-      - run: cargo +stable check --locked --all-targets
+      - run: cargo +stable clippy --locked --all-targets -- -D warnings
       - run: cargo +stable test --locked --lib
       - run: cargo +stable test --locked --doc

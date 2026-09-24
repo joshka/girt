@@ -2,6 +2,7 @@
 #[path = "support/pack_git.rs"]
 mod pack_git;
 
+#[cfg(unix)]
 use std::fs;
 use std::sync::atomic::AtomicBool;
 

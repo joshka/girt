@@ -48,7 +48,7 @@ For performance-sensitive changes, run `just bench`. See
 conditions, and recorded results.
 
 The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
-checks on macOS and Linux, with a separate Windows compile gate. See
+checks on macOS and Linux, with a separate Windows portable-test job. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
 making support claims. Local cross-compilation does not replace executing the test suite on the
 target OS.
