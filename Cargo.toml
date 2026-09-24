@@ -29,6 +29,7 @@ thiserror = "2"
 rustix = { version = "1", features = ["fs", "event", "process"] }
 
 [dev-dependencies]
+serde_json = "1"
 tokio = { version = "1.4", features = ["sync"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rstest = { version = "0.27.0", default-features = false }

@@ -113,7 +113,7 @@ LogLevel ERROR
             (root / name).write_text(f"IdentityFile {root}/{key}\nUserKnownHostsFile {root}/{trust}\nGlobalKnownHostsFile /dev/null\n")
         executable = shutil.which("sshd") or "/usr/sbin/sshd"
         log = (root / "diagnostics").open("w+")
-        child = subprocess.Popen([executable, "-D", "-e", "-f", str(root / "sshd_config")], stderr=log, start_new_session=True)
+        child = subprocess.Popen([executable, "-D", "-e", "-f", str(root / "sshd_config")], stderr=log)
         try:
             for _ in range(100):
                 if child.poll() is not None:
@@ -164,4 +164,7 @@ if __name__ == "__main__":
             signal.signal(signum, terminate)
         signal.alarm(25)
         sys.exit(service(args))
+    def stop_fixture(_signal, _frame):
+        raise SystemExit(1)
+    signal.signal(signal.SIGTERM, stop_fixture)
     main(args)

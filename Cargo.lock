@@ -505,6 +505,7 @@ dependencies = [
  "reqwest",
  "rstest",
  "rustix",
+ "serde_json",
  "sha1",
  "tempfile",
  "thiserror",

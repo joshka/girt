@@ -1,13 +1,15 @@
 //! Isolated sshd process, disposable keys/config/trust, and exact forced service/repository
 //! boundary.
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 
+#[path = "fixture_process.rs"]
+mod fixture_process;
+use fixture_process::Process;
 use girt::transport::ssh::SshRemote;
 
 pub struct Server {
-    child: Child,
+    _process: Process,
     pub root: PathBuf,
     pub port: u16,
     user: String,
@@ -15,35 +17,18 @@ pub struct Server {
 }
 impl Server {
     pub fn new(repository: &Path, fault: &str) -> Self {
-        let mut child = Command::new("python3")
+        let mut command = Command::new("python3");
+        command
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/tests/fixtures/ssh/server.py"
             ))
             .arg(repository)
-            .args(["--fault", fault])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut line = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut line)
-            .unwrap();
-        // The fixture's tiny JSON object contains generated paths and a validated local username.
-        // Avoid adding a JSON dependency solely for this test protocol.
-        let fields: Vec<_> = line
-            .trim()
-            .trim_start_matches('{')
-            .trim_end_matches('}')
-            .split(',')
-            .map(|s| s.split_once(':').unwrap().1.trim().trim_matches('"'))
-            .collect();
-        let port = fields[0].parse().expect("sshd fixture startup");
-        let user = fields[1].to_owned();
-        let root = PathBuf::from(fields[2]);
+            .args(["--fault", fault]);
+        let mut process = Process::spawn(&mut command, true);
+        let (port, user, root) = process.ready(parse_startup);
         Self {
-            child,
+            _process: process,
             root,
             port,
             user,
@@ -62,9 +47,30 @@ impl Server {
         .unwrap()
     }
 }
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.child.stdin.take();
-        let _ = self.child.wait();
+fn parse_startup(line: &str) -> Result<(u16, String, PathBuf), String> {
+    let value: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+    let port = value["port"]
+        .as_u64()
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|&p| p != 0)
+        .ok_or("invalid sshd port")?;
+    let user = value["user"]
+        .as_str()
+        .ok_or("missing sshd user")?
+        .to_owned();
+    let root = PathBuf::from(value["root"].as_str().ok_or("missing sshd root")?);
+    Ok((port, user, root))
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn startup_json_preserves_path_punctuation_and_escapes() {
+        use super::*;
+        let (_, user, root) =
+            parse_startup(r#"{"root":"/tmp/a,b:c\"d","user":"test","port":1234}"#).unwrap();
+        assert_eq!(user, "test");
+        assert_eq!(root, PathBuf::from("/tmp/a,b:c\"d"));
     }
 }

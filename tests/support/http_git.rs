@@ -1,10 +1,13 @@
 //! Loopback process ownership shared by HTTP integration tests, example and benchmark.
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
+
+#[path = "fixture_process.rs"]
+mod fixture_process;
+use fixture_process::Process;
 
 pub struct Server {
-    child: Child,
+    _process: Process,
     pub url: String,
     root: tempfile::TempDir,
 }
@@ -29,18 +32,10 @@ impl Server {
         if let Some((cert, key)) = tls {
             command.arg("--certificate").arg(cert).arg("--key").arg(key);
         }
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut port = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut port)
-            .unwrap();
-        let port: u16 = port.trim().parse().expect("fixture server startup");
+        let mut process = Process::spawn(&mut command, false);
+        let port: u16 = process.ready(|line| line.trim().parse::<u16>().map_err(|e| e.to_string()));
         Self {
-            child,
+            _process: process,
             url: format!(
                 "{}://127.0.0.1:{port}/repo",
                 if tls.is_some() { "https" } else { "http" }
@@ -54,11 +49,5 @@ impl Server {
             .lines()
             .map(str::to_owned)
             .collect()
-    }
-}
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
