@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::graph::Graph;
 use super::{PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::{check_cancelled, packet, put};
-use crate::{ObjectId, Objects, PackObject, write_pack};
+use crate::{ObjectId, Objects, PackObject};
 
 /// An immutable command list and non-thin SHA-1 pack ready for one receive-pack session.
 ///
@@ -33,9 +33,10 @@ impl PreparedPush {
     /// new history requires explicit force; it need not be present locally when force is allowed.
     /// Unchanged IDs are sent as conditional commands and remain subject to server policy.
     ///
-    /// Cancellation is checked between graph steps and pack writes, but cannot interrupt a single
-    /// storage read, hash, parse or compression call. Read limits bound decoding per object, not
-    /// aggregate decoding across objects. Sources must meet [`Objects`]'s storage assumptions.
+    /// Cancellation is checked between graph steps, pack writes, candidates and every 4096 search
+    /// units, but cannot interrupt a single storage read, hash, parse or compression call. Read
+    /// limits bound decoding per object, not aggregate decoding across objects. Sources must
+    /// meet [`Objects`]'s storage assumptions.
     ///
     /// # Errors
     ///
@@ -105,7 +106,20 @@ impl PreparedPush {
             bytes: vec![],
             cancel,
         };
-        let result = write_pack(&inputs, &mut pack, &mut io::sink(), limits.pack);
+        let result = crate::pack::write_controlled(
+            &inputs,
+            &mut pack,
+            &mut io::sink(),
+            limits.pack,
+            limits.compression,
+            &mut || {
+                if cancel.load(Ordering::Relaxed) {
+                    Err(io::Error::other("push cancelled").into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
         check_cancelled(cancel)?;
         let written = result?;
         Ok(Self {

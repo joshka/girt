@@ -35,8 +35,12 @@ Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, an
 [completion evidence](docs/testing.md#commit-history-completion).
 
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
-`cargo run --example write_pack` to export and reopen a private pack. The writer uses ordinary
-zlib-compressed entries without delta selection; the writer leaves installation to callers.
+`cargo run --example write_pack` to export and reopen a private pack. The default writer streams
+ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection
+through `PackCompression::Delta`; push exposes the same choice in `PushLimits::compression`.
+Installation remains the caller’s responsibility. See
+[delta compression](docs/compatibility.md#bounded-pack-delta-compression) for selection policy and
+compatibility boundaries.
 
 `fetch::receive` implements upload-pack protocol v0 over caller-supplied streams;
 `fetch::receive_local` supplies a local Git upload-pack process adapter. Fetch validates complete

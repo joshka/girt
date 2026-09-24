@@ -4,6 +4,7 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use sha1::{Digest, Sha1};
 
+use super::compression::{DeltaOptions, DeltaStats, PackCompression, instructions};
 use crate::{ObjectId, ObjectKind};
 
 /// One explicit SHA-1 object to export, borrowing its exact uncompressed payload.
@@ -25,7 +26,8 @@ pub struct PackObject<'a> {
 ///
 /// Input occurrences (including duplicates) are charged before sorting or hashing. Memory used by
 /// the writer is proportional to that count, plus fixed compression scratch space; payloads are
-/// borrowed and compressed directly to the sink. These are not total process heap limits.
+/// borrowed and compressed directly to the sink by the ordinary policy. Delta compression adds
+/// the scratch/work bounds documented on [`DeltaOptions`]. These are not total process heap limits.
 #[derive(Debug, Clone, Copy)]
 pub struct PackWriteLimits {
     /// Maximum input occurrences, also bounded by `u32::MAX` (default one million).
@@ -63,6 +65,8 @@ pub struct PackWritten {
     pub pack_bytes: u64,
     /// Total index bytes, including both checksums.
     pub index_bytes: u64,
+    /// Delta search and dependency accounting; zero for the ordinary path.
+    pub deltas: DeltaStats,
 }
 
 /// Failure to validate inputs or finish a caller-owned artifact pair.
@@ -133,6 +137,70 @@ pub fn write_pack(
     index: &mut impl Write,
     limits: PackWriteLimits,
 ) -> Result<PackWritten, PackWriteError> {
+    write_pack_with_compression(objects, pack, index, limits, PackCompression::Ordinary)
+}
+
+/// Writes a pack/index pair with explicit bounded compression selection.
+///
+/// See [`write_pack`] for validation, ownership, output bounds, and partial-artifact errors, and
+/// [`DeltaOptions`] for candidate ordering, memory/work bounds, reproducibility, and wire encoding.
+/// The ordinary policy produces exactly [`write_pack`]'s bytes. Delta search exhaustion falls back
+/// to the best completed entry, including ordinary encoding; it is not an error.
+///
+/// # Errors
+///
+/// Returns the same validation, resource, and I/O errors as [`write_pack`].
+///
+/// ```
+/// use girt::{
+///     DeltaOptions, ObjectId, ObjectKind, PackCompression, PackObject, PackWriteLimits,
+///     write_pack_with_compression,
+/// };
+/// let base: Vec<u8> = (0..=255).cycle().take(4096).collect();
+/// let mut edited = base.clone();
+/// edited[1000] ^= 255;
+/// let inputs: Vec<_> = [&base, &edited]
+///     .into_iter()
+///     .map(|data| PackObject {
+///         id: ObjectId::for_blob(data),
+///         kind: ObjectKind::Blob,
+///         data,
+///     })
+///     .collect();
+/// let (mut pack, mut index) = (Vec::new(), Vec::new());
+/// let policy = PackCompression::Delta(DeltaOptions {
+///     max_depth: 2,
+///     ..DeltaOptions::default()
+/// });
+/// let written = write_pack_with_compression(
+///     &inputs,
+///     &mut pack,
+///     &mut index,
+///     PackWriteLimits::default(),
+///     policy,
+/// )?;
+/// assert_eq!(written.objects, 2);
+/// assert_eq!(written.deltas.entries, 1);
+/// # Ok::<(), girt::PackWriteError>(())
+/// ```
+pub fn write_pack_with_compression(
+    objects: &[PackObject<'_>],
+    pack: &mut impl Write,
+    index: &mut impl Write,
+    limits: PackWriteLimits,
+    compression: PackCompression,
+) -> Result<PackWritten, PackWriteError> {
+    write_controlled(objects, pack, index, limits, compression, &mut || Ok(()))
+}
+
+pub(crate) fn write_controlled(
+    objects: &[PackObject<'_>],
+    pack: &mut impl Write,
+    index: &mut impl Write,
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<PackWritten, PackWriteError> {
     let objects = validate(objects, limits)?;
     let count = objects.len() as u32;
     let mut pack = Output::new(pack, limits.max_pack_bytes, "pack bytes");
@@ -140,14 +208,33 @@ pub fn write_pack(
     pack.put(&2u32.to_be_bytes())?;
     pack.put(&count.to_be_bytes())?;
     let mut entries = Vec::with_capacity(objects.len());
-    for object in objects {
+    let mut depths = Vec::with_capacity(objects.len());
+    let mut deltas = DeltaStats::default();
+    for (position, object) in objects.iter().enumerate() {
+        check()?;
+        let selected = match compression {
+            PackCompression::Ordinary => None,
+            PackCompression::Delta(options) => {
+                select_entry(&objects, position, &depths, options, &mut deltas, check)?
+            }
+        };
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
-        pack.put(&entry_header(object.kind, object.data.len() as u64))?;
-        // Finish explicitly so buffered-write failures are reported on the success path.
-        let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
-        encoder.write_all(object.data).map_err(output_error)?;
-        encoder.finish().map_err(output_error)?;
+        if let Some(selected) = selected {
+            pack.put(&selected.bytes)?;
+            depths.push(selected.depth);
+            if selected.depth != 0 {
+                deltas.entries += 1;
+                deltas.max_depth = deltas.max_depth.max(selected.depth);
+            }
+        } else {
+            pack.put(&entry_header(object.kind, object.data.len() as u64))?;
+            // Finish explicitly so buffered-write failures are reported on the success path.
+            let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
+            encoder.write_all(object.data).map_err(output_error)?;
+            encoder.finish().map_err(output_error)?;
+            depths.push(0);
+        }
         entries.push(Entry {
             id: object.id,
             offset,
@@ -164,7 +251,87 @@ pub fn write_pack(
         objects: count,
         pack_bytes,
         index_bytes: index.bytes,
+        deltas,
     })
+}
+
+struct SelectedEntry {
+    bytes: Vec<u8>,
+    depth: usize,
+}
+
+fn select_entry(
+    objects: &[PackObject<'_>],
+    position: usize,
+    depths: &[usize],
+    options: DeltaOptions,
+    stats: &mut DeltaStats,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<Option<SelectedEntry>, PackWriteError> {
+    let object = objects[position];
+    let length = object.data.len();
+    if length < 8
+        || length > options.max_object_bytes
+        || length > u32::MAX as usize
+        || options.max_depth == 0
+        || options.max_candidates == 0
+        || options.max_work == 0
+        || options.window == 0
+    {
+        return Ok(None);
+    }
+    let candidates = (position.saturating_sub(options.window)..position)
+        .rev()
+        .filter(|&i| {
+            let base = objects[i];
+            base.kind == object.kind
+                && depths[i] < options.max_depth
+                && base.data.len() <= options.max_object_bytes
+                && base.data.len() <= u32::MAX as usize
+                && base.data.len() >= length.div_ceil(2)
+                && base.data.len().div_ceil(2) <= length
+        })
+        .take(options.max_candidates);
+    let mut best: Option<SelectedEntry> = None;
+    let mut ordinary_cost = 0;
+    let mut remaining = options.max_work;
+    for i in candidates {
+        check()?;
+        if best.is_none() {
+            let bytes = compressed(entry_header(object.kind, length as u64), object.data)?;
+            ordinary_cost = bytes.len();
+            best = Some(SelectedEntry { bytes, depth: 0 });
+            // Even before zlib bytes, a REF_DELTA needs a header and a 20-byte base ID.
+            if ordinary_cost.saturating_sub(21) <= options.min_savings {
+                break;
+            }
+        }
+        stats.candidates += 1;
+        let before = remaining;
+        let program = instructions(objects[i].data, object.data, &mut remaining, check)?;
+        stats.work = stats.work.saturating_add(before - remaining);
+        let Some(program) = program else { break };
+        check()?;
+        let mut header = entry_header_code(7, program.len() as u64);
+        header.extend_from_slice(objects[i].id.as_bytes());
+        let bytes = compressed(header, &program)?;
+        let current = best.as_ref().unwrap();
+        if bytes.len() < current.bytes.len()
+            && ordinary_cost.saturating_sub(bytes.len()) >= options.min_savings
+        {
+            best = Some(SelectedEntry {
+                bytes,
+                depth: depths[i] + 1,
+            });
+        }
+    }
+    Ok(best)
+}
+
+fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
+    let mut encoder = ZlibEncoder::new(header, Compression::new(6));
+    encoder.write_all(data)?;
+    Ok(encoder.finish()?)
 }
 
 fn validate<'a>(
@@ -209,13 +376,17 @@ fn validate<'a>(
     Ok(sorted)
 }
 
-fn entry_header(kind: ObjectKind, mut size: u64) -> Vec<u8> {
+fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     let code = match kind {
         ObjectKind::Commit => 1,
         ObjectKind::Tree => 2,
         ObjectKind::Blob => 3,
         ObjectKind::Tag => 4,
     };
+    entry_header_code(code, size)
+}
+
+fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);
@@ -666,5 +837,266 @@ mod tests {
             Err(PackWriteError::Limit("pack bytes"))
         ));
         assert!(bytes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod compression_tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn payloads() -> Vec<Vec<u8>> {
+        (0..12)
+            .map(|variant| {
+                let mut state = 123456789u64;
+                let mut bytes: Vec<u8> = (0..16384)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        state as u8
+                    })
+                    .collect();
+                bytes[variant * 100] ^= 255;
+                bytes
+            })
+            .collect()
+    }
+    fn export(data: &[Vec<u8>], options: DeltaOptions) -> (PackWritten, Vec<u8>, Vec<u8>) {
+        let inputs: Vec<_> = data
+            .iter()
+            .map(|data| PackObject {
+                id: ObjectId::for_blob(data),
+                kind: ObjectKind::Blob,
+                data,
+            })
+            .collect();
+        let (mut pack, mut index) = (vec![], vec![]);
+        let written = write_pack_with_compression(
+            &inputs,
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            PackCompression::Delta(options),
+        )
+        .unwrap();
+        (written, pack, index)
+    }
+
+    #[rstest]
+    #[case::window(DeltaOptions { window: 0, ..DeltaOptions::default() })]
+    #[case::candidates(DeltaOptions { max_candidates: 0, ..DeltaOptions::default() })]
+    #[case::depth(DeltaOptions { max_depth: 0, ..DeltaOptions::default() })]
+    #[case::size(DeltaOptions { max_object_bytes: 0, ..DeltaOptions::default() })]
+    #[case::work(DeltaOptions { max_work: 0, ..DeltaOptions::default() })]
+    #[case::exhausted(DeltaOptions { max_work: 1, ..DeltaOptions::default() })]
+    #[case::savings(DeltaOptions { min_savings: usize::MAX, ..DeltaOptions::default() })]
+    fn ordinary_fallback_is_byte_identical(#[case] options: DeltaOptions) {
+        let data = payloads();
+        let (written, pack, index) = export(&data, options);
+        let (_, ordinary, ordinary_index) = export(
+            &data,
+            DeltaOptions {
+                window: 0,
+                ..options
+            },
+        );
+        assert_eq!(written.deltas.entries, 0);
+        assert_eq!(pack, ordinary);
+        assert_eq!(index, ordinary_index);
+    }
+
+    #[rstest]
+    #[case::one(1, 1, 1)]
+    #[case::two(3, 2, 2)]
+    #[case::default(16, 4, 4)]
+    fn bounded_deterministic_internal_dependencies(
+        #[case] window: usize,
+        #[case] candidates: usize,
+        #[case] depth: usize,
+    ) {
+        let mut data = payloads();
+        let options = DeltaOptions {
+            window,
+            max_candidates: candidates,
+            max_depth: depth,
+            ..DeltaOptions::default()
+        };
+        let (written, pack, index) = export(&data, options);
+        data.reverse();
+        data.push(data[0].clone());
+        let (_, other, other_index) = export(&data, options);
+        assert_eq!(pack, other);
+        assert_eq!(index, other_index);
+        assert!(written.deltas.entries > 0);
+        assert!(written.deltas.max_depth <= depth);
+        assert!(written.deltas.candidates <= 12 * candidates.min(window) as u64);
+        assert!(written.deltas.work <= 12 * options.max_work);
+        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        verify_payloads(&reader, &data, written.deltas.max_depth);
+    }
+    fn verify_payloads(reader: &crate::pack::Pack, data: &[Vec<u8>], max_delta_depth: usize) {
+        for expected in data {
+            let restored = reader
+                .read(
+                    reader.find(ObjectId::for_blob(expected)).unwrap(),
+                    crate::ReadLimits {
+                        max_delta_depth,
+                        ..crate::ReadLimits::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(restored.data(), expected);
+        }
+    }
+
+    #[rstest]
+    #[case::blob(ObjectKind::Blob)]
+    #[case::tree(ObjectKind::Tree)]
+    #[case::commit(ObjectKind::Commit)]
+    #[case::tag(ObjectKind::Tag)]
+    fn matching_is_byte_oriented_for_every_kind(#[case] kind: ObjectKind) {
+        let data = payloads();
+        let inputs: Vec<_> = data
+            .iter()
+            .map(|data| PackObject {
+                id: ObjectId::for_object(kind.as_str(), data),
+                kind,
+                data,
+            })
+            .collect();
+        let (mut pack, mut index) = (vec![], vec![]);
+        let written = write_pack_with_compression(
+            &inputs,
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            PackCompression::Delta(DeltaOptions::default()),
+        )
+        .unwrap();
+        assert!(written.deltas.entries > 0);
+        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        let restored = reader
+            .read(
+                reader.find(inputs[0].id).unwrap(),
+                crate::ReadLimits::default(),
+            )
+            .unwrap();
+        assert_eq!(restored.kind(), kind);
+        assert_eq!(restored.data(), data[0]);
+    }
+
+    #[test]
+    fn different_kinds_are_never_candidates() {
+        let data = payloads();
+        let inputs = [
+            PackObject {
+                id: ObjectId::for_blob(&data[0]),
+                kind: ObjectKind::Blob,
+                data: &data[0],
+            },
+            PackObject {
+                id: ObjectId::for_object("tree", &data[1]),
+                kind: ObjectKind::Tree,
+                data: &data[1],
+            },
+        ];
+        let written = write_pack_with_compression(
+            &inputs,
+            &mut vec![],
+            &mut vec![],
+            PackWriteLimits::default(),
+            PackCompression::Delta(DeltaOptions::default()),
+        )
+        .unwrap();
+        assert_eq!(written.deltas.candidates, 0);
+    }
+
+    #[test]
+    fn delta_output_bound_includes_base_id_and_trailer() {
+        let data = payloads();
+        let (written, _, _) = export(&data, DeltaOptions::default());
+        let inputs: Vec<_> = data
+            .iter()
+            .map(|data| PackObject {
+                id: ObjectId::for_blob(data),
+                kind: ObjectKind::Blob,
+                data,
+            })
+            .collect();
+        let limits = PackWriteLimits {
+            max_pack_bytes: written.pack_bytes - 1,
+            ..PackWriteLimits::default()
+        };
+        let (mut pack, mut index) = (vec![], vec![]);
+        let result = write_pack_with_compression(
+            &inputs,
+            &mut pack,
+            &mut index,
+            limits,
+            PackCompression::Delta(DeltaOptions::default()),
+        );
+        assert!(matches!(result, Err(PackWriteError::Limit("pack bytes"))));
+        assert!(pack.len() as u64 <= limits.max_pack_bytes);
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn exhausted_later_candidate_retains_completed_delta() {
+        let data = payloads();
+        let options = DeltaOptions {
+            max_candidates: 4,
+            max_work: 19000,
+            ..DeltaOptions::default()
+        };
+        let (written, pack, index) = export(&data, options);
+        assert!(written.deltas.entries > 0);
+        assert!(written.deltas.candidates > u64::from(written.deltas.entries));
+        assert!(written.deltas.work <= 12 * options.max_work);
+        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        verify_payloads(&reader, &data, written.deltas.max_depth);
+    }
+
+    #[test]
+    fn objects_above_search_size_remain_streaming() {
+        let data = payloads();
+        let (written, _, _) = export(
+            &data,
+            DeltaOptions {
+                max_object_bytes: 16383,
+                ..DeltaOptions::default()
+            },
+        );
+        assert_eq!(written.deltas.entries, 0);
+        assert_eq!(written.deltas.candidates, 0);
+        assert_eq!(written.deltas.work, 0);
+    }
+
+    #[test]
+    fn short_objects_cannot_recover_ref_delta_overhead() {
+        let data = vec![b"abcdefgh".to_vec(), b"abcdefgi".to_vec()];
+        let (written, _, _) = export(&data, DeltaOptions::default());
+        assert_eq!(written.deltas.candidates, 0);
+    }
+
+    #[test]
+    fn invalid_identity_precedes_delta_output() {
+        let input = PackObject {
+            id: ObjectId::from_bytes([0; 20]),
+            kind: ObjectKind::Blob,
+            data: &[1; 100],
+        };
+        let (mut pack, mut index) = (vec![], vec![]);
+        let result = write_pack_with_compression(
+            &[input],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            PackCompression::Delta(DeltaOptions::default()),
+        );
+        assert!(matches!(result, Err(PackWriteError::Identity { .. })));
+        assert!(pack.is_empty());
+        assert!(index.is_empty());
     }
 }

@@ -607,8 +607,9 @@ permits byte-preserving forwarding of objects while leaving graph policy to the 
 Pack v2 entries and index v2 IDs are ordered by ascending SHA-1 identity. Entries use zlib level 6
 without deltas. Identical inputs produce identical artifacts with the same compression backend and
 version; dependency upgrades may change compressed bytes. Similar revisions can take substantially
-more space than delta-selected packs. SHA-256, thin packs, delta selection, repacking, pruning, GC,
-multi-pack indexes, and transport are excluded. No dependencies were added.
+more space than delta-selected packs. The opt-in delta writer is described
+[below](#bounded-pack-delta-compression). SHA-256, thin packs, repacking, pruning, GC, multi-pack
+indexes, and transport are excluded. No dependencies were added.
 
 `PackWriteLimits` bounds input occurrences before allocation/sorting, each payload, total input
 bytes including duplicates, and both output lengths. Payloads are borrowed and compressed directly
@@ -766,15 +767,15 @@ although a packed read can decode shared bases again. All typed edges are checke
 invalid object fails preparation before any remote command. This is not a claim of full Git fsck
 equivalence.
 
-The existing writer emits ordinary zlib entries and a complete pack with no deltas or external
-bases. Its companion index is generated into a sink, not sent or installed. Repeated and incremental
-pushes using `new` retransmit full selected histories; `new_excluding` can reduce them as described
-below. Preparation releases selected payloads after buffering the pack; the caller can drop its
-object reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry
-visits/parent edges, individual reads, pack/index output, command bytes, advertisement bytes/entries
-and status bytes have explicit bounds. These bounds exclude allocator overhead, the caller's
-preexisting snapshot, and server memory. Read decoding budgets apply per object, not across the
-selection.
+The default writer emits ordinary zlib entries. `PushLimits::compression` can enable bounded
+internal REF_DELTA entries; both policies produce complete packs without external bases. Its
+companion index is generated into a sink, not sent or installed. Repeated and incremental pushes
+using `new` retransmit full selected histories; `new_excluding` can reduce them as described below.
+Preparation releases selected payloads after buffering the pack; the caller can drop its object
+reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent
+edges, individual reads, pack/index output, command bytes, advertisement bytes/entries and status
+bytes have explicit bounds. These bounds exclude allocator overhead, the caller's preexisting
+snapshot, and server memory. Read decoding budgets apply per object, not across the selection.
 
 ### Status, Failure and Transport Boundaries
 
@@ -809,10 +810,10 @@ waits, including stalled hooks. Caller-owned streams must provide interruption/d
 and must be closed after errors. Streams are one-shot and must end at EOF after the final status
 flush.
 
-HTTP/SSH adapters, authentication, remote/refspec configuration, automatic force, pruning, thin or
-delta-selected packs, deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and
-server infrastructure remain deferred. Empty command lists exchange only advertisement and flush,
-with no pack or status report.
+HTTP/SSH adapters, authentication, remote/refspec configuration, automatic force, pruning, thin
+packs, deletion, atomic multi-ref push, report-status-v2/proc-receive rewriting and server
+infrastructure remain deferred. Empty command lists exchange only advertisement and flush, with no
+pack or status report.
 
 ### Push Evidence and Provenance
 
@@ -950,8 +951,9 @@ tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can 
 with full preparation. Command expectations are independently checked before transmission and again
 by the server when committing refs. Races after advertisement retain server rejection or uncertain
 outcome semantics; complete and partial statuses are unchanged. Server-side concurrent object
-pruning still requires coordination. Packs remain non-thin ordinary entries; no delta selection,
-HTTP/SSH, credentials, pruning, shallow/partial support or new ref features are introduced.
+pruning still requires coordination. Packs remain non-thin; ordinary entries remain the default and
+bounded delta selection is now opt-in. No HTTP/SSH, credentials, pruning, shallow/partial support or
+new ref features are introduced.
 
 Disposable Git tests cover initial, no-op and incremental transfers, shared/divergent and merge
 histories, branch/tag selection, gitlinks, unavailable receiver roots, corrupt/missing local
@@ -961,3 +963,56 @@ old tips, including the rejection and race tests. Fixtures are independently gen
 plumbing and girt writers. Measurements and exact platform evidence are recorded with the
 [incremental benchmark](benchmarks.md#incremental-transfer-comparison) and
 [completion checklist](testing.md#incremental-transfer-completion).
+
+## Bounded Pack Delta Compression
+
+`write_pack_with_compression` accepts `PackCompression::Delta(DeltaOptions)`; `write_pack` and
+`PushLimits::default()` retain the ordinary streaming path. No dependencies are added. Options bound
+the preceding-entry window (16), suitable candidates (4), eligible payload bytes (1 MiB), search
+units per object (8 million), and emitted dependency depth (4). Zero bounds disable search; objects
+outside the size bound stream ordinarily. The default minimum complete-entry saving is 16 bytes. The
+public Rustdoc defines the work units and scratch-memory estimate; these are algorithmic bounds, not
+measured RSS or hard latency guarantees.
+
+Sorting and deduplication still precede selection. Pack and index entries remain in ascending
+object-ID order. Candidates come from the preceding window, newest first, with the same kind, length
+within a factor of two, and depth below the bound. A fixed 4096-slot anchor table searches byte
+sequences without interpreting text or structured payloads. Collisions retain the earliest base
+position. Bounded sampling can miss useful matches, especially far into large objects or outside the
+window; this writer does not promise Git's compression ratio.
+
+Original delta programs encode exact base/result sizes, literals of at most 127 bytes, and copies
+with four offset bytes and three size bytes. A copy size of zero means 65,536 bytes; longer copies
+split at 16,777,215 bytes. Encoding follows the published
+[pack format](https://git-scm.com/docs/pack-format), without consulting or adapting Git
+implementation source. Unit vectors and fixtures are original.
+
+Selection compares actual zlib-level-6 output including the entry header and 20-byte REF_DELTA base
+identity. It chooses a delta only when it strictly improves the current best and meets minimum
+savings against ordinary encoding. Ties preserve the first candidate. Exhausting search work drops
+the unfinished candidate and retains the best completed entry. Fixed inputs/options and compressor
+versions reproduce identical bytes regardless of input order. Pack sizes never exceed the ordinary
+policy for the same object set, but preparation can cost substantially more CPU and scratch memory.
+
+Only preceding internal bases are used, so there are no forward dependencies, cycles, thin packs, or
+external-base retention assumptions. REF_DELTA uses an object identity rather than a relative pack
+offset; index offsets retain the existing checked absolute-offset and large-offset encoding. No
+OFS_DELTA entries are emitted. This avoids requiring the optional `ofs-delta` receive-pack
+capability described by Git's
+[protocol capabilities](https://git-scm.com/docs/protocol-capabilities). A server advertising only
+`report-status` is explicitly exercised. OFS optimization is deferred.
+
+Push selection runs after receiver-history exclusion, keeping even incremental delta bases inside
+the outgoing pack. Cancellation is checked between candidates and every 4096 search units; one hash,
+storage call, or zlib compression remains non-interruptible. Input identity, output bounds,
+no-clobber installation, force/expected-old checks, and uncertain-outcome semantics are unchanged.
+
+Independent `index-pack` produces the exact same index; `verify-pack -v` proves emitted deltas, and
+Git `cat-file` and girt check exact payloads/kinds/identities. Tests include shifted 1 MiB binary
+objects, generated histories, empty/tiny entries, and a disposable delta push followed by
+incremental transfer. Library tests cover every logical kind without assuming valid structured
+syntax. Existing malformed-delta reader tests remain applicable. Evidence is macOS arm64 with Git
+2.55.0 and Rust 1.98.1; no new Linux or Windows runtime claim is made. HTTP/SSH, credentials, thin
+packs, GC, and repacking remain outside this change.
+[Measurements](benchmarks.md#bounded-delta-comparison) retain size, timing, search-count, and
+source-fingerprint evidence.

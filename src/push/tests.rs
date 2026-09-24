@@ -872,3 +872,44 @@ fn advertised_have_can_prove_exclusion_without_matching_a_command() {
     bytes.extend(b"0000");
     assert!(run(&bytes, &prepared).unwrap().all_succeeded());
 }
+
+#[test]
+fn ref_delta_push_needs_only_report_status() {
+    let f = Fixture::new();
+    let mut data: Vec<u8> = (0..65536).map(|n| (n % 251) as u8).collect();
+    let loose = f.repo.loose_objects().unwrap();
+    let first = loose.write_blob(&data).unwrap();
+    data[4000] ^= 255;
+    let second = loose.write_blob(&data).unwrap();
+    let commands = vec![
+        command("refs/tags/a", None, first),
+        command("refs/tags/b", None, second),
+    ];
+    let ordinary = f.prepare(commands.clone(), PushLimits::default()).unwrap();
+    let p = f
+        .prepare(
+            commands,
+            PushLimits {
+                compression: crate::PackCompression::Delta(crate::DeltaOptions::default()),
+                ..PushLimits::default()
+            },
+        )
+        .unwrap();
+    assert!(p.pack_bytes() < ordinary.pack_bytes());
+    let mut bytes = advertisement("report-status");
+    bytes.extend(pkt(b"unpack ok"));
+    bytes.extend(pkt(b"ok refs/tags/a"));
+    bytes.extend(pkt(b"ok refs/tags/b"));
+    bytes.extend(b"0000");
+    let mut sent = vec![];
+    let report = send(
+        &mut bytes.as_slice(),
+        &mut sent,
+        &p,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(report.all_succeeded());
+    assert!(!p.request.windows(9).any(|w| w == b"ofs-delta"));
+    assert_eq!(&sent[p.request.len()..], p.pack);
+}

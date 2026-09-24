@@ -559,3 +559,58 @@ repeat (zero objects / zero pack bytes), and a child-commit fetch (one object / 
 objects / 3,763 bytes for the full branch/tag selection). Repeated conditional push sends an empty
 32-byte pack and still receives server status. Different fixture messages/selections explain the
 small byte differences from the timed workloads.
+
+## Bounded Delta Comparison
+
+The opt-in writer is compared with the unchanged ordinary encoding policy using
+`cargo bench --bench pack_delta`. Criterion uses 20 samples, one second of warmup, and two seconds
+of measurement per case (eight seconds for oversized inputs, allowing enough iterations). Both
+policies include input identity validation, sorting/deduplication, zlib level 6, CRC/checksum
+computation and index generation into `io::sink`; fixture construction is outside sampling. These
+are in-memory measurements, not filesystem or transport timings.
+
+The original workloads contain 16 objects each: fixed-seed binary data with separated one-byte
+edits, binary data with insertions/deletions that shift offsets, generated Rust constant
+declarations with individual changes, independently seeded random bytes, repeated bytes with unique
+prefixes, 1 MiB + 1 byte random objects above the search-size limit, and eight-byte integers. This
+broadens the prior repeated-fixture evidence without claiming representative coverage of all
+repositories.
+
+Measured on 2026-09-23 (local date), macOS arm64, Rust 1.98.1, Criterion 0.8, with the retained
+Cargo.lock. The [CSV](benchmarks/delta-baseline.csv) preserves mean nanoseconds and 95% confidence
+intervals, complete pack lengths, candidate attempts, search units and maximum chain depth.
+[Source fingerprints](benchmarks/delta-baseline.sha256) identify the reproducible implementation,
+options and fixtures. No Linux/Windows runtime result is implied.
+
+| Workload       | Ordinary bytes | Delta bytes | Ordinary mean ms | Delta mean ms |
+| -------------- | -------------- | ----------- | ---------------- | ------------- |
+| Edited binary  | 1,048,992      | 66,743      | 16.815           | 19.801        |
+| Shifted binary | 1,049,248      | 67,027      | 16.894           | 19.943        |
+| Source         | 39,505         | 3,560       | 2.469            | 3.802         |
+| Independent    | 1,048,992      | 1,048,992   | 16.816           | 87.837        |
+| Repeated       | 1,508          | 843         | 2.150            | 5.964         |
+| Oversized      | 16,780,144     | 16,780,144  | 334.451          | 335.169       |
+| Tiny           | 224            | 224         | 0.138            | 0.141         |
+
+Default delta search saves about 94% on the edited/shifted binary workloads for roughly 18% more CPU
+time; generated source saves about 91% for 54% more time. Independent noise cannot benefit, but
+costs about 5.2 times as much preparation time because bounded matching and unsuccessful zlib trials
+still run. Repeated bytes save 665 bytes for roughly 2.8 times the time. Tiny and oversized cases do
+not attempt delta search. These tradeoffs justify retaining ordinary compression as the default and
+making limits explicit; they do not establish a universal tuning optimum.
+
+Eligible 16-object cases attempt 54 candidates, consuming approximately 0.93 to 6.00 million search
+units per pack; successful cases emit 15 deltas with maximum depth four. These counters exclude
+identity hashing and zlib, which remain bounded by input and candidate size/count. Metadata is
+linear in input count; the delta path adds at most a 32 KiB anchor table and roughly eight times the
+configured eligible object size in live scratch, plus zlib/allocator overhead. With the default 1
+MiB size bound this is roughly 8 MiB of additional scratch, compared with the ordinary streaming
+compressor's fixed scratch. Payloads are borrowed. This is an analytical working-space bound, not an
+RSS measurement or total-process memory promise. Increasing window/candidate/depth/size limits can
+increase work and decode costs; matching the writer's depth/size policy to downstream read limits
+remains the caller's responsibility.
+
+The policy compares complete entry costs, so delta output cannot exceed ordinary output for the same
+set. It deliberately uses REF_DELTA's 20-byte base identity rather than OFS_DELTA, preserving
+compatibility with receive-pack servers that do not advertise `ofs-delta`. Benchmark values do not
+include receiver reconstruction time, network latency, or the cost of selecting a push graph.

@@ -266,7 +266,8 @@ fingerprints are retained with the benchmark evidence.
 
 - `write_pack` generates SHA-1 pack v2 and index v2 artifacts from explicit borrowed inputs, with
   ordinary entries for blobs, trees, commits, and tags. Reachability and payload syntax remain
-  caller responsibilities. No installation, delta selection, pruning, GC, or transport is exposed.
+  caller responsibilities. No installation, pruning, GC, or transport is exposed by this artifact
+  API. Optional delta generation is covered separately below.
 - Focused unit tests cover identity/kind mismatches, conflicting and exact duplicates, deterministic
   ordering, input and output limits, exact bounds, short writes, write/flush failures, size headers,
   and checked output-counter overflow. Input rejection leaves both outputs untouched; later failure
@@ -413,3 +414,36 @@ docs.rs and private Rustdoc with warnings rejected. The affected suites passed a
 boundary and merge/divergence cases were added. Both disposable examples completed, and Markdown
 passed rumdl and markdownlint-cli2 with the global 100-column configuration. Linux GNU and Windows
 GNU/MSVC library Clippy cross-checks passed; these are compile checks, not runtime evidence.
+
+## Bounded Delta Compression Completion
+
+- Ordinary writing remains the default; explicit pack and push options select bounded internal
+  REF_DELTA compression. Same-kind, size-ratio and backward-window selection preserve deterministic
+  ordering and avoid thin packs. SHA-256 and OFS_DELTA writing remain excluded.
+- Named unit cases cover size varints, insert lengths 0/1/127/128, sparse/four-byte offsets,
+  implicit 64 KiB copies, maximum/split copies, empty/tiny/repeated/dissimilar/binary payloads,
+  search exhaustion/cancellation, window/candidate/depth/size/work/savings limits, and deterministic
+  order/duplicate handling. Invalid identities still fail before output; delta output limits include
+  base IDs and trailers. All four kinds use byte matching without parsing assumptions.
+- Public consumer tests independently regenerate indexes with Git, assert exact index equality,
+  prove delta emission with verify-pack, and compare Git/girt payloads and identities, including
+  shifted 1 MiB binary input. Existing malformed delta, output-failure, and no-clobber tests cover
+  shared decoding and storage boundaries.
+- A real disposable local push sends deltas and verifies the selected graph, then sends an
+  incremental update. Protocol tests exercise a receiver advertising only report-status. Existing
+  incremental, force, expectation-race, cancellation, and uncertain-status regressions remain part
+  of the full test suite.
+- Criterion compares ordinary and delta writing over edited/shifted binary data, generated source,
+  independent noise, repeated bytes, oversized objects, and tiny values. Retained byte counts,
+  candidate/work/depth counts, timing intervals and fingerprints make the comparison reproducible.
+  Scratch memory is bounded analytically; allocator overhead and RSS are not measured.
+- [Compatibility](compatibility.md#bounded-pack-delta-compression) and
+  [benchmark evidence](benchmarks.md#bounded-delta-comparison) describe defaults, limits, tradeoffs,
+  provenance and the macOS-only runtime boundary for this change.
+
+Validation on 2026-09-23 passed `just fmt` and `just check` (650 unit tests, 234 integration tests,
+17 doctests, all-target Clippy and docs.rs). Warning-denying private Rustdoc,
+`cargo run --example write_pack`, and markdownlint-cli2 with the global 100-column configuration
+also passed. `cargo bench --bench pack_delta` completed all seven ordinary/delta comparisons;
+retained source fingerprints verify successfully. Runtime evidence remains macOS arm64 and Git
+2.55.0; the earlier Linux CI runs do not validate this change.

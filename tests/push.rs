@@ -798,3 +798,84 @@ fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_posses
     );
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
+
+#[test]
+fn delta_push_then_incremental_update_preserves_payloads() {
+    let fixture = Fixture::new(false, 12);
+    let (_root, dest) = destination(true);
+    let cancel = AtomicBool::new(false);
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let commands = vec![
+        command("refs/heads/main", None, main(&fixture)),
+        command("refs/tags/packed", None, fixture.records.last().unwrap().0),
+    ];
+    let ordinary =
+        PreparedPush::new(&objects, commands.clone(), PushLimits::default(), &cancel).unwrap();
+    let limits = PushLimits {
+        compression: girt::PackCompression::Delta(girt::DeltaOptions::default()),
+        ..PushLimits::default()
+    };
+    let prepared = PreparedPush::new(&objects, commands, limits, &cancel).unwrap();
+    assert!(prepared.pack_bytes() < ordinary.pack_bytes());
+    assert!(
+        send_local(dest.git_dir(), &prepared, &cancel)
+            .unwrap()
+            .all_succeeded()
+    );
+    verify(&fixture, &dest);
+    let new = next(&fixture);
+    let mut first_payload = fixture.records[0].2.clone();
+    first_payload[5000] ^= 1;
+    let mut second_payload = first_payload.clone();
+    second_payload[7000] ^= 1;
+    let loose = fixture.repo.loose_objects().unwrap();
+    let first = loose.write_blob(&first_payload).unwrap();
+    let second = loose.write_blob(&second_payload).unwrap();
+    let updates = vec![
+        command("refs/heads/main", Some(main(&fixture)), new),
+        command("refs/tags/new-a", None, first),
+        command("refs/tags/new-b", None, second),
+    ];
+    let refreshed = fixture.repo.objects(PackLimits::default()).unwrap();
+    let update = PreparedPush::new_excluding(
+        &refreshed,
+        updates.clone(),
+        &[main(&fixture)],
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let ordinary_update = PreparedPush::new_excluding(
+        &refreshed,
+        updates,
+        &[main(&fixture)],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(update.object_count(), 3);
+    assert!(update.pack_bytes() < ordinary_update.pack_bytes());
+    assert!(
+        send_local(dest.git_dir(), &update, &cancel)
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(new));
+    assert_eq!(
+        git(
+            dest.git_dir(),
+            &["cat-file", "blob", &first.to_string()],
+            b""
+        ),
+        first_payload
+    );
+    assert_eq!(
+        git(
+            dest.git_dir(),
+            &["cat-file", "blob", &second.to_string()],
+            b""
+        ),
+        second_payload
+    );
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
+}

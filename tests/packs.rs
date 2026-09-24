@@ -148,7 +148,15 @@ fn unindexed_pack_is_not_yet_published() {
 /// Installs only into a fresh, private fixture before any reader exists. This is not a live
 /// repository publication protocol. Git regenerates an independent index beside the export.
 fn verify_export(records: &[(ObjectId, ObjectKind, Vec<u8>)]) {
-    use girt::{PackObject, PackWriteLimits, Repository, write_pack};
+    verify_compressed_export(records, girt::PackCompression::Ordinary, false);
+}
+
+fn verify_compressed_export(
+    records: &[(ObjectId, ObjectKind, Vec<u8>)],
+    compression: girt::PackCompression,
+    expect_delta: bool,
+) {
+    use girt::{PackObject, PackWriteLimits, Repository, write_pack_with_compression};
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
@@ -164,7 +172,15 @@ fn verify_export(records: &[(ObjectId, ObjectKind, Vec<u8>)]) {
         })
         .collect();
     let (mut pack, mut index) = (vec![], vec![]);
-    let result = write_pack(&input, &mut pack, &mut index, PackWriteLimits::default()).unwrap();
+    let result = write_pack_with_compression(
+        &input,
+        &mut pack,
+        &mut index,
+        PackWriteLimits::default(),
+        compression,
+    )
+    .unwrap();
+    assert_eq!(result.deltas.entries > 0, expect_delta);
     let basename = format!("objects/pack/pack-{}", result.checksum);
     let pack_path = format!("{basename}.pack");
     let index_path = format!("{basename}.idx");
@@ -185,7 +201,21 @@ fn verify_export(records: &[(ObjectId, ObjectKind, Vec<u8>)]) {
         fs::read(root.path().join("independent.idx")).unwrap(),
         index
     );
-    git(root.path(), &["verify-pack", "-v", &index_path], b"");
+    let verified = git(root.path(), &["verify-pack", "-v", &index_path], b"");
+    let report = String::from_utf8(verified).unwrap();
+    let depths: Vec<usize> = report
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            (fields.len() == 7).then(|| fields[5].parse().unwrap())
+        })
+        .collect();
+    assert_eq!(!depths.is_empty(), expect_delta);
+    assert_eq!(depths.len(), result.deltas.entries as usize);
+    assert_eq!(
+        depths.into_iter().max().unwrap_or(0),
+        result.deltas.max_depth
+    );
     let repo = Repository::open(root.path()).unwrap();
     let objects = repo.objects(PackLimits::default()).unwrap();
     for (id, kind, expected) in records {
@@ -223,4 +253,40 @@ fn git_and_reader_accept_mixed_export_and_repeated_objects() {
 #[case::large((0..4 * 1024 * 1024).map(|n| (n % 251) as u8).collect())]
 fn git_and_reader_accept_binary_and_large_exports(#[case] data: Vec<u8>) {
     verify_export(&[(ObjectId::for_blob(&data), ObjectKind::Blob, data)]);
+}
+
+#[test]
+fn git_indexes_and_reads_internal_deltas() {
+    let fixture = Fixture::new(false, 12);
+    verify_compressed_export(
+        &fixture.records,
+        girt::PackCompression::Delta(girt::DeltaOptions::default()),
+        true,
+    );
+}
+
+#[test]
+fn git_reads_shifted_binary_deltas() {
+    let mut state = 987654321u64;
+    let base: Vec<u8> = (0..1048576)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    let mut edited = base.clone();
+    edited.splice(4000..4013, [0, 255, 1]);
+    let records = vec![
+        (ObjectId::for_blob(&base), ObjectKind::Blob, base),
+        (ObjectId::for_blob(&edited), ObjectKind::Blob, edited),
+        (ObjectId::for_blob(b""), ObjectKind::Blob, vec![]),
+        (ObjectId::for_blob(b"x"), ObjectKind::Blob, b"x".to_vec()),
+    ];
+    verify_compressed_export(
+        &records,
+        girt::PackCompression::Delta(girt::DeltaOptions::default()),
+        true,
+    );
 }

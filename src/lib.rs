@@ -55,7 +55,10 @@ pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
 pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};
 pub use objects::{Object, ObjectReadError, Objects, PackLimits, ReadLimits};
-pub use pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack};
+pub use pack::{
+    DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,
+    PackWritten, write_pack, write_pack_with_compression,
+};
 pub use repository::{OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

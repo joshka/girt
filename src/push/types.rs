@@ -1,5 +1,5 @@
 use crate::refs::RefName;
-use crate::{ObjectId, PackWriteLimits, ReadLimits};
+use crate::{ObjectId, PackCompression, PackWriteLimits, ReadLimits};
 
 /// Policy for replacing an existing destination. Server restrictions still apply.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -56,6 +56,9 @@ pub struct PushLimits {
     /// Selected count/payload and generated artifact bounds. The index is generated into a sink;
     /// its bound still applies. Full selected count/payload bounds apply before exclusion.
     pub pack: PackWriteLimits,
+    /// Explicit pack compression policy; ordinary entries by default. Delta bases stay internal
+    /// after receiver-history exclusion and need no receive-pack capability negotiation.
+    pub compression: PackCompression,
 }
 impl Default for PushLimits {
     fn default() -> Self {
@@ -69,6 +72,7 @@ impl Default for PushLimits {
             max_ancestry_steps: 4_000_000,
             read: ReadLimits::default(),
             pack: PackWriteLimits::default(),
+            compression: PackCompression::Ordinary,
         }
     }
 }
