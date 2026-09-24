@@ -56,12 +56,12 @@ observes process exit. Full pipes in either direction do not require a blocking 
 yield so cancellation and other runtime work can progress. No runtime or detached task is created.
 The `ssh` feature does not enable HTTP/TLS dependencies or async filesystem operations.
 
-`receive_ssh` takes `Option<Arc<KnownHistory>>` and returns an owned `SshFetch`. Pass `None` for a
-full transfer without preparing or allocating history. With `Some`, the result privately retains the
-exact negotiation history without copying objects. It is `Send + Sync + 'static`: move the download
-into a caller-managed bounded blocking worker after the initiating scope drops its Arc. Validation
-consumes the download and releases its history ownership on success or failure; dropping the
-download also releases it. Other Arc owners may retain history independently. Installation still
+`receive_ssh` takes `Option<Arc<KnownHistory>>` and returns an owned `DownloadedFetch`. Pass `None`
+for a full transfer without preparing or allocating history. With `Some`, the result privately
+retains the exact negotiation history without copying objects. It is `Send + Sync + 'static`: move
+the download into a caller-managed bounded blocking worker after the initiating scope drops its Arc.
+Validation consumes the download and releases its history ownership on success or failure; dropping
+the download also releases it. Other Arc owners may retain history independently. Installation still
 rechecks dependencies and requires caller coordination with GC.
 
 Validation is a separate synchronous step; it decodes/indexes packs, checks identities and proves

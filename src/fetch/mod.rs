@@ -20,12 +20,23 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::{SshFetch, receive_ssh};
+pub use ssh::receive_ssh;
 
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
-pub use http::{HttpFetch, receive_http};
+pub use http::receive_http;
+
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+mod download;
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+pub use download::DownloadedFetch;
 
 mod connectivity;
 mod install;

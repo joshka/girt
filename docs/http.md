@@ -11,7 +11,7 @@ Create a caller-owned Tokio runtime with I/O and time enabled. The library creat
 CPU worker pool. Existing stream and local-process APIs remain synchronous. Core-only builds have no
 Tokio, HTTP or TLS dependency.
 
-`fetch::receive_http` takes `Option<Arc<KnownHistory>>` and returns an owned `HttpFetch`. Pass
+`fetch::receive_http` takes `Option<Arc<KnownHistory>>` and returns an owned `DownloadedFetch`. Pass
 `None` for a full transfer without preparing or allocating history. With `Some`, the result
 privately retains the exact history used during negotiation, without copying its objects. Call its
 synchronous `validate` method to decode/index the pack, check identities and prove selected-tip
@@ -41,10 +41,10 @@ or slow callbacks. Pack import and filesystem operations are separate. This expl
 boundary avoids a hidden `spawn_blocking` job that would continue consuming resources after its
 await was dropped.
 
-`HttpRemote` and `HttpFetch` are `Send + Sync + 'static`; network futures are `Send` when the fetch
-selection callback is `Send`. Inputs borrowed by a future must live until it finishes. `HttpFetch`
-retains no borrows. Concurrent operations are allowed, with separate resource budgets; the caller
-bounds concurrency and aggregate memory.
+`HttpRemote` and `DownloadedFetch` are `Send + Sync + 'static`; network futures are `Send` when the
+fetch selection callback is `Send`. Inputs borrowed by a future must live until it finishes.
+`DownloadedFetch` retains no borrows. Concurrent operations are allowed, with separate resource
+budgets; the caller bounds concurrency and aggregate memory.
 
 ## Endpoint, Authentication and TLS
 

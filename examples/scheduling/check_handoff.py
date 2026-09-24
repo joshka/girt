@@ -55,7 +55,7 @@ girt = {{ path = "{ROOT}", features = ["http", "ssh"] }}
 tokio = {{ version = "1.4", features = ["rt"] }}
 ''')
     env = dict(os.environ, CARGO_TARGET_DIR=str(ROOT / "target/handoff-probe"))
-    for module, remote, fetch in [("http", "HttpRemote", "HttpFetch"), ("ssh", "SshRemote", "SshFetch")]:
+    for module, remote, fetch in [("http", "HttpRemote", "DownloadedFetch"), ("ssh", "SshRemote", "DownloadedFetch")]:
         source = COMMON + OWNED
         for key, value in [("TYPE", fetch), ("RECEIVE", f"receive_{module}"), ("MODULE", module), ("REMOTE", remote)]:
             source = source.replace(key, value)

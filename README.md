@@ -63,16 +63,16 @@ branch/tag publication example. Deletion and atomic multi-ref push are deferred.
 [push compatibility](docs/compatibility.md#receive-pack-push).
 
 Enable the `http` feature for async smart-HTTP(S) fetch and push using a caller-owned Tokio runtime.
-`fetch::receive_http` downloads a response; its `HttpFetch::validate` step performs synchronous pack
-validation before installation. `push::send_http` consumes an already prepared push. Authentication
-headers and additional trust roots are explicit; redirects, proxies and automatic retries are
-rejected or disabled. Run `cargo run --features http --example http_local` for a disposable loopback
-example. See [HTTP setup and contracts](docs/http.md).
+`fetch::receive_http` downloads a response; its `DownloadedFetch::validate` step performs
+synchronous pack validation before installation. `push::send_http` consumes an already prepared
+push. Authentication headers and additional trust roots are explicit; redirects, proxies and
+automatic retries are rejected or disabled. Run `cargo run --features http --example http_local` for
+a disposable loopback example. See [HTTP setup and contracts](docs/http.md).
 
 Enable `ssh` on macOS/Linux for async system OpenSSH fetch and push. Supply literal endpoint
 components and an explicit executable/config file to `transport::ssh::SshRemote`.
-`fetch::receive_ssh` returns an `SshFetch` for separate validation; `push::send_ssh` borrows a
-prepared push. Host-key checking and noninteractive policy are enforced. Run
+`fetch::receive_ssh` returns an `DownloadedFetch` for separate validation; `push::send_ssh` borrows
+a prepared push. Host-key checking and noninteractive policy are enforced. Run
 `cargo run --features ssh --example ssh_local` against a disposable loopback sshd with temporary
 keys and a restricted service command. See [SSH setup and contracts](docs/ssh.md).
 
