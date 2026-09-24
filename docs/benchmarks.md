@@ -645,3 +645,37 @@ samples do not support a general speedup/regression claim. TLS performance is no
 CSV and source fingerprints in `docs/benchmarks/http-baseline.*` identify the measured
 implementation and fixture. Fingerprints were recorded after formatting and minimum-version
 corrections; resolved dependency versions and benchmark behavior did not change.
+
+## SSH Loopback Baseline
+
+Measured on 2026-09-23 on macOS arm64 with Rust 1.98.1, Git 2.55.0 and OpenSSH 10.3p1:
+
+```sh
+cargo bench --features ssh --bench ssh
+```
+
+The original 16-blob fixture has 19 objects and 574,362 payload bytes before the added incremental
+commit. Timed operations include client process creation, a fresh SSH handshake/authentication,
+forced-command dispatch to real Git upload-pack, pipe transfer, exit/group cleanup and synchronous
+validation. Key generation, sshd startup, repository creation and known-history preparation are
+outside timing. Storage is warm; SSH connection sharing is deliberately disabled. Criterion uses 10
+samples, a one-second warmup and at least two seconds of measurement per case.
+
+| Operation                  | Estimate (ms) | 95% interval (ms) |
+| -------------------------- | ------------: | ----------------: |
+| Full download + validation |        183.47 |     180.54–186.28 |
+| Incremental + validation   |        184.66 |     183.57–185.65 |
+| Known-only + validation    |        160.04 |     158.97–161.18 |
+
+These small loopback transfers are dominated by connection/process/service overhead; they are not
+WAN throughput or SSH algorithm comparisons. Incremental transfer saves objects without avoiding the
+handshake. The fixture includes Python forced-command dispatch, and exit observation polls at 20 ms,
+both of which contribute to elapsed time. Local runs put the known-only mean between 154 and 160 ms;
+this is process/handshake timing evidence, not a claim of a reproducible code regression. No
+numerical performance gate is imposed. Push graph and compression costs remain covered by the
+existing push and delta benchmarks; this SSH benchmark measures the new waiting/transfer boundary.
+RSS, cold-cache behavior and remote network latency are not measured.
+
+[CSV estimates](benchmarks/ssh-baseline.csv) and
+[source fingerprints](benchmarks/ssh-baseline.sha256) retain reproducible evidence. Linux runtime
+performance is not established by this macOS run.

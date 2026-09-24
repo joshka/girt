@@ -96,3 +96,11 @@ Git, Python 3 and OpenSSL on PATH and use only disposable loopback servers. `jus
 this feature; also run `cargo check --no-default-features` when changing feature gates. See
 [HTTP setup and contracts](docs/http.md) for the example, TLS fixtures and async processing
 boundary.
+
+## SSH Fixtures
+
+The optional `ssh` feature uses system OpenSSH and a caller-owned Tokio runtime on macOS/Linux. Its
+loopback interoperability tests require Python 3, Git, ssh, ssh-keygen and an unprivileged sshd that
+can authenticate the current OS user with a temporary key and a forced command. No persistent
+SSH/account configuration is changed. Missing or restricted sshd is a concrete fixture failure, not
+a skipped compatibility result. See [SSH contracts and setup](docs/ssh.md).

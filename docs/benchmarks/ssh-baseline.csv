@@ -1,0 +1,4 @@
+operation,lower_ms,estimate_ms,upper_ms
+full-download-validate,180.539,183.466,186.276
+incremental-download-validate,183.574,184.656,185.653
+known-only-discovery-validate,158.965,160.041,161.179

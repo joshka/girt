@@ -5,7 +5,8 @@ use std::time::Instant;
 /// Cancellation and an optional absolute deadline for an owned transport.
 ///
 /// The following process/pipe guarantees apply to local adapters. With the `http` feature, the
-/// HTTP adapter polls this same control during async network waits; its module documents the
+/// HTTP adapter polls this same control during async network waits; `ssh` also uses it for async
+/// OpenSSH pipe and exit waits. Each adapter module documents the
 /// network-specific scope, runtime requirements and separate synchronous validation step.
 ///
 /// Set `cancel` from another thread and leave it set until the operation returns. The deadline

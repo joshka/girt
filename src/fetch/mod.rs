@@ -10,9 +10,15 @@
 //! while selected-tip connectivity can depend on verified local objects. Installation rechecks
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
 //! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
-//! requests, automatic tags, refspecs, pruning, protocol v1/v2 and SSH are outside this slice.
-//! The `http` feature adds async smart-HTTP downloads with separate synchronous validation. Peeling
+//! requests, automatic tags, refspecs, pruning and protocol v1/v2 are outside this slice.
+//! The `http` and `ssh` features add async network downloads with separate synchronous validation.
+//! SSH requires macOS/Linux and a caller-selected OpenSSH configuration. Peeling
 //! hints are exposed separately from selectable reference tips.
+
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+mod ssh;
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub use ssh::{SshFetch, receive_ssh};
 
 #[cfg(feature = "http")]
 mod http;
@@ -110,6 +116,10 @@ impl Default for FetchLimits {
 /// Transfer, validation, or installation failed. No references have been changed.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
+    /// Sanitized OpenSSH transport or service failure.
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    #[error("{0}")]
+    Ssh(#[source] crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
     #[error("{0}")]
@@ -209,6 +219,17 @@ impl From<crate::transport::http::HttpError> for FetchError {
             crate::transport::http::HttpError::Cancelled => Self::Cancelled,
             crate::transport::http::HttpError::Deadline => Self::Deadline,
             error => Self::Http(error),
+        }
+    }
+}
+
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+impl From<crate::transport::ssh::SshError> for FetchError {
+    fn from(error: crate::transport::ssh::SshError) -> Self {
+        match error {
+            crate::transport::ssh::SshError::Cancelled => Self::Cancelled,
+            crate::transport::ssh::SshError::Deadline => Self::Deadline,
+            error => Self::Ssh(error),
         }
     }
 }

@@ -9,6 +9,7 @@ keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
 
 [features]
+ssh = ["dep:tokio", "tokio/net"]
 http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
 
 [package.metadata.docs.rs]
@@ -139,3 +140,12 @@ required-features = ["http"]
 [[example]]
 name = "http_local"
 required-features = ["http"]
+
+[[example]]
+name = "ssh_local"
+required-features = ["ssh"]
+
+[[bench]]
+name = "ssh"
+harness = false
+required-features = ["ssh"]

@@ -131,7 +131,8 @@ includes combined permissive component notices; distributors must retain applica
 notices. The dependency graph contains no mandatory copyleft license; licenses offering a permissive
 alternative are evaluated under that alternative.
 
-SSH, credential discovery, remote/refspec policy, protocol v2, shallow/partial repositories,
-automatic tags/pruning, thin packs and push deletion remain outside this adapter. See
+SSH is provided by a separate optional [adapter](ssh.md). Credential discovery, remote/refspec
+policy, protocol v2, shallow/partial repositories, automatic tags/pruning, thin packs and push
+deletion remain outside this adapter. See
 [Git compatibility evidence](compatibility.md#smart-http-and-https) and
 [loopback benchmarks](benchmarks.md#smart-http-loopback-baseline).

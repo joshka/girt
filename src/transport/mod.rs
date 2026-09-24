@@ -1,5 +1,8 @@
 //! Caller control for owned transports; protocol streams remain caller-owned and cooperative.
 
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub mod ssh;
+
 mod control;
 #[cfg(feature = "http")]
 pub mod http;

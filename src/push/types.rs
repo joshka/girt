@@ -151,6 +151,10 @@ pub enum PushError {
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
+    /// Sanitized OpenSSH transport or service failure.
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    #[error("{0}")]
+    Ssh(#[source] crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
     #[error("{0}")]
@@ -249,6 +253,17 @@ impl From<crate::transport::http::HttpError> for PushFailure {
             crate::transport::http::HttpError::Cancelled => Self::Cancelled,
             crate::transport::http::HttpError::Deadline => Self::Deadline,
             error => Self::Http(error),
+        }
+    }
+}
+
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+impl From<crate::transport::ssh::SshError> for PushFailure {
+    fn from(error: crate::transport::ssh::SshError) -> Self {
+        match error {
+            crate::transport::ssh::SshError::Cancelled => Self::Cancelled,
+            crate::transport::ssh::SshError::Deadline => Self::Deadline,
+            error => Self::Ssh(error),
         }
     }
 }

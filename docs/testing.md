@@ -472,3 +472,38 @@ retained source fingerprints verify successfully. Runtime evidence remains macOS
 The adapter is opt-in. `just check` now tests/clippies all features and docs.rs enables all
 features; core-only compilation is checked separately. New runtime evidence is limited to macOS
 arm64. Earlier Linux CI is not HTTP validation, and HTTP integration fixtures remain Unix-gated.
+
+## SSH Completion
+
+- [x] Optional macOS/Linux OpenSSH adapters expose async v0 fetch/push with caller-owned runtime,
+      explicit endpoint components/config, separate synchronous fetch validation and push
+      preparation.
+- [x] Unit tests reject unsafe endpoint/options shapes and verify literal quoting, redacted errors,
+  pre-write cancellation, process reaping, dropped-future cleanup and isolated group cleanup.
+- [x] Real loopback sshd and Git verify full/incremental/no-op fetch, initial/subsequent/no-op push,
+  branch/tag objects, delta transfer and exclusion. Mixed Git ref rejections return reports.
+- [x] Temporary trust/key fixtures verify known, unknown and changed hosts, failed authentication,
+  config override protection, and repository paths with spaces, quotes and shell metacharacters.
+- [x] Fault fixtures verify blocked diagnostics, handshake/service/upload/response/exit stalls,
+  cancellation, byte limits, malformed framing and acknowledged push status retention.
+- [x] `ssh_local` demonstrates disposable publication and download with validation outside the
+      runtime. Criterion measures full/incremental/known-only SSH fetch including handshake and
+      cleanup.
+- [x] [SSH contracts](ssh.md) state executable/config trust, enforced noninteractive policy,
+      unsupported endpoint/options, sanitized errors, local cleanup versus remote uncertainty, CPU
+      and memory boundaries, dependencies and deferred architecture decisions.
+
+Runtime interoperability evidence is macOS arm64 with Git 2.55.0 and OpenSSH 10.3p1. Fault services
+and compile cross-checks are separate evidence; they do not establish Linux or Windows runtime
+compatibility. The fixture uses the existing local OS identity with throwaway keys only, without
+persistent account/SSH changes or external remotes.
+
+Validation passed `just check` (681 unit tests, 294 integration tests and 12 doctests, formatting,
+all-feature/all-target Clippy and docs.rs), warning-denying private Rustdoc, core-only compilation,
+the disposable SSH example and Markdown lint. The final additional real-Git post-receive-hook
+cancellation case passed, bringing integration coverage to 295 tests. After final fixture cleanup
+and SSH option tightening, all 16 SSH unit tests, all 24 SSH integration tests and affected Clippy
+passed again. Linux GNU and Windows GNU library Clippy cross-checks with `ssh` passed. A Windows
+all-target cross-check was blocked by the existing `alloca` dev dependency requiring unavailable
+`x86_64-w64-mingw32-gcc`; no Windows runtime evidence is claimed. The concrete follow-up is to run
+all-target Clippy on the configured native Windows CI runner or provide that cross C compiler.

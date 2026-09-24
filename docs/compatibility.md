@@ -1056,3 +1056,33 @@ coverage is configured but has not been run for this change; Windows HTTP runtim
 SSH, credential discovery, proxy use, redirects, protocol v2, shallow/partial repositories and
 remote/refspec policy remain outside this change. The HTTP fixture is test infrastructure, not a
 supported server.
+
+## SSH Transport
+
+The optional `ssh` feature adds one OpenSSH process per v0 upload-pack/receive-pack exchange on
+macOS/Linux. Literal endpoint components and an explicit trusted executable/config file define the
+boundary. Host-key verification and noninteractive policy are enforced; remote paths are POSIX-shell
+quoted. Fetch returns a bounded download for synchronous validation, while push borrows a prepared
+pack. See [SSH contracts](ssh.md) for supported inputs, runtime, bounds and recovery.
+
+Original isolated sshd fixtures with throwaway keys demonstrate actual Git full, incremental and
+known-only fetch; initial, subsequent and no-op push; branches, annotated tags, internal deltas and
+receiver-history exclusion. Git and girt read the resulting payloads independently, and Git
+verify-pack checks fetch delta entries. Real update-hook rejection preserves mixed ref outcomes;
+cancellation during a post-receive hook remains uncertain after Git has committed the ref. Host
+trust tests accept the fixture key and reject unknown/changed keys; a different client key fails
+authentication. Paths containing spaces, quotes and shell metacharacters round-trip literally.
+
+Separate transport fault services exercise malformed envelopes, bounded wire input, stalled SSH
+handshake and Git service, blocked upload, full stderr, status/EOF/exit waits, and cancellation.
+Complete or partial acknowledgement prefixes remain visible on uncertain outcomes. Unit process
+tests check dropped futures, reaping, cancellation before writes, and group cleanup without killing
+an unrelated child. Fault services do not substitute for actual Git interoperability.
+
+Implementation and original fixtures use the public
+[Git pack protocol](https://git-scm.com/docs/gitprotocol-pack),
+[OpenSSH client](https://man.openbsd.org/ssh) and
+[OpenSSH configuration](https://man.openbsd.org/ssh_config) contracts and observed behavior. No Git
+source or tests were copied or adapted. New runtime evidence is macOS arm64, Git 2.55.0, OpenSSH
+10.3p1 and Rust 1.98.1. No Linux runtime result or Windows SSH support is claimed. Broader async
+filesystem/object-store architecture remains undecided.
