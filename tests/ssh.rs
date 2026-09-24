@@ -924,3 +924,118 @@ fn orchestration_rejects_malformed_transfer_without_installation() {
         0
     );
 }
+
+#[test]
+fn clone_download_finishes_on_owned_worker_without_checkout() {
+    let f = Fixture::new(true, 4);
+    let server = Server::new(f.root.path(), "none");
+    let remote = server.remote("config");
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("clone");
+    let request = girt::clone::CloneRequest::prepare(
+        &path,
+        girt::InitKind::Worktree,
+        b"ssh://fixture/repository",
+        girt::clone::BranchSelection::Default,
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let rt = runtime();
+    let download = rt
+        .block_on(request.receive_ssh(
+            &remote,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    assert!(!path.exists());
+    let report = rt.block_on(async move {
+        tokio::task::spawn_blocking(move || {
+            download
+                .validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+                .unwrap()
+                .finish(fetch::FetchUpdateLimits::default(), &AtomicBool::new(false))
+                .unwrap()
+        })
+        .await
+        .unwrap()
+    });
+    let repo = report.repository.unwrap();
+    assert_eq!(
+        tip(&repo, "refs/heads/main"),
+        tip(&f.repo, "refs/heads/main")
+    );
+    assert_eq!(
+        tip(&repo, "refs/tags/packed"),
+        tip(&f.repo, "refs/tags/packed")
+    );
+    assert!(
+        girt::remote::Remote::find(repo.config(), b"origin")
+            .unwrap()
+            .is_some()
+    );
+    assert!(!repo.git_dir().join("index").exists());
+    assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+    git(repo.git_dir(), &["fsck", "--strict", "--full"], b"");
+}
+
+#[test]
+fn clone_validation_cancellation_leaves_destination_absent() {
+    let f = Fixture::new(true, 4);
+    let server = Server::new(f.root.path(), "none");
+    let remote = server.remote("config");
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("clone");
+    let request = girt::clone::CloneRequest::prepare(
+        &path,
+        girt::InitKind::Bare,
+        b"ssh://fixture/repository",
+        girt::clone::BranchSelection::Default,
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let download = runtime()
+        .block_on(request.receive_ssh(
+            &remote,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let result = download.validate(&AtomicBool::new(true), |_| ControlFlow::Continue(()));
+    assert!(matches!(
+        result,
+        Err(girt::clone::CloneTransferError::Transfer(
+            FetchError::Cancelled
+        ))
+    ));
+    assert!(!path.exists());
+}
+
+#[test]
+fn clone_malformed_transfer_leaves_destination_absent() {
+    let f = Fixture::new(false, 2);
+    let server = Server::new(f.root.path(), "malformed");
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("clone");
+    let request = girt::clone::CloneRequest::prepare(
+        &path,
+        girt::InitKind::Bare,
+        b"ssh://fixture/repository",
+        girt::clone::BranchSelection::Default,
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let result = runtime().block_on(request.receive_ssh(
+        &server.remote("config"),
+        FetchLimits::default(),
+        deadline(&cancel),
+    ));
+    assert!(matches!(
+        result,
+        Err(girt::clone::CloneTransferError::Transfer(_))
+    ));
+    assert!(!path.exists());
+}

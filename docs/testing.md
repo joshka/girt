@@ -690,3 +690,42 @@ Nightly formatting, rumdl and markdownlint-cli2 (100-column configuration) passe
 The [Criterion baseline](benchmarks.md#fetch-orchestration-baseline) retains estimates and source
 fingerprints. Linux runtime and Windows portability were not rerun for this increment; the workflow
 unit/integration tests needing reference storage are Unix-gated.
+
+### Clone Orchestration Completion
+
+Acceptance is a usable full clone into a new bare or ordinary no-checkout repository, with explicit
+transport, branch choice, persistent remote metadata, budgets and observable partial state:
+
+- Focused unit tests cover default/selected/unborn/detached planning, inconsistent symbolic hints,
+  missing/duplicate refs, actual-advertisement mapping, config quoting and conflicting writers.
+- Original Git CLI integration tests cover both layouts, all branches/tags, strict fsck/object
+  observations, explicit selection, empty remotes, detached/missing HEAD and a moved remote tip.
+  Ordinary clone has the same absent-index status as `git clone --no-checkout --no-local`.
+- Both Git and girt consume stored origin refspecs in subsequent fetches; local branch refs remain
+  protected by the unchanged fetch destination/worktree rules.
+- Failure tests cover preexisting files/directories/symlinks, reservation races, absent parents,
+  cancellation before and after initialization, dropped downloads, invalid branch objects,
+  verification limits, unindexed residual packs, config and reference locks, and config conflicts.
+  Nested fetch/transaction reports preserve the existing exact partial-publication contract.
+- Real loopback HTTP and SSH downloads move to owned workers for validation and finish, with
+  separate validation-cancellation cases proving destination absence.
+- `examples/clone_repository.rs` demonstrates explicit policy, download-before-initialization,
+  failure reports, persisted origin and the no-checkout boundary in disposable repositories.
+- The new Criterion planning harness measures 10 and 10,000 branches plus HEAD. Existing fetch,
+  mapping, transaction and transport baselines cover the reused processing paths; initialization and
+  minimal config writing add bounded metadata steps, without a throughput claim.
+
+See [clone compatibility](compatibility.md#clone-without-checkout) for scope, layout differences,
+selection policy, publication order and residual-state contracts. The
+[planning baseline](benchmarks.md#clone-planning-baseline) retains Criterion estimates and source
+fingerprints.
+
+On 2026-09-24, macOS arm64 with Rust 1.98.1 and Git 2.55.0, `just check` passed 907 unit tests, 410
+integration cases and 14 doctests, plus all-target/all-feature Clippy and docs.rs. Three final
+integration regressions and the new lifecycle doctest passed in focused reruns, bringing the current
+suite to 413 integration cases and 15 doctests. Final Clippy and docs.rs builds also passed.
+Core-only compilation, warning-denying all-feature private Rustdoc, the runnable clone example,
+nightly formatting, rumdl, Markdown lint and the planning benchmark passed. Rendered public Rustdoc
+and its example/navigation were inspected through a temporary loopback preview. Linux/Windows
+runtime evidence remains uncollected; finish retains the existing Unix reference backend
+requirement.

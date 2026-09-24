@@ -38,6 +38,21 @@ pub enum InitError {
 }
 
 impl Repository {
+    // Clone has exclusively reserved an absent destination root. Keep population shared with
+    // init, but never relax init's public bare-destination refusal to accommodate clone.
+    pub(crate) fn init_reserved_clone(path: &Path, kind: InitKind) -> Result<Self, InitError> {
+        let git_dir = match kind {
+            InitKind::Bare => path.to_path_buf(),
+            InitKind::Worktree => {
+                let git_dir = path.join(".git");
+                create_directory(&git_dir)?;
+                git_dir
+            }
+        };
+        populate(&git_dir, kind)?;
+        Ok(Self::open(path)?)
+    }
+
     /// Creates an empty SHA-1 repository with unborn `refs/heads/main`.
     ///
     /// Creates version-0 configuration, files-backend refs and an object directory. No Git process,

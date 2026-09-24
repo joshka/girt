@@ -16,6 +16,16 @@
 //! directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive ancestor.
 //! Discovery stops at malformed or unsupported metadata rather than selecting an outer repository.
 //!
+//! # Cloning without checkout
+//!
+//! [`clone::CloneRequest::prepare`] selects a new destination, layout, stored origin URL, branch
+//! policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any owned
+//! network download on a caller-controlled worker, then call [`clone::CloneReady::finish`]. Both
+//! layouts retain all remote-tracking branches and tags, with one selected local branch or detached
+//! HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout state.
+//! Inspect [`clone::CloneError`] for initialized, installed, configured and published state after
+//! failure. Run `cargo run --example clone_repository` for the lifecycle.
+//!
 //! # Planning from remote configuration
 //!
 //! [`remote::Remote::find`] reads named URLs and fetch/push refspecs from [`Repository::config`].
@@ -72,6 +82,7 @@
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
 //! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
+//! - [`clone`]: bare and ordinary no-checkout creation with persistent origin configuration.
 //! - [`fetch`]: upload-pack v0, validated object installation, and conditional fetch publication.
 //! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
 //! - [`transport`]: owned transport cancellation, deadlines, and process lifetime contracts.
@@ -100,6 +111,7 @@
 //! no-reflog updates and deletion, plus conditional batches and caller-controlled reflog appends.
 //! The working-tree index and working-tree conversion are not implemented.
 
+pub mod clone;
 mod commit;
 pub mod config;
 mod edges;

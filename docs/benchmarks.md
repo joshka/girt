@@ -838,3 +838,32 @@ fingerprints all library sources, the harness and Cargo files; verify with
 `shasum -a 256 -c docs/benchmarks/fetch-workflow-baseline.sha256`. These are sampled operation
 estimates, not latency percentiles or a performance target. Preliminary runs during implementation
 are not comparison evidence. No numerical acceptance threshold or speedup/regression claim is made.
+
+## Clone Planning Baseline
+
+`cargo bench --bench clone` measures clone's advertisement-to-HEAD/refspec plan for 10 and 10,000
+branches plus HEAD, with a valid symbolic HEAD capability. Generated names and arbitrary nonzero
+SHA-1 IDs are original in-memory inputs; this operation does not read objects. Request preparation,
+filesystem checks and advertisement generation are outside timing. Each iteration includes mapping,
+HEAD selection, owned plan allocation and destruction. Existing fetch/transaction baselines cover
+clone's reused installation and reference processing; no end-to-end clone latency claim is made.
+
+The 2026-09-24 run used Criterion 0.8.2, 30 samples, one-second warmup and three-second target
+measurement, with the checked-in lockfile and default optimized bench profile. The host was Apple M2
+Max with 96 GiB RAM, macOS 26.6.2 (25G83), rustc 1.98.1 and Cargo 1.98.1. Input memory was warm;
+there was no filesystem/network work inside timing. No concurrent agent-started builds/tests ran
+during sampling. Desktop activity, CPU placement, frequency and thermal state were uncontrolled.
+
+| Branches | Median µs | 95% CI, µs        |
+| -------- | --------- | ----------------- |
+| 10       | 7.277     | 7.227–7.337       |
+| 10,000   | 6017.141  | 5997.925–6081.247 |
+
+The [CSV estimates](benchmarks/clone-baseline.csv) retain medians and confidence intervals in
+nanoseconds. The [source fingerprints](benchmarks/clone-baseline.sha256) cover library sources,
+harness and Cargo files; verify with `shasum -a 256 -c docs/benchmarks/clone-baseline.sha256`.
+Fingerprints include final contract-comment corrections after sampling; processing code is
+unchanged. These are baseline operation estimates, not latency percentiles, a regression comparison
+or a numerical acceptance threshold. Retained plans and temporary source lists scale with
+advertisement size; transfer limits bound advertisements/wants, while arbitrary preview callers
+bound their own inputs. Peak RSS and other platforms were not measured.

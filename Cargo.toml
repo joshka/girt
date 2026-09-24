@@ -176,3 +176,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "fetch_workflow"
 harness = false
+
+[[example]]
+name = "clone_repository"
+doc-scrape-examples = true
+
+[[bench]]
+name = "clone"
+harness = false

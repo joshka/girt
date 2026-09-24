@@ -235,6 +235,19 @@ pub struct FetchReady {
 }
 
 impl FetchReady {
+    // Clone supplies a fresh repository; use only the actual transfer advertisement.
+    pub(crate) fn for_clone(
+        request: FetchRequest,
+        received: ReceivedFetch,
+    ) -> Result<Self, FetchPlanError> {
+        let updates = request.plan(received.advertisement())?;
+        Ok(Self {
+            request,
+            updates,
+            received,
+        })
+    }
+
     /// The mapping and decisions derived from the advertisement used by this transfer.
     pub fn updates(&self) -> &[FetchUpdate] {
         &self.updates

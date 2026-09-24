@@ -1480,3 +1480,75 @@ This increment was exercised on 2026-09-24 on macOS arm64 with Git 2.55.0 and ru
 [benchmark baseline](benchmarks.md#fetch-orchestration-baseline) record the checks and retained
 measurements. Earlier Linux/Windows validation records do not establish runtime support for these
 new workflow paths.
+
+## Clone Without Checkout
+
+`clone::CloneRequest` composes exclusive destination initialization with existing local/HTTP/SSH
+fetch, validation, installation and conditional references. The destination must be absent,
+including empty directories and dangling symlinks, and its parent must exist. Downloads and
+validation precede all destination writes. No hardlinks, alternates, index, checkout,
+shallow/partial clone, recursive submodules, mirror behavior or credential discovery are included.
+Ordinary clones contain only `.git`; Git can report staged deletions until a later checkout
+populates the index and files.
+
+Both bare and ordinary layouts store every advertised branch under `refs/remotes/origin/*` and all
+tags under `refs/tags/*`. A selected branch additionally gets one `refs/heads/*` ref and symbolic
+HEAD. Bare clones deliberately use this same layout rather than Git CLI bare clone's
+all-local-branch layout, so later `FetchRequest` calls can use the persisted refspecs without
+weakening its branch and worktree safeguards. No `origin/HEAD` alias, pruning or `FETCH_HEAD` is
+written. All configured refspecs are unforced; later replacement policy stays explicit at the fetch
+boundary.
+
+Default selection honors one consistent `symref=HEAD:refs/heads/...` capability. Without a symbolic
+hint, an advertised HEAD remains detached even when one or several branches share its ID. A missing
+HEAD in a nonempty advertisement requires an explicit full branch name. Explicit selection overrides
+remote default-branch hints but does not filter the other branches/tags. Empty v0 advertisements can
+omit the remote's unborn branch name; use the caller-selected branch or `main` in that case. An
+advertised unborn symbolic name is preserved. Tag/revision selection is unsupported; branch and
+detached HEAD tips must be commits, without tag peeling. All advertised branch tips are checked.
+
+Planning occurs inside the actual transfer callback. A preview cannot replace that advertisement,
+and IDs never change after download. HTTP discovery and RPC can race remote changes; a server may
+refuse an unavailable advertised ID, which is a transfer error with no destination effects. Clone
+never substitutes a newer tip or promises that its snapshot remains current at the remote.
+
+Finish reserves the root, initializes metadata, uses fetch to install and verify objects and publish
+tracking refs/tags, verifies branch object kinds, saves config under an exclusive `config.lock`,
+then conditionally publishes the local branch and HEAD in that order. Config replacement compares
+the exact initializer contents and refuses other writers' edits. A final reopen supplies a fresh
+config snapshot before success is returned. Direct refs use the caller's reflog policy; stored
+symbolic HEAD uses preservation because symbolic replacements cannot append reflogs through this
+primitive.
+
+Errors retain reservation/initialization flags, a completed fetch report or its detailed nested
+failure, config completion and final reference outcomes. Initialization can leave partial metadata;
+installation can leave an unindexed pack; later errors can leave installed objects, tracking refs,
+tags, config, local refs or partial reflogs. No automatic cleanup, rollback, retry, atomic reader
+snapshot or crash durability is promised. Callers exclude path replacement, other writers,
+checkout/worktree changes and GC during finish. Cancellation is checked between phases; it does not
+interrupt config replacement or a started reference transaction. Join synchronous workers even after
+requesting cancellation.
+
+The fixed `origin` stores a caller-supplied credential-free URL and two fetch refspecs, plus the
+selected branch's remote/merge keys. The URL is independent metadata, not an endpoint resolver;
+transport endpoints, credentials, trust, budgets and deadlines stay explicit. Relative local URLs
+are relative to the new repository when consumed by Git. HTTP/SSH return owned downloads and perform
+no object validation or storage inside network polling. Validation/finish stay synchronous and
+caller-scheduled. Configuration replacement is clone-specific, not a general config editor.
+
+Original fixtures in `tests/clone.rs` use Git CLI `init`, `hash-object`, `mktree`, `commit-tree`,
+`mktag`, `update-ref` and `symbolic-ref`. Git verifies objects, strict fsck, no-checkout status and
+stored remote configuration; both girt and Git perform subsequent fetches. The fixtures cover bare
+and ordinary clones, empty/default/selected/detached or missing HEAD, multiple equal branch tips,
+annotated tags, remote changes after transfer, invalid branch objects and unsafe destinations.
+Focused unit tests exercise planning, config encoding/locking, dropped transfers, cancellation,
+reservation races, installation residuals, verification limits and reference/config failure phases.
+HTTP and SSH loopback fixtures exercise owned worker handoff and cancellation before initialization.
+Existing transaction tests provide the shared per-ref/per-log partial-publication evidence.
+
+Runtime evidence for this slice is macOS arm64 with Git 2.55.0, Rust 1.98.1 and OpenSSH 10.3p1.
+Linux/Windows runtime behavior is not established by this run. Finish requires the Unix reference
+backend; local process and SSH transport contracts retain their macOS/Linux restrictions; clone
+filesystem interoperability tests are Unix-gated. No dependencies or platform support were added,
+and no upstream implementation/test source or copyright-audit comparisons were used as
+implementation input.
