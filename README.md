@@ -27,8 +27,12 @@ including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is experimen
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
 dependencies and [platform validation](docs/compatibility.md#platform-and-git-version-validation).
-SHA-256, reflogs, reference deletion, multi-ref transactions, upward repository discovery, and a CLI
-are not implemented.
+SHA-256, reflogs, reference deletion, multi-ref transactions, and a CLI are not implemented.
+
+Repository discovery searches physical ancestors, with an optional inclusive ceiling. Initialization
+creates ordinary or bare SHA-1 repositories with unborn `main` and refuses reinitialization. See the
+[initialization example](examples/init_repository.rs) and
+[discovery and initialization boundaries](docs/compatibility.md#repository-discovery-and-initialization).
 
 Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, and
 `Objects::merge_bases`; see the [history example](examples/history.rs) and

@@ -9,6 +9,13 @@
 //! structured fields are needed. Repository history queries follow complete commit ancestry under
 //! [`HistoryLimits`] without relying on timestamps.
 //!
+//! # Creating and finding a repository
+//!
+//! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
+//! reinitialization. [`Repository::discover`] searches physical ancestors from an existing
+//! directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive ancestor.
+//! Discovery stops at malformed or unsupported metadata rather than selecting an outer repository.
+//!
 //! # Fetching and publishing references
 //!
 //! Build optional [`fetch::KnownHistory`] from verified local objects before negotiation. Local
@@ -39,7 +46,8 @@
 //!
 //! # Library contents
 //!
-//! - [`Repository`] and [`OpenError`]: explicit-path opening with local format detection.
+//! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
+//!   initialization of bare or ordinary SHA-1 repositories.
 //! - [`refs`]: validated reference names, loose/packed reads, symbolic resolution, and conditional
 //!   single-reference updates explicitly without reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
@@ -69,8 +77,7 @@
 //! smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a
 //! caller-owned Tokio runtime; fetch pack validation remains an explicit synchronous step.
 //! Files references support reads, symbolic resolution, and explicit no-reflog updates.
-//! The working-tree index, upward discovery, and working-tree conversion are
-//! not implemented.
+//! The working-tree index and working-tree conversion are not implemented.
 
 mod commit;
 pub mod config;
@@ -99,6 +106,6 @@ pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,
     PackWritten, write_pack, write_pack_with_compression,
 };
-pub use repository::{OpenError, Repository};
+pub use repository::{InitError, InitKind, OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

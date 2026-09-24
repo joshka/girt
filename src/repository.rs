@@ -1,7 +1,11 @@
-//! Explicit-path, read-only repository opening.
+//! Repository location, opening, and creation.
+mod discover;
+mod init;
+
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+pub use init::{InitError, InitKind};
 use thiserror::Error;
 
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
@@ -127,7 +131,7 @@ impl Repository {
         let input = canonical(input)?;
         let (git_dir, inferred_worktree) = if metadata.is_file() {
             (read_gitfile(&input)?, input.parent().map(Path::to_path_buf))
-        } else if exists(&input.join(".git"))? {
+        } else if entry_exists(&input.join(".git"))? {
             let dotgit = input.join(".git");
             let git_dir = if dotgit.is_dir() {
                 canonical(&dotgit)?
@@ -465,6 +469,13 @@ fn path_bytes(source: &Path, bytes: &[u8]) -> Result<PathBuf, OpenError> {
         std::str::from_utf8(bytes)
             .map(PathBuf::from)
             .map_err(|_| unsupported(source, "non-UTF-8 path"))
+    }
+}
+fn entry_exists(path: &Path) -> Result<bool, OpenError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(io_error(path, source)),
     }
 }
 fn exists(path: &Path) -> Result<bool, OpenError> {

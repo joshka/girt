@@ -538,3 +538,24 @@ tests, 12 doctests, all-target/all-feature Clippy and docs.rs), both disposable 
 the current compiler probes, core-only compilation, warning-denying all-feature private Rustdoc, and
 Markdown checks. No new scheduling timings were collected and no Linux/Windows runtime validation
 was performed for this revision.
+
+### Repository Discovery and Initialization Completion
+
+- [x] Discovery selects the nearest candidate in canonical ancestor order, with an inclusive
+      ceiling; ordinary and bare SHA-1 initialization create an unborn `main` branch.
+      Reinitialization is refused.
+- [x] Focused unit tests cover ceilings, starts, symlink ancestry, malformed markers, exclusive
+      writes, concurrent creation, partial population failure, and preservation of unrelated files.
+- [x] `examples/init_repository.rs` demonstrates disposable creation, nested discovery, and blob
+      storage.
+- [x] Git uses generated repositories for object access, commits, reference updates, and strict
+      fsck; girt discovers Git-generated ordinary, bare, separate, and linked layouts.
+- [x] Unsupported SHA-256, reftable settings, and worktree-specific configuration fail without
+      mutation or fallback to an outer repository. Partial initialization remains available for
+      inspection.
+- [x] No benchmark is required: this increment adds small metadata setup and parent traversal
+      without a performance claim or a change to an existing processing hot path.
+- [x] Public contracts, the README, and compatibility evidence describe the supported boundaries.
+- [x] Local checks pass on macOS arm64 with Git 2.55.0 and Rust 1.98.1: `just check`, the executable
+      example, private-item Rustdoc, and Markdown lint. Linux, Windows, and actual mount-point
+      crossing remain untested for this increment.

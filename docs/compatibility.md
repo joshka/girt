@@ -1176,3 +1176,53 @@ Markdown lint. Independent core-only, HTTP-only, and SSH-only library checks als
 and Windows GNU library cross-checks with SSH passed. Windows all-feature cross-compilation was
 blocked in `aws-lc-sys` by the unavailable `x86_64-w64-mingw32-gcc`; native Windows CI remains the
 follow-up for that build. No new Linux or Windows runtime result is claimed.
+
+## Repository Discovery and Initialization
+
+`Repository::discover` searches an existing directory and its physical ancestors up to the
+filesystem root, including across mount points. `discover_with_ceiling` includes the supplied
+ancestor but never searches its parents. Both paths are canonicalized; the ceiling restricts
+candidate locations, not where a gitfile or linked-worktree backlink may lead. A `.git`, `HEAD`, or
+`objects` entry selects a candidate for the existing opener. Invalid or unsupported metadata stops
+discovery instead of falling back to an outer repository. This conservative marker policy can also
+stop at unrelated files with those names. Environment overrides, ownership checks, and Git's
+discovery configuration are not used.
+
+`Repository::init(path, InitKind)` creates ordinary or bare SHA-1 repositories with version-0
+config, files-backend refs, empty object storage, and unborn `refs/heads/main`. Ordinary
+destinations may be existing directories with unrelated files; the three discovery markers refuse
+initialization. Bare destinations must be absent, including when the existing directory is empty.
+Parents must already exist. Reinitialization is refused without altering existing metadata;
+recognized unsupported formats and layouts retain opening errors. Templates, hooks, initial commits,
+indexes, separate Git-directory creation, linked-worktree creation, branch-name options, and ambient
+configuration are outside this increment. The executable example is
+`cargo run --example init_repository`.
+
+Directory creation reserves the metadata destination, and files use exclusive creation. Competing
+initializers have one winner. The caller must exclude other writers and path replacement. A later
+failure leaves newly created directories and partial metadata for inspection; no rollback or
+power-loss durability is promised. Initialization never removes files or overwrites existing files.
+
+Independent fixtures in `tests/repositories.rs` exercise Git object access, commit creation,
+reference updates and `git fsck --strict` in both generated layouts, plus Git staging and committing
+in an ordinary worktree. Git-generated ordinary, bare, relative gitfile, and linked-worktree layouts
+are discovered from nested directories. SHA-256, reftable configuration, and worktree-specific
+configuration are rejected without mutation or outer-repository fallback. These tests derive from
+the [repository layout](https://git-scm.com/docs/gitrepository-layout) and
+[initialization](https://git-scm.com/docs/git-init) manuals and independent CLI observations, not
+Git implementation code or upstream fixtures. Existing opening compatibility evidence remains
+applicable.
+
+Unit tests cover inclusive ceilings, invalid ancestry and starts, nearest candidates, symlink
+ancestry, malformed and dangling markers, exclusive file creation, partial population failures,
+concurrent initialization, and preservation of unrelated files. No benchmark is added: this
+increment performs small metadata setup and ancestor traversal, changes no existing processing hot
+path, and makes no performance claim. Metadata reads retain the opener's unbounded allocation
+policy.
+
+Local validation on 2026-09-24 used Git 2.55.0, Rust 1.98.1, and macOS arm64. All 62 repository
+integration cases and 33 focused repository unit cases passed, as did `just check` (including all
+features), the disposable initialization example, private-item Rustdoc with warnings rejected, and
+Markdown lint with the repository's 100-column policy. This increment has not been executed on Linux
+or Windows; earlier platform results do not establish its runtime behavior there. Mount-point
+crossing follows the ancestor algorithm but was not exercised with a separately mounted filesystem.

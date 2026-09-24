@@ -558,3 +558,181 @@ fn invalid_config_output(root: &Path, path: &Path) -> std::process::Output {
         .output()
         .unwrap()
 }
+
+#[rstest]
+#[case::worktree(girt::InitKind::Worktree, b"false\n")]
+#[case::bare(girt::InitKind::Bare, b"true\n")]
+fn git_uses_girt_initialized_repository(#[case] kind: girt::InitKind, #[case] bare: &[u8]) {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("repo");
+    let repo = Repository::init(&path, kind).unwrap();
+    assert_eq!(
+        git(&path, &["rev-parse", "--is-bare-repository"], b""),
+        bare
+    );
+    assert_eq!(
+        git(&path, &["rev-parse", "--show-object-format"], b""),
+        b"sha1\n"
+    );
+    assert_eq!(
+        git(&path, &["symbolic-ref", "HEAD"], b""),
+        b"refs/heads/main\n"
+    );
+    let blob = repo
+        .loose_objects()
+        .unwrap()
+        .write_blob(b"from girt\n")
+        .unwrap();
+    assert_eq!(
+        git(&path, &["cat-file", "blob", &blob.to_string()], b""),
+        b"from girt\n"
+    );
+    let tree = git(
+        &path,
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
+    let tree = std::str::from_utf8(&tree).unwrap().trim();
+    let commit = git(&path, &["commit-tree", tree], b"initial commit\n");
+    let commit = std::str::from_utf8(&commit).unwrap().trim();
+    git(&path, &["update-ref", "HEAD", commit], b"");
+    assert_eq!(git(&path, &["show", "HEAD:file"], b""), b"from girt\n");
+    git(&path, &["fsck", "--strict"], b"");
+    let before = snapshot(&path);
+    assert!(matches!(
+        Repository::init(&path, kind),
+        Err(girt::InitError::AlreadyExists(_))
+    ));
+    assert_eq!(snapshot(&path), before);
+}
+
+#[test]
+fn git_can_add_and_commit_in_initialized_worktree() {
+    let root = tempfile::tempdir().unwrap();
+    Repository::init(root.path(), girt::InitKind::Worktree).unwrap();
+    std::fs::write(root.path().join("file"), b"worktree bytes\n").unwrap();
+    git(root.path(), &["add", "file"], b"");
+    git(
+        root.path(),
+        &["-c", "commit.gpgSign=false", "commit", "-m", "fixture"],
+        b"",
+    );
+    assert_eq!(
+        git(root.path(), &["show", "HEAD:file"], b""),
+        b"worktree bytes\n"
+    );
+    git(root.path(), &["fsck", "--strict"], b"");
+}
+
+#[rstest]
+#[case::ordinary(false)]
+#[case::bare(true)]
+fn discovers_nested_git_created_repository(#[case] bare: bool) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), bare);
+    let nested = root.path().join("one/two");
+    std::fs::create_dir_all(&nested).unwrap();
+    let expected = Repository::open(root.path()).unwrap();
+    let before = snapshot(root.path());
+    let discovered = Repository::discover_with_ceiling(&nested, root.path()).unwrap();
+    assert_eq!(discovered.git_dir(), expected.git_dir());
+    assert_eq!(discovered.worktree(), expected.worktree());
+    assert_eq!(snapshot(root.path()), before);
+}
+
+#[test]
+fn discovers_separate_metadata_outside_ceiling() {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--template=",
+            "--object-format=sha1",
+            "--separate-git-dir=metadata",
+            "work",
+        ],
+        b"",
+    );
+    let work = root.path().join("work");
+    std::fs::write(work.join(".git"), b"gitdir: ../metadata\n").unwrap();
+    std::fs::create_dir(work.join("nested")).unwrap();
+    let before = snapshot(root.path());
+    let repo = Repository::discover_with_ceiling(work.join("nested"), &work).unwrap();
+    assert_eq!(repo.git_dir(), canonical(&root.path().join("metadata")));
+    assert_eq!(snapshot(root.path()), before);
+}
+
+#[test]
+fn discovers_linked_worktree_before_parent_repository() {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), false);
+    git(
+        root.path(),
+        &[
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+        b"",
+    );
+    git(root.path(), &["worktree", "add", "--detach", "linked"], b"");
+    std::fs::create_dir(root.path().join("linked/nested")).unwrap();
+    let before = snapshot(root.path());
+    let repo = Repository::discover(root.path().join("linked/nested")).unwrap();
+    assert_eq!(
+        repo.git_dir(),
+        canonical(&root.path().join(".git/worktrees/linked"))
+    );
+    assert_eq!(repo.common_dir(), canonical(&root.path().join(".git")));
+    assert!(matches!(
+        Repository::init(root.path().join("linked"), girt::InitKind::Worktree),
+        Err(girt::InitError::AlreadyExists(_))
+    ));
+    assert_eq!(snapshot(root.path()), before);
+}
+
+#[rstest]
+#[case::sha256("sha256", None)]
+#[case::reftable("sha1", Some(("extensions.refStorage", "reftable")))]
+#[case::worktree_config("sha1", Some(("extensions.worktreeConfig", "true")))]
+fn discovery_and_initialization_reject_unsupported_without_changes(
+    #[case] format: &str,
+    #[case] extension: Option<(&str, &str)>,
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), false);
+    let inner = root.path().join("inner");
+    std::fs::create_dir(&inner).unwrap();
+    unsupported_repository(&inner, format, extension);
+    std::fs::create_dir(inner.join("nested")).unwrap();
+    let before = snapshot(root.path());
+    assert!(matches!(
+        Repository::discover(inner.join("nested")),
+        Err(OpenError::Unsupported { .. })
+    ));
+    assert!(matches!(
+        Repository::init(&inner, girt::InitKind::Worktree),
+        Err(girt::InitError::Open(OpenError::Unsupported { .. }))
+    ));
+    assert_eq!(snapshot(root.path()), before);
+}
+
+fn unsupported_repository(path: &Path, format: &str, extension: Option<(&str, &str)>) {
+    git(
+        path,
+        &[
+            "init",
+            "--template=",
+            &format!("--object-format={format}"),
+            ".",
+        ],
+        b"",
+    );
+    if let Some((key, value)) = extension {
+        git(path, &["config", key, value], b"");
+    }
+}

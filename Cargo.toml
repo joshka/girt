@@ -156,3 +156,7 @@ required-features = ["ssh"]
 name = "scheduling"
 path = "examples/scheduling/main.rs"
 required-features = ["http", "ssh"]
+
+[[example]]
+name = "init_repository"
+doc-scrape-examples = true
