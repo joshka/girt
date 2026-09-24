@@ -215,9 +215,10 @@ impl TagFields {
     }
 }
 
-/// The declared type of an annotated tag's target object.
+/// One of Git's four object kinds, also used to declare an annotated tag's target type.
 ///
-/// This declaration does not prove that the target exists or has the stated type.
+/// In a tag this declaration does not prove that the target exists or has the stated type.
+/// In a verified [`crate::Object`] it identifies the kind included in the object's identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectKind {
     /// File content.
@@ -226,7 +227,7 @@ pub enum ObjectKind {
     Tree,
     /// A recorded snapshot and its history metadata.
     Commit,
-    /// Another annotated tag; no recursive peeling is performed.
+    /// An annotated tag; no recursive peeling is performed.
     Tag,
 }
 

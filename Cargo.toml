@@ -10,6 +10,7 @@ categories = ["development-tools"]
 
 [dependencies]
 flate2 = "1"
+crc32fast = "1"
 sha1 = "0.10"
 tempfile = "3"
 thiserror = "2"
@@ -72,4 +73,12 @@ doc-scrape-examples = true
 
 [[bench]]
 name = "references"
+harness = false
+
+[[example]]
+name = "packed_repository"
+doc-scrape-examples = true
+
+[[bench]]
+name = "packs"
 harness = false

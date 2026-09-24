@@ -336,8 +336,9 @@ global configuration settings in its child process; those settings do not affect
 
 Opening checks HEAD's marker shape without resolving its reference and requires object and refs
 directories. It rejects shallow markers and alternates files, including empty ones, rather than
-pretending that loose local storage is complete. Packs may exist, but subsequent object reads only
-search loose storage and can report an object missing even when it is packed.
+pretending that local storage is complete. The repository opener does not inspect packs.
+`Repository::objects` opens bounded pack snapshots; `Repository::loose_objects` continues to search
+only loose storage.
 
 File-content snapshots before and after successful and rejected opening establish absence of file
 creation, deletion or content changes. Filesystem access times are not covered by that guarantee.
@@ -457,3 +458,65 @@ and conditionally advances it while preserving HEAD's symbolic value. Criterion 
 reads, HEAD resolution, no-reflog updates, and packed lookups over 10 and 10,000 refs; see the
 [reference baseline](benchmarks.md#reference-baseline). Reflogs, multi-ref transactions, deletion,
 reftable, object packs, graph traversal, discovery and transport remain outside this capability.
+
+## SHA-1 Pack Reading
+
+`Repository::objects(PackLimits)` returns a synchronous reader with live loose-object access and an
+owned snapshot of pack/index pairs. `Objects::read(id, ReadLimits)` returns a verified kind and
+exact payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary;
+structured parsing remains separate. Existing loose typed reads and writes retain their contracts. A
+corrupt loose copy fails without falling through to a valid packed duplicate.
+
+### Formats and Validation
+
+Only SHA-1 pack v2 and index v2 are supported, including index large-offset tables, ordinary
+objects, OFS_DELTA, and REF_DELTA. Pack v3, index v1, and unknown versions return explicit version
+errors. Reserved object types fail when read. Index binary search uses strictly ordered full IDs; an
+offset-ordered table identifies entry boundaries and OFS_DELTA bases.
+
+Opening reads all pairs within caller-supplied aggregate byte and pack-count limits. It validates
+index lengths, sorted unique IDs, exact fanout counts, large-offset references, unique in-range
+entry offsets, pack headers/counts, both SHA-1 trailers, their agreement, and every entry CRC32. An
+unpaired pack or index is an I/O error. Entry framing, exact zlib termination, declared lengths,
+delta programs, and object identities are checked on demand, including all traversed bases and
+intermediate results. Opening alone does not certify payload syntax or all object identities. The
+checks detect corruption; SHA-1 collision detection is not provided.
+
+REF_DELTA resolves only inside its own pack, including forward references. An external or missing
+base returns `MissingBase`, even if another pack or loose storage contains that identity. Iterative
+traversal detects cycles and bounds depth. Reads bound each object, each delta program, and the sum
+of all inflated and reconstructed bytes. Limits are charged before decoding/allocation. These bounds
+exclude allocator overhead, index tables, fixed decompression scratch space, and structured parsing
+performed by callers; they are not a total process-memory quota.
+
+Pack bytes and index tables are retained for the reader's lifetime. Decoded objects are not cached.
+Repacking after opening cannot invalidate the owned bytes, but new packs require reopening. Races
+while opening can return I/O errors; callers may reopen. Loose reads remain live. Trusted paths and
+ancestors are required; this API does not secure hostile concurrent filesystem mutation. Multi-pack
+indexes, bitmap/reverse indexes, alternates, partial/shallow repositories, thin packs, pack writing,
+transport, and traversal are outside this capability. Auxiliary acceleration files are ignored.
+
+### Independent Evidence
+
+The implementation uses the public
+[Git pack format specification](https://git-scm.com/docs/gitformat-pack), not Git source code.
+`src/pack/tests.rs` constructs original binary fixtures for malformed/truncated inputs, checksums,
+CRCs, offsets, ordering, fanout, large-offset tables, reserved kinds, delta instructions, forward
+references, nested deltas, missing/external bases, cycles, exact limits, and resource failures.
+Fixtures are constructed in memory; no downloaded binary fixtures are used.
+
+`tests/support/pack_git.rs` generates isolated SHA-1 bare repositories using Git `hash-object`,
+`mktree`, `commit-tree`, and `mktag`. `pack-objects --stdout --no-reuse-delta --no-reuse-object`
+with and without `--delta-base-offset` produces independent OFS_DELTA and REF_DELTA packs.
+`index-pack --index-version=2` builds indexes. `verify-pack -v` proves that actual delta entries
+exist, and their reported offsets let the fixture assert the intended encoding. After
+`prune-packed`, `tests/packs.rs` compares all object IDs, kinds, and exact payload bytes with Git
+`cat-file`. It also covers mixed storage, loose corruption precedence, absent objects, orphaned
+files, loading limits, and snapshot reads after `repack -ad` deletes the original pair.
+
+The exercised environment is Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64 (Apple M2 Max). Other
+operating systems and actual multi-gigabyte packs have not been exercised; small fixtures cover the
+64-bit offset representation. The new direct dependency `crc32fast` uses `MIT OR Apache-2.0`
+(checked in the resolved 1.5.2 package metadata); it was already transitive via flate2. A
+[Criterion baseline](benchmarks.md#pack-read-baseline) records opening, indexed misses, ordinary
+reads, and delta reconstruction. `examples/packed_repository.rs` is the runnable consumer.

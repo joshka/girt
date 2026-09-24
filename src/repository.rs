@@ -16,7 +16,8 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
 /// format versions 0 and 1 with SHA-1 objects are supported. Includes, worktree configuration,
 /// alternates, shallow repositories and other extensions are rejected explicitly. Object access
-/// remains limited to loose objects; opening does not prove that every reachable object is loose.
+/// uses [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for bounded
+/// loose/packed reads. Opening repository metadata alone does not validate object storage.
 ///
 /// Paths preserve OS bytes on Unix. On other platforms metadata paths must be UTF-8. No tilde,
 /// environment-variable or prefix interpolation is performed. Tilde and `%(...)` prefixes in
@@ -194,7 +195,7 @@ impl Repository {
     pub fn common_dir(&self) -> &Path {
         &self.common_dir
     }
-    /// Shared loose/packed object directory. Pack access is not implemented.
+    /// Shared loose/packed object directory. Use [`Self::objects`] to open packed reads.
     pub fn object_dir(&self) -> &Path {
         &self.object_dir
     }
@@ -214,6 +215,22 @@ impl Repository {
     pub fn object_format(&self) -> ObjectFormat {
         ObjectFormat::Sha1
     }
+    /// Opens a bounded snapshot of pack/index pairs alongside live loose-object reads.
+    ///
+    /// See [`crate::Objects`] for supported versions, validation timing, snapshot lifetime,
+    /// external-base policy, and filesystem assumptions. Does not create files or directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
+    /// failures, or exhausted snapshot limits. Reopen after a concurrent repack failure.
+    pub fn objects(
+        &self,
+        limits: crate::PackLimits,
+    ) -> Result<crate::Objects, crate::ObjectReadError> {
+        crate::Objects::open(&self.object_dir, limits)
+    }
+
     /// Connects to the existing loose-object API without creating directories or files.
     ///
     /// # Errors

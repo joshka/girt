@@ -1,0 +1,146 @@
+use sha1::{Digest, Sha1};
+
+use crate::{ObjectId, ObjectReadError as Error};
+
+#[derive(Debug)]
+pub(super) struct Entry {
+    pub id: ObjectId,
+    pub offset: usize,
+    pub end: usize,
+    pub crc: u32,
+}
+
+/// Identity order serves lookups; a separate offset order serves OFS_DELTA and entry boundaries.
+#[derive(Debug)]
+pub(super) struct Index {
+    pub entries: Vec<Entry>,
+    pub offsets: Vec<usize>,
+    pub pack_hash: [u8; 20],
+}
+
+impl Index {
+    pub fn parse(bytes: &[u8], pack_end: usize) -> Result<Self, Error> {
+        if bytes.len() < 8 {
+            return Err(Error::Corrupt("truncated index header"));
+        }
+        if &bytes[..4] != b"\xfftOc" {
+            return Err(Error::IndexVersion(1));
+        }
+        let version = word(bytes, 4)?;
+        if version != 2 {
+            return Err(Error::IndexVersion(version));
+        }
+        let count = word(bytes, 1028)? as usize;
+        let table_end = count
+            .checked_mul(28)
+            .and_then(|n| n.checked_add(1032))
+            .ok_or(Error::Corrupt("index length overflow"))?;
+        let trailer = bytes
+            .len()
+            .checked_sub(40)
+            .ok_or(Error::Corrupt("truncated index"))?;
+        if table_end > trailer || (trailer - table_end) % 8 != 0 {
+            return Err(Error::Corrupt("index table length"));
+        }
+        verify_hash(bytes, "index checksum")?;
+        let large_count = (trailer - table_end) / 8;
+        if large_count > count {
+            return Err(Error::Corrupt("excess large offsets"));
+        }
+        let mut used_large = vec![false; large_count];
+        let mut entries = Vec::with_capacity(count);
+        let mut fanout = [0u32; 256];
+        for position in 0..count {
+            let start = 1032 + position * 20;
+            let id = ObjectId::from_bytes(bytes[start..start + 20].try_into().unwrap());
+            if entries.last().is_some_and(|entry: &Entry| entry.id >= id) {
+                return Err(Error::Corrupt("unsorted or duplicate index identities"));
+            }
+            fanout[id.as_bytes()[0] as usize] += 1;
+            let crc = word(bytes, 1032 + count * 20 + position * 4)?;
+            let raw_offset = word(bytes, 1032 + count * 24 + position * 4)?;
+            let offset = if raw_offset & 0x8000_0000 == 0 {
+                raw_offset as u64
+            } else {
+                let slot = (raw_offset & 0x7fff_ffff) as usize;
+                let used = used_large
+                    .get_mut(slot)
+                    .ok_or(Error::Corrupt("large offset index"))?;
+                if *used {
+                    return Err(Error::Corrupt("duplicate large offset index"));
+                }
+                *used = true;
+                let start = table_end + slot * 8;
+                u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap())
+            };
+            let offset = usize::try_from(offset).map_err(|_| Error::Corrupt("offset overflow"))?;
+            if offset < 12 || offset >= pack_end {
+                return Err(Error::Corrupt("offset outside pack entries"));
+            }
+            entries.push(Entry {
+                id,
+                offset,
+                end: 0,
+                crc,
+            });
+        }
+        if used_large.contains(&false) {
+            return Err(Error::Corrupt("unused large offset"));
+        }
+        let mut cumulative = 0;
+        for (bucket, size) in fanout.into_iter().enumerate() {
+            cumulative += size;
+            if word(bytes, 8 + bucket * 4)? != cumulative {
+                return Err(Error::Corrupt("index fanout"));
+            }
+        }
+        let mut offsets: Vec<_> = (0..count).collect();
+        offsets.sort_unstable_by_key(|&position| entries[position].offset);
+        let mut next = pack_end;
+        for &position in offsets.iter().rev() {
+            let entry = &mut entries[position];
+            if entry.offset == next {
+                return Err(Error::Corrupt("duplicate pack offset"));
+            }
+            entry.end = next;
+            next = entry.offset;
+        }
+        if next != 12 {
+            return Err(Error::Corrupt("unindexed pack bytes"));
+        }
+        Ok(Self {
+            entries,
+            offsets,
+            pack_hash: bytes[trailer..trailer + 20].try_into().unwrap(),
+        })
+    }
+
+    pub fn find(&self, id: ObjectId) -> Option<usize> {
+        self.entries
+            .binary_search_by_key(&id, |entry| entry.id)
+            .ok()
+    }
+
+    pub fn at_offset(&self, offset: usize) -> Result<usize, Error> {
+        let position = self
+            .offsets
+            .binary_search_by_key(&offset, |&i| self.entries[i].offset)
+            .map_err(|_| Error::Corrupt("base offset is not an indexed entry"))?;
+        Ok(self.offsets[position])
+    }
+}
+
+pub(super) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
+    let word = bytes
+        .get(position..position + 4)
+        .ok_or(Error::Corrupt("truncated integer"))?;
+    Ok(u32::from_be_bytes(word.try_into().unwrap()))
+}
+
+pub(super) fn verify_hash(bytes: &[u8], reason: &'static str) -> Result<(), Error> {
+    let end = bytes.len().checked_sub(20).ok_or(Error::Corrupt(reason))?;
+    if Sha1::digest(&bytes[..end])[..] != bytes[end..] {
+        return Err(Error::Corrupt(reason));
+    }
+    Ok(())
+}

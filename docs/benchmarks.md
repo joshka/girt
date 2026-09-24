@@ -315,3 +315,40 @@ threshold.
 The large packed workload exposes the cost of validating and allocating the entire file on every
 lookup. These measurements establish a baseline for a future snapshot/index design; they do not
 justify adding caching before its invalidation contract is defined.
+
+## Pack Read Baseline
+
+Run `cargo bench --bench packs` with the checked-in lockfile. Criterion uses 30 samples, one-second
+warmup, and two-second measurement targets. Git fixture creation is outside timing. The shared
+`tests/support/pack_git.rs` workload builds 16 or 256 similar 35 KiB blobs plus one tree, commit,
+and annotated tag. Git produces actual OFS_DELTA entries; `verify-pack` and entry headers confirm
+the encoding. The harness records the selected delta's base/depth and pack/index sizes.
+
+Validated opening reads pack/index bytes and checks SHA-1 trailers, index structure, and entry CRCs.
+Indexed misses measure the live loose-path miss and binary search. Successful reads also include
+zlib decoding and identity verification; delta reads include base decoding, reconstruction, and both
+identities. Pack snapshots are already in memory for reads and reconstructed objects are not cached.
+Filesystem caches are warm, including repeated nonexistent loose-path lookups.
+
+The [CSV](benchmarks/pack-baseline.csv) retains median estimates and 95% confidence intervals in
+nanoseconds. The [source fingerprints](benchmarks/pack-baseline.sha256) identify the measured
+sources, fixture builder, harness, manifest, and lockfile. Verify with
+`shasum -a 256 -c docs/benchmarks/pack-baseline.sha256`. Measurements use rustc 1.98.1, Git 2.55.0,
+macOS 26.6.2 (25G83), and Apple M2 Max, with temporary files on the internal APFS SSD. The command
+was `cargo bench --bench packs > /tmp/girt-packs-bench.txt 2>&1`, run on 2026-09-23. There was no
+cache eviction, CPU pinning, or control of desktop background activity. These are initial baselines,
+without a comparison to another library or a numerical acceptance threshold.
+
+| Operation                     | 16 blobs, median (µs) | 256 blobs, median (µs) |
+| ----------------------------- | --------------------- | ---------------------- |
+| Open and validate, warm files | 52.95                 | 85.61                  |
+| Indexed absence               | 1.28                  | 1.30                   |
+| Indexed ordinary blob         | 62.09                 | 61.35                  |
+| Indexed delta reconstruction  | 100.96                | 105.71                 |
+
+The selected ordinary payloads are 35,841 and 35,842 bytes. Both selected deltas have depth one;
+their programs are 28 and 27 bytes. The corresponding pack/index sizes are 3,697/1,604 and
+19,631/8,324 bytes. The difference between input object volume and pack size reflects the
+deliberately similar fixture content. This baseline does not establish deep-chain, multi-gigabyte
+pack, random cold-storage, or highly concurrent performance. Other development checks ran during
+this sample; small differences between runs should not be treated as implementation regressions.

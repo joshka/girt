@@ -206,3 +206,25 @@ implemented. Keep these distinctions visible in the completion report.
 - macOS arm64 is exercised; Linux-only non-UTF-8 loose filename tests remain unrun. Non-Unix
   storage, noncooperating writers, crash durability, reflogs, deletion and multi-ref transactions
   are outside the supported boundary. No object-pack, history or transport capability is implied.
+
+## Pack Reading Completion
+
+- SHA-1 pack/index v2 reads expose all four object kinds and exact payloads through
+  `Repository::objects`. Loose reads take precedence; loose writing remains unchanged.
+- Original unit fixtures cover index structure, ordering/fanout, large offsets, pack/index
+  checksums, CRCs, malformed/truncated entries, zlib completion, delta instructions and base
+  references. Every traversed object's identity is verified, including intermediate bases.
+- Git-generated OFS_DELTA and REF_DELTA fixtures establish independent identity, kind, and byte
+  agreement for blobs, trees, commits, and tags. Mixed storage and post-repack reads exercise the
+  unified boundary; `examples/packed_repository.rs` prints an existing object's exact payload.
+- Snapshot bytes/count, individual payload/program bytes, cumulative decoding, and delta depth have
+  explicit limits and failure tests. Cycles and missing/external bases fail without recursive calls.
+  Opening and reading are read-only; publication/partial-write tests are inapplicable.
+- [Compatibility evidence](compatibility.md#sha-1-pack-reading) states validation timing, owned
+  snapshot lifetime, no decoded cache, supported versions, fixture provenance, and exclusions.
+- The [pack baseline](benchmarks.md#pack-read-baseline) uses Criterion on 16- and 256-blob Git
+  workloads, measuring validated opening, indexed absence, ordinary reads, and reconstruction. Reads
+  include live loose-path misses and identity verification. Pack bytes are in memory and filesystem
+  caches are warm; these are not cold-storage or large-repository claims.
+- Pack v3, index v1, external/thin bases, SHA-256, multi-pack indexes, pack writing, and history
+  traversal remain unsupported. Only macOS arm64 is exercised; no performance threshold is set.

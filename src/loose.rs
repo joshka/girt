@@ -139,6 +139,19 @@ impl LooseObjects {
         max_size: usize,
         expected_kind: &str,
     ) -> Result<Vec<u8>, Error> {
+        Ok(self.decode_raw(id, max_size, Some(expected_kind))?.data)
+    }
+
+    pub(crate) fn read_raw(&self, id: ObjectId, max_size: usize) -> Result<crate::Object, Error> {
+        self.decode_raw(id, max_size, None)
+    }
+
+    fn decode_raw(
+        &self,
+        id: ObjectId,
+        max_size: usize,
+        expected_kind: Option<&str>,
+    ) -> Result<crate::Object, Error> {
         let file = File::open(self.object_path(id))?;
         let mut encoded = decompress(file, max_size.saturating_add(32))?;
         let separator = encoded
@@ -152,9 +165,16 @@ impl LooseObjects {
             .ok_or(Error::Corrupt("invalid header"))?;
         let kind = &header[..space];
         let length = &header[space + 1..];
-        if kind != expected_kind.as_bytes() {
+        if expected_kind.is_some_and(|expected| kind != expected.as_bytes()) {
             return Err(Error::UnsupportedObjectType);
         }
+        let kind = match kind {
+            b"blob" => crate::ObjectKind::Blob,
+            b"tree" => crate::ObjectKind::Tree,
+            b"commit" => crate::ObjectKind::Commit,
+            b"tag" => crate::ObjectKind::Tag,
+            _ => return Err(Error::UnsupportedObjectType),
+        };
         let content = &encoded[separator + 1..];
         if length != content.len().to_string().as_bytes() {
             return Err(Error::Corrupt("noncanonical or mismatched length"));
@@ -162,11 +182,14 @@ impl LooseObjects {
         if content.len() > max_size {
             return Err(Error::TooLarge);
         }
-        if ObjectId::for_object(expected_kind, content) != id {
+        if ObjectId::for_object(kind.as_str(), content) != id {
             return Err(Error::Corrupt("object identity mismatch"));
         }
         encoded.drain(..separator + 1);
-        Ok(encoded)
+        Ok(crate::Object {
+            kind,
+            data: encoded,
+        })
     }
 
     /// Writes exact blob bytes and returns their SHA-1 identity.

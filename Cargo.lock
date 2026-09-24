@@ -274,6 +274,7 @@ dependencies = [
 name = "girt"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "criterion",
  "flate2",
  "rstest",
