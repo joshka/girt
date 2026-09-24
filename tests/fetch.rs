@@ -1,4 +1,6 @@
 //! Disposable Git upload-pack servers; no network, real remotes, or caller checkout mutation.
+#[path = "support/forward_delta.rs"]
+mod forward_delta;
 #[path = "support/pack_git.rs"]
 mod pack_git;
 
@@ -702,4 +704,42 @@ fn installation_honors_destination_snapshot_limits_and_allows_retry() {
         .install(&repo, PackLimits::default(), &AtomicBool::new(false))
         .unwrap();
     verify_contents(&fixture, &repo);
+}
+
+#[test]
+fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
+    let (wire, tip, pack) = forward_delta::response(1, 64);
+    let (_root, repo) = destination();
+    git(
+        repo.git_dir(),
+        &["index-pack", "--strict", "--stdin"],
+        &pack,
+    );
+    assert_eq!(
+        git(repo.git_dir(), &["cat-file", "blob", &tip.to_string()], b""),
+        64u64.to_be_bytes()
+    );
+    // Sixty-five passes visit all sixty-five entries, including already resolved entries.
+    let limits = FetchLimits {
+        max_resolution_steps: 65 * 65,
+        ..FetchLimits::default()
+    };
+    let receive = |limits| {
+        girt::fetch::receive(
+            &mut wire.as_slice(),
+            &mut std::io::sink(),
+            |_| vec![tip],
+            limits,
+            &AtomicBool::new(false),
+            |_| ControlFlow::Continue(()),
+        )
+    };
+    assert_eq!(receive(limits).unwrap().object_count(), 65);
+    assert!(matches!(
+        receive(FetchLimits {
+            max_resolution_steps: 65 * 65 - 1,
+            ..limits
+        }),
+        Err(FetchError::Limit("delta resolution steps"))
+    ));
 }

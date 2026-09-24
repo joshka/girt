@@ -9,6 +9,8 @@ use girt::fetch::{FetchLimits, receive};
 use girt::transport::TransportControl;
 use girt::{PackLimits, ReadLimits};
 
+#[path = "../tests/support/forward_delta.rs"]
+mod forward_delta;
 #[path = "../tests/support/pack_git.rs"]
 mod pack_git;
 
@@ -185,6 +187,23 @@ fn fetch(c: &mut Criterion) {
                         cancel: &cancel,
                         deadline: Some(Instant::now() + Duration::from_secs(30)),
                     },
+                    |_| ControlFlow::Continue(()),
+                )
+                .unwrap()
+            })
+        });
+    }
+    for chains in [1, 16, 128] {
+        let (wire, tip, _) = forward_delta::response(chains, 64);
+        group.throughput(Throughput::Elements((chains * 65) as u64));
+        group.bench_function(format!("forward-ref-delta-depth64-chains{chains}"), |b| {
+            b.iter(|| {
+                receive(
+                    &mut black_box(wire.as_slice()),
+                    &mut io::sink(),
+                    |_| vec![tip],
+                    FetchLimits::default(),
+                    &cancel,
                     |_| ControlFlow::Continue(()),
                 )
                 .unwrap()
