@@ -27,15 +27,17 @@ jobs:
           git --version
           uname -a
       - run: cargo +stable test --locked --all-features
-      - name: Isolated library features
-        run: |
-          cargo +stable check --locked --lib --no-default-features
-          cargo +stable check --locked --lib --no-default-features --features http
-          cargo +stable check --locked --lib --no-default-features --features ssh
+      - name: Core-only library
+        run: cargo +stable check --locked --lib --no-default-features
+      - name: HTTP-only library
+        run: cargo +stable check --locked --lib --no-default-features --features http
+      - name: SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo +stable run --locked --example fetch_local
       - run: cargo +stable run --locked --example push_local
       - run: cargo +stable run --locked --features http --example http_local
+      - run: cargo +stable run --locked --features ssh --example ssh_local
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -54,11 +56,12 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustc +stable -Vv
           git --version
-      - name: Isolated library features
-        run: |
-          cargo +stable check --locked --lib --no-default-features
-          cargo +stable check --locked --lib --no-default-features --features http
-          cargo +stable check --locked --lib --no-default-features --features ssh
+      - name: Core-only library
+        run: cargo +stable check --locked --lib --no-default-features
+      - name: HTTP-only library
+        run: cargo +stable check --locked --lib --no-default-features --features http
+      - name: SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo +stable test --locked --lib
       - run: cargo +stable test --locked --doc
