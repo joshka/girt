@@ -53,7 +53,10 @@ impl KnownHistory {
             check_cancelled(cancel)?;
             let mut read = limits.known_read;
             read.max_object_bytes = read.max_object_bytes.min(bytes);
-            let object = store.read(id, read)?.ok_or(Error::Missing(id))?;
+            let object = store
+                .read(id, read)
+                .map_err(|source| Error::LocalRead { id, source })?
+                .ok_or(Error::Missing(id))?;
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));
             }
@@ -75,7 +78,8 @@ impl KnownHistory {
             match object.kind() {
                 ObjectKind::Blob => {}
                 ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())?;
+                    let commit = Commit::parse(object.data())
+                        .map_err(|source| Error::Commit { id, source })?;
                     edge(commit.fields().tree, ObjectKind::Tree)?;
                     for &parent in &commit.fields().parents {
                         edge(parent, ObjectKind::Commit)?;
@@ -85,8 +89,10 @@ impl KnownHistory {
                     }
                 }
                 ObjectKind::Tree => {
-                    let tree = Tree::parse(object.data())?;
-                    tree.validate()?;
+                    let tree =
+                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
+                    tree.validate()
+                        .map_err(|source| Error::Tree { id, source })?;
                     for entry in tree.entries() {
                         match entry.mode {
                             EntryMode::Gitlink => {}
@@ -96,7 +102,8 @@ impl KnownHistory {
                     }
                 }
                 ObjectKind::Tag => {
-                    let tag = Tag::parse(object.data())?;
+                    let tag =
+                        Tag::parse(object.data()).map_err(|source| Error::Tag { id, source })?;
                     edge(tag.fields().target, tag.fields().target_kind)?;
                 }
             }
@@ -243,6 +250,22 @@ mod tests {
                 &AtomicBool::new(false)
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn corrupt_local_dependency_reports_identity_and_storage_cause() {
+        let (root, objects, commit, blob) = graph();
+        damage(root.path(), blob, true);
+        let error = KnownHistory::new(
+            &objects,
+            &[commit],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::LocalRead { id, source: crate::ObjectReadError::Loose(_) } if id == blob)
         );
     }
 

@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::pack::Pack;
 use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
@@ -134,7 +134,8 @@ pub struct Objects {
 impl Objects {
     pub(crate) fn open(directory: &Path, limits: PackLimits) -> Result<Self, ObjectReadError> {
         let loose = LooseObjects::new(directory, ObjectFormat::Sha1)?;
-        let entries = match fs::read_dir(directory.join("pack")) {
+        let pack_directory = directory.join("pack");
+        let entries = match fs::read_dir(&pack_directory) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self {
@@ -142,11 +143,21 @@ impl Objects {
                     packs: vec![],
                 });
             }
-            Err(error) => return Err(error.into()),
+            Err(source) => {
+                return Err(ObjectReadError::Path {
+                    path: pack_directory,
+                    source,
+                });
+            }
         };
         let mut paths = Vec::new();
         for entry in entries {
-            let path = entry?.path();
+            let path = entry
+                .map_err(|source| ObjectReadError::Path {
+                    path: pack_directory.clone(),
+                    source,
+                })?
+                .path();
             if path.extension().is_some_and(|extension| extension == "idx") {
                 if paths.len() == limits.max_packs {
                     return Err(ObjectReadError::Limit("pack count"));
@@ -160,7 +171,13 @@ impl Objects {
         for path in paths {
             let index = read_bounded(&path, &mut remaining)?;
             let data = read_bounded(&path.with_extension("pack"), &mut remaining)?;
-            packs.push(Pack::open(&index, data)?);
+            packs.push(Pack::open(&index, data).map_err(|source| {
+                ObjectReadError::PackArtifacts {
+                    pack: path.with_extension("pack"),
+                    index: path,
+                    source: Box::new(source),
+                }
+            })?);
         }
         Ok(Self { loose, packs })
     }
@@ -196,13 +213,18 @@ impl Objects {
 }
 
 fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Vec<u8>, ObjectReadError> {
-    let file = File::open(path)?;
-    if file.metadata()?.len() > *remaining as u64 {
+    let at_path = |source| ObjectReadError::Path {
+        path: path.to_owned(),
+        source,
+    };
+    let file = File::open(path).map_err(at_path)?;
+    if file.metadata().map_err(at_path)?.len() > *remaining as u64 {
         return Err(ObjectReadError::Limit("pack snapshot bytes"));
     }
     let mut bytes = Vec::new();
     file.take((*remaining as u64).saturating_add(1))
-        .read_to_end(&mut bytes)?;
+        .read_to_end(&mut bytes)
+        .map_err(at_path)?;
     if bytes.len() > *remaining {
         return Err(ObjectReadError::Limit("pack snapshot bytes"));
     }
@@ -213,9 +235,26 @@ fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Vec<u8>, ObjectRea
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectReadError {
-    /// Filesystem access failed, including a missing pack paired with an index.
-    #[error("object storage I/O: {0}")]
-    Io(#[from] io::Error),
+    /// Filesystem access failed at this artifact or directory.
+    #[error("object storage at {path}: {source}")]
+    Path {
+        /// Artifact or directory being accessed.
+        path: PathBuf,
+        /// Concrete filesystem failure.
+        #[source]
+        source: io::Error,
+    },
+    /// Validation of an index/pack pair failed during snapshot opening.
+    #[error("object storage pair {index} / {pack}: {source}")]
+    PackArtifacts {
+        /// Index identifying the pair.
+        index: PathBuf,
+        /// Pack paired with the index.
+        pack: PathBuf,
+        /// Concrete validation failure.
+        #[source]
+        source: Box<ObjectReadError>,
+    },
     /// The existing loose reader rejected the object; preserves its concrete cause.
     #[error("loose object: {0}")]
     Loose(#[from] crate::Error),

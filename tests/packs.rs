@@ -128,7 +128,7 @@ fn missing_pack_is_storage_failure_not_object_absence() {
     fs::remove_file(fixture.index_path.with_extension("pack")).unwrap();
     assert!(matches!(
         fixture.repo.objects(PackLimits::default()),
-        Err(ObjectReadError::Io(_))
+        Err(ObjectReadError::Path { path, source }) if path == fixture.repo.object_dir().join("pack").join(fixture.index_path.file_name().unwrap()).with_extension("pack") && source.kind() == std::io::ErrorKind::NotFound
     ));
 }
 
@@ -289,4 +289,24 @@ fn git_reads_shifted_binary_deltas() {
         girt::PackCompression::Delta(girt::DeltaOptions::default()),
         true,
     );
+}
+
+#[test]
+fn corrupt_snapshot_identifies_both_artifacts_and_preserves_cause() {
+    let fixture = Fixture::new(true, 4);
+    let expected_index = fs::canonicalize(&fixture.index_path).unwrap();
+    fs::remove_file(&fixture.index_path).unwrap();
+    fs::write(&fixture.index_path, b"broken").unwrap();
+    let error = fixture.repo.objects(PackLimits::default()).unwrap_err();
+    let ObjectReadError::PackArtifacts {
+        index,
+        pack,
+        source,
+    } = error
+    else {
+        panic!("expected artifact context: {error}");
+    };
+    assert_eq!(index, expected_index);
+    assert_eq!(pack, expected_index.with_extension("pack"));
+    assert!(matches!(*source, ObjectReadError::Corrupt(_)));
 }

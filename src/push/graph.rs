@@ -39,7 +39,10 @@ impl Graph {
             read.max_object_bytes = read.max_object_bytes.min(
                 usize::try_from(bytes.min(limits.pack.max_object_bytes)).unwrap_or(usize::MAX),
             );
-            let object = store.read(id, read)?.ok_or(Error::Missing(id))?;
+            let object = store
+                .read(id, read)
+                .map_err(|source| Error::Read { id, source })?
+                .ok_or(Error::Missing(id))?;
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));
             }
@@ -60,7 +63,8 @@ impl Graph {
             match object.kind() {
                 ObjectKind::Blob => {}
                 ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())?;
+                    let commit = Commit::parse(object.data())
+                        .map_err(|source| Error::Commit { id, source })?;
                     edge(commit.fields().tree, ObjectKind::Tree)?;
                     for &parent in &commit.fields().parents {
                         edge(parent, ObjectKind::Commit)?;
@@ -68,8 +72,10 @@ impl Graph {
                     graph.parents.insert(id, commit.fields().parents.clone());
                 }
                 ObjectKind::Tree => {
-                    let tree = Tree::parse(object.data())?;
-                    tree.validate()?;
+                    let tree =
+                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
+                    tree.validate()
+                        .map_err(|source| Error::Tree { id, source })?;
                     for entry in tree.entries() {
                         match entry.mode {
                             EntryMode::Gitlink => {}
@@ -79,7 +85,8 @@ impl Graph {
                     }
                 }
                 ObjectKind::Tag => {
-                    let tag = Tag::parse(object.data())?;
+                    let tag =
+                        Tag::parse(object.data()).map_err(|source| Error::Tag { id, source })?;
                     edge(tag.fields().target, tag.fields().target_kind)?;
                 }
             }
@@ -146,21 +153,28 @@ impl Graph {
             match object.kind() {
                 ObjectKind::Blob => {}
                 ObjectKind::Commit => {
-                    let commit = Commit::parse(object.data())?;
+                    let commit = Commit::parse(object.data())
+                        .map_err(|source| Error::Commit { id, source })?;
                     edge(commit.fields().tree)?;
                     for &parent in &commit.fields().parents {
                         edge(parent)?;
                     }
                 }
                 ObjectKind::Tree => {
-                    let tree = Tree::parse(object.data())?;
+                    let tree =
+                        Tree::parse(object.data()).map_err(|source| Error::Tree { id, source })?;
                     for entry in tree.entries() {
                         if entry.mode != EntryMode::Gitlink {
                             edge(entry.id)?;
                         }
                     }
                 }
-                ObjectKind::Tag => edge(Tag::parse(object.data())?.fields().target)?,
+                ObjectKind::Tag => edge(
+                    Tag::parse(object.data())
+                        .map_err(|source| Error::Tag { id, source })?
+                        .fields()
+                        .target,
+                )?,
             }
         }
         for id in seen {

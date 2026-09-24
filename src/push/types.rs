@@ -206,20 +206,44 @@ pub enum PushFailure {
     #[error("wrong reachable object kind for {0}")]
     Kind(ObjectId),
     /// Bounded object storage read failed.
-    #[error("push object read: {0}")]
-    Read(#[from] crate::ObjectReadError),
+    #[error("push object {id}: {source}")]
+    Read {
+        /// Reachable object being read.
+        id: ObjectId,
+        /// Concrete storage failure.
+        #[source]
+        source: crate::ObjectReadError,
+    },
     /// Pack construction failed before sending commands.
     #[error("push pack: {0}")]
     Pack(#[from] crate::PackWriteError),
     /// Reachable commit payload invalid or unsupported.
-    #[error("push commit: {0}")]
-    Commit(#[from] crate::CommitError),
+    #[error("push commit {id}: {source}")]
+    Commit {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::CommitError,
+    },
     /// Reachable tree payload invalid or unsupported.
-    #[error("push tree: {0}")]
-    Tree(#[from] crate::TreeError),
+    #[error("push tree {id}: {source}")]
+    Tree {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::TreeError,
+    },
     /// Reachable tag payload invalid or unsupported.
-    #[error("push tag: {0}")]
-    Tag(#[from] crate::TagError),
+    #[error("push tag {id}: {source}")]
+    Tag {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::TagError,
+    },
     /// Local receive-pack exited unsuccessfully, even if some results were acknowledged.
     #[error("local receive-pack exited unsuccessfully: {0}")]
     Process(std::process::ExitStatus),

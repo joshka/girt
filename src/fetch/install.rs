@@ -154,13 +154,18 @@ impl ReceivedFetch {
             objects: self.objects,
         };
         if !self.dependencies.is_empty() {
-            let objects = repository.objects(snapshot_limits)?;
+            let objects = repository
+                .objects(snapshot_limits)
+                .map_err(FetchError::Destination)?;
             let mut bytes = self.limits.max_known_bytes;
             for &id in &self.dependencies {
                 check_cancelled(cancel)?;
                 let mut read = self.limits.known_read;
                 read.max_object_bytes = read.max_object_bytes.min(bytes);
-                let object = objects.read(id, read)?.ok_or(FetchError::Missing(id))?;
+                let object = objects
+                    .read(id, read)
+                    .map_err(|source| FetchError::LocalRead { id, source })?
+                    .ok_or(FetchError::Missing(id))?;
                 bytes = bytes
                     .checked_sub(object.data().len())
                     .ok_or(FetchError::Limit("known bytes"))?;

@@ -747,10 +747,11 @@ fn interrupted_read_during_report_is_uncertain() {
 fn malformed_reachable_payload_is_rejected(#[case] kind: ObjectKind) {
     let f = Fixture::new();
     let id = raw_object(&f, kind, b"invalid");
-    assert!(
-        f.prepare(vec![tag_command(id)], PushLimits::default())
-            .is_err()
-    );
+    let error = f
+        .prepare(vec![tag_command(id)], PushLimits::default())
+        .unwrap_err();
+    assert!(error.to_string().contains(&id.to_string()));
+    assert!(std::error::Error::source(&error).is_some());
 }
 fn raw_object(f: &Fixture, kind: ObjectKind, data: &[u8]) -> ObjectId {
     let id = ObjectId::for_object(kind.as_str(), data);

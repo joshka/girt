@@ -153,6 +153,18 @@ pub enum FetchError {
     /// Pack framing, checksum, delta reconstruction, or storage validation failed.
     #[error("received pack: {0}")]
     Pack(#[from] crate::ObjectReadError),
+    /// Reopening the destination failed before dependency checks or publication.
+    #[error("destination object snapshot: {0}")]
+    Destination(#[source] crate::ObjectReadError),
+    /// A local dependency failed during history preparation or installation rechecking.
+    #[error("local fetch dependency {id}: {source}")]
+    LocalRead {
+        /// Local object being read.
+        id: ObjectId,
+        /// Concrete storage failure.
+        #[source]
+        source: crate::ObjectReadError,
+    },
     /// Index encoding failed.
     #[error("received index: {0}")]
     Index(#[from] crate::PackWriteError),
@@ -163,14 +175,32 @@ pub enum FetchError {
     #[error("reachable object {0} has the wrong kind")]
     Kind(ObjectId),
     /// Reachable commit syntax is unsupported or invalid.
-    #[error("reachable commit: {0}")]
-    Commit(#[from] crate::CommitError),
+    #[error("reachable commit {id}: {source}")]
+    Commit {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::CommitError,
+    },
     /// Reachable tree syntax or entries are invalid.
-    #[error("reachable tree: {0}")]
-    Tree(#[from] crate::TreeError),
+    #[error("reachable tree {id}: {source}")]
+    Tree {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::TreeError,
+    },
     /// Reachable tag syntax is unsupported or invalid.
-    #[error("reachable tag: {0}")]
-    Tag(#[from] crate::TagError),
+    #[error("reachable tag {id}: {source}")]
+    Tag {
+        /// Object whose payload failed validation.
+        id: ObjectId,
+        /// Concrete payload validation failure.
+        #[source]
+        source: crate::TagError,
+    },
     /// A local upload-pack exited unsuccessfully after its protocol response.
     #[error("local upload-pack exited unsuccessfully: {0}")]
     Process(std::process::ExitStatus),

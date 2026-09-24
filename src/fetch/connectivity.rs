@@ -59,15 +59,18 @@ pub(super) fn validate_with_known(
         match object.kind() {
             ObjectKind::Blob => {}
             ObjectKind::Commit => {
-                let commit = Commit::parse(object.data())?;
+                let commit = Commit::parse(object.data())
+                    .map_err(|source| FetchError::Commit { id, source })?;
                 edge(commit.fields().tree, ObjectKind::Tree)?;
                 for &parent in &commit.fields().parents {
                     edge(parent, ObjectKind::Commit)?;
                 }
             }
             ObjectKind::Tree => {
-                let tree = Tree::parse(object.data())?;
-                tree.validate()?;
+                let tree =
+                    Tree::parse(object.data()).map_err(|source| FetchError::Tree { id, source })?;
+                tree.validate()
+                    .map_err(|source| FetchError::Tree { id, source })?;
                 for entry in tree.entries() {
                     match entry.mode {
                         EntryMode::Gitlink => {}
@@ -77,7 +80,8 @@ pub(super) fn validate_with_known(
                 }
             }
             ObjectKind::Tag => {
-                let tag = Tag::parse(object.data())?;
+                let tag =
+                    Tag::parse(object.data()).map_err(|source| FetchError::Tag { id, source })?;
                 edge(tag.fields().target, tag.fields().target_kind)?;
             }
         }
@@ -219,14 +223,11 @@ mod tests {
     #[case::commit(ObjectKind::Commit)]
     #[case::tag(ObjectKind::Tag)]
     fn rejects_malformed_reachable_payload(#[case] kind: ObjectKind) {
-        assert!(
-            validate_root(
-                object(kind, b"invalid".to_vec()),
-                vec![],
-                FetchLimits::default()
-            )
-            .is_err()
-        );
+        let root = object(kind, b"invalid".to_vec());
+        let id = root.id();
+        let error = validate_root(root, vec![], FetchLimits::default()).unwrap_err();
+        assert!(error.to_string().contains(&id.to_string()));
+        assert!(std::error::Error::source(&error).is_some());
     }
     #[test]
     fn combined_graph_records_only_used_local_dependencies() {
