@@ -119,7 +119,7 @@ impl ReceivedFetch {
     /// deletion/repacking by other tools can still make opening fail and requires retry. The
     /// object directory and ancestors must be trusted.
     ///
-    /// Before creating artifacts, reopens the destination with [`crate::PackLimits::default`] and
+    /// Before creating artifacts, reopens the destination under `snapshot_limits` and
     /// identity-checks every local object used for connectivity, under the receive call's local
     /// byte/count and per-read bounds. This also applies to a known-only result with no pack.
     /// Objects must remain available through subsequent reference publication; GC coordination
@@ -145,6 +145,7 @@ impl ReceivedFetch {
     pub fn install(
         &self,
         repository: &Repository,
+        snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchInstalled, FetchError> {
         check_cancelled(cancel)?;
@@ -153,7 +154,7 @@ impl ReceivedFetch {
             objects: self.objects,
         };
         if !self.dependencies.is_empty() {
-            let objects = repository.objects(crate::PackLimits::default())?;
+            let objects = repository.objects(snapshot_limits)?;
             let mut bytes = self.limits.max_known_bytes;
             for &id in &self.dependencies {
                 check_cancelled(cancel)?;

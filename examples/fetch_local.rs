@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         |_| ControlFlow::Continue(()),
     )?;
-    let result = received.install(&destination, &cancel)?;
+    let result = received.install(&destination, girt::PackLimits::default(), &cancel)?;
     // Updating a ref is a separate, conditional operation, explicitly without a reflog.
     destination.references()?.update_without_reflog(
         &branch,
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |_| ControlFlow::Continue(()),
     )?;
     // Recheck known dependencies in the destination even when no pack was needed.
-    repeated.install(&destination, &cancel)?;
+    repeated.install(&destination, girt::PackLimits::default(), &cancel)?;
     assert_eq!(repeated.pack_bytes(), 0);
     println!(
         "Repeated fetch: {} objects, {} pack bytes",

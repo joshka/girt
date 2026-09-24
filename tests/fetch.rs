@@ -73,7 +73,9 @@ fn imports_server_deltas_and_all_object_kinds(#[case] ofs: bool) {
     let (root, repo) = destination();
     assert!(fixture.index_path.exists());
     let received = fetch(fixture.root.path());
-    let installed = received.install(&repo, &AtomicBool::new(false)).unwrap();
+    let installed = received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let index = repo
         .object_dir()
         .join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));
@@ -128,7 +130,9 @@ fn empty_repository_transfers_nothing() {
     let (source, _) = destination();
     let (_root, repo) = destination();
     let received = fetch(source.path());
-    let installed = received.install(&repo, &AtomicBool::new(false)).unwrap();
+    let installed = received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     assert_eq!(installed.objects, 0);
     assert!(installed.checksum.is_none());
 }
@@ -169,7 +173,9 @@ fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
         |_| ControlFlow::Continue(()),
     );
     let received = received.unwrap();
-    received.install(&repo, &AtomicBool::new(false)).unwrap();
+    received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let tag = fixture.records.last().unwrap().0;
     assert_eq!(
         repo.objects(PackLimits::default())
@@ -186,11 +192,13 @@ fn repeated_and_incremental_fetches_allow_conditional_updates() {
     let fixture = Fixture::new(true, 4);
     let (root, repo) = destination();
     let first = fetch(fixture.root.path());
-    let installed = first.install(&repo, &AtomicBool::new(false)).unwrap();
+    let installed = first
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let repeated = fetch(fixture.root.path());
     assert_eq!(
         repeated
-            .install(&repo, &AtomicBool::new(false))
+            .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
             .unwrap()
             .checksum,
         installed.checksum
@@ -225,7 +233,7 @@ fn repeated_and_incremental_fetches_allow_conditional_updates() {
         b"",
     );
     fetch(fixture.root.path())
-        .install(&repo, &AtomicBool::new(false))
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
         .unwrap();
     let updated = refs.update_without_reflog(
         &branch,
@@ -253,7 +261,9 @@ fn concurrent_ref_change_fails_only_the_callers_conditional_update() {
     let refs = repo.references().unwrap();
     refs.update_without_reflog(&branch, Target::Direct(other), Expected::Absent)
         .unwrap();
-    received.install(&repo, &AtomicBool::new(false)).unwrap();
+    received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     assert!(
         refs.update_without_reflog(
             &branch,
@@ -282,7 +292,9 @@ fn existing_snapshots_and_concurrent_openers_see_complete_pairs() {
                 }
             }
         });
-        received.install(&repo, &AtomicBool::new(false)).unwrap();
+        received
+            .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
         done.store(true, Ordering::Release);
         reader.join().unwrap();
     });
@@ -299,8 +311,14 @@ fn concurrent_publishers_reuse_identical_artifacts() {
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     let results = std::thread::scope(|scope| {
-        let first = scope.spawn(|| received.install(&repo, &AtomicBool::new(false)).unwrap());
-        let second = received.install(&repo, &AtomicBool::new(false)).unwrap();
+        let first = scope.spawn(|| {
+            received
+                .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+                .unwrap()
+        });
+        let second = received
+            .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
         (first.join().unwrap(), second)
     });
     assert_eq!(results.0.checksum, results.1.checksum);
@@ -317,7 +335,7 @@ fn installation_failure_preserves_existing_objects() {
     fs::write(repo.object_dir().join("pack"), b"blocking file").unwrap();
     let received = fetch(fixture.root.path());
     assert!(matches!(
-        received.install(&repo, &AtomicBool::new(false)),
+        received.install(&repo, girt::PackLimits::default(), &AtomicBool::new(false)),
         Err(FetchError::Io(_))
     ));
     assert_eq!(loose.read_blob(id, 100).unwrap(), b"keep me");
@@ -333,7 +351,7 @@ fn cancelled_install_has_no_side_effects() {
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     assert!(matches!(
-        received.install(&repo, &AtomicBool::new(true)),
+        received.install(&repo, girt::PackLimits::default(), &AtomicBool::new(true)),
         Err(FetchError::Cancelled)
     ));
     assert_eq!(
@@ -349,13 +367,15 @@ fn conflicting_artifacts_are_never_overwritten() {
     let fixture = Fixture::new(true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
-    let installed = received.install(&repo, &AtomicBool::new(false)).unwrap();
+    let installed = received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let path = repo
         .object_dir()
         .join(format!("pack/pack-{}.pack", installed.checksum.unwrap()));
     fs::write(&path, b"existing damage").unwrap();
     assert!(matches!(
-        received.install(&repo, &AtomicBool::new(false)),
+        received.install(&repo, girt::PackLimits::default(), &AtomicBool::new(false)),
         Err(FetchError::Existing(_))
     ));
     assert_eq!(fs::read(path).unwrap(), b"existing damage");
@@ -369,14 +389,14 @@ fn retries_after_index_publication_failure() {
     // Obtain the deterministic basename in a separate disposable destination.
     let (_other_root, other) = destination();
     let checksum = received
-        .install(&other, &AtomicBool::new(false))
+        .install(&other, girt::PackLimits::default(), &AtomicBool::new(false))
         .unwrap()
         .checksum
         .unwrap();
     let index = repo.object_dir().join(format!("pack/pack-{checksum}.idx"));
     fs::write(&index, b"conflicting index").unwrap();
     assert!(matches!(
-        received.install(&repo, &AtomicBool::new(false)),
+        received.install(&repo, girt::PackLimits::default(), &AtomicBool::new(false)),
         Err(FetchError::Existing(_))
     ));
     assert_eq!(fs::read(&index).unwrap(), b"conflicting index");
@@ -396,7 +416,9 @@ fn retries_after_index_publication_failure() {
             .unwrap(),
         None
     );
-    received.install(&repo, &AtomicBool::new(false)).unwrap();
+    received
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     verify_contents(&fixture, &repo);
     assert_eq!(
         fs::read_dir(repo.object_dir().join("pack"))
@@ -462,20 +484,25 @@ fn negotiated_initial_noop_and_incremental_preserve_connectivity() {
     let fixture = Fixture::new(true, 16);
     let (_root, repo) = destination();
     let initial = negotiated(fixture.root.path(), &girt::fetch::KnownHistory::default());
-    initial.install(&repo, &AtomicBool::new(false)).unwrap();
+    initial
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let known = known(&repo, initial.wants());
     let noop = negotiated(fixture.root.path(), &known);
     assert_eq!(noop.object_count(), 0);
     assert_eq!(noop.pack_bytes(), 0);
     assert_eq!(noop.wants(), initial.wants());
-    noop.install(&repo, &AtomicBool::new(false)).unwrap();
+    noop.install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     let next = child(&fixture, &[main_id(&fixture)], b"incremental\n");
     set_main(&fixture, next);
     let full = fetch(fixture.root.path());
     let incremental = negotiated(fixture.root.path(), &known);
     assert_eq!(incremental.object_count(), 1);
     assert!(incremental.pack_bytes() < full.pack_bytes());
-    incremental.install(&repo, &AtomicBool::new(false)).unwrap();
+    incremental
+        .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     verify_contents(&fixture, &repo);
     git(
         repo.git_dir(),
@@ -513,7 +540,11 @@ fn negotiated_shared_history_and_merge(#[case] merge: bool) {
     assert!(received.object_count() < full.object_count());
     assert!(received.pack_bytes() < full.pack_bytes());
     received
-        .install(&fixture.repo, &AtomicBool::new(false))
+        .install(
+            &fixture.repo,
+            girt::PackLimits::default(),
+            &AtomicBool::new(false),
+        )
         .unwrap();
     git(
         fixture.repo.git_dir(),
@@ -539,7 +570,9 @@ fn disconnected_haves_fall_back_to_complete_transfer() {
     let full = fetch(fixture.root.path());
     let received = negotiated(fixture.root.path(), &known);
     assert_eq!(received.object_count(), full.object_count());
-    received.install(&local, &AtomicBool::new(false)).unwrap();
+    received
+        .install(&local, girt::PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
     verify_contents(&fixture, &local);
 }
 
@@ -564,7 +597,11 @@ fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool)
     let id = blob.to_string();
     let path = local.object_dir().join(&id[..2]).join(&id[2..]);
     damage(&path, corrupt);
-    assert!(received.install(&local, &AtomicBool::new(false)).is_err());
+    assert!(
+        received
+            .install(&local, girt::PackLimits::default(), &AtomicBool::new(false))
+            .is_err()
+    );
     assert_eq!(
         fs::read_dir(local.object_dir().join("pack"))
             .unwrap()
@@ -634,6 +671,35 @@ fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
     assert_eq!(received.object_count(), fixture.records.len());
     assert!(received.wants().contains(&tag));
     received
-        .install(&fixture.repo, &AtomicBool::new(false))
+        .install(
+            &fixture.repo,
+            girt::PackLimits::default(),
+            &AtomicBool::new(false),
+        )
         .unwrap();
+}
+
+#[test]
+fn installation_honors_destination_snapshot_limits_and_allows_retry() {
+    let fixture = Fixture::new(true, 4);
+    let (_root, repo) = destination();
+    let initial = fetch(fixture.root.path());
+    initial
+        .install(&repo, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let known = known(&repo, initial.wants());
+    let received = negotiated(fixture.root.path(), &known);
+    let too_small = PackLimits {
+        max_packs: 0,
+        ..PackLimits::default()
+    };
+    assert!(
+        received
+            .install(&repo, too_small, &AtomicBool::new(false))
+            .is_err()
+    );
+    received
+        .install(&repo, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    verify_contents(&fixture, &repo);
 }

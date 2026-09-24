@@ -157,7 +157,9 @@ fn real_git_full_incremental_and_known_only_fetch() {
         .unwrap()
     });
     let (_root, dest) = destination();
-    let installed = received.install(&dest, &cancel).unwrap();
+    let installed = received
+        .install(&dest, girt::PackLimits::default(), &cancel)
+        .unwrap();
     let index = dest
         .object_dir()
         .join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));
@@ -228,11 +230,11 @@ fn real_git_full_incremental_and_known_only_fetch() {
     // Owning the negotiation snapshot never exempts installation from checking local dependencies.
     let (_missing_root, missing) = destination();
     assert!(matches!(
-        noop.install(&missing, &cancel),
+        noop.install(&missing, girt::PackLimits::default(), &cancel),
         Err(FetchError::Missing(_))
     ));
     assert!(matches!(
-        incremental.install(&missing, &cancel),
+        incremental.install(&missing, girt::PackLimits::default(), &cancel),
         Err(FetchError::Missing(_))
     ));
     assert!(
@@ -244,9 +246,12 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .next()
             .is_some()
     );
-    noop.install(&dest, &cancel).unwrap();
+    noop.install(&dest, girt::PackLimits::default(), &cancel)
+        .unwrap();
     assert_eq!(incremental.object_count(), 1);
-    incremental.install(&dest, &cancel).unwrap();
+    incremental
+        .install(&dest, girt::PackLimits::default(), &cancel)
+        .unwrap();
     assert!(
         dest.objects(PackLimits::default())
             .unwrap()

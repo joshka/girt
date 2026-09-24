@@ -128,7 +128,11 @@ mod supported {
         })?;
         assert_eq!(validated.pack_bytes(), 0);
         // Installation is an explicit blocking step outside the executor; it rechecks dependencies.
-        validated.install(&source_repo, &validation_cancel)?;
+        validated.install(
+            &source_repo,
+            girt::PackLimits::default(),
+            &validation_cancel,
+        )?;
 
         println!("Pushed and fetched {id} through disposable SSH");
         Ok(())
