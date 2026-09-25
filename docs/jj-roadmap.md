@@ -66,7 +66,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
-| R16 | Object-store refresh and concurrent publication             | R15, R11                        | Ready for acceptance | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
+| R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Planned              | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics)                                                                                                                    |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Planned              | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned              | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
@@ -330,6 +330,8 @@ primary/alternate publication and GC behavior, one-attempt recovery, determinist
 and generation resource costs. Executable `60b52cabfca3cac916c642cd250711b8bec8332c` passes local
 `just check` and scoped native run
 [36166628885](https://github.com/joshka/girt/actions/runs/36166628885) on Ubuntu 22.04/24.04, macOS
-14 and Windows Server 2022. R16 is ready for coordinator acceptance. R15's measurement limits and
-C02's tracing, malformed-alternate policy and platform owners remain unchanged. Next remains R37,
-R38, R40, then R17; no successor is dispatched.
+14 and Windows Server 2022. The coordinator accepts R16 using evidence child
+`c07d9c3d2ae708c62e89f76cb95df78a5e1b0e85`. Acceptance preserves bounded one-attempt refresh,
+immutable pinned artifacts and aggregate resource limits. R15's measurement limits and C02's
+tracing, malformed-alternate policy and platform owners remain unchanged. Next remains R37, R38,
+R40, then R17; no successor is dispatched.
