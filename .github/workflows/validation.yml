@@ -44,7 +44,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    # Exercise portable units; Unix reference storage remains unsupported.
+    # Portable integrations are explicit; reference and process adapters remain unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -63,5 +63,12 @@ jobs:
       - name: SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
-      - run: cargo +stable test --locked --lib
-      - run: cargo +stable test --locked --doc
+      - run: cargo +stable test --locked --all-features --lib
+      - run: cargo +stable test --locked --all-features --doc
+      - name: Portable Git interoperability
+        run: >-
+          cargo +stable test --locked --no-default-features
+          --test blobs --test trees --test commits --test tags --test packs
+          --test history --test repositories --test remotes --test tree_compare
+      - name: Portable HTTP runtime
+        run: cargo +stable test --locked --no-default-features --features http --test http_portable

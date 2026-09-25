@@ -66,7 +66,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "CONTENT_LENGTH": str(size),
             "REMOTE_USER": "fixture",
         }
-        result = subprocess.run(["git", "http-backend"], input=request, capture_output=True, env=env, check=True)
+        # Windows process startup needs SystemRoot; retain only these OS locations, not Git overrides.
+        for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+            if key in os.environ:
+                env[key] = os.environ[key]
+        result = subprocess.run(["git", "http-backend"], input=request, capture_output=True,
+                                env=env, check=True, timeout=15)
         headers, body = result.stdout.split(b"\r\n\r\n", 1)
         status = 200
         fields = []

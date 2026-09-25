@@ -19,7 +19,7 @@ impl Server {
         tls: Option<(&Path, &Path)>,
     ) -> Self {
         let root = tempfile::tempdir().unwrap();
-        let mut command = Command::new("python3");
+        let mut command = Command::new(if cfg!(windows) { "python" } else { "python3" });
         command
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
