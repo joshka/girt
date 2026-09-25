@@ -5,8 +5,12 @@
 //! [`ObjectId`] carries SHA-1 or SHA-256 digest bytes. [`ObjectFormat::hash_object`] hashes exact
 //! payloads with Git framing; it does not validate payload structure or translate embedded IDs.
 //! Hex parsing accepts full 40/64-digit identities, while [`ObjectId::from_hex`] requires an
-//! explicit format. Null IDs are format-specific sentinels. Codecs, repositories, packs, refs,
-//! indexes and transports currently support SHA-1 only and reject incompatible identity inputs.
+//! explicit format. Null IDs are format-specific sentinels. Codecs, loose storage and loose-backed
+//! traversal support both formats. Tree construction and all decoded payload parsing take an
+//! explicit format, including empty trees. Commit construction derives the format from its tree
+//! and requires matching parents; tag construction derives it from the target. Packs, refs,
+//! indexes and transports currently support SHA-1 only. SHA-256 repository operations refuse
+//! those unsupported features before mutation.
 //!
 //! # Reading a repository
 //!
@@ -52,10 +56,11 @@
 //!
 //! # Creating and finding a repository
 //!
-//! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
-//! reinitialization. [`Repository::discover`] searches physical ancestors from an existing
-//! directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive ancestor.
-//! Discovery stops at malformed or unsupported metadata rather than selecting an outer repository.
+//! [`Repository::init`] creates a bare or ordinary SHA-1 or SHA-256 repository with unborn `main`
+//! and refuses reinitialization. [`Repository::discover`] searches physical ancestors from an
+//! existing directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive
+//! ancestor. Discovery stops at malformed or unsupported metadata rather than selecting an outer
+//! repository.
 //!
 //! # Checking out a selected tree
 //!
@@ -136,7 +141,7 @@
 //! # Library contents
 //!
 //! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
-//!   initialization of bare or ordinary SHA-1 repositories.
+//!   initialization of bare or ordinary SHA-1 or SHA-256 repositories.
 //! - [`refs`]: validated reference names, loose/packed enumeration and reads, symbolic resolution,
 //!   conditional transactions with explicit reflogs, and single-reference operations without
 //!   reflogs.
@@ -166,10 +171,10 @@
 //!   storage assumptions.
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
-//! The current API is experimental and supports SHA-1 loose objects, pack/index v2 reads,
-//! caller-owned pack/index v2 exports, object transfer and fetch orchestration, and conditional
-//! branch/tag push. Fetch and push accept v0 streams or local Git server adapters. The optional
-//! `http` feature adds async smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on
+//! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1 pack/index v2
+//! reads, caller-owned pack/index v2 exports, object transfer and fetch orchestration, and
+//! conditional branch/tag push. Fetch and push accept v0 streams or local Git server adapters. The
+//! optional `http` feature adds async smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on
 //! macOS/Linux. Both use a caller-owned Tokio runtime; fetch pack validation remains an explicit
 //! synchronous step. Files references support enumeration, reads, symbolic resolution, and explicit
 //! no-reflog updates and deletion, plus conditional batches and caller-controlled reflog appends.

@@ -236,3 +236,7 @@ required-features = ["tracing"]
 [[bench]]
 name = "tracing"
 harness = false
+
+[[bench]]
+name = "object_formats"
+harness = false

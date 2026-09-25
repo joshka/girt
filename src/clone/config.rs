@@ -86,7 +86,12 @@ mod tests {
     #[test]
     fn preserves_other_writers_config_and_releases_owned_lock() {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            InitKind::Bare,
+        )
+        .unwrap();
         fs::write(repo.git_dir().join("config"), b"keep").unwrap();
         assert!(publish(&repo, InitKind::Bare, b"replace").is_err());
         assert_eq!(fs::read(repo.git_dir().join("config")).unwrap(), b"keep");

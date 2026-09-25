@@ -52,7 +52,7 @@ fn init(directory: &Path) -> LooseObjects {
         &["init", "--bare", "--object-format=sha1", "--template=", "."],
         b"",
     );
-    LooseObjects::new(directory.join("objects"), ObjectFormat::Sha1).unwrap()
+    LooseObjects::new(directory.join("objects"), ObjectFormat::Sha1)
 }
 
 fn id(output: &[u8]) -> ObjectId {

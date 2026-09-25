@@ -4,7 +4,7 @@ pub use payload::{CommitHeaderRef, CommitPayload};
 
 use crate::ObjectId;
 
-/// An owned SHA-1 commit describing a tree, ordered parents, people, and a message.
+/// An owned SHA-1 or SHA-256 commit describing a tree, ordered parents, people, and a message.
 ///
 /// [`Self::parse`] retains the original payload as well as decoded fields. [`Self::encode`] and
 /// [`Self::id`] therefore preserve every accepted byte, including hexadecimal case, date spelling,
@@ -17,11 +17,12 @@ use crate::ObjectId;
 /// as date spelling belong to the original payload, not the decoded fields.
 ///
 /// The supported grammar requires tree, zero or more parents, author, committer, then extra
-/// headers, followed by a blank line and arbitrary message bytes. IDs are exactly 40 hexadecimal
-/// SHA-1 digits. Dates fit signed 64-bit seconds and offsets use `+HHMM` or `-HHMM`, with hours
-/// below 24 and minutes below 60. Reordered or repeated required headers, continuations on required
-/// headers, SHA-256 IDs, missing separators, and other date grammars are rejected explicitly.
-/// Use [`CommitPayload`] to retain structurally framed bytes independently of these restrictions.
+/// headers, followed by a blank line and arbitrary message bytes. IDs have exactly the selected
+/// format's 40 or 64 hexadecimal digits. Dates fit signed 64-bit seconds and offsets use `+HHMM` or
+/// `-HHMM`, with hours below 24 and minutes below 60. Reordered or repeated required headers,
+/// continuations on required headers, foreign-format IDs, missing separators, and other date
+/// grammars are rejected explicitly. Use [`CommitPayload`] to retain structurally framed bytes
+/// independently of these restrictions.
 ///
 /// This is not full `git fsck` validation. References (including zero and duplicate parent IDs) are
 /// not resolved, messages are unrestricted, and extra headers are opaque even when named `gpgsig`
@@ -38,14 +39,14 @@ use crate::ObjectId;
 ///     offset_minutes: -420,
 /// };
 /// let commit = Commit::new(CommitFields {
-///     tree: Tree::new(vec![])?.id(),
+///     tree: Tree::new(girt::ObjectFormat::Sha1, vec![])?.id(),
 ///     parents: vec![],
 ///     author: person.clone(),
 ///     committer: person,
 ///     extra_headers: vec![],
 ///     message: b"Initial snapshot\n".to_vec(),
 /// })?;
-/// let parsed = Commit::parse(commit.as_bytes())?;
+/// let parsed = Commit::parse(girt::ObjectFormat::Sha1, commit.as_bytes())?;
 /// assert_eq!(parsed.fields().message, b"Initial snapshot\n");
 /// assert_eq!(parsed.id(), commit.id());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -66,7 +67,7 @@ impl Commit {
     /// # Errors
     ///
     /// Returns the field errors described by [`Self::validate`]. No filesystem operations occur.
-    /// SHA-256 tree/parent identities return [`CommitError::ObjectFormat`].
+    /// Mixed tree/parent formats return [`CommitError::ObjectFormat`].
     pub fn new(fields: CommitFields) -> Result<Self, CommitError> {
         fields.validate()?;
         let mut payload = format!("tree {}\n", fields.tree).into_bytes();
@@ -100,20 +101,21 @@ impl Commit {
     /// # Errors
     ///
     /// Returns [`CommitError`] for unsupported or malformed framing, missing required headers,
-    /// invalid SHA-1 IDs, or unreadable identities/dates. See [`Commit`] for the supported grammar.
-    pub fn parse(payload: &[u8]) -> Result<Self, CommitError> {
+    /// invalid or foreign-format IDs, or unreadable identities/dates. See [`Commit`] for the
+    /// supported grammar.
+    pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, CommitError> {
         let separator = payload
             .windows(2)
             .position(|pair| pair == b"\n\n")
             .ok_or(CommitError::MissingSeparator)?;
         let mut lines = payload[..separator].split(|&byte| byte == b'\n').peekable();
-        let tree = parse_id(required_line(lines.next(), b"tree ")?)?;
+        let tree = parse_id(format, required_line(lines.next(), b"tree ")?)?;
         let mut parents = Vec::new();
         while lines
             .peek()
             .is_some_and(|line| line.starts_with(b"parent "))
         {
-            parents.push(parse_id(required_line(lines.next(), b"parent ")?)?);
+            parents.push(parse_id(format, required_line(lines.next(), b"parent ")?)?);
         }
         let author = Signature::parse(required_line(lines.next(), b"author ")?)?;
         let committer = Signature::parse(required_line(lines.next(), b"committer ")?)?;
@@ -149,6 +151,11 @@ impl Commit {
         })
     }
 
+    /// The format of the tree and parent references.
+    pub fn object_format(&self) -> crate::ObjectFormat {
+        self.fields.tree.format()
+    }
+
     /// Borrows decoded fields. Clone them and call [`Self::new`] for an explicit reconstruction.
     pub fn fields(&self) -> &CommitFields {
         &self.fields
@@ -180,7 +187,8 @@ impl Commit {
 
     /// Hashes the canonical commit object header and exact retained payload without copying it.
     pub fn id(&self) -> ObjectId {
-        ObjectId::for_object("commit", &self.payload)
+        self.object_format()
+            .hash_object(crate::ObjectKind::Commit, &self.payload)
     }
 }
 
@@ -211,9 +219,8 @@ pub struct CommitFields {
 
 impl CommitFields {
     fn validate(&self) -> Result<(), CommitError> {
-        self.tree.require_sha1()?;
         for parent in &self.parents {
-            parent.require_sha1()?;
+            parent.require_format(self.tree.format())?;
         }
         self.author.validate()?;
         self.committer.validate()?;
@@ -358,7 +365,7 @@ pub struct CommitHeader {
 /// A commit lies outside the supported grammar or fails construction validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CommitError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A parent identity differs from the commit tree's format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// The blank line separating headers from message is missing.
@@ -367,7 +374,7 @@ pub enum CommitError {
     /// A required header is absent, reordered, repeated, or has an unsupported continuation.
     #[error("missing or misplaced required commit header")]
     RequiredHeader,
-    /// A tree or parent identity is not exactly 40 hexadecimal SHA-1 digits.
+    /// A tree or parent identity does not have the selected hexadecimal format.
     #[error("invalid or unsupported commit object identity")]
     InvalidObjectId,
     /// Identity framing is unreadable or name/email fails construction rules.
@@ -386,8 +393,8 @@ fn required_line<'a>(line: Option<&'a [u8]>, prefix: &[u8]) -> Result<&'a [u8], 
         .ok_or(CommitError::RequiredHeader)
 }
 
-fn parse_id(value: &[u8]) -> Result<ObjectId, CommitError> {
-    if value.len() != 40 {
+fn parse_id(format: crate::ObjectFormat, value: &[u8]) -> Result<ObjectId, CommitError> {
+    if value.len() != format.digest_len() * 2 {
         return Err(CommitError::InvalidObjectId);
     }
     std::str::from_utf8(value)
@@ -426,10 +433,13 @@ mod tests {
     }
 
     fn fields() -> CommitFields {
-        Commit::parse(&payload(PERSON, b"", b"Initial\n"))
-            .unwrap()
-            .fields()
-            .clone()
+        Commit::parse(
+            crate::ObjectFormat::Sha1,
+            &payload(PERSON, b"", b"Initial\n"),
+        )
+        .unwrap()
+        .fields()
+        .clone()
     }
 
     #[test]
@@ -461,7 +471,12 @@ mod tests {
             "02".repeat(20)
         );
         assert_eq!(commit.as_bytes(), expected.as_bytes());
-        assert_eq!(Commit::parse(commit.as_bytes()).unwrap().fields(), &fields);
+        assert_eq!(
+            Commit::parse(crate::ObjectFormat::Sha1, commit.as_bytes())
+                .unwrap()
+                .fields(),
+            &fields
+        );
     }
 
     #[rstest]
@@ -470,7 +485,7 @@ mod tests {
     #[case::binary(b"\xff\0\r\n\nauthor fake\n")]
     fn preserves_message_bytes(#[case] message: &[u8]) {
         let input = payload(PERSON, b"", message);
-        let commit = Commit::parse(&input).unwrap();
+        let commit = Commit::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(commit.fields().message, message);
         assert_eq!(commit.encode(), input);
         assert_eq!(
@@ -483,7 +498,7 @@ mod tests {
     fn preserves_unknown_repeated_and_multiline_headers() {
         let extra = b"encoding ISO-8859-1\nx-other \xff\ngpgsig first\n \n  indented\n last\n \nx-other again\n";
         let input = payload(PERSON, extra, b"body");
-        let commit = Commit::parse(&input).unwrap();
+        let commit = Commit::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(
             commit.fields().extra_headers,
             vec![
@@ -518,7 +533,7 @@ mod tests {
             "tree {}\nauthor A <a@example.com> +00042 -0000\ncommitter {PERSON}\n\n",
             TREE.to_uppercase()
         );
-        let parsed = Commit::parse(input.as_bytes()).unwrap();
+        let parsed = Commit::parse(crate::ObjectFormat::Sha1, input.as_bytes()).unwrap();
         assert_eq!(parsed.fields().author.seconds, 42);
         assert_eq!(parsed.fields().author.offset_minutes, 0);
         assert_eq!(parsed.validate(), Ok(()));
@@ -540,7 +555,7 @@ mod tests {
         #[case] error: CommitError,
     ) {
         let input = payload(author, b"", b"");
-        let parsed = Commit::parse(&input).unwrap();
+        let parsed = Commit::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(parsed.validate(), Err(error));
         assert_eq!(Commit::new(parsed.fields().clone()), Err(error));
         assert_eq!(parsed.encode(), input);
@@ -551,7 +566,7 @@ mod tests {
     #[case::max_seconds("A <a@example.com> 9223372036854775807 +2359", i64::MAX, 1439)]
     #[case::min_seconds("A <a@example.com> -9223372036854775808 -2359", i64::MIN, -1439)]
     fn parses_date_boundaries(#[case] author: &str, #[case] seconds: i64, #[case] offset: i16) {
-        let parsed = Commit::parse(&payload(author, b"", b"")).unwrap();
+        let parsed = Commit::parse(crate::ObjectFormat::Sha1, &payload(author, b"", b"")).unwrap();
         assert_eq!(parsed.fields().author.seconds, seconds);
         assert_eq!(parsed.fields().author.offset_minutes, offset);
         assert_eq!(
@@ -591,7 +606,7 @@ mod tests {
     #[case::trailing_space("A <a> 1 +0000 ")]
     fn rejects_unreadable_dates(#[case] author: &str) {
         assert_eq!(
-            Commit::parse(&payload(author, b"", b"")),
+            Commit::parse(crate::ObjectFormat::Sha1, &payload(author, b"", b"")),
             Err(CommitError::InvalidDate)
         );
     }
@@ -602,7 +617,7 @@ mod tests {
     #[case::no_date_separator("A <a>1 +0000")]
     fn rejects_unreadable_identities(#[case] author: &str) {
         assert_eq!(
-            Commit::parse(&payload(author, b"", b"")),
+            Commit::parse(crate::ObjectFormat::Sha1, &payload(author, b"", b"")),
             Err(CommitError::InvalidSignature)
         );
     }
@@ -632,7 +647,7 @@ mod tests {
     fn retains_header_values_rejected_by_construction(#[case] value: &[u8]) {
         let extra = [b"x ".as_slice(), value, b"\n"].concat();
         let input = payload(PERSON, &extra, b"");
-        let parsed = Commit::parse(&input).unwrap();
+        let parsed = Commit::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(parsed.encode(), input);
         assert_eq!(parsed.validate(), Err(CommitError::InvalidHeader));
     }
@@ -699,7 +714,7 @@ mod tests {
         CommitError::RequiredHeader
     )]
     fn rejects_incomplete_or_unsupported_headers(#[case] input: &[u8], #[case] error: CommitError) {
-        assert_eq!(Commit::parse(input), Err(error));
+        assert_eq!(Commit::parse(crate::ObjectFormat::Sha1, input), Err(error));
     }
 
     #[rstest]
@@ -712,7 +727,7 @@ mod tests {
     #[case::repeated_committer(b"committer A <a> 1 +0000\n")]
     fn rejects_misplaced_extra_headers(#[case] extra: &[u8]) {
         assert_eq!(
-            Commit::parse(&payload(PERSON, extra, b"")),
+            Commit::parse(crate::ObjectFormat::Sha1, &payload(PERSON, extra, b"")),
             Err(CommitError::InvalidHeader)
         );
     }
@@ -730,12 +745,50 @@ mod format_boundary_tests {
             "tree {}\nauthor A <a> 0 +0000\ncommitter C <c> 0 +0000\n\n",
             ObjectId::Sha1([1; 20])
         );
-        let mut fields = Commit::parse(payload.as_bytes()).unwrap().fields().clone();
+        let mut fields = Commit::parse(crate::ObjectFormat::Sha1, payload.as_bytes())
+            .unwrap()
+            .fields()
+            .clone();
         fields.tree = tree;
         fields.parents = vec![parent];
         assert!(matches!(
             Commit::new(fields),
             Err(CommitError::ObjectFormat(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod dual_format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn parsing_rejects_foreign_parent(#[case] format: ObjectFormat, #[case] foreign: ObjectFormat) {
+        let bytes = format!(
+            "tree {}\nparent {}\nauthor A <a> 1 +0000\ncommitter C <c> 1 +0000\n\n",
+            ObjectId::null(format),
+            ObjectId::null(foreign)
+        );
+        assert_eq!(
+            Commit::parse(format, bytes.as_bytes()),
+            Err(CommitError::InvalidObjectId)
+        );
+    }
+
+    #[test]
+    fn sha256_nonhex_tree_is_not_an_identity() {
+        let bytes = format!(
+            "tree {}\nauthor A <a> 1 +0000\ncommitter C <c> 1 +0000\n\n",
+            "z".repeat(64)
+        );
+        assert_eq!(
+            Commit::parse(ObjectFormat::Sha256, bytes.as_bytes()),
+            Err(CommitError::InvalidObjectId)
+        );
     }
 }

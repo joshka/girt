@@ -73,7 +73,7 @@ fn interoperates_with_git_in_both_directions(#[case] bytes: Vec<u8>) {
         b"",
     );
     let directory = root.path().join("objects");
-    let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(&directory, ObjectFormat::Sha1);
     let expected = git(root.path(), &["hash-object", "--stdin"], &bytes);
     let expected: ObjectId = std::str::from_utf8(&expected)
         .unwrap()
@@ -97,7 +97,7 @@ fn interoperates_with_git_in_both_directions(#[case] bytes: Vec<u8>) {
 #[test]
 fn reports_missing_object() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let error = objects
         .read_blob(ObjectId::for_blob(girt::ObjectFormat::Sha1, b"missing"), 10)
         .unwrap_err();
@@ -113,7 +113,7 @@ fn reports_missing_object() {
 #[case::one_byte_over_limit(b"abc".to_vec(), 2)]
 fn rejects_oversized_objects(#[case] bytes: Vec<u8>, #[case] limit: usize) {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = objects.write_blob(&bytes).unwrap();
     assert!(matches!(objects.read_blob(id, limit), Err(Error::TooLarge)));
 }
@@ -122,7 +122,7 @@ fn rejects_oversized_objects(#[case] bytes: Vec<u8>, #[case] limit: usize) {
 #[test]
 fn rejects_unsupported_object_type() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &compressed(b"tree 0\0"));
     assert!(matches!(
@@ -144,7 +144,7 @@ fn rejects_unsupported_object_type() {
 #[case::unrepresentable_length(b"blob 999999999999999999999999999999\0abc")]
 fn rejects_malformed_headers_lengths_and_identities(#[case] encoded: &[u8]) {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &compressed(encoded));
     assert!(matches!(
@@ -164,7 +164,7 @@ const ABC_LOOSE: &[u8] = &[
 #[test]
 fn reads_complete_zlib_fixture() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, ABC_LOOSE);
     assert_eq!(objects.read_blob(id, 3).unwrap(), b"abc");
@@ -192,7 +192,7 @@ fn reads_complete_zlib_fixture() {
 #[case::checksum_byte_3(17)]
 fn rejects_truncated_zlib_data(#[case] length: usize) {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &ABC_LOOSE[..length]);
     assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
@@ -202,7 +202,7 @@ fn rejects_truncated_zlib_data(#[case] length: usize) {
 #[test]
 fn rejects_invalid_zlib_checksum() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     let mut encoded = ABC_LOOSE.to_vec();
     *encoded.last_mut().unwrap() ^= 1;
@@ -216,7 +216,7 @@ fn rejects_invalid_zlib_checksum() {
 #[case::second_stream(ABC_LOOSE)]
 fn rejects_trailing_zlib_data(#[case] suffix: &[u8]) {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     let encoded = [ABC_LOOSE, suffix].concat();
     install(root.path(), id, &encoded);
@@ -227,7 +227,7 @@ fn rejects_trailing_zlib_data(#[case] suffix: &[u8]) {
 #[test]
 fn rejects_non_zlib_data() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, b"not zlib");
     assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
@@ -237,7 +237,7 @@ fn rejects_non_zlib_data() {
 #[test]
 fn concurrent_writes_publish_one_object() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let bytes = b"concurrent original fixture";
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, bytes);
     std::thread::scope(|scope| {
@@ -255,7 +255,7 @@ fn concurrent_writes_publish_one_object() {
 #[test]
 fn duplicate_write_preserves_existing_object() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = objects.write_blob(b"duplicate").unwrap();
     let path = object_path(root.path(), id);
     let original = fs::read(&path).unwrap();
@@ -268,7 +268,7 @@ fn duplicate_write_preserves_existing_object() {
 #[test]
 fn write_preserves_corrupt_existing_object() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"duplicate");
     let path = object_path(root.path(), id);
     install(root.path(), id, b"corrupt existing object");
@@ -285,7 +285,7 @@ fn write_preserves_corrupt_existing_object() {
 #[test]
 fn failed_publication_leaves_no_temporary_file() {
     let root = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"blocked");
     let path = object_path(root.path(), id);
     fs::create_dir_all(&path).unwrap();

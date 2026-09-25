@@ -311,7 +311,7 @@ fn pre_receive_hook_rejects_all_commands() {
 fn publishes_nested_tags_trees_binary_blobs_symlinks_and_external_gitlinks() {
     let (_source_root, source) = destination(true);
     let (_root, dest) = destination(true);
-    let objects = source.loose_objects().unwrap();
+    let objects = source.loose_objects();
     let blob = objects.write_blob(b"binary\0\xff").unwrap();
     let link = objects.write_blob(b"target").unwrap();
     let external = ObjectId::for_blob(
@@ -320,33 +320,39 @@ fn publishes_nested_tags_trees_binary_blobs_symlinks_and_external_gitlinks() {
     );
     let tree = objects
         .write_tree(
-            &Tree::new(vec![
-                TreeEntry {
-                    name: b"data".to_vec(),
-                    mode: EntryMode::Blob,
-                    id: blob,
-                },
-                TreeEntry {
-                    name: b"link".to_vec(),
-                    mode: EntryMode::Symlink,
-                    id: link,
-                },
-                TreeEntry {
-                    name: b"submodule".to_vec(),
-                    mode: EntryMode::Gitlink,
-                    id: external,
-                },
-            ])
+            &Tree::new(
+                girt::ObjectFormat::Sha1,
+                vec![
+                    TreeEntry {
+                        name: b"data".to_vec(),
+                        mode: EntryMode::Blob,
+                        id: blob,
+                    },
+                    TreeEntry {
+                        name: b"link".to_vec(),
+                        mode: EntryMode::Symlink,
+                        id: link,
+                    },
+                    TreeEntry {
+                        name: b"submodule".to_vec(),
+                        mode: EntryMode::Gitlink,
+                        id: external,
+                    },
+                ],
+            )
             .unwrap(),
         )
         .unwrap();
     let subtree = objects
         .write_tree(
-            &Tree::new(vec![TreeEntry {
-                name: b"dir".to_vec(),
-                mode: EntryMode::Tree,
-                id: tree,
-            }])
+            &Tree::new(
+                girt::ObjectFormat::Sha1,
+                vec![TreeEntry {
+                    name: b"dir".to_vec(),
+                    mode: EntryMode::Tree,
+                    id: tree,
+                }],
+            )
             .unwrap(),
         )
         .unwrap();
@@ -678,11 +684,7 @@ fn arbitrary_local_possession_is_not_receiver_knowledge() {
 fn receiver_root_missing_locally_preserves_full_forced_transfer() {
     let f = Fixture::new(true, 4);
     let (_root, dest) = destination(true);
-    let foreign = dest
-        .loose_objects()
-        .unwrap()
-        .write_blob(b"foreign root")
-        .unwrap();
+    let foreign = dest.loose_objects().write_blob(b"foreign root").unwrap();
     git(
         dest.git_dir(),
         &["update-ref", "refs/tags/foreign", &foreign.to_string()],
@@ -831,7 +833,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
     first_payload[5000] ^= 1;
     let mut second_payload = first_payload.clone();
     second_payload[7000] ^= 1;
-    let loose = fixture.repo.loose_objects().unwrap();
+    let loose = fixture.repo.loose_objects();
     let first = loose.write_blob(&first_payload).unwrap();
     let second = loose.write_blob(&second_payload).unwrap();
     let updates = vec![

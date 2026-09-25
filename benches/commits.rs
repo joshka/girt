@@ -46,7 +46,7 @@ fn commits(criterion: &mut Criterion) {
             b.iter(|| Commit::new(black_box(commit.fields().clone())).unwrap());
         });
         group.bench_function(BenchmarkId::new("parse", size), |b| {
-            b.iter(|| Commit::parse(black_box(payload)).unwrap())
+            b.iter(|| Commit::parse(girt::ObjectFormat::Sha1, black_box(payload)).unwrap())
         });
         group.bench_function(BenchmarkId::new("payload_view", size), |b| {
             b.iter(|| CommitPayload::parse(black_box(payload)).unwrap())
@@ -86,7 +86,7 @@ fn commits(criterion: &mut Criterion) {
 
 fn empty_store() -> (TempDir, LooseObjects) {
     let directory = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     (directory, objects)
 }
 

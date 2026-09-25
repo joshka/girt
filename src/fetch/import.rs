@@ -224,6 +224,7 @@ fn resolve(
                 )?;
                 (
                     Object {
+                        format: crate::ObjectFormat::Sha1,
                         kind: base.kind,
                         data,
                     },
@@ -235,6 +236,7 @@ fn resolve(
                 };
                 (
                     Object {
+                        format: crate::ObjectFormat::Sha1,
                         kind,
                         data: std::mem::take(&mut entries[i].payload),
                     },

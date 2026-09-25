@@ -1,25 +1,27 @@
 # Git Compatibility Evidence
 
-SHA-1 and SHA-256 object identities and canonical object hashing are supported independently of
-storage. The [R02 evidence](evidence/r02.md) records Git hash observations, format refusals and
-remaining propagation work. SHA-256 repository/storage/codec support remains queued under R04/R05.
+SHA-1 and SHA-256 identities, codecs, loose storage, repository initialization/opening and
+loose-backed traversal are supported. The [R04 evidence](evidence/r04.md) records the public API,
+Git interoperability and scoped refusals. Pack/ref/reflog/index widths remain R05; transport
+negotiation remains later work. No dual-hash conversion is provided.
 
-Loose storage supports SHA-1 blobs, trees, commits, and tags with canonical object headers. The
-caller can supply an object directory and its known `ObjectFormat::Sha1` format, or use `Repository`
-to open an explicit repository path and detect the format from local configuration. SHA-256 storage
-is recognized and rejected. Crate Rustdoc owns the API examples and complete limitations.
+Loose storage uses canonical object headers and an explicitly selected format. Repositories detect
+the format from common configuration. SHA-256 repositories may be opened for loose access, but
+indexed object snapshots refuse SHA-256 pack artifacts and refs/index operations refuse before
+mutation. Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain
+their historical evidence scope; R04 supersedes their SHA-1-only codec and loose-storage limits.
 
 ## Current Capabilities and Evidence
 
-The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
-fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
-explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
-tracking-layout clone into bare or ordinary no-checkout repositories, recursive tree comparison, and
-byte-preserving content diff, SHA-1 working-tree index v2 read/replacement, and raw read-only
-working-tree status and conservative raw tree checkout on macOS/Linux. The single-reference
-no-reflog operations remain available. HTTP and SSH downloads share owned validation state.
-Installation takes explicit destination snapshot limits. Read and operation limits remain per phase;
-no process-wide heap or hard CPU-latency guarantee is implied.
+The current API supports both-format loose objects and complete-history queries, SHA-1 pack/index
+v2, object-only fetch, conditional branch/tag push, reference enumeration, and conditional
+transactions with explicit reflog policy, named remote/refspec mapping, explicit fetch
+orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories, recursive
+tree comparison, and byte-preserving content diff, SHA-1 working-tree index v2 read/replacement, and
+raw read-only working-tree status and conservative raw tree checkout on macOS/Linux. The
+single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
+validation state. Installation takes explicit destination snapshot limits. Read and operation limits
+remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                |
 | -------------- | -------------------------------------------------------- |
@@ -1369,11 +1371,11 @@ discovery instead of falling back to an outer repository. This conservative mark
 stop at unrelated files with those names. Environment overrides, ownership checks, and Git's
 discovery configuration are not used.
 
-`Repository::init(path, InitKind)` creates ordinary or bare SHA-1 repositories with version-0
-config, files-backend refs, empty object storage, and unborn `refs/heads/main`. Ordinary
-destinations may be existing directories with unrelated files; the three discovery markers refuse
-initialization. Bare destinations must be absent, including when the existing directory is empty.
-Parents must already exist. Reinitialization is refused without altering existing metadata;
+`Repository::init(format, path, InitKind)` creates ordinary or bare repositories with
+format-specific config, files-backend refs, empty object storage, and unborn `refs/heads/main`.
+Ordinary destinations may be existing directories with unrelated files; the three discovery markers
+refuse initialization. Bare destinations must be absent, including when the existing directory is
+empty. Parents must already exist. Reinitialization is refused without altering existing metadata;
 recognized unsupported formats and layouts retain opening errors. Templates, hooks, initial commits,
 indexes, separate Git-directory creation, linked-worktree creation, branch-name options, and ambient
 configuration are outside this increment. The executable example is

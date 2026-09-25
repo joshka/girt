@@ -7,22 +7,24 @@ concepts and exact interoperability for supported repository formats and operati
 
 ## Status
 
-The library derives SHA-1/SHA-256 object identities, encodes blobs, and reads and writes SHA-1 loose
-blobs, trees, commits, and annotated tags in an explicitly selected object directory. Reads validate
-object contents; writes publish complete objects without replacing existing files. In-memory SHA-1
-trees support byte-preserving names, standard entry modes, payload parsing and encoding, Git
-ordering, and identity. Parsing preserves supported noncanonical trees; construction validates names
-and duplicates. Commits preserve exact payloads and expose tree, ordered parents, identities, dates,
-byte messages, and opaque multiline headers. Construction validates fields separately from parsing
-existing commits. Annotated tags preserve target identity and type, byte names, optional taggers,
-opaque extra headers, and message bytes, including embedded signatures. Storing a tag object does
-not create a tag reference. Explicit-path repository opening supports ordinary, bare, separate Git
-directories, and linked worktrees, deriving SHA-1 storage from repository-local configuration.
-Unsupported configuration sources and repository extensions return errors. Files-backend references
-support byte-preserving names, loose/packed enumeration and reads, symbolic resolution, and
-conditional batches with explicit reflog policy, plus single-ref operations without reflogs. HEAD
-and per-worktree refs use the detected layout. Repository object reads combine live loose storage
-with bounded snapshots of SHA-1 pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA
+The library derives SHA-1/SHA-256 object identities, encodes blobs, and reads and writes
+SHA-1/SHA-256 loose blobs, trees, commits, and annotated tags in an explicitly selected object
+directory. Reads validate object contents; writes publish complete objects without replacing
+existing files. In-memory trees in both formats support byte-preserving names, standard entry modes,
+payload parsing and encoding, Git ordering, and identity. Parsing preserves supported noncanonical
+trees; construction validates names and duplicates. Commits preserve exact payloads and expose tree,
+ordered parents, identities, dates, byte messages, and opaque multiline headers. Construction
+validates fields separately from parsing existing commits. Annotated tags preserve target identity
+and type, byte names, optional taggers, opaque extra headers, and message bytes, including embedded
+signatures. Storing a tag object does not create a tag reference. Explicit-path repository opening
+supports ordinary, bare, separate Git directories, and linked worktrees, deriving the object format
+from repository-local configuration. SHA-256 pack/ref/reflog/index support remains queued under R05;
+those storage operations refuse explicitly. Transport negotiation remains SHA-1-only. Unsupported
+configuration sources and repository extensions return errors. Files-backend references support
+byte-preserving names, loose/packed enumeration and reads, symbolic resolution, and conditional
+batches with explicit reflog policy, plus single-ref operations without reflogs. HEAD and
+per-worktree refs use the detected layout. Repository object reads combine live loose storage with
+bounded snapshots of SHA-1 pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA
 reconstruction. The API is experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and

@@ -1,4 +1,4 @@
-//! Exclusive creation of minimal SHA-1 repository metadata.
+//! Exclusive creation of minimal SHA-1 or SHA-256 repository metadata.
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -50,14 +50,16 @@ impl Repository {
                 git_dir
             }
         };
-        populate(&git_dir, kind)?;
+        populate(&git_dir, kind, crate::ObjectFormat::Sha1)?;
         Ok(Self::open(path)?)
     }
 
-    /// Creates an empty SHA-1 repository with unborn `refs/heads/main`.
+    /// Creates an empty repository in the selected object format with unborn `refs/heads/main`.
     ///
-    /// Creates version-0 configuration, files-backend refs and an object directory. No Git process,
-    /// templates, hooks, ambient configuration, index, or initial commit are used. The
+    /// Creates version-0 configuration for SHA-1 or version-1 with `extensions.objectFormat` for
+    /// SHA-256, files-backend reference directories and an object directory. SHA-256 refs and
+    /// indexes require Git until their girt implementations land; loose objects are usable. No Git
+    /// process, templates, hooks, ambient configuration, index, or initial commit are used. The
     /// destination's parent must exist. Ordinary worktrees may use an existing directory
     /// containing unrelated files; a `.git`, `HEAD`, or `objects` entry refuses initialization.
     /// Bare destinations must not exist, even as empty directories. Separate Git directories
@@ -80,16 +82,24 @@ impl Repository {
     /// ```
     /// use girt::{InitKind, Repository};
     /// let root = tempfile::tempdir()?;
-    /// let repo = Repository::init(root.path().join("project"), InitKind::Worktree)?;
+    /// let repo = Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     root.path().join("project"),
+    ///     InitKind::Worktree,
+    /// )?;
     /// let nested = repo.worktree().unwrap().join("src");
     /// std::fs::create_dir(&nested)?;
     /// assert_eq!(Repository::discover(&nested)?.git_dir(), repo.git_dir());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn init(path: impl AsRef<Path>, kind: InitKind) -> Result<Self, InitError> {
+    pub fn init(
+        format: crate::ObjectFormat,
+        path: impl AsRef<Path>,
+        kind: InitKind,
+    ) -> Result<Self, InitError> {
         let path = path.as_ref();
         if has_marker(path)? {
-            // Preserve format/layout errors, including SHA-256 and linked-worktree extensions.
+            // Preserve unsupported format/layout errors before any mutation.
             Self::open(path)?;
             return Err(InitError::AlreadyExists(path.into()));
         }
@@ -112,12 +122,12 @@ impl Repository {
                 git_dir
             }
         };
-        populate(&git_dir, kind)?;
+        populate(&git_dir, kind, format)?;
         Ok(Self::open(path)?)
     }
 }
 
-fn populate(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
+fn populate(git_dir: &Path, kind: InitKind, format: crate::ObjectFormat) -> Result<(), InitError> {
     for name in [
         "objects",
         "objects/info",
@@ -128,7 +138,7 @@ fn populate(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
     ] {
         create_directory(&git_dir.join(name))?;
     }
-    create_file(&git_dir.join("config"), &initial_config(kind))?;
+    create_file(&git_dir.join("config"), &format_config(kind, format))?;
     // HEAD is last so a partially initialized directory does not look ready to open.
     let mut head = b"ref: ".to_vec();
     head.extend_from_slice(initial_branch().as_bytes());
@@ -138,6 +148,13 @@ fn populate(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
 
 // Initialization owns these defaults, including exact bytes used by clone's config precondition.
 pub(crate) fn initial_config(kind: InitKind) -> Vec<u8> {
+    format_config(kind, crate::ObjectFormat::Sha1)
+}
+
+fn format_config(kind: InitKind, format: crate::ObjectFormat) -> Vec<u8> {
+    if format == crate::ObjectFormat::Sha256 {
+        return format!("[core]\n\trepositoryformatversion = 1\n\tbare = {}\n[extensions]\n\tobjectformat = sha256\n", kind == InitKind::Bare).into_bytes();
+    }
     format!(
         "[core]\n\trepositoryformatversion = 0\n\tbare = {}\n",
         kind == InitKind::Bare
@@ -187,7 +204,8 @@ mod tests {
     #[case::bare(InitKind::Bare, true)]
     fn creates_expected_layout(#[case] kind: InitKind, #[case] bare: bool) {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("repo"), kind).unwrap();
+        let repo =
+            Repository::init(crate::ObjectFormat::Sha1, root.path().join("repo"), kind).unwrap();
         assert_eq!(repo.worktree().is_none(), bare);
         assert_eq!(repo.format_version(), 0);
         assert_eq!(
@@ -201,7 +219,7 @@ mod tests {
     fn preserves_unrelated_worktree_files() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("keep"), b"original").unwrap();
-        Repository::init(root.path(), InitKind::Worktree).unwrap();
+        Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
         assert_eq!(fs::read(root.path().join("keep")).unwrap(), b"original");
     }
 
@@ -209,7 +227,7 @@ mod tests {
     fn refuses_existing_empty_bare_destination() {
         let root = tempfile::tempdir().unwrap();
         assert!(matches!(
-            Repository::init(root.path(), InitKind::Bare),
+            Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Bare),
             Err(InitError::AlreadyExists(_))
         ));
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
@@ -221,7 +239,9 @@ mod tests {
     fn refuses_existing_marker_without_writes(#[case] marker: &str) {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join(marker), b"keep").unwrap();
-        assert!(Repository::init(root.path(), InitKind::Worktree).is_err());
+        assert!(
+            Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).is_err()
+        );
         assert_eq!(fs::read(root.path().join(marker)).unwrap(), b"keep");
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
@@ -229,7 +249,14 @@ mod tests {
     #[test]
     fn missing_parent_is_not_created() {
         let root = tempfile::tempdir().unwrap();
-        assert!(Repository::init(root.path().join("missing/repo"), InitKind::Bare).is_err());
+        assert!(
+            Repository::init(
+                crate::ObjectFormat::Sha1,
+                root.path().join("missing/repo"),
+                InitKind::Bare
+            )
+            .is_err()
+        );
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
@@ -238,7 +265,9 @@ mod tests {
     fn dangling_marker_is_not_replaced() {
         let root = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink("missing", root.path().join(".git")).unwrap();
-        assert!(Repository::init(root.path(), InitKind::Worktree).is_err());
+        assert!(
+            Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).is_err()
+        );
         assert_eq!(
             fs::read_link(root.path().join(".git")).unwrap(),
             Path::new("missing")
@@ -250,7 +279,7 @@ mod tests {
     fn partial_population_failure_preserves_files_and_omits_head() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("config"), b"another writer").unwrap();
-        assert!(populate(root.path(), InitKind::Bare).is_err());
+        assert!(populate(root.path(), InitKind::Bare, crate::ObjectFormat::Sha1).is_err());
         assert_eq!(
             fs::read(root.path().join("config")).unwrap(),
             b"another writer"
@@ -267,10 +296,10 @@ mod tests {
         let (first, second) = std::thread::scope(|scope| {
             let first = scope.spawn(|| {
                 barrier.wait();
-                Repository::init(&path, InitKind::Bare)
+                Repository::init(crate::ObjectFormat::Sha1, &path, InitKind::Bare)
             });
             barrier.wait();
-            let second = Repository::init(&path, InitKind::Bare);
+            let second = Repository::init(crate::ObjectFormat::Sha1, &path, InitKind::Bare);
             (first.join().unwrap(), second)
         });
         assert_ne!(first.is_ok(), second.is_ok());

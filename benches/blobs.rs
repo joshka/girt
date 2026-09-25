@@ -62,7 +62,7 @@ fn blobs(criterion: &mut Criterion) {
 // Return the directory owner alongside the store so cleanup happens after each measurement.
 fn empty_store() -> (TempDir, LooseObjects) {
     let directory = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     (directory, objects)
 }
 

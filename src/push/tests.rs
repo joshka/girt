@@ -25,24 +25,19 @@ impl Fixture {
         Self { _root: root, repo }
     }
     fn blob(&self) -> ObjectId {
-        self.repo
-            .loose_objects()
-            .unwrap()
-            .write_blob(b"payload")
-            .unwrap()
+        self.repo.loose_objects().write_blob(b"payload").unwrap()
     }
     fn tree(&self, id: ObjectId, mode: EntryMode) -> ObjectId {
-        let tree = Tree::new(vec![TreeEntry {
-            mode,
-            id,
-            name: b"entry".to_vec(),
-        }])
+        let tree = Tree::new(
+            crate::ObjectFormat::Sha1,
+            vec![TreeEntry {
+                mode,
+                id,
+                name: b"entry".to_vec(),
+            }],
+        )
         .unwrap();
-        self.repo
-            .loose_objects()
-            .unwrap()
-            .write_tree(&tree)
-            .unwrap()
+        self.repo.loose_objects().write_tree(&tree).unwrap()
     }
     fn commit(&self, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
         let signature = Signature {
@@ -60,11 +55,7 @@ impl Fixture {
             message: vec![],
         })
         .unwrap();
-        self.repo
-            .loose_objects()
-            .unwrap()
-            .write_commit(&commit)
-            .unwrap()
+        self.repo.loose_objects().write_commit(&commit).unwrap()
     }
     fn tag(&self, target: ObjectId, kind: ObjectKind) -> ObjectId {
         let tag = Tag::new(TagFields {
@@ -76,7 +67,7 @@ impl Fixture {
             message: vec![],
         })
         .unwrap();
-        self.repo.loose_objects().unwrap().write_tag(&tag).unwrap()
+        self.repo.loose_objects().write_tag(&tag).unwrap()
     }
     fn prepare(
         &self,
@@ -898,7 +889,7 @@ fn advertised_have_can_prove_exclusion_without_matching_a_command() {
 fn ref_delta_push_needs_only_report_status() {
     let f = Fixture::new();
     let mut data: Vec<u8> = (0..65536).map(|n| (n % 251) as u8).collect();
-    let loose = f.repo.loose_objects().unwrap();
+    let loose = f.repo.loose_objects();
     let first = loose.write_blob(&data).unwrap();
     data[4000] ^= 255;
     let second = loose.write_blob(&data).unwrap();

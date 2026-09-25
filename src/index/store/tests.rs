@@ -6,7 +6,12 @@ use crate::{InitKind, ObjectId};
 
 fn repository() -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     (root, repo)
 }
 fn populated(repo: &Repository) -> Vec<u8> {

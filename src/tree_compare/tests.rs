@@ -28,11 +28,21 @@ impl Fixture {
     }
 
     fn tree(&self, entries: Vec<TreeEntry>) -> ObjectId {
-        self.store("tree", &Tree::new(entries).unwrap().encode())
+        self.store(
+            "tree",
+            &Tree::new(crate::ObjectFormat::Sha1, entries)
+                .unwrap()
+                .encode(),
+        )
     }
 
     fn objects(&self) -> Objects {
-        Objects::open(self.0.path(), PackLimits::default()).unwrap()
+        Objects::open(
+            crate::ObjectFormat::Sha1,
+            self.0.path(),
+            PackLimits::default(),
+        )
+        .unwrap()
     }
 
     fn compare(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Vec<TreeChange> {

@@ -56,7 +56,7 @@ mod supported {
         let source_repo = Repository::open(source.path())?;
         let destination_repo = Repository::open(destination.path())?;
         let id = source_repo
-            .loose_objects()?
+            .loose_objects()
             .write_blob(b"Disposable SSH example\n")?;
         let cancel = AtomicBool::new(false);
         let control = TransportControl {

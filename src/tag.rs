@@ -1,6 +1,6 @@
 use crate::{CommitError, ObjectId, Signature};
 
-/// An owned SHA-1 annotated tag object, including its exact original payload.
+/// An owned SHA-1 or SHA-256 annotated tag object, including its exact original payload.
 ///
 /// A tag object names an object and carries optional tagger metadata and a message. It is
 /// independent of a tag reference: creating or storing it does not create `refs/tags/...`.
@@ -14,8 +14,9 @@ use crate::{CommitError, ObjectId, Signature};
 /// Supported framing is `object`, `type`, `tag`, an optional `tagger`, then opaque extra lines.
 /// Each header ends in LF. A blank line introduces the message; without it, the payload must end
 /// after a header newline and the message is empty. Required headers cannot be reordered or
-/// repeated. IDs must contain 40 hexadecimal SHA-1 digits. Tagger dates use the same grammar as
-/// [`crate::Commit`]. SHA-256 IDs and other date grammars are unsupported.
+/// repeated. IDs must contain the selected format's 40 or 64 hexadecimal digits. Tagger dates use
+/// the same grammar as [`crate::Commit`]. Foreign-format IDs and other date grammars are
+/// unsupported.
 ///
 /// This is not full fsck validation. Target existence/type, reference-name rules, and cryptographic
 /// signatures are not checked. Memory grows with the input and decoded fields; bound input before
@@ -31,7 +32,7 @@ use crate::{CommitError, ObjectId, Signature};
 ///     extra_headers: vec![],
 ///     message: b"First release\n".to_vec(),
 /// })?;
-/// let parsed = Tag::parse(tag.as_bytes())?;
+/// let parsed = Tag::parse(girt::ObjectFormat::Sha1, tag.as_bytes())?;
 /// assert_eq!(parsed.fields().name, b"v1");
 /// assert_eq!(parsed.id(), tag.id());
 /// # Ok::<(), girt::TagError>(())
@@ -50,7 +51,7 @@ impl Tag {
     /// # Errors
     ///
     /// Returns the construction failures described by [`Self::validate`]. Has no external effects.
-    /// SHA-256 target identities return [`TagError::ObjectFormat`].
+    /// The target identity determines the tag's format.
     pub fn new(fields: TagFields) -> Result<Self, TagError> {
         fields.validate()?;
         let headers = format!(
@@ -83,8 +84,9 @@ impl Tag {
     /// # Errors
     ///
     /// Returns [`TagError`] for missing, reordered, or repeated known headers, unterminated
-    /// headers, invalid SHA-1 IDs, unsupported target types, or unreadable tagger metadata.
-    pub fn parse(payload: &[u8]) -> Result<Self, TagError> {
+    /// headers, invalid or foreign-format IDs, unsupported target types, or unreadable tagger
+    /// metadata.
+    pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TagError> {
         let (headers, message) = match payload.windows(2).position(|pair| pair == b"\n\n") {
             Some(separator) => (&payload[..separator], &payload[separator + 2..]),
             None => (
@@ -96,7 +98,7 @@ impl Tag {
         };
         let mut lines = headers.split(|&byte| byte == b'\n').peekable();
         let target_bytes = required_line(lines.next(), b"object ")?;
-        if target_bytes.len() != 40 {
+        if target_bytes.len() != format.digest_len() * 2 {
             return Err(TagError::InvalidObjectId);
         }
         let target = std::str::from_utf8(target_bytes)
@@ -134,6 +136,11 @@ impl Tag {
         })
     }
 
+    /// The format of the target reference.
+    pub fn object_format(&self) -> crate::ObjectFormat {
+        self.fields.target.format()
+    }
+
     /// Borrows decoded fields; clone them for explicit reconstruction with [`Self::new`].
     pub fn fields(&self) -> &TagFields {
         &self.fields
@@ -164,7 +171,8 @@ impl Tag {
 
     /// Hashes the canonical tag object header and exact retained payload without copying it.
     pub fn id(&self) -> ObjectId {
-        ObjectId::for_object("tag", &self.payload)
+        self.object_format()
+            .hash_object(crate::ObjectKind::Tag, &self.payload)
     }
 }
 
@@ -174,7 +182,8 @@ impl Tag {
 /// original [`Tag`] and are not retained by these fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TagFields {
-    /// Target SHA-1 identity; zero IDs and missing targets are not rejected.
+    /// Target identity (which determines the constructed tag's format); zero IDs and missing
+    /// targets are not rejected.
     pub target: ObjectId,
 
     /// Declared target type, without checking the referenced object.
@@ -198,7 +207,6 @@ pub struct TagFields {
 
 impl TagFields {
     fn validate(&self) -> Result<(), TagError> {
-        self.target.require_sha1()?;
         if self.name.is_empty()
             || self
                 .name
@@ -261,16 +269,13 @@ impl ObjectKind {
 /// Unsupported tag framing or a construction validation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TagError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
-    #[error(transparent)]
-    ObjectFormat(#[from] crate::ObjectFormatError),
     /// A header has no terminating LF and no message separator precedes it.
     #[error("unterminated tag header")]
     UnterminatedHeader,
     /// A required header is missing or reordered.
     #[error("missing or misplaced required tag header")]
     RequiredHeader,
-    /// The target is not exactly 40 hexadecimal SHA-1 digits.
+    /// The target does not have the selected hexadecimal format.
     #[error("invalid or unsupported tag target identity")]
     InvalidObjectId,
     /// The declared target type is not blob, tree, commit, or tag.
@@ -314,10 +319,13 @@ mod tests {
     }
 
     fn fields() -> TagFields {
-        Tag::parse(&payload(b"tagger A <a> 1 +0000\n\nrelease\n"))
-            .unwrap()
-            .fields()
-            .clone()
+        Tag::parse(
+            crate::ObjectFormat::Sha1,
+            &payload(b"tagger A <a> 1 +0000\n\nrelease\n"),
+        )
+        .unwrap()
+        .fields()
+        .clone()
     }
 
     #[rstest]
@@ -332,7 +340,12 @@ mod tests {
         let expected =
             format!("object {TARGET}\ntype {spelling}\ntag v1\ntagger A <a> 1 +0000\n\nrelease\n");
         assert_eq!(tag.as_bytes(), expected.as_bytes());
-        assert_eq!(Tag::parse(tag.as_bytes()).unwrap().fields(), &fields);
+        assert_eq!(
+            Tag::parse(crate::ObjectFormat::Sha1, tag.as_bytes())
+                .unwrap()
+                .fields(),
+            &fields
+        );
     }
 
     #[rstest]
@@ -342,7 +355,7 @@ mod tests {
     #[case::tagger_separator(b"tagger A <a> 1 +0000\n\n", Some(1))]
     fn preserves_empty_message_framing(#[case] tail: &[u8], #[case] seconds: Option<i64>) {
         let input = payload(tail);
-        let tag = Tag::parse(&input).unwrap();
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(tag.encode(), input);
         assert_eq!(tag.fields().message, b"");
         assert_eq!(
@@ -361,7 +374,7 @@ mod tests {
         let mut fields = fields();
         fields.message = message.to_vec();
         let tag = Tag::new(fields).unwrap();
-        let parsed = Tag::parse(tag.as_bytes()).unwrap();
+        let parsed = Tag::parse(crate::ObjectFormat::Sha1, tag.as_bytes()).unwrap();
         assert_eq!(parsed.fields().message, message);
         assert_eq!(parsed.encode(), tag.encode());
     }
@@ -370,7 +383,7 @@ mod tests {
     fn preserves_opaque_extra_lines() {
         let input =
             payload(b"tagger A <a> 1 +0000\nx first\n continued\nx second\nbare-line\n\nbody");
-        let parsed = Tag::parse(&input).unwrap();
+        let parsed = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(
             parsed.fields().extra_headers,
             [
@@ -390,7 +403,7 @@ mod tests {
             "object {}\ntype blob\ntag v1\ntagger A <a> +00042 -0000\n",
             TARGET.to_uppercase()
         );
-        let tag = Tag::parse(input.as_bytes()).unwrap();
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, input.as_bytes()).unwrap();
         assert_eq!(tag.fields().tagger.as_ref().unwrap().seconds, 42);
         assert_eq!(tag.encode(), input.as_bytes());
         assert_eq!(tag.validate(), Ok(()));
@@ -405,7 +418,7 @@ mod tests {
     fn retains_names_rejected_by_construction(#[case] name: &[u8]) {
         let headers = format!("object {TARGET}\ntype blob\ntag ");
         let input = [headers.as_bytes(), name, b"\n\n"].concat();
-        let parsed = Tag::parse(&input).unwrap();
+        let parsed = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(parsed.encode(), input);
         assert_eq!(parsed.validate(), Err(TagError::InvalidName));
         assert_eq!(
@@ -419,7 +432,10 @@ mod tests {
         let mut fields = fields();
         fields.name = b"../v\xff".to_vec();
         let tag = Tag::new(fields).unwrap();
-        assert_eq!(Tag::parse(tag.as_bytes()).unwrap(), tag);
+        assert_eq!(
+            Tag::parse(crate::ObjectFormat::Sha1, tag.as_bytes()).unwrap(),
+            tag
+        );
     }
 
     #[rstest]
@@ -440,7 +456,7 @@ mod tests {
     #[test]
     fn retains_extra_values_rejected_by_validation() {
         let input = payload(b"x \0\r\n\n");
-        let tag = Tag::parse(&input).unwrap();
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(tag.encode(), input);
         assert_eq!(tag.validate(), Err(TagError::InvalidHeader));
     }
@@ -448,7 +464,7 @@ mod tests {
     #[test]
     fn constructs_negative_tagger_seconds() {
         let input = payload(b"tagger A <a> -1 +0000\n\n");
-        let tag = Tag::parse(&input).unwrap();
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(Tag::new(tag.fields().clone()).unwrap().as_bytes(), input);
     }
 
@@ -456,7 +472,7 @@ mod tests {
     #[case::empty(" <> 1 +0000", CommitError::InvalidSignature)]
     fn retains_tagger_rejected_by_validation(#[case] person: &str, #[case] error: CommitError) {
         let input = payload(format!("tagger {person}\n\n").as_bytes());
-        let tag = Tag::parse(&input).unwrap();
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(tag.encode(), input);
         assert_eq!(tag.validate(), Err(TagError::Tagger(error)));
         assert_eq!(Tag::new(tag.fields().clone()), Err(TagError::Tagger(error)));
@@ -468,7 +484,10 @@ mod tests {
     #[case::offset("A <a> 1 +2400", CommitError::InvalidDate)]
     fn rejects_unreadable_tagger(#[case] person: &str, #[case] error: CommitError) {
         assert_eq!(
-            Tag::parse(&payload(format!("tagger {person}\n\n").as_bytes())),
+            Tag::parse(
+                crate::ObjectFormat::Sha1,
+                &payload(format!("tagger {person}\n\n").as_bytes())
+            ),
             Err(TagError::Tagger(error))
         );
     }
@@ -500,7 +519,7 @@ mod tests {
         TagError::RequiredHeader
     )]
     fn rejects_malformed_headers(#[case] input: &[u8], #[case] error: TagError) {
-        assert_eq!(Tag::parse(input), Err(error));
+        assert_eq!(Tag::parse(crate::ObjectFormat::Sha1, input), Err(error));
     }
 
     #[rstest]
@@ -510,12 +529,19 @@ mod tests {
     #[case::misplaced_tagger(b"x extra\ntagger A <a> 1 +0000\n\n")]
     #[case::repeated_tagger(b"tagger A <a> 1 +0000\ntagger A <a> 1 +0000\n\n")]
     fn rejects_repeated_or_misplaced_headers(#[case] tail: &[u8]) {
-        assert_eq!(Tag::parse(&payload(tail)), Err(TagError::InvalidHeader));
+        assert_eq!(
+            Tag::parse(crate::ObjectFormat::Sha1, &payload(tail)),
+            Err(TagError::InvalidHeader)
+        );
     }
 
     #[test]
     fn matches_independent_literal_identity() {
-        let tag = Tag::parse(&payload(b"tagger A <a> 1 +0000\n")).unwrap();
+        let tag = Tag::parse(
+            crate::ObjectFormat::Sha1,
+            &payload(b"tagger A <a> 1 +0000\n"),
+        )
+        .unwrap();
         assert_eq!(
             tag.id().to_string(),
             "1316e0263ce4c0bc7afc85d20286be352811d4cf"
@@ -528,7 +554,7 @@ mod format_boundary_tests {
     use super::*;
 
     #[test]
-    fn rejects_sha256_target_before_encoding() {
+    fn constructs_sha256_target() {
         let result = Tag::new(TagFields {
             target: ObjectId::Sha256([1; 32]),
             target_kind: ObjectKind::Blob,
@@ -537,6 +563,25 @@ mod format_boundary_tests {
             extra_headers: vec![],
             message: vec![],
         });
-        assert!(matches!(result, Err(TagError::ObjectFormat(_))));
+        assert_eq!(result.unwrap().object_format(), crate::ObjectFormat::Sha256);
+    }
+}
+
+#[cfg(test)]
+mod dual_format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn parsing_rejects_foreign_target(#[case] format: ObjectFormat, #[case] foreign: ObjectFormat) {
+        let bytes = format!("object {}\ntype blob\ntag v1\n\n", ObjectId::null(foreign));
+        assert_eq!(
+            Tag::parse(format, bytes.as_bytes()),
+            Err(TagError::InvalidObjectId)
+        );
     }
 }

@@ -17,11 +17,20 @@ fn entry(name: String, mode: EntryMode, id: ObjectId) -> TreeEntry {
 
 fn compare(c: &mut Criterion) {
     let temporary = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temporary.path().join("benchmark"), InitKind::Bare).unwrap();
-    let store = repo.loose_objects().unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temporary.path().join("benchmark"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let store = repo.loose_objects();
     let a = store.write_blob(b"first").unwrap();
     let b = store.write_blob(b"second").unwrap();
-    let write = |entries| store.write_tree(&Tree::new(entries).unwrap()).unwrap();
+    let write = |entries| {
+        store
+            .write_tree(&Tree::new(girt::ObjectFormat::Sha1, entries).unwrap())
+            .unwrap()
+    };
     let leaves = |id| {
         (0..100)
             .map(|i| entry(format!("file-{i:03}"), EntryMode::Blob, id))

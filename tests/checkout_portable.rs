@@ -7,7 +7,12 @@ use girt::{InitKind, Repository};
 #[test]
 fn cancellation_precedes_index_access() {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
     let failure = repo
         .checkout_tree(None, None, Limits::default(), &AtomicBool::new(true))
@@ -20,7 +25,12 @@ fn cancellation_precedes_index_access() {
 #[test]
 fn unsupported_platform_does_not_lock_or_parse_index() {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"invalid").unwrap();
     let failure = repo
         .checkout_tree(None, None, Limits::default(), &AtomicBool::new(false))

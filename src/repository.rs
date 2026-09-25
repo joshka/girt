@@ -19,10 +19,11 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// opening is not a security boundary against concurrent filesystem changes or untrusted paths.
 ///
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
-/// format versions 0 and 1 with SHA-1 objects are supported. Includes, worktree configuration,
-/// alternates, shallow repositories and other extensions are rejected explicitly. Object access
-/// uses [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for bounded
-/// loose/packed reads. Opening repository metadata alone does not validate object storage.
+/// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 loose objects are
+/// supported. Includes, worktree configuration, alternates, shallow repositories and other
+/// extensions are rejected explicitly. Object access uses [`Self::loose_objects`] for loose
+/// reads/writes or [`Self::objects`] for bounded loose/packed reads. Opening repository metadata
+/// alone does not validate object storage.
 ///
 /// Paths preserve OS bytes on Unix. On other platforms metadata paths must be UTF-8. No tilde,
 /// environment-variable or prefix interpolation is performed. Tilde and `%(...)` prefixes in
@@ -34,7 +35,7 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// use girt::{ObjectId, Repository};
 /// let repository = Repository::open("/path/to/repository")?;
 /// let id: ObjectId = "ce013625030ba8dba906f756967f9e9ca394464a".parse()?;
-/// let bytes = repository.loose_objects()?.read_blob(id, 1024)?;
+/// let bytes = repository.loose_objects().read_blob(id, 1024)?;
 /// assert_eq!(bytes, b"hello\n");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -46,6 +47,7 @@ pub struct Repository {
     worktree: Option<PathBuf>,
     config: Config,
     format_version: u32,
+    object_format: ObjectFormat,
 }
 
 /// Repository location, metadata, configuration or supported-format failure.
@@ -98,7 +100,7 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Reference storage is currently unsupported on non-Unix platforms. Unsupported repository
+    /// SHA-256 reference storage and non-Unix platforms are explicitly unsupported. Repository
     /// backends such as reftable are rejected by [`Self::open`] before a handle can be constructed.
     pub fn references(&self) -> Result<crate::refs::References<'_>, crate::refs::ReferenceError> {
         crate::refs::References::new(self)
@@ -117,7 +119,7 @@ impl Repository {
     /// # Errors
     ///
     /// Distinguishes missing locations, malformed metadata, I/O failures, configuration failures,
-    /// and unsupported features (including recognized SHA-256 object storage). No files are written
+    /// and unsupported configuration or storage features. No files are written
     /// on success or failure. Filesystem reads and allocation are synchronous and unbounded by a
     /// caller-supplied resource limit.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
@@ -173,7 +175,7 @@ impl Repository {
             path: config_path.clone(),
             source,
         })?;
-        let format_version = validate_config(&config, &config_path)?;
+        let (format_version, object_format) = validate_config(&config, &config_path)?;
         reject_storage_features(&common_dir, &object_dir)?;
         let worktree = resolve_worktree(
             &git_dir,
@@ -189,6 +191,7 @@ impl Repository {
             worktree,
             config,
             format_version,
+            object_format,
         })
     }
 
@@ -216,9 +219,9 @@ impl Repository {
     pub fn format_version(&self) -> u32 {
         self.format_version
     }
-    /// Object format verified while opening. Currently always SHA-1.
+    /// Object format verified from common repository configuration while opening.
     pub fn object_format(&self) -> ObjectFormat {
-        ObjectFormat::Sha1
+        self.object_format
     }
     /// Opens a bounded snapshot of pack/index pairs alongside live loose-object reads.
     ///
@@ -228,26 +231,27 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
-    /// failures, or exhausted snapshot limits. Reopen after a concurrent repack failure.
+    /// failures, or exhausted snapshot limits. SHA-256 snapshots support loose-only storage; any
+    /// `.pack` or `.idx` artifact returns [`crate::ObjectReadError::Unsupported`]. Use
+    /// [`Self::loose_objects`] to explicitly read loose objects alongside unsupported packs.
+    /// Reopen after a concurrent repack failure.
     pub fn objects(
         &self,
         limits: crate::PackLimits,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
-        crate::Objects::open(&self.object_dir, limits)
+        crate::Objects::open(self.object_format, &self.object_dir, limits)
     }
 
     /// Connects to the existing loose-object API without creating directories or files.
     ///
-    /// # Errors
-    ///
-    /// Propagates the storage constructor's format error. All currently openable repositories use
-    /// supported SHA-1 storage. Subsequent reads/writes retain [`LooseObjects`]' contracts.
-    pub fn loose_objects(&self) -> Result<LooseObjects, crate::Error> {
+    /// Both openable formats support loose storage. Subsequent reads/writes retain
+    /// [`LooseObjects`]' format checks and storage contracts.
+    pub fn loose_objects(&self) -> LooseObjects {
         LooseObjects::new(&self.object_dir, self.object_format())
     }
 }
 
-fn validate_config(config: &Config, path: &Path) -> Result<u32, OpenError> {
+fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), OpenError> {
     for entry in config.entries() {
         if entry.section == b"include" || entry.section == b"includeif" {
             return Err(unsupported(path, "configuration includes"));
@@ -273,6 +277,7 @@ fn validate_config(config: &Config, path: &Path) -> Result<u32, OpenError> {
             &format!("repository format version {version}"),
         ));
     }
+    let mut object_format = ObjectFormat::Sha1;
     if let Some(value) = config.value("extensions", None, "objectformat") {
         if version == 0 {
             return Err(unsupported(
@@ -282,11 +287,11 @@ fn validate_config(config: &Config, path: &Path) -> Result<u32, OpenError> {
         }
         match value {
             Some(b"sha1") => (),
-            Some(b"sha256") => return Err(unsupported(path, "SHA-256 object storage")),
+            Some(b"sha256") => object_format = ObjectFormat::Sha256,
             _ => return Err(unsupported(path, "unknown extensions.objectFormat")),
         }
     }
-    Ok(version)
+    Ok((version, object_format))
 }
 
 fn parse_version(value: &[u8]) -> Option<u32> {

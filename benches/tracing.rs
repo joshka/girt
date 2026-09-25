@@ -8,10 +8,17 @@ use girt::{
 
 fn measure(c: &mut Criterion) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
-    let loose = repo.loose_objects().unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let loose = repo.loose_objects();
     let blob = loose.write_blob(&vec![b'x'; 4096]).unwrap();
-    let tree = loose.write_tree(&Tree::new(vec![]).unwrap()).unwrap();
+    let tree = loose
+        .write_tree(&Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap())
+        .unwrap();
     let signature = Signature {
         name: b"benchmark".to_vec(),
         email: b"benchmark@example.test".to_vec(),

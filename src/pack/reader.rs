@@ -115,7 +115,11 @@ impl Pack {
                     4 => ObjectKind::Tag,
                     _ => unreachable!("non-delta kinds validated above"),
                 };
-                let object = Object { kind, data };
+                let object = Object {
+                    kind,
+                    data,
+                    format: crate::ObjectFormat::Sha1,
+                };
                 verify_identity(&object, entry.id)?;
                 break object;
             }

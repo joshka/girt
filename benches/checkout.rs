@@ -14,7 +14,12 @@ struct Fixture {
 impl Fixture {
     fn new(count: usize, update: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+        let repo = Repository::init(
+            girt::ObjectFormat::Sha1,
+            temp.path().join("repo"),
+            InitKind::Worktree,
+        )
+        .unwrap();
         let old_tree = make_tree(&repo, count, b'o');
         let target = make_tree(&repo, count, b'n');
         let old = update.then_some(old_tree);
@@ -31,7 +36,7 @@ impl Fixture {
     }
 }
 fn make_tree(repo: &Repository, count: usize, byte: u8) -> ObjectId {
-    let objects = repo.loose_objects().unwrap();
+    let objects = repo.loose_objects();
     let id = objects.write_blob(&vec![byte; 1024]).unwrap();
     let entries = (0..count)
         .map(|n| TreeEntry {
@@ -40,7 +45,9 @@ fn make_tree(repo: &Repository, count: usize, byte: u8) -> ObjectId {
             id,
         })
         .collect();
-    objects.write_tree(&Tree::new(entries).unwrap()).unwrap()
+    objects
+        .write_tree(&Tree::new(girt::ObjectFormat::Sha1, entries).unwrap())
+        .unwrap()
 }
 fn benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("raw_checkout");

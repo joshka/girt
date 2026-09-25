@@ -55,7 +55,7 @@ fn agrees_with_git_for_exact_packed_objects(#[case] ofs: bool, #[case] kind: Obj
 fn combines_loose_and_packed_reads_and_reports_absence() {
     let fixture = Fixture::new(true, 4);
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
-    let loose = fixture.repo.loose_objects().unwrap();
+    let loose = fixture.repo.loose_objects();
     let id = loose.write_blob(b"new loose blob").unwrap();
     assert_eq!(
         objects

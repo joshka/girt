@@ -59,7 +59,12 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
 }
 fn fixture() -> (tempfile::TempDir, Repository) {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     (temp, repo)
 }
 fn status(repo: &Repository) -> Report {
@@ -437,8 +442,8 @@ fn separate_gitdir_inside_worktree_is_a_boundary() {
 #[test]
 fn wrong_kind_index_object_is_an_error() {
     let (_temp, repo) = fixture();
-    let tree = girt::Tree::new(vec![]).unwrap();
-    let id = repo.loose_objects().unwrap().write_tree(&tree).unwrap();
+    let tree = girt::Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap();
+    let id = repo.loose_objects().write_tree(&tree).unwrap();
     let index = Index::new(
         vec![Entry::new(b"file".to_vec(), Mode::Regular, id)],
         Default::default(),

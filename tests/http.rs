@@ -728,11 +728,7 @@ fn cancellation_during_stalled_upload_is_uncertain() {
             state as u8
         })
         .collect();
-    let id = source
-        .loose_objects()
-        .unwrap()
-        .write_blob(&payload)
-        .unwrap();
+    let id = source.loose_objects().write_blob(&payload).unwrap();
     let prepared = PreparedPush::new(
         &source.objects(PackLimits::default()).unwrap(),
         vec![command("refs/tags/large", None, id)],

@@ -37,6 +37,9 @@ pub struct IndexEdit {
 /// Synchronous index storage failure, retaining path and underlying causes.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    /// Index storage for this repository format is not implemented.
+    #[error("unsupported index storage format: {0}")]
+    UnsupportedFormat(crate::ObjectFormat),
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
     #[error("{operation}; additionally, lock cleanup failed: {cleanup}")]
@@ -90,6 +93,7 @@ impl Repository {
     ///
     /// # Errors
     ///
+    /// SHA-256 repositories return [`StorageError::UnsupportedFormat`] before filesystem access.
     /// Returns contextual I/O, non-regular-file, format and limit errors. Reads are bounded and
     /// synchronous; nothing is written. Concurrent cooperating writers publish whole files by
     /// rename. In-place writes by noncooperating processes may instead produce a parse error.
@@ -104,6 +108,9 @@ impl Repository {
         );
 
         let operation = || {
+            if self.object_format() != crate::ObjectFormat::Sha1 {
+                return Err(StorageError::UnsupportedFormat(self.object_format()));
+            }
             let path = self.git_dir().join("index");
             read_bytes(&path, limits)?
                 .map(|bytes| parse(&path, &bytes, limits))
@@ -127,6 +134,7 @@ impl Repository {
     ///
     /// # Errors
     ///
+    /// SHA-256 repositories return [`StorageError::UnsupportedFormat`] before locking.
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
@@ -140,6 +148,9 @@ impl Repository {
         );
 
         let operation = || {
+            if self.object_format() != crate::ObjectFormat::Sha1 {
+                return Err(StorageError::UnsupportedFormat(self.object_format()));
+            }
             let destination = self.git_dir().join("index");
             let lock_path = self.git_dir().join("index.lock");
             let file = OpenOptions::new()

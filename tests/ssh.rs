@@ -693,7 +693,7 @@ fn blocked_upload_expires_with_unknown_outcome() {
             state as u8
         })
         .collect();
-    let id = repo.loose_objects().unwrap().write_blob(&bytes).unwrap();
+    let id = repo.loose_objects().write_blob(&bytes).unwrap();
     let cancel = AtomicBool::new(false);
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),

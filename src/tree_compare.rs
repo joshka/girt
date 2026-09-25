@@ -103,7 +103,8 @@ impl Objects {
     /// Returns [`TreeCompareError`] for a visited missing, wrong-kind, corrupt, malformed or
     /// structurally invalid tree, cancellation, or an exhausted bound. Read/parse failures include
     /// the tree ID and byte path (empty for the root). No partial results or filesystem mutations
-    /// are produced. SHA-1 and the five modes accepted by [`Tree::parse`] are supported.
+    /// are produced. Both object formats and the five modes accepted by [`Tree::parse`] are
+    /// supported.
     ///
     /// ```no_run
     /// use std::sync::atomic::AtomicBool;
@@ -130,7 +131,7 @@ impl Objects {
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
         for id in old.into_iter().chain(new) {
-            id.require_sha1()?;
+            id.require_format(self.object_format())?;
         }
         let mut budget = Budget {
             remaining: limits,
@@ -255,7 +256,7 @@ impl Budget<'_> {
     ) -> Result<Tree, TreeCompareError> {
         self.check()?;
         let Some(id) = id else {
-            return Ok(Tree::new(vec![]).expect("empty tree"));
+            return Ok(Tree::new(objects.object_format(), vec![]).expect("empty tree"));
         };
         charge(&mut self.remaining.max_trees, 1, "trees")?;
         let mut read = self.remaining.read;
@@ -289,7 +290,7 @@ impl Budget<'_> {
             path: path.to_vec(),
             source,
         };
-        let tree = Tree::parse(object.data()).map_err(invalid)?;
+        let tree = Tree::parse(object.object_format(), object.data()).map_err(invalid)?;
         charge(
             &mut self.remaining.max_entries,
             tree.entries().len(),

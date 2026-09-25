@@ -12,8 +12,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dispatch = tracing::Dispatch::new(subscriber);
     tracing::dispatcher::with_default(&dispatch, || -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let repo = Repository::init(root.path().join("repo"), InitKind::Bare)?;
-        let loose = repo.loose_objects()?;
+        let repo = Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            InitKind::Bare,
+        )?;
+        let loose = repo.loose_objects();
         let id = loose.write_blob(b"caller-owned tracing example")?;
         assert_eq!(loose.read_blob(id, 1024)?, b"caller-owned tracing example");
         repo.edit_index(Default::default())?.commit()?;

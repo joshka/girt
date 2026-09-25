@@ -1097,3 +1097,35 @@ history walks with instrumentation disabled, enabled without a subscriber, and e
 formatting to a sink. Run `cargo bench --bench tracing` and
 `cargo bench --features tracing --bench tracing`. These whole-operation observations include
 filesystem variance and subscriber costs; they establish no numerical regression gate.
+
+## R04 Dual-Format Object Baseline
+
+`cargo bench --bench object_formats --no-default-features` compares SHA-1 and SHA-256 hashing, owned
+tree/commit/tag codecs, and loose storage. At revision `248a7244e9d403ae0d08ec476bd85035c4f0ade7`,
+Criterion used 20 samples, 500-ms warmup and at least one second collection per case on macOS arm64,
+Rust 1.98.1. No builds or tests overlapped sampling. The
+[source hashes, commands and estimates](/Users/joshka/.codex/reports/girt-r04/benchmarks.json),
+[raw samples](/Users/joshka/.codex/reports/girt-r04/criterion) and
+[run log](/Users/joshka/.codex/reports/girt-r04/bench.log) are retained.
+
+Blob input is 64 KiB of deterministic varied bytes. Trees contain 256 entries with byte names and
+format-sized IDs; commit input includes a negative timestamp and a folded opaque signature. Setup is
+outside sampling. New-object destinations are prepared before timing; the operation includes fanout
+creation, hashing, compression and publication. Existing writes additionally validate the stored
+object. Reads use warm filesystem caches. These are whole-operation measurements, not cold storage,
+memory bounds or tracing-overhead estimates.
+
+| Operation                  | SHA-1 mean, µs (95% interval) | SHA-256 mean, µs (95% interval) |
+| -------------------------- | ----------------------------- | ------------------------------- |
+| Hash 64-KiB blob           | 65.25 (63.96–66.69)           | 182.30 (179.33–185.03)          |
+| Parse 256-entry tree       | 8.33 (8.25–8.42)              | 8.39 (8.37–8.42)                |
+| Encode 256-entry tree      | 4.32 (4.28–4.36)              | 3.94 (3.91–3.96)                |
+| Parse commit               | 0.482 (0.478–0.486)           | 0.544 (0.535–0.556)             |
+| Parse tag                  | 0.263 (0.261–0.264)           | 0.341 (0.334–0.347)             |
+| Read warm 64-KiB blob      | 110.01 (108.99–111.09)        | 236.08 (233.06–239.67)          |
+| Write existing 64-KiB blob | 669.06 (663.93–674.65)        | 973.48 (960.89–987.55)          |
+| Publish new 64-KiB blob    | 599.28 (595.89–602.93)        | 718.14 (711.86–724.95)          |
+
+This establishes a reproducible baseline for both implemented formats. It does not establish a
+speedup over earlier revisions or a universal hash-cost ratio. No numerical acceptance threshold is
+imposed. See the [R04 report](evidence/r04.md) for compatibility and storage-failure evidence.

@@ -34,7 +34,12 @@ fn sha1_repository_refuses_sha256_read_and_checkout_before_locking() {
     use girt::{InitKind, PackLimits, ReadLimits, Repository};
 
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     let id = ObjectId::Sha256([1; 32]);
     let objects = repo.objects(PackLimits::default()).unwrap();
     assert!(matches!(

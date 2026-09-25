@@ -61,7 +61,7 @@ fn init(directory: &Path) -> (LooseObjects, ObjectId) {
         .parse()
         .unwrap();
     (
-        LooseObjects::new(directory.join("objects"), ObjectFormat::Sha1).unwrap(),
+        LooseObjects::new(directory.join("objects"), ObjectFormat::Sha1),
         id,
     )
 }
@@ -261,11 +261,17 @@ fn fixed_unit_identity_agrees_with_git() {
     );
     assert_eq!(
         std::str::from_utf8(&git_id).unwrap().trim(),
-        Commit::parse(payload).unwrap().id().to_string()
+        Commit::parse(girt::ObjectFormat::Sha1, payload)
+            .unwrap()
+            .id()
+            .to_string()
     );
     assert_eq!(
-        Commit::parse(payload).unwrap().fields().tree,
-        Tree::new(vec![]).unwrap().id()
+        Commit::parse(girt::ObjectFormat::Sha1, payload)
+            .unwrap()
+            .fields()
+            .tree,
+        Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap().id()
     );
 }
 
@@ -301,7 +307,11 @@ fn constructs_signed_seconds_without_rewriting_identity(#[case] seconds: i64) {
 
 #[test]
 fn caller_can_resolve_collision_by_decrementing_across_epoch() {
-    let mut initial = fields(Tree::new(vec![]).unwrap().id(), vec![], b"same content");
+    let mut initial = fields(
+        Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap().id(),
+        vec![],
+        b"same content",
+    );
     initial.author.seconds = 0;
     initial.committer.seconds = 0;
     let first = Commit::new(initial.clone()).unwrap();
@@ -311,7 +321,7 @@ fn caller_can_resolve_collision_by_decrementing_across_epoch() {
     assert_eq!(first.id(), duplicate.id());
     assert_ne!(first.id(), decremented.id());
     assert_eq!(
-        Commit::parse(decremented.as_bytes())
+        Commit::parse(girt::ObjectFormat::Sha1, decremented.as_bytes())
             .unwrap()
             .fields()
             .committer

@@ -12,20 +12,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temporary;
     let (repo, old, new) = if args.is_empty() {
         temporary = tempfile::tempdir()?;
-        let repo = Repository::init(temporary.path().join("sample"), InitKind::Bare)?;
-        let store = repo.loose_objects()?;
+        let repo = Repository::init(
+            girt::ObjectFormat::Sha1,
+            temporary.path().join("sample"),
+            InitKind::Bare,
+        )?;
+        let store = repo.loose_objects();
         let old_blob = store.write_blob(b"hello\n")?;
         let new_blob = store.write_blob(b"hello, trees\n")?;
-        let old = store.write_tree(&Tree::new(vec![TreeEntry {
-            name: b"hello.txt".to_vec(),
-            mode: EntryMode::Blob,
-            id: old_blob,
-        }])?)?;
-        let new = store.write_tree(&Tree::new(vec![TreeEntry {
-            name: b"hello.txt".to_vec(),
-            mode: EntryMode::Executable,
-            id: new_blob,
-        }])?)?;
+        let old = store.write_tree(&Tree::new(
+            girt::ObjectFormat::Sha1,
+            vec![TreeEntry {
+                name: b"hello.txt".to_vec(),
+                mode: EntryMode::Blob,
+                id: old_blob,
+            }],
+        )?)?;
+        let new = store.write_tree(&Tree::new(
+            girt::ObjectFormat::Sha1,
+            vec![TreeEntry {
+                name: b"hello.txt".to_vec(),
+                mode: EntryMode::Executable,
+                id: new_blob,
+            }],
+        )?)?;
         (repo, Some(old), Some(new))
     } else {
         if args.len() != 3 {

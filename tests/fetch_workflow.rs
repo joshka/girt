@@ -61,7 +61,12 @@ fn name(value: &str) -> RefName {
 }
 fn destination() -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repository = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let repository = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     (root, repository)
 }
 struct Source {
@@ -487,7 +492,6 @@ fn destination_race_keeps_installed_objects_and_does_not_overwrite_writer() {
     );
     let competing = repository
         .loose_objects()
-        .unwrap()
         .write_blob(b"competing writer")
         .unwrap();
     repository

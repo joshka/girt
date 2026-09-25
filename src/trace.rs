@@ -35,7 +35,7 @@ fn io(error: &std::io::Error) -> &'static str {
 pub(crate) fn loose(error: &crate::Error) -> &'static str {
     use crate::Error::*;
     match error {
-        ObjectFormat(_) | UnsupportedFormat(_) | UnknownObjectType => "unsupported",
+        ObjectFormat(_) | UnknownObjectType => "unsupported",
         Io(e) => io(e),
         UnsupportedObjectType => "wrong_kind",
         Corrupt(_) | Tree(_) | Commit(_) | Tag(_) => "corrupt",
@@ -50,7 +50,7 @@ pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
         Path { source, .. } => io(source),
         PackArtifacts { source, .. } => object(source),
         Loose(e) => loose(e),
-        IndexVersion(_) | PackVersion(_) | ObjectType(_) => "unsupported",
+        Unsupported(_) | IndexVersion(_) | PackVersion(_) | ObjectType(_) => "unsupported",
         Corrupt(_) | DeltaCycle => "corrupt",
         Limit(_) => "limit",
         MissingBase(_) => "missing",
@@ -198,6 +198,7 @@ pub(crate) fn transaction(
 pub(crate) fn index(error: &crate::index::StorageError, span: &tracing::Span) -> &'static str {
     use crate::index::StorageError::*;
     match error {
+        UnsupportedFormat(_) => "unsupported",
         Cleanup { operation, .. } => {
             span.record("effects", "cleanup_failed");
             index(operation, span)

@@ -7,7 +7,12 @@ use girt::{InitKind, Repository};
 #[test]
 fn cancellation_precedes_platform_and_storage_access() {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"not an index").unwrap();
     let result = repo.raw_status(
         Baseline::Tree(None),
@@ -22,7 +27,12 @@ fn cancellation_precedes_platform_and_storage_access() {
 #[test]
 fn unsupported_platform_fails_before_index_read() {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     std::fs::write(repo.git_dir().join("index"), b"not an index").unwrap();
     let result = repo.raw_status(
         Baseline::Tree(None),

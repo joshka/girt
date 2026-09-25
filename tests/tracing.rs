@@ -20,7 +20,12 @@ fn repository() -> (tempfile::TempDir, Repository) {
         .prefix("R03_SECRET_path")
         .tempdir()
         .unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     (root, repo)
 }
 fn pkt(bytes: &[u8]) -> Vec<u8> {
@@ -64,6 +69,14 @@ fn receive(
         &AtomicBool::new(cancelled),
         |_| ControlFlow::Continue(()),
     )
+}
+
+// Keep setup calls under a dispatch too: parallel tests may first register these same callsites
+// while asserting captured operations. Unsubscribed setup can race that initial registration.
+fn received_fixture(bytes: &[u8]) -> girt::fetch::ReceivedFetch {
+    tracing::dispatcher::with_default(&Capture::default().dispatch(), || {
+        receive(bytes, FetchLimits::default(), false).unwrap()
+    })
 }
 
 #[test]
@@ -116,7 +129,7 @@ fn fetch_failure_classes(
 fn installation_failure_retains_visible_pack_and_reports_phase() {
     let (_root, repo) = repository();
     let (_, bytes) = transfer();
-    let received = receive(&bytes, FetchLimits::default(), false).unwrap();
+    let received = received_fixture(&bytes);
     // Successful installation identifies the artifact name; removing only its index and replacing
     // it with a directory makes the second index publication fail after pack reuse succeeds.
     let installed = received
@@ -184,7 +197,7 @@ mod http;
 fn push_write_failure_is_uncertain_without_logging_source_text() {
     use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushError, PushLimits};
     let (_root, repo) = repository();
-    let id = repo.loose_objects().unwrap().write_blob(SECRET).unwrap();
+    let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![PushCommand {
@@ -266,7 +279,7 @@ fn reference_transaction_has_prepare_and_publication_children() {
 fn filtered_operations_never_modify_caller_fields() {
     use tracing_subscriber::layer::SubscriberExt;
     let root = tempfile::tempdir().unwrap();
-    let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let capture = Capture::default();
     let dispatch = tracing::Dispatch::new(
         tracing_subscriber::registry()
@@ -301,7 +314,7 @@ fn filtered_operations_never_modify_caller_fields() {
 fn loose_kind_errors_remain_distinct(#[case] encoded: &[u8], #[case] class: &str) {
     use std::io::Write;
     let root = tempfile::tempdir().unwrap();
-    let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+    let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1);
     let id = ObjectId::for_blob(ObjectFormat::Sha1, b"");
     let hex = id.to_string();
     std::fs::create_dir(root.path().join(&hex[..2])).unwrap();
@@ -320,7 +333,7 @@ fn loose_kind_errors_remain_distinct(#[case] encoded: &[u8], #[case] class: &str
 fn successful_push_protocol_exposes_remote_rejections_without_text() {
     use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits};
     let (_root, repo) = repository();
-    let id = repo.loose_objects().unwrap().write_blob(SECRET).unwrap();
+    let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![PushCommand {
@@ -359,4 +372,82 @@ fn successful_push_protocol_exposes_remote_rejections_without_text() {
     assert_eq!(span.fields["pending"], "0");
     assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
     assert!(capture.events().is_empty());
+}
+
+#[test]
+fn sha256_storage_spans_include_format_and_classify_refusal() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha256,
+        root.path().join("R03_SECRET_path"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let loose = repo.loose_objects();
+    let capture = Capture::default();
+    let id = tracing::dispatcher::with_default(&capture.dispatch(), || loose.write_blob(SECRET))
+        .unwrap();
+    assert_eq!(
+        capture.named("loose.write").fields["object_format"],
+        "sha256"
+    );
+    assert_eq!(capture.named("loose.write").fields["outcome"], "success");
+    let capture = Capture::default();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        assert_eq!(loose.read_blob(id, 100).unwrap(), SECRET);
+        assert!(repo.edit_index(Default::default()).is_err());
+    });
+    assert_eq!(
+        capture.named("loose.read").fields["object_format"],
+        "sha256"
+    );
+    assert_eq!(
+        capture.named("index.edit_index").fields["failure_class"],
+        "unsupported"
+    );
+    assert!(capture.spans().iter().all(|s| s.closed));
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.events().is_empty());
+    let capture = Capture::default();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        assert!(
+            loose
+                .write_tree(&girt::Tree::new(ObjectFormat::Sha1, vec![]).unwrap())
+                .is_err()
+        );
+    });
+    assert_eq!(
+        capture.named("loose.write").fields["failure_class"],
+        "unsupported"
+    );
+}
+
+#[test]
+fn sha1_transfer_cannot_publish_into_sha256_repository() {
+    let (_, bytes) = transfer();
+    let received = received_fixture(&bytes);
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha256,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let pack_dir = repo.object_dir().join("pack");
+    let capture = Capture::default();
+    let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
+        received.install(&repo, PackLimits::default(), &AtomicBool::new(false))
+    });
+    assert!(matches!(result, Err(FetchError::Unsupported(_))));
+    assert_eq!(std::fs::read_dir(pack_dir).unwrap().count(), 0);
+    assert_eq!(
+        capture.named("fetch.install").fields["failure_class"],
+        "unsupported"
+    );
+    assert!(
+        !capture
+            .named("fetch.install")
+            .fields
+            .contains_key("effects")
+    );
 }

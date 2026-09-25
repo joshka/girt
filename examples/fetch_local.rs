@@ -25,13 +25,16 @@ fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::E
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
-    let objects = source.loose_objects()?;
+    let objects = source.loose_objects();
     let blob = objects.write_blob(b"Fetched through a local upload-pack server\n")?;
-    let tree = objects.write_tree(&Tree::new(vec![TreeEntry {
-        mode: EntryMode::Blob,
-        name: b"hello.txt".to_vec(),
-        id: blob,
-    }])?)?;
+    let tree = objects.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            mode: EntryMode::Blob,
+            name: b"hello.txt".to_vec(),
+            id: blob,
+        }],
+    )?)?;
     let author = Signature {
         name: b"Fetch Example".to_vec(),
         email: b"fetch@example.com".to_vec(),

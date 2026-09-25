@@ -85,7 +85,12 @@ criterion_main!(benches);
 fn transactions(c: &mut Criterion) {
     for count in [1, 32] {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("repo"), girt::InitKind::Bare).unwrap();
+        let repo = Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            girt::InitKind::Bare,
+        )
+        .unwrap();
         let edits: Vec<_> = (0..count)
             .map(|index| RefEdit {
                 name: RefName::new(format!("refs/tags/batch-{index:03}")).unwrap(),
@@ -120,7 +125,12 @@ fn transactions(c: &mut Criterion) {
         });
     }
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("detach"), girt::InitKind::Bare).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("detach"),
+        girt::InitKind::Bare,
+    )
+    .unwrap();
     let refs = repo.references().unwrap();
     let head = RefName::new("HEAD").unwrap();
     let unborn = Target::Symbolic(RefName::new("refs/heads/main").unwrap());

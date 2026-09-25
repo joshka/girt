@@ -62,7 +62,8 @@ change.
 
 R02 closes the identity/hash and current-boundary-refusal subset only; see its
 [evidence and ownership audit](evidence/r02.md). Both-format codecs, storage, refs, indexes and
-transport remain open under their owning tasks.
+transport remain open under their owning tasks. R04 codec/loose-storage evidence and precise R05
+refusals are recorded in [its completion report](evidence/r04.md).
 
 ### A03 — Instrumentation, errors and scheduling
 

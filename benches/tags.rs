@@ -40,7 +40,7 @@ fn tags(criterion: &mut Criterion) {
             b.iter(|| Tag::new(black_box(tag.fields().clone())).unwrap());
         });
         group.bench_function(BenchmarkId::new("parse", size), |b| {
-            b.iter(|| Tag::parse(black_box(payload)).unwrap())
+            b.iter(|| Tag::parse(girt::ObjectFormat::Sha1, black_box(payload)).unwrap())
         });
         group.bench_function(BenchmarkId::new("encode", size), |b| {
             b.iter(|| black_box(&tag).encode())
@@ -73,7 +73,7 @@ fn tags(criterion: &mut Criterion) {
 
 fn empty_store() -> (TempDir, LooseObjects) {
     let directory = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     (directory, objects)
 }
 

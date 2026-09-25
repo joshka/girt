@@ -13,11 +13,18 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
-        let loose = repo.loose_objects().unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            InitKind::Bare,
+        )
+        .unwrap();
+        let loose = repo.loose_objects();
         let old = loose.write_blob(b"old\n").unwrap();
         let new = loose.write_blob(b"new\n").unwrap();
-        let tree = loose.write_tree(&Tree::new(vec![]).unwrap()).unwrap();
+        let tree = loose
+            .write_tree(&Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap())
+            .unwrap();
         let objects = repo.objects(PackLimits::default()).unwrap();
         Self {
             root,

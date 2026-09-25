@@ -292,7 +292,12 @@ fn tree_changes_load_verified_content_for_diff(#[case] packed: bool) {
 
 fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::ObjectId) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let path = root.path().join("repo");
     // Git independently writes the byte payloads; no filesystem text conversion is involved.
     std::fs::write(root.path().join("old"), b"old\r\n").unwrap();
@@ -307,24 +312,30 @@ fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::Objec
         .lines()
         .map(|id| id.parse().unwrap())
         .collect();
-    let store = repo.loose_objects().unwrap();
+    let store = repo.loose_objects();
     let old = store
         .write_tree(
-            &Tree::new(vec![TreeEntry {
-                name: b"file".to_vec(),
-                mode: EntryMode::Blob,
-                id: ids[0],
-            }])
+            &Tree::new(
+                girt::ObjectFormat::Sha1,
+                vec![TreeEntry {
+                    name: b"file".to_vec(),
+                    mode: EntryMode::Blob,
+                    id: ids[0],
+                }],
+            )
             .unwrap(),
         )
         .unwrap();
     let new = store
         .write_tree(
-            &Tree::new(vec![TreeEntry {
-                name: b"file".to_vec(),
-                mode: EntryMode::Executable,
-                id: ids[1],
-            }])
+            &Tree::new(
+                girt::ObjectFormat::Sha1,
+                vec![TreeEntry {
+                    name: b"file".to_vec(),
+                    mode: EntryMode::Executable,
+                    id: ids[1],
+                }],
+            )
             .unwrap(),
         )
         .unwrap();

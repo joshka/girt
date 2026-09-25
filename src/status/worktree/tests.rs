@@ -9,7 +9,12 @@ use crate::InitKind;
 
 fn fixture(path: &[u8], content: &[u8]) -> (tempfile::TempDir, Repository, Vec<index::Entry>) {
     let temp = tempfile::tempdir().unwrap();
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        crate::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     let file = repo.worktree().unwrap().join(OsStr::from_bytes(path));
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(file, content).unwrap();
@@ -230,8 +235,13 @@ fn cancellation_during_read_returns_no_partial_report() {
 fn skips_nested_repository_and_bare_metadata() {
     let (_temp, repo, entries) = fixture(b"file", b"old");
     let root = repo.worktree().unwrap();
-    Repository::init(root.join("nested"), InitKind::Worktree).unwrap();
-    Repository::init(root.join("bare"), InitKind::Bare).unwrap();
+    Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.join("nested"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    Repository::init(crate::ObjectFormat::Sha1, root.join("bare"), InitKind::Bare).unwrap();
     let result = scan(
         &repo,
         root,

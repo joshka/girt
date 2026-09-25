@@ -57,7 +57,11 @@ impl References<'_> {
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectId, Repository};
     /// let directory = tempfile::tempdir()?;
-    /// let repo = Repository::init(directory.path().join("repo"), InitKind::Bare)?;
+    /// let repo = Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Bare,
+    /// )?;
     /// let refs = repo.references()?;
     /// let tag = RefName::new(b"refs/tags/example")?;
     /// let value = Target::Direct(ObjectId::Sha1([1; 20]));
@@ -232,7 +236,12 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, Repository) {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            InitKind::Bare,
+        )
+        .unwrap();
         fs::create_dir_all(repo.git_dir().join("refs/heads")).unwrap();
         fs::write(
             repo.git_dir().join("refs/heads/a"),

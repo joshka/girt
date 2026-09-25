@@ -30,7 +30,7 @@ impl Fixture {
         fs::write(root.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
         fs::write(root.path().join("config"), "[core]\nbare=true\n").unwrap();
         let repo = Repository::open(root.path()).unwrap();
-        let id = repo.loose_objects().unwrap().write_blob(payload).unwrap();
+        let id = repo.loose_objects().write_blob(payload).unwrap();
         let commands = ["refs/tags/one", "refs/tags/two"].map(|name| PushCommand {
             name: RefName::new(name).unwrap(),
             expected: None,

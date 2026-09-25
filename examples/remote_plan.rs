@@ -11,7 +11,11 @@ use girt::{InitKind, ObjectId, PackLimits, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let repo = Repository::init(directory.path().join("repo"), InitKind::Bare)?;
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        directory.path().join("repo"),
+        InitKind::Bare,
+    )?;
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(repo.common_dir().join("config"))?;
@@ -54,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Current fetch callbacks return IDs only, so mapping errors travel through the saved result.
     // Retain the plan for a separate conditional ref transaction after validated installation.
 
-    let local_id = repo.loose_objects()?.write_blob(b"local tag target")?;
+    let local_id = repo.loose_objects().write_blob(b"local tag target")?;
     let local_sources = [RefSource {
         name: RefName::new("refs/tags/local")?,
         id: local_id,

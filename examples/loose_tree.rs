@@ -3,21 +3,24 @@ use girt::{EntryMode, LooseObjects, ObjectFormat, Tree, TreeEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1)?;
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     let text = objects.write_blob(b"hello\n")?;
     let binary = objects.write_blob(b"\0\xff")?;
-    let tree = Tree::new(vec![
-        TreeEntry {
-            mode: EntryMode::Blob,
-            name: b"hello.txt".to_vec(),
-            id: text,
-        },
-        TreeEntry {
-            mode: EntryMode::Blob,
-            name: b"data.bin".to_vec(),
-            id: binary,
-        },
-    ])?;
+    let tree = Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![
+            TreeEntry {
+                mode: EntryMode::Blob,
+                name: b"hello.txt".to_vec(),
+                id: text,
+            },
+            TreeEntry {
+                mode: EntryMode::Blob,
+                name: b"data.bin".to_vec(),
+                id: binary,
+            },
+        ],
+    )?;
     let id = objects.write_tree(&tree)?;
     let restored = objects.read_tree(id, 1024)?;
     assert_eq!(id, tree.id());

@@ -99,7 +99,11 @@ mod tests {
     };
 
     fn object(kind: ObjectKind, data: Vec<u8>) -> Object {
-        Object { kind, data }
+        Object {
+            kind,
+            data,
+            format: crate::ObjectFormat::Sha1,
+        }
     }
     fn validate_root(
         root: Object,
@@ -135,11 +139,14 @@ mod tests {
     fn tree(id: ObjectId, mode: EntryMode) -> Object {
         object(
             ObjectKind::Tree,
-            Tree::new(vec![TreeEntry {
-                id,
-                mode,
-                name: b"entry".to_vec(),
-            }])
+            Tree::new(
+                crate::ObjectFormat::Sha1,
+                vec![TreeEntry {
+                    id,
+                    mode,
+                    name: b"entry".to_vec(),
+                }],
+            )
             .unwrap()
             .encode(),
         )

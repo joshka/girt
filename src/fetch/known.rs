@@ -30,7 +30,8 @@ impl KnownHistory {
     /// # Errors
     ///
     /// Fails on missing/corrupt objects, malformed payloads, mistyped edges, cancellation or
-    /// bounds. To request a full transfer instead, explicitly use [`KnownHistory::default`].
+    /// bounds. SHA-256 stores are refused because fetch negotiation is currently SHA-1-only.
+    /// To request a full transfer instead, explicitly use [`KnownHistory::default`].
     pub fn new(
         store: &Objects,
         roots: &[ObjectId],
@@ -38,6 +39,9 @@ impl KnownHistory {
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         check_cancelled(cancel)?;
+        if store.object_format() != crate::ObjectFormat::Sha1 {
+            return Err(Error::Unsupported("SHA-256 fetch negotiation"));
+        }
         if roots.len() > limits.max_wants {
             return Err(Error::Limit("known roots"));
         }
@@ -134,22 +138,25 @@ mod tests {
 
     fn graph() -> (tempfile::TempDir, Objects, ObjectId, ObjectId) {
         let root = tempfile::tempdir().unwrap();
-        let loose = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let loose = LooseObjects::new(root.path(), ObjectFormat::Sha1);
         let blob = loose.write_blob(b"known blob").unwrap();
         let tree = loose
             .write_tree(
-                &Tree::new(vec![
-                    TreeEntry {
-                        mode: EntryMode::Blob,
-                        name: b"blob".to_vec(),
-                        id: blob,
-                    },
-                    TreeEntry {
-                        mode: EntryMode::Gitlink,
-                        name: b"external".to_vec(),
-                        id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
-                    },
-                ])
+                &Tree::new(
+                    crate::ObjectFormat::Sha1,
+                    vec![
+                        TreeEntry {
+                            mode: EntryMode::Blob,
+                            name: b"blob".to_vec(),
+                            id: blob,
+                        },
+                        TreeEntry {
+                            mode: EntryMode::Gitlink,
+                            name: b"external".to_vec(),
+                            id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
+                        },
+                    ],
+                )
                 .unwrap(),
             )
             .unwrap();
@@ -172,7 +179,12 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        let objects = Objects::open(root.path(), PackLimits::default()).unwrap();
+        let objects = Objects::open(
+            crate::ObjectFormat::Sha1,
+            root.path(),
+            PackLimits::default(),
+        )
+        .unwrap();
         (root, objects, commit, blob)
     }
 

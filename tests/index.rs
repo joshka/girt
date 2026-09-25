@@ -59,7 +59,12 @@ fn input(root: &Path, args: &[&str], bytes: &[u8]) -> Vec<u8> {
 }
 fn repository() -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     (root, repo)
 }
 fn seed(repo: &Repository) {
@@ -114,11 +119,7 @@ fn reads_git_stat_flags_and_roundtrips_exactly() {
 fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] spelling: &str) {
     let (_root, repo) = repository();
     let root = repo.worktree().unwrap();
-    let id = repo
-        .loose_objects()
-        .unwrap()
-        .write_blob(b"payload")
-        .unwrap();
+    let id = repo.loose_objects().write_blob(b"payload").unwrap();
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.replace_entries(vec![Entry::new(b"leaf".to_vec(), mode, id)])
         .unwrap();
@@ -131,7 +132,7 @@ fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] 
     // explicit. Tree bytes independently verify index-to-object compatibility for every mode.
     let tree_id = String::from_utf8(git(root, &["write-tree", "--missing-ok"])).unwrap();
     let payload = git(root, &["cat-file", "tree", tree_id.trim()]);
-    let tree = Tree::parse(&payload).unwrap();
+    let tree = Tree::parse(girt::ObjectFormat::Sha1, &payload).unwrap();
     tree.validate().unwrap();
     assert_eq!(tree.entries()[0].id, id);
     assert_eq!(tree.entries()[0].name, b"leaf");
@@ -157,7 +158,7 @@ fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] 
 fn git_conflict_stages_and_byte_paths_roundtrip() {
     let (_root, repo) = repository();
     let root = repo.worktree().unwrap();
-    let id = repo.loose_objects().unwrap().write_blob(b"data").unwrap();
+    let id = repo.loose_objects().write_blob(b"data").unwrap();
     let mut records =
         format!("100644 {id} 1\tconflict\0100755 {id} 3\tconflict\0120000 {id} 0\t").into_bytes();
     records.extend_from_slice(b"non-utf8-\xff\0");
@@ -179,7 +180,7 @@ fn git_conflict_stages_and_byte_paths_roundtrip() {
 fn git_long_paths_need_no_filesystem_materialization() {
     let (_root, repo) = repository();
     let root = repo.worktree().unwrap();
-    let id = repo.loose_objects().unwrap().write_blob(b"data").unwrap();
+    let id = repo.loose_objects().write_blob(b"data").unwrap();
     let mut records = format!("100644 {id} 0\t").into_bytes();
     records.extend_from_slice(&vec![b'x'; 5000]);
     records.push(0);

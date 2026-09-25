@@ -12,10 +12,16 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Object {
     pub(crate) kind: ObjectKind,
+    pub(crate) format: ObjectFormat,
     pub(crate) data: Vec<u8>,
 }
 
 impl Object {
+    /// The storage format in which the identity was verified.
+    pub fn object_format(&self) -> ObjectFormat {
+        self.format
+    }
+
     /// The verified Git object type.
     pub fn kind(&self) -> ObjectKind {
         self.kind
@@ -33,7 +39,7 @@ impl Object {
 
     /// Hashes the kind, canonical header, and payload.
     pub fn id(&self) -> ObjectId {
-        ObjectId::for_object(self.kind.as_str(), &self.data)
+        self.format.hash_object(self.kind, &self.data)
     }
 }
 
@@ -93,7 +99,7 @@ impl Default for ReadLimits {
 /// Reads loose objects and an immutable, validated snapshot of local packs.
 ///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening loads
-/// all `.idx`/`.pack` pairs in filename order and verifies index v2 structure, SHA-1 checksums,
+/// all SHA-1 `.idx`/`.pack` pairs in filename order and verifies index v2 structure, checksums,
 /// pack v2 headers/counts, offset ranges, and entry CRCs. Pack v3 and index v1 are explicitly
 /// unsupported. Entry framing, zlib streams, delta programs, and object identities are checked on
 /// reads, including every base and intermediate delta; opening is not a full pack fsck.
@@ -112,6 +118,9 @@ impl Default for ReadLimits {
 /// pack before publishing its index. Alternates and partial/shallow repositories are outside the
 /// repository opener's supported scope. Loose writes use [`LooseObjects`]; validated received-pack
 /// installation uses [`crate::fetch::ReceivedFetch::install`].
+///
+/// SHA-256 snapshots support loose-only repositories and refuse any `.idx` or `.pack` artifact
+/// before interpreting its bytes. Direct [`LooseObjects`] access remains available.
 ///
 /// # Example
 ///
@@ -132,18 +141,28 @@ pub struct Objects {
 }
 
 impl Objects {
-    pub(crate) fn open(directory: &Path, limits: PackLimits) -> Result<Self, ObjectReadError> {
+    /// Format shared by all objects in this store.
+    pub fn object_format(&self) -> ObjectFormat {
+        self.loose.object_format()
+    }
+
+    pub(crate) fn open(
+        format: ObjectFormat,
+        directory: &Path,
+        limits: PackLimits,
+    ) -> Result<Self, ObjectReadError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
             "objects.open",
+            object_format = %format,
             outcome = "incomplete",
             failure_class = tracing::field::Empty,
             effects = tracing::field::Empty,
         );
 
         let operation = || {
-            let loose = LooseObjects::new(directory, ObjectFormat::Sha1)?;
+            let loose = LooseObjects::new(directory, format);
             let pack_directory = directory.join("pack");
             let entries = match fs::read_dir(&pack_directory) {
                 Ok(entries) => entries,
@@ -168,6 +187,13 @@ impl Objects {
                         source,
                     })?
                     .path();
+                if format == ObjectFormat::Sha256
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension == "idx" || extension == "pack")
+                {
+                    return Err(ObjectReadError::Unsupported("SHA-256 packed storage"));
+                }
                 if path.extension().is_some_and(|extension| extension == "idx") {
                     if paths.len() == limits.max_packs {
                         return Err(ObjectReadError::Limit("pack count"));
@@ -201,7 +227,8 @@ impl Objects {
         result
     }
 
-    /// Reads an exact object by full SHA-1 identity; returns `None` only when absent.
+    /// Reads an exact object by full identity in this store's format; returns `None` only when
+    /// absent.
     ///
     /// The payload is uninterpreted. Parse it separately if structured fields are needed.
     /// A missing loose path falls through to the snapshot's indexed packs in filename order.
@@ -274,6 +301,9 @@ fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Vec<u8>, ObjectRea
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectReadError {
+    /// A recognized storage feature is outside the implemented subset.
+    #[error("unsupported object storage: {0}")]
+    Unsupported(&'static str),
     /// Filesystem access failed at this artifact or directory.
     #[error("object storage at {path}: {source}")]
     Path {

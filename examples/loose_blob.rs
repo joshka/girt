@@ -3,7 +3,7 @@ use girt::{LooseObjects, ObjectFormat};
 
 fn main() -> Result<(), girt::Error> {
     let directory = tempfile::tempdir()?;
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1)?;
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     let bytes = b"hello\0Git\xff";
 
     let id = objects.write_blob(bytes)?;

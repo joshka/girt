@@ -12,9 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("ID must be ASCII")?
         .parse()?;
     let repository = Repository::open(path)?;
-    let bytes = repository
-        .loose_objects()?
-        .read_blob(id, 16 * 1024 * 1024)?;
+    let bytes = repository.loose_objects().read_blob(id, 16 * 1024 * 1024)?;
     println!(
         "Read {} bytes from {}",
         bytes.len(),

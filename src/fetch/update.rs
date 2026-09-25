@@ -125,8 +125,8 @@ fn peel_commit(
                 if depth == limits.max_tag_depth {
                     return Err(FetchError::Limit("update tag depth"));
                 }
-                let tag =
-                    Tag::parse(object.data()).map_err(|source| FetchError::Tag { id, source })?;
+                let tag = Tag::parse(crate::ObjectFormat::Sha1, object.data())
+                    .map_err(|source| FetchError::Tag { id, source })?;
                 id = tag.fields().target;
                 expected = Some(tag.fields().target_kind);
             }

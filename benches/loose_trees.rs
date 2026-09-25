@@ -23,7 +23,7 @@ fn loose_trees(criterion: &mut Criterion) {
                 ),
             })
             .collect();
-        let tree = Tree::new(entries).unwrap();
+        let tree = Tree::new(girt::ObjectFormat::Sha1, entries).unwrap();
         let size = tree.encode().len();
         group.throughput(Throughput::Bytes(size as u64));
 
@@ -52,7 +52,7 @@ fn loose_trees(criterion: &mut Criterion) {
 
 fn empty_store() -> (TempDir, LooseObjects) {
     let directory = tempfile::tempdir().unwrap();
-    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
     (directory, objects)
 }
 

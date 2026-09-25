@@ -530,12 +530,7 @@ fn dangling_object_id_is_not_object_lookup() {
         refs.resolve(&name("refs/tags/missing"), 0).unwrap().id,
         Some(missing)
     );
-    assert!(
-        repo.loose_objects()
-            .unwrap()
-            .read_blob(missing, 100)
-            .is_err()
-    );
+    assert!(repo.loose_objects().read_blob(missing, 100).is_err());
 }
 
 #[test]

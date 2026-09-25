@@ -13,19 +13,24 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            temp.path().join("repo"),
+            InitKind::Worktree,
+        )
+        .unwrap();
         Self { _temp: temp, repo }
     }
     fn root(&self) -> &Path {
         self.repo.worktree().unwrap()
     }
     fn tree(&self, name: &[u8], mode: EntryMode, bytes: &[u8]) -> ObjectId {
-        let store = self.repo.loose_objects().unwrap();
+        let store = self.repo.loose_objects();
         let id = store.write_blob(bytes).unwrap();
         self.entry_tree(name, mode, id)
     }
     fn entry_tree(&self, path: &[u8], mode: EntryMode, id: ObjectId) -> ObjectId {
-        let store = self.repo.loose_objects().unwrap();
+        let store = self.repo.loose_objects();
         let (first, rest) = path
             .iter()
             .position(|b| *b == b'/')
@@ -36,11 +41,14 @@ impl Fixture {
         };
         store
             .write_tree(
-                &Tree::new(vec![TreeEntry {
-                    name: first.to_vec(),
-                    mode,
-                    id,
-                }])
+                &Tree::new(
+                    crate::ObjectFormat::Sha1,
+                    vec![TreeEntry {
+                        name: first.to_vec(),
+                        mode,
+                        id,
+                    }],
+                )
                 .unwrap(),
             )
             .unwrap()
@@ -153,12 +161,7 @@ fn preserves_staged_changes_and_conflicts(#[case] stage: index::Stage) {
     let old = f.initial(b"file", EntryMode::Blob, b"old");
     let mut edit = f.repo.edit_index(Default::default()).unwrap();
     let mut entries = edit.index().entries().to_vec();
-    entries[0].id = f
-        .repo
-        .loose_objects()
-        .unwrap()
-        .write_blob(b"staged")
-        .unwrap();
+    entries[0].id = f.repo.loose_objects().write_blob(b"staged").unwrap();
     entries[0].stage = stage;
     edit.replace_entries(entries).unwrap();
     edit.commit().unwrap();
@@ -222,7 +225,12 @@ fn rejects_unsupported_tree_paths_before_mutation(#[case] path: &[u8], #[case] m
 #[test]
 fn rejects_nested_repository() {
     let f = Fixture::new();
-    let nested = Repository::init(f.root().join("nested"), InitKind::Worktree).unwrap();
+    let nested = Repository::init(
+        crate::ObjectFormat::Sha1,
+        f.root().join("nested"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     let target = f.tree(b"nested/file", EntryMode::Blob, b"new");
     let head = fs::read(nested.git_dir().join("HEAD")).unwrap();
     assert!(f.checkout(None, Some(target)).is_err());
@@ -640,22 +648,25 @@ fn corrupted_blob_is_rejected_before_mutation() {
 #[test]
 fn colliding_tree_paths_are_rejected_even_on_case_sensitive_filesystems() {
     let f = Fixture::new();
-    let store = f.repo.loose_objects().unwrap();
+    let store = f.repo.loose_objects();
     let id = store.write_blob(b"new").unwrap();
     let tree = store
         .write_tree(
-            &Tree::new(vec![
-                TreeEntry {
-                    name: b"file".to_vec(),
-                    mode: EntryMode::Blob,
-                    id,
-                },
-                TreeEntry {
-                    name: b"FILE".to_vec(),
-                    mode: EntryMode::Blob,
-                    id,
-                },
-            ])
+            &Tree::new(
+                crate::ObjectFormat::Sha1,
+                vec![
+                    TreeEntry {
+                        name: b"file".to_vec(),
+                        mode: EntryMode::Blob,
+                        id,
+                    },
+                    TreeEntry {
+                        name: b"FILE".to_vec(),
+                        mode: EntryMode::Blob,
+                        id,
+                    },
+                ],
+            )
             .unwrap(),
         )
         .unwrap();
@@ -678,7 +689,12 @@ fn existing_symlink_ancestor_does_not_escape_worktree() {
 #[test]
 fn bare_nested_repository_is_not_entered() {
     let f = Fixture::new();
-    Repository::init(f.root().join("nested"), InitKind::Bare).unwrap();
+    Repository::init(
+        crate::ObjectFormat::Sha1,
+        f.root().join("nested"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let tree = f.tree(b"nested/file", EntryMode::Blob, b"new");
     let failure = f.checkout(None, Some(tree)).unwrap_err();
     assert!(failure.report.applied.is_empty());
@@ -821,7 +837,7 @@ impl Fixture {
     // Original multi-path trees use one payload so namespace policy, not content conversion,
     // determines these scenarios. Recursive grouping constructs independent tree objects.
     fn paths(&self, paths: &[&str]) -> ObjectId {
-        let store = self.repo.loose_objects().unwrap();
+        let store = self.repo.loose_objects();
         let blob = store.write_blob(b"fixture\n").unwrap();
         let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for path in paths {
@@ -843,7 +859,9 @@ impl Fixture {
                 }
             })
             .collect();
-        store.write_tree(&Tree::new(entries).unwrap()).unwrap()
+        store
+            .write_tree(&Tree::new(crate::ObjectFormat::Sha1, entries).unwrap())
+            .unwrap()
     }
 
     fn seed_paths(&self, paths: &[&str], files: &[&str], directories: &[&str]) -> Option<ObjectId> {

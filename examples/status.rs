@@ -24,8 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn fixture(temp: &tempfile::TempDir) -> Result<Repository, Box<dyn std::error::Error>> {
-    let repository = Repository::init(temp.path().join("repo"), InitKind::Worktree)?;
-    let id = repository.loose_objects()?.write_blob(b"staged\n")?;
+    let repository = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )?;
+    let id = repository.loose_objects().write_blob(b"staged\n")?;
     let mut edit = repository.edit_index(Default::default())?;
     edit.replace_entries(vec![girt::index::Entry::new(
         b"hello.txt".to_vec(),

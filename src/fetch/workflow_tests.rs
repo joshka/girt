@@ -12,7 +12,12 @@ fn id(byte: u8) -> ObjectId {
 }
 fn request(specs: &[&str]) -> (tempfile::TempDir, FetchRequest) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let repo = Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let specs =
         Refspecs::parse(Direction::Fetch, specs.iter().map(|spec| spec.as_bytes())).unwrap();
     let request = FetchRequest::prepare(repo, specs, BTreeSet::new(), Reflog::Preserve).unwrap();

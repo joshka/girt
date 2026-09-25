@@ -257,7 +257,6 @@ fn concurrent_ref_change_fails_only_the_callers_conditional_update() {
     let branch = RefName::new("refs/heads/main").unwrap();
     let other = repo
         .loose_objects()
-        .unwrap()
         .write_blob(b"concurrent writer")
         .unwrap();
     let refs = repo.references().unwrap();
@@ -331,7 +330,7 @@ fn concurrent_publishers_reuse_identical_artifacts() {
 fn installation_failure_preserves_existing_objects() {
     let fixture = Fixture::new(true, 4);
     let (_root, repo) = destination();
-    let loose = repo.loose_objects().unwrap();
+    let loose = repo.loose_objects();
     let id = loose.write_blob(b"keep me").unwrap();
     fs::remove_dir(repo.object_dir().join("pack")).unwrap();
     fs::write(repo.object_dir().join("pack"), b"blocking file").unwrap();
@@ -559,9 +558,15 @@ fn negotiated_shared_history_and_merge(#[case] merge: bool) {
 fn disconnected_haves_fall_back_to_complete_transfer() {
     let fixture = Fixture::new(true, 4);
     let (_root, local) = destination();
-    let loose = local.loose_objects().unwrap();
-    let tree = loose.write_tree(&girt::Tree::new(vec![]).unwrap()).unwrap();
-    let template = girt::Commit::parse(&fixture.records[fixture.records.len() - 2].2).unwrap();
+    let loose = local.loose_objects();
+    let tree = loose
+        .write_tree(&girt::Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap())
+        .unwrap();
+    let template = girt::Commit::parse(
+        girt::ObjectFormat::Sha1,
+        &fixture.records[fixture.records.len() - 2].2,
+    )
+    .unwrap();
     let mut fields = template.fields().clone();
     fields.tree = tree;
     fields.message = b"Disconnected local history".to_vec();
@@ -584,7 +589,7 @@ fn disconnected_haves_fall_back_to_complete_transfer() {
 fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool) {
     let fixture = Fixture::new(true, 4);
     let (_root, local) = destination();
-    let loose = local.loose_objects().unwrap();
+    let loose = local.loose_objects();
     copy_loose(&fixture, &loose);
     let blob = fixture.ordinary;
     let known = known(&local, &[main_id(&fixture)]);
@@ -640,12 +645,14 @@ fn copy_loose(fixture: &Fixture, loose: &girt::LooseObjects) {
         match kind {
             girt::ObjectKind::Blob => loose.write_blob(bytes).unwrap(),
             girt::ObjectKind::Tree => loose
-                .write_tree(&girt::Tree::parse(bytes).unwrap())
+                .write_tree(&girt::Tree::parse(girt::ObjectFormat::Sha1, bytes).unwrap())
                 .unwrap(),
             girt::ObjectKind::Commit => loose
-                .write_commit(&girt::Commit::parse(bytes).unwrap())
+                .write_commit(&girt::Commit::parse(girt::ObjectFormat::Sha1, bytes).unwrap())
                 .unwrap(),
-            girt::ObjectKind::Tag => loose.write_tag(&girt::Tag::parse(bytes).unwrap()).unwrap(),
+            girt::ObjectKind::Tag => loose
+                .write_tag(&girt::Tag::parse(girt::ObjectFormat::Sha1, bytes).unwrap())
+                .unwrap(),
         };
     }
 }

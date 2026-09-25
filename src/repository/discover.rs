@@ -97,7 +97,8 @@ mod tests {
     #[test]
     fn ceiling_is_inclusive_and_stops_parent_search() {
         let root = tempfile::tempdir().unwrap();
-        let outer = Repository::init(root.path(), InitKind::Worktree).unwrap();
+        let outer =
+            Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
         let child = root.path().join("child");
         std::fs::create_dir(&child).unwrap();
         assert!(matches!(
@@ -115,8 +116,13 @@ mod tests {
     #[test]
     fn nearest_repository_wins() {
         let root = tempfile::tempdir().unwrap();
-        Repository::init(root.path(), InitKind::Worktree).unwrap();
-        let inner = Repository::init(root.path().join("inner"), InitKind::Worktree).unwrap();
+        Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
+        let inner = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("inner"),
+            InitKind::Worktree,
+        )
+        .unwrap();
         assert_eq!(
             Repository::discover(inner.worktree().unwrap())
                 .unwrap()
@@ -139,7 +145,7 @@ mod tests {
     #[test]
     fn malformed_inner_marker_prevents_outer_fallback() {
         let root = tempfile::tempdir().unwrap();
-        Repository::init(root.path(), InitKind::Worktree).unwrap();
+        Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
         let child = root.path().join("child");
         std::fs::create_dir(&child).unwrap();
         std::fs::write(child.join(".git"), b"invalid\n").unwrap();
@@ -179,7 +185,12 @@ mod tests {
     #[test]
     fn symlink_start_uses_physical_ancestry() {
         let root = tempfile::tempdir().unwrap();
-        let repo = Repository::init(root.path().join("physical"), InitKind::Worktree).unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("physical"),
+            InitKind::Worktree,
+        )
+        .unwrap();
         let nested = root.path().join("physical/nested");
         std::fs::create_dir(&nested).unwrap();
         let alias = root.path().join("alias");
@@ -200,7 +211,7 @@ mod tests {
     #[test]
     fn dangling_gitfile_symlink_stops_search() {
         let root = tempfile::tempdir().unwrap();
-        Repository::init(root.path(), InitKind::Worktree).unwrap();
+        Repository::init(crate::ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
         let child = root.path().join("child");
         std::fs::create_dir(&child).unwrap();
         std::os::unix::fs::symlink("missing", child.join(".git")).unwrap();

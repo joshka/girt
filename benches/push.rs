@@ -68,6 +68,7 @@ fn push(c: &mut Criterion) {
         });
         let old = fixture.records[fixture.records.len() - 2].0;
         let commit = girt::Commit::parse(
+            girt::ObjectFormat::Sha1,
             objects
                 .read(old, ReadLimits::default())
                 .unwrap()
@@ -81,7 +82,6 @@ fn push(c: &mut Criterion) {
         let next = fixture
             .repo
             .loose_objects()
-            .unwrap()
             .write_commit(&girt::Commit::new(fields).unwrap())
             .unwrap();
         let update = PushCommand {

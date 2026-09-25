@@ -109,7 +109,10 @@ impl ReceivedFetch {
         self.pack.len()
     }
 
-    /// Publishes the validated pack and index without replacing any existing artifact.
+    /// Publishes the validated SHA-1 pack and index without replacing any existing artifact.
+    ///
+    /// SHA-256 destinations return [`FetchError::Unsupported`] before filesystem mutation, even
+    /// for empty transfers. Object-format negotiation and SHA-256 installation are not supported.
     ///
     /// Writes temporary files in the destination pack directory, completes and syncs their
     /// contents, then publishes the pack before its index using no-clobber persistence. The
@@ -160,6 +163,9 @@ impl ReceivedFetch {
         );
 
         let operation = || {
+            if repository.object_format() != crate::ObjectFormat::Sha1 {
+                return Err(FetchError::Unsupported("SHA-256 pack installation"));
+            }
             check_cancelled(cancel)?;
             let result = FetchInstalled {
                 checksum: self.checksum,

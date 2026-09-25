@@ -96,7 +96,7 @@ fn opens_and_reads_git_blob_without_mutation(
         worktree.map(|p| canonical(&root.path().join(p))).as_deref()
     );
     assert_eq!(
-        repo.loose_objects().unwrap().read_blob(id, 100).unwrap(),
+        repo.loose_objects().read_blob(id, 100).unwrap(),
         b"hello from Git\0\xff"
     );
     assert_eq!(snapshot(root.path()), before);
@@ -262,7 +262,7 @@ fn rejects_unsupported_without_mutation(
 }
 
 #[test]
-fn recognizes_sha256_and_rejects_storage() {
+fn recognizes_sha256_loose_storage() {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
@@ -275,9 +275,12 @@ fn recognizes_sha256_and_rejects_storage() {
         ],
         b"",
     );
-    let error = Repository::open(root.path()).unwrap_err();
-    assert!(matches!(&error, OpenError::Unsupported { .. }));
-    assert!(error.to_string().contains("SHA-256"));
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.object_format(), girt::ObjectFormat::Sha256);
+    assert_eq!(
+        repo.loose_objects().object_format(),
+        girt::ObjectFormat::Sha256
+    );
 }
 
 #[rstest]
@@ -565,7 +568,7 @@ fn invalid_config_output(root: &Path, path: &Path) -> std::process::Output {
 fn git_uses_girt_initialized_repository(#[case] kind: girt::InitKind, #[case] bare: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("repo");
-    let repo = Repository::init(&path, kind).unwrap();
+    let repo = Repository::init(girt::ObjectFormat::Sha1, &path, kind).unwrap();
     assert_eq!(
         git(&path, &["rev-parse", "--is-bare-repository"], b""),
         bare
@@ -578,11 +581,7 @@ fn git_uses_girt_initialized_repository(#[case] kind: girt::InitKind, #[case] ba
         git(&path, &["symbolic-ref", "HEAD"], b""),
         b"refs/heads/main\n"
     );
-    let blob = repo
-        .loose_objects()
-        .unwrap()
-        .write_blob(b"from girt\n")
-        .unwrap();
+    let blob = repo.loose_objects().write_blob(b"from girt\n").unwrap();
     assert_eq!(
         git(&path, &["cat-file", "blob", &blob.to_string()], b""),
         b"from girt\n"
@@ -600,7 +599,7 @@ fn git_uses_girt_initialized_repository(#[case] kind: girt::InitKind, #[case] ba
     git(&path, &["fsck", "--strict"], b"");
     let before = snapshot(&path);
     assert!(matches!(
-        Repository::init(&path, kind),
+        Repository::init(girt::ObjectFormat::Sha1, &path, kind),
         Err(girt::InitError::AlreadyExists(_))
     ));
     assert_eq!(snapshot(&path), before);
@@ -609,7 +608,12 @@ fn git_uses_girt_initialized_repository(#[case] kind: girt::InitKind, #[case] ba
 #[test]
 fn git_can_add_and_commit_in_initialized_worktree() {
     let root = tempfile::tempdir().unwrap();
-    Repository::init(root.path(), girt::InitKind::Worktree).unwrap();
+    Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path(),
+        girt::InitKind::Worktree,
+    )
+    .unwrap();
     std::fs::write(root.path().join("file"), b"worktree bytes\n").unwrap();
     git(root.path(), &["add", "file"], b"");
     git(
@@ -689,14 +693,17 @@ fn discovers_linked_worktree_before_parent_repository() {
     );
     assert_eq!(repo.common_dir(), canonical(&root.path().join(".git")));
     assert!(matches!(
-        Repository::init(root.path().join("linked"), girt::InitKind::Worktree),
+        Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("linked"),
+            girt::InitKind::Worktree
+        ),
         Err(girt::InitError::AlreadyExists(_))
     ));
     assert_eq!(snapshot(root.path()), before);
 }
 
 #[rstest]
-#[case::sha256("sha256", None)]
 #[case::reftable("sha1", Some(("extensions.refStorage", "reftable")))]
 #[case::worktree_config("sha1", Some(("extensions.worktreeConfig", "true")))]
 fn discovery_and_initialization_reject_unsupported_without_changes(
@@ -715,7 +722,7 @@ fn discovery_and_initialization_reject_unsupported_without_changes(
         Err(OpenError::Unsupported { .. })
     ));
     assert!(matches!(
-        Repository::init(&inner, girt::InitKind::Worktree),
+        Repository::init(girt::ObjectFormat::Sha1, &inner, girt::InitKind::Worktree),
         Err(girt::InitError::Open(OpenError::Unsupported { .. }))
     ));
     assert_eq!(snapshot(root.path()), before);

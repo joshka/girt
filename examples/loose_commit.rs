@@ -5,13 +5,16 @@ use girt::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let objects = LooseObjects::new(directory.path().join("objects"), ObjectFormat::Sha1)?;
+    let objects = LooseObjects::new(directory.path().join("objects"), ObjectFormat::Sha1);
     let blob = objects.write_blob(b"Hello from a commit!\n")?;
-    let tree = Tree::new(vec![TreeEntry {
-        mode: EntryMode::Blob,
-        name: b"hello.txt".to_vec(),
-        id: blob,
-    }])?;
+    let tree = Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            mode: EntryMode::Blob,
+            name: b"hello.txt".to_vec(),
+            id: blob,
+        }],
+    )?;
     let tree_id = objects.write_tree(&tree)?;
     let author = Signature {
         name: b"A. Writer".to_vec(),

@@ -9,20 +9,30 @@ use girt::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare)?;
-    let store = repo.loose_objects()?;
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )?;
+    let store = repo.loose_objects();
     let old_blob = store.write_blob(b"heading\r\nold\n")?;
     let new_blob = store.write_blob(b"heading\r\nnew\xff")?;
-    let old = store.write_tree(&Tree::new(vec![TreeEntry {
-        name: b"example.txt".to_vec(),
-        mode: EntryMode::Blob,
-        id: old_blob,
-    }])?)?;
-    let new = store.write_tree(&Tree::new(vec![TreeEntry {
-        name: b"example.txt".to_vec(),
-        mode: EntryMode::Executable,
-        id: new_blob,
-    }])?)?;
+    let old = store.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            name: b"example.txt".to_vec(),
+            mode: EntryMode::Blob,
+            id: old_blob,
+        }],
+    )?)?;
+    let new = store.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            name: b"example.txt".to_vec(),
+            mode: EntryMode::Executable,
+            id: new_blob,
+        }],
+    )?)?;
     let objects = repo.objects(PackLimits::default())?;
     let cancel = AtomicBool::new(false);
     let limits = DiffLimits::default();

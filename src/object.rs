@@ -5,8 +5,8 @@ use sha1::{Digest, Sha1};
 
 /// The hash format used by a Git object database.
 ///
-/// Recognizing a format does not imply storage support: [`crate::LooseObjects`] currently supports
-/// only SHA-1.
+/// [`crate::LooseObjects`] supports both formats; packs, refs, indexes and transports currently
+/// support SHA-1 only.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectFormat {
     /// Git's SHA-1 object format, with 20-byte identities.
@@ -104,11 +104,15 @@ impl ObjectId {
     }
 
     pub(crate) fn require_sha1(self) -> Result<(), ObjectFormatError> {
-        if self.format() == ObjectFormat::Sha1 {
+        self.require_format(ObjectFormat::Sha1)
+    }
+
+    pub(crate) fn require_format(self, expected: ObjectFormat) -> Result<(), ObjectFormatError> {
+        if self.format() == expected {
             Ok(())
         } else {
             Err(ObjectFormatError {
-                expected: ObjectFormat::Sha1,
+                expected,
                 actual: self.format(),
             })
         }
@@ -127,7 +131,7 @@ impl ObjectFormat {
     /// Hashes canonical Git framing and an uninterpreted object payload.
     ///
     /// Does not validate the payload or translate embedded object references. Storage and codecs
-    /// currently support SHA-1 only. The caller chooses the format appropriate to the payload.
+    /// support both formats. The caller chooses the format appropriate to the payload.
     ///
     /// ```
     /// use girt::{ObjectFormat, ObjectId, ObjectKind};

@@ -70,7 +70,12 @@ fn downloads_validates_installs_and_reuses_known_objects() {
         .unwrap()
     });
     let root = tempfile::tempdir().unwrap();
-    let destination = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let destination = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     received
         .install(&destination, PackLimits::default(), &cancel)
         .unwrap();
@@ -128,7 +133,12 @@ fn downloads_validates_installs_and_reuses_known_objects() {
 fn pushes_objects_and_git_publishes_the_remote_ref() {
     let source = Fixture::new(true, 4);
     let root = tempfile::tempdir().unwrap();
-    Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     git(
         &root.path().join("repo"),
         &["config", "http.receivepack", "true"],
@@ -173,7 +183,12 @@ fn rejects_http_status_without_retry(
     #[case] expected: u16,
 ) {
     let root = tempfile::tempdir().unwrap();
-    Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let server = Server::new(&root.path().join("repo"), fault, "secret", None);
     let remote = HttpRemote::new(&server.url, headers, &[]).unwrap();
     let cancel = AtomicBool::new(false);
@@ -193,7 +208,12 @@ fn rejects_http_status_without_retry(
 #[test]
 fn stalled_discovery_observes_deadline() {
     let root = tempfile::tempdir().unwrap();
-    Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let server = Server::new(&root.path().join("repo"), "stall", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);

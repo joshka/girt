@@ -5,14 +5,21 @@ use girt::{EntryMode, InitKind, Repository, Tree, TreeEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
-    let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree)?;
-    let objects = repo.loose_objects()?;
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temp.path().join("repo"),
+        InitKind::Worktree,
+    )?;
+    let objects = repo.loose_objects();
     let blob = objects.write_blob(b"literal\r\nbytes\0\xff")?;
-    let target = objects.write_tree(&Tree::new(vec![TreeEntry {
-        name: b"hello.txt".to_vec(),
-        mode: EntryMode::Blob,
-        id: blob,
-    }])?)?;
+    let target = objects.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            name: b"hello.txt".to_vec(),
+            mode: EntryMode::Blob,
+            id: blob,
+        }],
+    )?)?;
     // This example owns the repository exclusively. After a no-checkout clone, likewise pass
     // None as baseline and read the desired commit's tree for target. HEAD is never switched.
     let cancel = AtomicBool::new(false);

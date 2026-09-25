@@ -26,13 +26,13 @@ fn trees(criterion: &mut Criterion) {
                 id: ObjectId::Sha1([0x81; 20]),
             })
             .collect();
-        let tree = Tree::new(entries).unwrap();
+        let tree = Tree::new(girt::ObjectFormat::Sha1, entries).unwrap();
         let payload = tree.encode();
 
         group.throughput(Throughput::Bytes(payload.len() as u64));
 
         group.bench_function(BenchmarkId::new("parse", count), |b| {
-            b.iter(|| Tree::parse(black_box(&payload)).unwrap());
+            b.iter(|| Tree::parse(girt::ObjectFormat::Sha1, black_box(&payload)).unwrap());
         });
 
         group.bench_function(BenchmarkId::new("encode", count), |b| {

@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_repo = Repository::open(source.path())?;
     let destination_repo = Repository::open(destination.path())?;
     let id = source_repo
-        .loose_objects()?
+        .loose_objects()
         .write_blob(b"Disposable HTTP example\n")?;
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);

@@ -119,6 +119,9 @@ pub enum ReferenceError {
 
 impl<'a> References<'a> {
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
+        if repository.object_format() != crate::ObjectFormat::Sha1 {
+            return Err(ReferenceError::Unsupported("SHA-256 reference storage"));
+        }
         if !cfg!(unix) {
             return Err(ReferenceError::Unsupported(
                 "reference storage on non-Unix platforms",

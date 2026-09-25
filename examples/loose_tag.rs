@@ -3,7 +3,7 @@ use girt::{LooseObjects, ObjectFormat, ObjectKind, Signature, Tag, TagFields};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let objects = LooseObjects::new(directory.path().join("objects"), ObjectFormat::Sha1)?;
+    let objects = LooseObjects::new(directory.path().join("objects"), ObjectFormat::Sha1);
     let target = objects.write_blob(b"Release artifact\n")?;
     let tag = Tag::new(TagFields {
         target,

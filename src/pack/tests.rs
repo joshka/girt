@@ -566,7 +566,12 @@ fn rejects_external_base_even_when_it_exists_in_another_pack() {
     std::fs::write(directory.join("base.pack"), base_data).unwrap();
     std::fs::write(directory.join("delta.idx"), index).unwrap();
     std::fs::write(directory.join("delta.pack"), data).unwrap();
-    let objects = crate::Objects::open(root.path(), crate::PackLimits::default()).unwrap();
+    let objects = crate::Objects::open(
+        crate::ObjectFormat::Sha1,
+        root.path(),
+        crate::PackLimits::default(),
+    )
+    .unwrap();
     assert!(
         matches!(objects.read(id, ReadLimits::default()), Err(Error::MissingBase(found)) if found == base)
     );

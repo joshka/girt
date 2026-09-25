@@ -12,11 +12,16 @@ use girt::{Commit, CommitFields, Config, InitKind, Repository, Signature, Tree};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let source = Repository::init(root.path().join("source"), InitKind::Bare)?;
+    let source = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("source"),
+        InitKind::Bare,
+    )?;
     let destination_path = root.path().join("destination");
-    let destination = Repository::init(&destination_path, InitKind::Bare)?;
-    let objects = source.loose_objects()?;
-    let tree = objects.write_tree(&Tree::new(Vec::new())?)?;
+    let destination =
+        Repository::init(girt::ObjectFormat::Sha1, &destination_path, InitKind::Bare)?;
+    let objects = source.loose_objects();
+    let tree = objects.write_tree(&Tree::new(girt::ObjectFormat::Sha1, Vec::new())?)?;
     let identity = Signature {
         name: b"Fetch Example".to_vec(),
         email: b"fetch@example.com".to_vec(),

@@ -23,7 +23,14 @@ fn workflow(c: &mut Criterion) {
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(4));
     let root = tempfile::tempdir().unwrap();
-    let planning = request(Repository::init(root.path().join("planning"), InitKind::Bare).unwrap());
+    let planning = request(
+        Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("planning"),
+            InitKind::Bare,
+        )
+        .unwrap(),
+    );
     for count in [10, 10_000] {
         let advertisement = Advertisement {
             refs: (0..count)
@@ -43,10 +50,14 @@ fn workflow(c: &mut Criterion) {
             },
         );
     }
-    let source = Repository::init(root.path().join("source"), InitKind::Bare).unwrap();
+    let source = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("source"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let id = source
         .loose_objects()
-        .unwrap()
         .write_blob(&vec![b'x'; 4096])
         .unwrap();
     for i in 0..10 {
@@ -65,8 +76,12 @@ fn workflow(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let root = tempfile::tempdir().unwrap();
-                let repository =
-                    Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+                let repository = Repository::init(
+                    girt::ObjectFormat::Sha1,
+                    root.path().join("repo"),
+                    InitKind::Bare,
+                )
+                .unwrap();
                 let ready = request(repository)
                     .receive_local(
                         source.git_dir(),

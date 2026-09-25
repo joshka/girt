@@ -22,13 +22,16 @@ fn repository() -> Result<(tempfile::TempDir, Repository), Box<dyn std::error::E
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
-    let loose = source.loose_objects()?;
+    let loose = source.loose_objects();
     let blob = loose.write_blob(b"Published by girt through local receive-pack\n")?;
-    let tree = loose.write_tree(&Tree::new(vec![TreeEntry {
-        mode: EntryMode::Blob,
-        name: b"hello.txt".to_vec(),
-        id: blob,
-    }])?)?;
+    let tree = loose.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            mode: EntryMode::Blob,
+            name: b"hello.txt".to_vec(),
+            id: blob,
+        }],
+    )?)?;
     let author = Signature {
         name: b"Push Example".to_vec(),
         email: b"push@example.com".to_vec(),

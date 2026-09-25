@@ -66,6 +66,10 @@ values describe progress, not crash durability, new artifact counts or rollback.
 not prove absence of effects: directories or private artifacts can precede the first publication
 boundary. Returned reports and the documented storage contracts remain binding.
 
+Loose reads/writes and object snapshot opening record the closed `object_format` value (`sha1` or
+`sha256`). Format refusals use the existing `unsupported` failure class, including index locking and
+fetch installation refusal before writes.
+
 Counts describe the named phase, not total allocations or unique work across nested spans. Import
 `decoded_bytes` is the charged decode budget, including delta work. Connectivity records visited
 objects and edge occurrences after successful completion. Successful graph/import counts can be

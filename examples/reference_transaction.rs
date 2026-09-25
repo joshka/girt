@@ -4,9 +4,13 @@ use girt::{Commit, CommitFields, Repository, Signature, Tree};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    let repo = Repository::init(directory.path().join("repository"), girt::InitKind::Bare)?;
-    let objects = repo.loose_objects()?;
-    let tree = objects.write_tree(&Tree::new(Vec::new())?)?;
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        directory.path().join("repository"),
+        girt::InitKind::Bare,
+    )?;
+    let objects = repo.loose_objects();
+    let tree = objects.write_tree(&Tree::new(girt::ObjectFormat::Sha1, Vec::new())?)?;
     let committer = Signature {
         name: b"Example Writer".to_vec(),
         email: b"writer@example.com".to_vec(),

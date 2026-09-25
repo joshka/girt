@@ -209,7 +209,7 @@ impl Graph {
                 if object.kind() != ObjectKind::Commit {
                     return Err(HistoryError::NotCommit(id));
                 }
-                let commit = Commit::parse(object.data())
+                let commit = Commit::parse(object.object_format(), object.data())
                     .map_err(|source| HistoryError::Parse { id, source })?;
                 let parents = &commit.fields().parents;
                 remaining = remaining

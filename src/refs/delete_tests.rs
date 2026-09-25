@@ -20,7 +20,12 @@ fn packed_bytes() -> String {
 }
 fn fixture() -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(root.path().join("repo"), InitKind::Bare).unwrap();
+    let repo = Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     fs::create_dir_all(repo.git_dir().join("refs/heads")).unwrap();
     fs::write(repo.git_dir().join("refs/heads/main"), format!("{NEW}\n")).unwrap();
     fs::write(repo.git_dir().join("packed-refs"), packed_bytes()).unwrap();

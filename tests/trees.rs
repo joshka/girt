@@ -107,7 +107,7 @@ fn interoperates_with_git_in_both_directions(
         b"",
     );
 
-    let tree = Tree::new(entries).unwrap();
+    let tree = Tree::new(girt::ObjectFormat::Sha1, entries).unwrap();
     let id = tree.id().to_string();
 
     let git_id = git(root.path(), &["mktree", "-z", "--missing"], &listing);
@@ -116,7 +116,7 @@ fn interoperates_with_git_in_both_directions(
     let git_payload = git(root.path(), &["cat-file", "tree", &id], b"");
     assert_eq!(tree.encode(), git_payload);
 
-    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1);
     let parsed = objects.read_tree(tree.id(), git_payload.len()).unwrap();
     assert_eq!(parsed.entries(), tree.entries());
     assert_eq!(parsed.validate(), Ok(()));
@@ -148,7 +148,7 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
     );
 
     let payload = [first, &[0x81; 20], second, &[0x82; 20]].concat();
-    let tree = Tree::parse(&payload).unwrap();
+    let tree = Tree::parse(girt::ObjectFormat::Sha1, &payload).unwrap();
     let expected = git(
         root.path(),
         &["hash-object", "-w", "--literally", "-t", "tree", "--stdin"],
@@ -161,7 +161,7 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
         std::str::from_utf8(&expected).unwrap().trim()
     );
     assert!(tree.validate().is_err());
-    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1).unwrap();
+    let objects = LooseObjects::new(root.path().join("objects"), ObjectFormat::Sha1);
     assert_eq!(objects.read_tree(tree.id(), payload.len()).unwrap(), tree);
     let hex = tree.id().to_string();
     std::fs::remove_file(root.path().join("objects").join(&hex[..2]).join(&hex[2..])).unwrap();

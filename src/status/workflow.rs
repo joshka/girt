@@ -136,7 +136,11 @@ mod supported {
                 .map(|id| {
                     let object =
                         read_object(&objects, id, b"HEAD", ObjectKind::Commit, &mut limits)?;
-                    Ok::<_, Error>(Commit::parse(object.data())?.fields().tree)
+                    Ok::<_, Error>(
+                        Commit::parse(crate::ObjectFormat::Sha1, object.data())?
+                            .fields()
+                            .tree,
+                    )
                 })
                 .transpose()?,
         };
@@ -261,8 +265,12 @@ mod supported {
         #[case::head("HEAD", b"HEAD")]
         fn detects_metadata_change_on_final_reread(#[case] file: &str, #[case] expected: &[u8]) {
             let temp = tempfile::tempdir().unwrap();
-            let repo =
-                Repository::init(temp.path().join("repo"), crate::InitKind::Worktree).unwrap();
+            let repo = Repository::init(
+                crate::ObjectFormat::Sha1,
+                temp.path().join("repo"),
+                crate::InitKind::Worktree,
+            )
+            .unwrap();
             let bytes = replacement(file);
             let result = run_with_checkpoint(
                 &repo,

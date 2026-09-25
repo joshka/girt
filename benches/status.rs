@@ -10,9 +10,14 @@ fn benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("raw_status");
     for (count, changed) in [(100, false), (100, true), (1_000, false), (1_000, true)] {
         let temp = tempfile::tempdir().unwrap();
-        let repo = Repository::init(temp.path().join("repo"), InitKind::Worktree).unwrap();
+        let repo = Repository::init(
+            girt::ObjectFormat::Sha1,
+            temp.path().join("repo"),
+            InitKind::Worktree,
+        )
+        .unwrap();
         let bytes = vec![b'x'; 1024];
-        let id = repo.loose_objects().unwrap().write_blob(&bytes).unwrap();
+        let id = repo.loose_objects().write_blob(&bytes).unwrap();
         let mut entries = Vec::new();
         for n in 0..count {
             let path = format!("file-{n:06}");
@@ -25,6 +30,7 @@ fn benchmark(c: &mut Criterion) {
             entries.push(Entry::new(path.into_bytes(), Mode::Regular, id));
         }
         let tree = Tree::new(
+            girt::ObjectFormat::Sha1,
             entries
                 .iter()
                 .map(|entry| TreeEntry {
@@ -35,7 +41,7 @@ fn benchmark(c: &mut Criterion) {
                 .collect(),
         )
         .unwrap();
-        let tree_id = repo.loose_objects().unwrap().write_tree(&tree).unwrap();
+        let tree_id = repo.loose_objects().write_tree(&tree).unwrap();
         let mut edit = repo.edit_index(Default::default()).unwrap();
         edit.replace_entries(entries).unwrap();
         edit.commit().unwrap();

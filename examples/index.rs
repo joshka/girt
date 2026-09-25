@@ -4,13 +4,17 @@ use girt::{InitKind, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
-    let repository = Repository::init(temporary.path().join("repo"), InitKind::Worktree)?;
+    let repository = Repository::init(
+        girt::ObjectFormat::Sha1,
+        temporary.path().join("repo"),
+        InitKind::Worktree,
+    )?;
     let limits = Limits::default();
     assert!(repository.read_index(limits)?.is_none());
 
     // Store the object first; index publication does not verify object existence or apply filters.
     let id = repository
-        .loose_objects()?
+        .loose_objects()
         .write_blob(b"hello from the index\n")?;
     let mut edit = repository.edit_index(limits)?;
     let mut entries = edit.index().entries().to_vec();

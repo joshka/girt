@@ -3,7 +3,8 @@ use std::collections::HashSet;
 
 use crate::ObjectId;
 
-/// An owned, in-memory SHA-1 Git tree: names, modes, and references to other objects.
+/// An owned, in-memory Git tree in an explicitly selected object format: names, modes, and
+/// references to other objects.
 ///
 /// A tree payload can be readable even when its entries violate tree rules. For example, two
 /// records can both name `hello.txt`, or their names can be out of Git order. Inspection tools need
@@ -14,7 +15,7 @@ use crate::ObjectId;
 /// The operations therefore make separate promises:
 ///
 /// - [`Tree::parse`] decodes supported records and preserves their bytes. Success means the modes,
-///   delimiters, and 20-byte IDs can be read; it does not establish valid names or ordering.
+///   delimiters, and format-sized IDs can be read; it does not establish valid names or ordering.
 /// - [`Tree::validate`] checks component names, uniqueness, and Git order without changing entries.
 ///   Use it after parsing when your operation requires those properties. Inspection, hashing, and
 ///   exact re-encoding do not require it.
@@ -31,7 +32,7 @@ use crate::ObjectId;
 ///
 /// Names are bytes, without UTF-8 conversion. No operation resolves object references or checks
 /// their existence or type. This API does not traverse directories, access storage, validate
-/// checkout safety on a particular filesystem, or support SHA-256 trees. Memory use is proportional
+/// checkout safety on a particular filesystem. Memory use is proportional
 /// to the supplied payload; callers must bound input size when reading untrusted objects.
 /// [`crate::LooseObjects::read_tree`] provides a payload limit for loose storage.
 /// Use [`crate::LooseObjects::write_tree`] to store an existing tree without normalization.
@@ -39,14 +40,17 @@ use crate::ObjectId;
 /// ```
 /// use girt::{EntryMode, ObjectId, Tree, TreeEntry};
 ///
-/// let tree = Tree::new(vec![TreeEntry {
-///     mode: EntryMode::Blob,
-///     name: b"hello.txt".to_vec(),
-///     id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n"),
-/// }])?;
+/// let tree = Tree::new(
+///     girt::ObjectFormat::Sha1,
+///     vec![TreeEntry {
+///         mode: EntryMode::Blob,
+///         name: b"hello.txt".to_vec(),
+///         id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n"),
+///     }],
+/// )?;
 ///
 /// let payload = tree.encode();
-/// let parsed = Tree::parse(&payload)?;
+/// let parsed = Tree::parse(girt::ObjectFormat::Sha1, &payload)?;
 ///
 /// // Require valid names and ordering when accepting a payload from another source.
 /// // This check is redundant for the unchanged encoding of Tree::new above.
@@ -58,11 +62,13 @@ use crate::ObjectId;
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tree {
+    format: crate::ObjectFormat,
     entries: Vec<TreeEntry>,
 }
 
 impl Tree {
-    /// Consumes SHA-1 entries, validates them, and sorts them into Git's tree order.
+    /// Consumes entries in the selected format, validates them, and sorts them into Git's tree
+    /// order.
     ///
     /// # Errors
     ///
@@ -70,15 +76,18 @@ impl Tree {
     /// [`TreeError::DuplicateName`] for repeated byte-identical names, regardless of mode.
     /// Names such as `.git` and platform-specific aliases are not checked: this is structural
     /// validation, not a complete `git fsck` or checkout-safety check. Object IDs are not validated
-    /// against a database, and even all-zero IDs are preserved. SHA-256 IDs return
+    /// against a database, and even all-zero IDs are preserved. Foreign-format IDs return
     /// [`TreeError::ObjectFormat`] before encoding.
-    pub fn new(mut entries: Vec<TreeEntry>) -> Result<Self, TreeError> {
+    pub fn new(
+        format: crate::ObjectFormat,
+        mut entries: Vec<TreeEntry>,
+    ) -> Result<Self, TreeError> {
         for entry in &entries {
-            entry.id.require_sha1()?;
+            entry.id.require_format(format)?;
         }
         validate_names(&entries)?;
         entries.sort_by(TreeEntry::git_cmp);
-        Ok(Self { entries })
+        Ok(Self { format, entries })
     }
 
     /// Parses a tree payload, excluding the `tree <length>\0` object header.
@@ -91,9 +100,10 @@ impl Tree {
     /// # Errors
     ///
     /// Returns an error for a missing mode/name delimiter, unsupported or malformed mode spelling,
-    /// or fewer than 20 bytes for an entry's SHA-1 ID. Input must be a SHA-1 payload; no
-    /// hash-format autodetection is possible from these bytes.
-    pub fn parse(mut payload: &[u8]) -> Result<Self, TreeError> {
+    /// or fewer than `format.digest_len()` bytes for an entry's ID. The caller must select the
+    /// payload's format; these binary records have no reliable format autodetection. Empty trees
+    /// also retain the selected format for hashing.
+    pub fn parse(format: crate::ObjectFormat, mut payload: &[u8]) -> Result<Self, TreeError> {
         let mut entries = Vec::new();
 
         while !payload.is_empty() {
@@ -111,19 +121,25 @@ impl Tree {
             let name = &payload[..nul];
             payload = &payload[nul + 1..];
 
-            let raw_id = payload.get(..20).ok_or(TreeError::TruncatedObjectId)?;
-            let mut id = [0; 20];
-            id.copy_from_slice(raw_id);
+            let raw_id = payload
+                .get(..format.digest_len())
+                .ok_or(TreeError::TruncatedObjectId)?;
+            let id = ObjectId::from_bytes(format, raw_id).expect("checked digest length");
 
             entries.push(TreeEntry {
                 mode,
                 name: name.to_vec(),
-                id: ObjectId::Sha1(id),
+                id,
             });
-            payload = &payload[20..];
+            payload = &payload[format.digest_len()..];
         }
 
-        Ok(Self { entries })
+        Ok(Self { format, entries })
+    }
+
+    /// The format selected for this tree, including an empty tree.
+    pub fn object_format(&self) -> crate::ObjectFormat {
+        self.format
     }
 
     /// Borrows entries in their stored order, without allowing mutation of the tree.
@@ -179,11 +195,12 @@ impl Tree {
     ///
     /// Allocates a temporary payload buffer. Does not validate or normalize a parsed tree.
     pub fn id(&self) -> ObjectId {
-        ObjectId::for_object("tree", &self.encode())
+        self.format
+            .hash_object(crate::ObjectKind::Tree, &self.encode())
     }
 }
 
-/// One tree entry, with an uninterpreted byte name and a SHA-1 reference.
+/// One tree entry, with an uninterpreted byte name and a format-bearing reference.
 ///
 /// Fields are freely editable before construction. [`Tree::new`] checks names and duplicates.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -265,7 +282,7 @@ impl EntryMode {
 /// A tree payload could not be parsed, or entries failed structural validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TreeError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// An entry identity differs from the selected tree format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// No space separates the mode from the name.
@@ -277,7 +294,7 @@ pub enum TreeError {
     /// No NUL separates the name from the raw identity.
     #[error("missing tree name delimiter")]
     MissingNameDelimiter,
-    /// Fewer than 20 raw identity bytes follow the name delimiter.
+    /// Fewer than the selected format's raw identity bytes follow the name delimiter.
     #[error("truncated tree entry object identity")]
     TruncatedObjectId,
     /// A name is empty, contains NUL or `/`, or is `.` or `..`.
@@ -335,10 +352,10 @@ mod tests {
 
     #[test]
     fn empty_tree_has_git_identity() {
-        let tree = Tree::new(vec![]).unwrap();
+        let tree = Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap();
 
         assert_eq!(tree.encode(), b"");
-        assert_eq!(Tree::parse(b"").unwrap(), tree);
+        assert_eq!(Tree::parse(crate::ObjectFormat::Sha1, b"").unwrap(), tree);
         assert_eq!(tree.validate(), Ok(()));
         assert_eq!(
             tree.id().to_string(),
@@ -354,11 +371,13 @@ mod tests {
     #[case::gitlink(EntryMode::Gitlink, b"160000 a\0")]
     fn preserves_supported_modes(#[case] mode: EntryMode, #[case] prefix: &[u8]) {
         let expected = record(prefix);
-        let tree = Tree::new(vec![entry(mode, b"a")]).unwrap();
+        let tree = Tree::new(crate::ObjectFormat::Sha1, vec![entry(mode, b"a")]).unwrap();
 
         assert_eq!(tree.encode(), expected);
         assert_eq!(
-            Tree::parse(&expected).unwrap().entries(),
+            Tree::parse(crate::ObjectFormat::Sha1, &expected)
+                .unwrap()
+                .entries(),
             &[entry(mode, b"a")]
         );
     }
@@ -375,7 +394,7 @@ mod tests {
         ]
         .concat();
 
-        let tree = Tree::parse(&payload).unwrap();
+        let tree = Tree::parse(crate::ObjectFormat::Sha1, &payload).unwrap();
 
         assert_eq!(
             tree.entries(),
@@ -398,10 +417,20 @@ mod tests {
     #[case::backslash(b"a\\b")]
     fn preserves_name_bytes(#[case] name: &[u8]) {
         let expected = [b"100644 ".as_slice(), name, b"\0", &[0x81; 20]].concat();
-        let tree = Tree::new(vec![entry(EntryMode::Blob, name)]).unwrap();
+        let tree = Tree::new(
+            crate::ObjectFormat::Sha1,
+            vec![entry(EntryMode::Blob, name)],
+        )
+        .unwrap();
 
         assert_eq!(tree.encode(), expected);
-        assert_eq!(Tree::parse(&expected).unwrap().entries()[0].name, name);
+        assert_eq!(
+            Tree::parse(crate::ObjectFormat::Sha1, &expected)
+                .unwrap()
+                .entries()[0]
+                .name,
+            name
+        );
     }
 
     #[rstest]
@@ -427,11 +456,14 @@ mod tests {
 
     #[test]
     fn sorts_file_and_directory_prefixes() {
-        let tree = Tree::new(vec![
-            entry(EntryMode::Blob, b"a0"),
-            entry(EntryMode::Tree, b"a"),
-            entry(EntryMode::Blob, b"a.c"),
-        ])
+        let tree = Tree::new(
+            crate::ObjectFormat::Sha1,
+            vec![
+                entry(EntryMode::Blob, b"a0"),
+                entry(EntryMode::Tree, b"a"),
+                entry(EntryMode::Blob, b"a.c"),
+            ],
+        )
         .unwrap();
         let names: Vec<_> = tree
             .entries()
@@ -451,7 +483,10 @@ mod tests {
     #[case::dot_dot(b"..")]
     fn rejects_invalid_new_names(#[case] name: &[u8]) {
         assert_eq!(
-            Tree::new(vec![entry(EntryMode::Blob, name)]),
+            Tree::new(
+                crate::ObjectFormat::Sha1,
+                vec![entry(EntryMode::Blob, name)]
+            ),
             Err(TreeError::InvalidName)
         );
     }
@@ -463,7 +498,7 @@ mod tests {
     #[case::dot_dot(b"100644 ..\0")]
     fn parses_invalid_names_without_repair(#[case] prefix: &[u8]) {
         let payload = record(prefix);
-        let tree = Tree::parse(&payload).unwrap();
+        let tree = Tree::parse(crate::ObjectFormat::Sha1, &payload).unwrap();
 
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::InvalidName));
@@ -472,12 +507,12 @@ mod tests {
     #[test]
     fn preserves_unsorted_input_until_explicit_reconstruction() {
         let payload = [record(b"40000 a\0"), record(b"100644 a.c\0")].concat();
-        let tree = Tree::parse(&payload).unwrap();
+        let tree = Tree::parse(crate::ObjectFormat::Sha1, &payload).unwrap();
 
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::Unsorted));
 
-        let rebuilt = Tree::new(tree.entries().to_vec()).unwrap();
+        let rebuilt = Tree::new(crate::ObjectFormat::Sha1, tree.entries().to_vec()).unwrap();
 
         assert_eq!(rebuilt.entries()[0].name, b"a.c");
         assert_ne!(rebuilt.id(), tree.id());
@@ -488,12 +523,12 @@ mod tests {
     #[case::different_mode(b"40000 a\0")]
     fn detects_duplicate_names_even_when_nonadjacent(#[case] last: &[u8]) {
         let payload = [record(b"100644 a\0"), record(b"100644 a.c\0"), record(last)].concat();
-        let tree = Tree::parse(&payload).unwrap();
+        let tree = Tree::parse(crate::ObjectFormat::Sha1, &payload).unwrap();
 
         assert_eq!(tree.encode(), payload);
         assert_eq!(tree.validate(), Err(TreeError::DuplicateName));
         assert_eq!(
-            Tree::new(tree.entries().to_vec()),
+            Tree::new(crate::ObjectFormat::Sha1, tree.entries().to_vec()),
             Err(TreeError::DuplicateName)
         );
     }
@@ -508,7 +543,7 @@ mod tests {
     #[case::overflow(b"777777777777777777777777 a\0")]
     fn rejects_unsupported_mode_spellings(#[case] prefix: &[u8]) {
         assert_eq!(
-            Tree::parse(&record(prefix)),
+            Tree::parse(crate::ObjectFormat::Sha1, &record(prefix)),
             Err(TreeError::UnsupportedMode)
         );
     }
@@ -519,14 +554,17 @@ mod tests {
     #[case::no_id(b"100644 a\0", TreeError::TruncatedObjectId)]
     #[case::short_id(b"100644 a\0abcdefghijklmnopqrs", TreeError::TruncatedObjectId)]
     fn rejects_incomplete_records(#[case] payload: &[u8], #[case] error: TreeError) {
-        assert_eq!(Tree::parse(payload), Err(error));
+        assert_eq!(Tree::parse(crate::ObjectFormat::Sha1, payload), Err(error));
     }
 
     #[test]
     fn rejects_trailing_partial_entry() {
         let payload = [record(b"100644 a\0"), b"100644 b\0short".to_vec()].concat();
 
-        assert_eq!(Tree::parse(&payload), Err(TreeError::TruncatedObjectId));
+        assert_eq!(
+            Tree::parse(crate::ObjectFormat::Sha1, &payload),
+            Err(TreeError::TruncatedObjectId)
+        );
     }
 }
 
@@ -536,11 +574,61 @@ mod format_boundary_tests {
 
     #[test]
     fn rejects_sha256_entry_before_encoding() {
-        let result = Tree::new(vec![TreeEntry {
-            mode: EntryMode::Blob,
-            name: b"a".to_vec(),
-            id: ObjectId::Sha256([1; 32]),
-        }]);
+        let result = Tree::new(
+            crate::ObjectFormat::Sha1,
+            vec![TreeEntry {
+                mode: EntryMode::Blob,
+                name: b"a".to_vec(),
+                id: ObjectId::Sha256([1; 32]),
+            }],
+        );
         assert!(matches!(result, Err(TreeError::ObjectFormat(_))));
+    }
+}
+
+#[cfg(test)]
+mod dual_format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, "4b825dc642cb6eb9a060e54bf8d69288fbee4904")]
+    #[case::sha256(
+        ObjectFormat::Sha256,
+        "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+    )]
+    fn empty_tree_retains_selected_identity(#[case] format: ObjectFormat, #[case] expected: &str) {
+        let tree = Tree::new(format, vec![]).unwrap();
+        assert_eq!(tree.id().to_string(), expected);
+        assert_eq!(Tree::parse(format, b"").unwrap(), tree);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn truncated_digest_is_rejected(#[case] format: ObjectFormat) {
+        let mut bytes = b"160000 submodule\0".to_vec();
+        bytes.extend(vec![1; format.digest_len() - 1]);
+        assert_eq!(
+            Tree::parse(format, &bytes),
+            Err(TreeError::TruncatedObjectId)
+        );
+    }
+
+    #[test]
+    fn sha256_tree_rejects_sha1_gitlink() {
+        assert!(matches!(
+            Tree::new(
+                ObjectFormat::Sha256,
+                vec![TreeEntry {
+                    mode: EntryMode::Gitlink,
+                    name: b"submodule".to_vec(),
+                    id: ObjectId::Sha1([1; 20])
+                }]
+            ),
+            Err(TreeError::ObjectFormat(_))
+        ));
     }
 }

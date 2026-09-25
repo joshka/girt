@@ -65,7 +65,12 @@ fn tree(root: &Path) -> ObjectId {
         .unwrap()
 }
 fn source(parent: &Path) -> Repository {
-    let repo = Repository::init(parent.join("source"), InitKind::Worktree).unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        parent.join("source"),
+        InitKind::Worktree,
+    )
+    .unwrap();
     let root = repo.worktree().unwrap();
     fs::create_dir(root.join("dir")).unwrap();
     fs::write(root.join("dir/raw"), b"one\r\ntwo\0\xff").unwrap();

@@ -6,9 +6,16 @@ use crate::{Commit, CommitFields, Signature, Tree};
 
 fn ready() -> (tempfile::TempDir, CloneReady) {
     let root = tempfile::tempdir().unwrap();
-    let source = Repository::init(root.path().join("source"), InitKind::Bare).unwrap();
-    let objects = source.loose_objects().unwrap();
-    let tree = objects.write_tree(&Tree::new(vec![]).unwrap()).unwrap();
+    let source = Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.path().join("source"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let objects = source.loose_objects();
+    let tree = objects
+        .write_tree(&Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap())
+        .unwrap();
     let who = Signature {
         name: b"Clone".to_vec(),
         email: b"clone@example.com".to_vec(),
@@ -53,7 +60,12 @@ fn ready() -> (tempfile::TempDir, CloneReady) {
     (root, ready)
 }
 fn initialized(ready: &CloneReady) -> (Repository, CloneReport) {
-    let repo = Repository::init(&ready.request.destination, ready.request.kind).unwrap();
+    let repo = Repository::init(
+        crate::ObjectFormat::Sha1,
+        &ready.request.destination,
+        ready.request.kind,
+    )
+    .unwrap();
     let report = CloneReport {
         destination: ready.request.destination.clone(),
         reserved: true,
@@ -206,7 +218,12 @@ fn index_install_failure_reports_unindexed_residual_pack() {
     let (_root, ready) = ready();
     let (repo, mut report) = initialized(&ready);
     let staging = tempfile::tempdir().unwrap();
-    let copy = Repository::init(staging.path().join("repo"), InitKind::Bare).unwrap();
+    let copy = Repository::init(
+        crate::ObjectFormat::Sha1,
+        staging.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
     let installed = ready
         .received
         .install(&copy, Default::default(), &AtomicBool::new(false))
