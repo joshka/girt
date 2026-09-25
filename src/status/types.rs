@@ -173,9 +173,9 @@ pub enum Error {
         id: ObjectId,
         /// Entry path, or `HEAD` for the baseline commit.
         path: Vec<u8>,
-        /// Storage/verification cause.
+        /// Storage/verification cause. Boxed to keep contextual errors compact.
         #[source]
-        source: crate::ObjectReadError,
+        source: Box<crate::ObjectReadError>,
     },
     /// Referenced commit/blob is missing or has the wrong kind.
     #[error("invalid status object {id} at {path:?}: {reason}")]

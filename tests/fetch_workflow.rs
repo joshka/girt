@@ -507,7 +507,7 @@ fn destination_race_keeps_installed_objects_and_does_not_overwrite_writer() {
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Publication(TransactionError::Prepare { .. })
     ));
     assert!(error.report.installed.is_some());
@@ -538,7 +538,7 @@ fn failed_installation_never_publishes_refs() {
     let error = ready
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
-    assert!(matches!(error.source, FetchFinishFailure::Installation(_)));
+    assert!(matches!(*error.source, FetchFinishFailure::Installation(_)));
     assert!(error.report.installed.is_none());
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
 }
@@ -560,8 +560,17 @@ fn cancellation_before_installation_leaves_refs_and_objects_untouched() {
     let error = ready
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(true))
         .unwrap_err();
+    let cause = std::error::Error::source(&error).unwrap();
     assert!(matches!(
-        error.source,
+        cause
+            .downcast_ref::<Box<FetchFinishFailure>>()
+            .map(Box::as_ref),
+        Some(FetchFinishFailure::Installation(
+            girt::fetch::FetchError::Cancelled
+        ))
+    ));
+    assert!(matches!(
+        *error.source,
         FetchFinishFailure::Installation(girt::fetch::FetchError::Cancelled)
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
@@ -633,7 +642,7 @@ fn publication_lock_failure_keeps_installed_objects() {
         .unwrap_err();
     assert!(error.report.installed.is_some());
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Publication(TransactionError::Prepare { .. })
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
@@ -663,7 +672,7 @@ fn head_alias_into_destination_is_rejected_after_transfer() {
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Safety(FetchPlanError::Head(_))
     ));
     assert!(error.report.installed.is_some());
@@ -738,7 +747,7 @@ fn commit_rewinds_require_force_and_authorization_like_git(#[case] tag: bool) {
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Update(girt::fetch::FetchUpdateError::NonFastForward(_))
     ));
     assert!(error.report.installed.is_some());
@@ -818,7 +827,7 @@ fn failed_index_installation_reports_possible_unindexed_pack() {
     let error = ready
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
-    assert!(matches!(error.source, FetchFinishFailure::Installation(_)));
+    assert!(matches!(*error.source, FetchFinishFailure::Installation(_)));
     assert!(error.report.installed.is_none());
     assert!(basename.with_extension("pack").is_file());
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
@@ -853,7 +862,7 @@ fn missing_known_dependency_prevents_publication() {
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Installation(girt::fetch::FetchError::Missing(_))
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/other"), None);
@@ -922,7 +931,7 @@ fn ancestry_budget_failure_leaves_installed_objects_without_advancing_ref() {
     };
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Update(girt::fetch::FetchUpdateError::History(
             girt::HistoryError::Limit(_)
         ))
@@ -954,7 +963,7 @@ fn tag_peeling_budget_failure_prevents_publication() {
     };
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Update(girt::fetch::FetchUpdateError::Object(
             girt::fetch::FetchError::Limit("update tag depth")
         ))
@@ -992,7 +1001,7 @@ fn corrupt_loose_shadow_cannot_receive_a_published_ref() {
         .unwrap_err();
     assert!(error.report.installed.is_some());
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::BeforePublication(girt::fetch::FetchError::LocalRead { .. })
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
@@ -1022,7 +1031,7 @@ fn installed_graph_verification_budget_is_explicit() {
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(error.report.installed.is_some());
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::BeforePublication(girt::fetch::FetchError::Limit(_))
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);

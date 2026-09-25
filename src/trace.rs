@@ -223,7 +223,7 @@ pub(crate) fn fetch_finish(
 ) -> &'static str {
     use crate::fetch::FetchFinishFailure::*;
     span.record("effects", "possibly_partial");
-    match &error.source {
+    match error.source.as_ref() {
         Installation(e) | BeforePublication(e) => fetch(e),
         Publication(e) => transaction(e, span),
         Safety(_) => "precondition",

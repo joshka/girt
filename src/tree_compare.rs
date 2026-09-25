@@ -266,7 +266,7 @@ impl Budget<'_> {
             .map_err(|source| TreeCompareError::Read {
                 id,
                 path: path.to_vec(),
-                source,
+                source: Box::new(source),
             })?
             .ok_or_else(|| TreeCompareError::Missing {
                 id,
@@ -350,9 +350,9 @@ pub enum TreeCompareError {
         id: ObjectId,
         /// Relative directory path bytes; empty for a root.
         path: Vec<u8>,
-        /// Underlying storage failure.
+        /// Underlying storage failure. Boxed to keep contextual errors compact.
         #[source]
-        source: ObjectReadError,
+        source: Box<ObjectReadError>,
     },
     /// A visited tree has unsupported syntax, invalid names, duplicates or invalid Git ordering.
     #[error("invalid tree {id} at {path:?}: {source}")]

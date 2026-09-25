@@ -307,7 +307,7 @@ impl FetchReady {
                 Ok(()) => Ok(report),
                 Err(source) => Err(FetchFinishError {
                     report: Box::new(report),
-                    source,
+                    source: Box::new(source),
                 }),
             }
         };
@@ -495,8 +495,9 @@ pub struct FetchFinishError {
     /// Transfer and installation effects before failure; installed objects are never rolled back.
     pub report: Box<FetchReport>,
     /// Failed phase, including the existing transaction's partial-effect contract.
+    /// Boxed to keep the returned error compact across platforms.
     #[source]
-    pub source: FetchFinishFailure,
+    pub source: Box<FetchFinishFailure>,
 }
 
 /// Failed phase after validated transfer.

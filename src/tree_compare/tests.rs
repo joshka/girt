@@ -306,8 +306,24 @@ fn corrupt_storage_retains_source() {
     let root = f.tree(vec![]);
     let hex = root.to_string();
     std::fs::write(f.0.path().join(&hex[..2]).join(&hex[2..]), b"corrupt").unwrap();
+    let error = f
+        .objects()
+        .compare_trees(
+            None,
+            Some(root),
+            TreeCompareLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    let source = std::error::Error::source(&error).unwrap();
+    assert!(matches!(
+        source
+            .downcast_ref::<Box<ObjectReadError>>()
+            .map(Box::as_ref),
+        Some(ObjectReadError::Loose(_))
+    ));
     assert!(
-        matches!(f.objects().compare_trees(None,Some(root),TreeCompareLimits::default(),&AtomicBool::new(false)),Err(TreeCompareError::Read {id,path,..}) if id == root && path.is_empty())
+        matches!(error, TreeCompareError::Read { id, path, .. } if id == root && path.is_empty())
     );
 }
 

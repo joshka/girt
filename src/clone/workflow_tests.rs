@@ -196,7 +196,7 @@ fn verification_limit_failure_retains_installed_objects_without_refs() {
         panic!("expected fetch failure")
     };
     assert!(matches!(
-        fetch.source,
+        *fetch.source,
         FetchFinishFailure::BeforePublication(_)
     ));
     assert!(fetch.report.installed.is_some());
@@ -242,7 +242,7 @@ fn index_install_failure_reports_unindexed_residual_pack() {
     let Err(CloneFailure::Fetch(error)) = result else {
         panic!("expected fetch failure")
     };
-    assert!(matches!(error.source, FetchFinishFailure::Installation(_)));
+    assert!(matches!(*error.source, FetchFinishFailure::Installation(_)));
     assert!(error.report.installed.is_none());
     assert!(basename.with_extension("pack").is_file());
     assert!(!report.configured);
@@ -285,7 +285,7 @@ fn cancelled_after_initialization_keeps_empty_repository() {
         panic!("expected fetch cancellation")
     };
     assert!(matches!(
-        error.source,
+        *error.source,
         FetchFinishFailure::Installation(FetchError::Cancelled)
     ));
     assert!(report.initialized);
@@ -313,7 +313,7 @@ fn fetch_reference_lock_failure_retains_pack_without_configuration() {
     let Err(CloneFailure::Fetch(error)) = result else {
         panic!("expected fetch publication failure")
     };
-    assert!(matches!(error.source, FetchFinishFailure::Publication(_)));
+    assert!(matches!(*error.source, FetchFinishFailure::Publication(_)));
     assert!(error.report.installed.is_some());
     assert!(!report.configured);
     assert_eq!(

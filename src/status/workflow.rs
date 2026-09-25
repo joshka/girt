@@ -231,7 +231,7 @@ mod supported {
             .map_err(|source| Error::Object {
                 id,
                 path: path.to_vec(),
-                source,
+                source: Box::new(source),
             })?
             .ok_or_else(|| Error::InvalidObject {
                 id,
