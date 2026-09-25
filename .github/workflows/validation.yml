@@ -4,12 +4,18 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      http_only:
+        description: Run only focused Windows HTTP regression checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   unix:
+    if: ${{ !inputs.http_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +80,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
+    if: ${{ !inputs.http_only }}
     # Portable integrations are explicit; process adapters remain unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -123,3 +130,24 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --locked --all-features --no-deps
+
+  windows-http:
+    if: ${{ inputs.http_only }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain and environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json -Compress
+          Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
+          Write-Output "Temporary directory: $env:TEMP"
+      - name: HTTP runtime regression
+        run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable -- --show-output
+      - name: HTTP test Clippy
+        run: cargo +stable clippy --locked --no-default-features --features http --test http --test http_portable -- -D warnings

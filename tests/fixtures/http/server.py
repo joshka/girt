@@ -16,6 +16,9 @@ parser.add_argument("--certificate")
 parser.add_argument("--key")
 parser.add_argument("--requests")
 args = parser.parse_args()
+# A controlled slow-discovery case proves that a deadline can expire before a POST fault.
+delayed_discovery = args.fault.startswith("delayed-discovery/")
+args.fault = args.fault.removeprefix("delayed-discovery/")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -32,6 +35,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if args.requests:
             with open(args.requests, "a") as log:
                 log.write(self.command + "\n")
+        if delayed_discovery and self.command == "GET":
+            time.sleep(2)
         if args.fault == "stall" or (args.fault == "post-stall" and self.command == "POST"):
             time.sleep(10)
             return

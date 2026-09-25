@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
-use girt::push::{self, ForcePolicy, PreparedPush, PushCommand, PushError, PushLimits, Status};
+use girt::push::{
+    self, ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, Status,
+};
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::transport::http::{HttpError, HttpRemote};
@@ -479,7 +481,10 @@ fn truncated_mutating_response_retains_acknowledged_prefix() {
         ))
         .unwrap_err();
     let PushError::Uncertain { report, .. } = error else {
-        panic!("expected uncertain")
+        panic!(
+            "expected uncertain, got {error:?}; requests: {:?}",
+            server.requests()
+        )
     };
     assert_eq!(report.unpack, Some(Status::Ok));
     assert_eq!(report.refs[0].status, Some(Status::Ok));
@@ -615,11 +620,9 @@ fn https_validates_chain_and_hostname(
     assert_eq!(result.is_ok(), succeeds, "{result:?}");
 }
 
-#[rstest]
-#[case::server_failure("post-failure")]
-#[case::stalled_status("post-stall")]
-#[case::invalid_rpc_media("post-media")]
-fn attempted_push_http_failures_are_uncertain_and_not_retried(#[case] fault: &str) {
+// The timeout is a fixture watchdog, not an injected transport deadline. Fault assertions
+// must reach POST regardless of how long Git discovery takes on the native host.
+fn observed_post_fault(fault: &str) -> PushError {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), fault, "", None);
@@ -634,18 +637,139 @@ fn attempted_push_http_failures_are_uncertain_and_not_retried(#[case] fault: &st
         &[],
     );
     let cancel = AtomicBool::new(false);
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(1)),
-    };
-    let error = runtime()
-        .block_on(push::send_http(&remote, prepared, control))
-        .unwrap_err();
-    let PushError::Uncertain { report, .. } = error else {
-        panic!("expected uncertain")
-    };
-    assert_eq!(report.refs[0].status, None);
+    let error = runtime().block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            push::send_http(&remote, prepared, TransportControl::new(&cancel)),
+        )
+        .await
+        .expect("HTTP fixture did not finish within its watchdog")
+        .unwrap_err()
+    });
+    assert_eq!(server.requests(), ["GET", "POST"], "{error:?}");
+    error
+}
+
+#[rstest]
+#[case::ordinary("post-failure")]
+#[case::slow_discovery("delayed-discovery/post-failure")]
+fn server_failure_after_post_is_uncertain_and_not_retried(#[case] fault: &str) {
+    let error = observed_post_fault(fault);
+    assert!(
+        matches!(
+            &error,
+            PushError::Uncertain { cause: PushFailure::Http(HttpError::Status(503)), report }
+                if report.refs[0].status.is_none()
+        ),
+        "{error:?}"
+    );
+}
+
+#[rstest]
+#[case::ordinary("post-media")]
+#[case::slow_discovery("delayed-discovery/post-media")]
+fn invalid_media_after_post_is_uncertain_and_not_retried(#[case] fault: &str) {
+    let error = observed_post_fault(fault);
+    assert!(
+        matches!(
+            &error,
+            PushError::Uncertain { cause: PushFailure::Http(HttpError::Protocol("media type (dumb HTTP unsupported)")), report }
+                if report.refs[0].status.is_none()
+        ),
+        "{error:?}"
+    );
+}
+
+#[rstest]
+#[case::ordinary("post-stall")]
+#[case::slow_discovery("delayed-discovery/post-stall")]
+fn cancellation_after_observed_post_is_uncertain_and_not_retried(#[case] fault: &str) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let server = Server::new(dest.git_dir(), fault, "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let prepared = prepared(
+        &f,
+        vec![command(
+            "refs/heads/main",
+            None,
+            tip(&f.repo, "refs/heads/main"),
+        )],
+        &[],
+    );
+    let cancel = AtomicBool::new(false);
+    let (error, observed_post) = std::thread::scope(|scope| {
+        let observer = scope.spawn(|| {
+            let end = Instant::now() + Duration::from_secs(30);
+            while !server.requests().iter().any(|method| method == "POST") {
+                if Instant::now() >= end {
+                    cancel.store(true, Ordering::Relaxed);
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            cancel.store(true, Ordering::Relaxed);
+            true
+        });
+        let error = runtime()
+            .block_on(push::send_http(
+                &remote,
+                prepared,
+                TransportControl::new(&cancel),
+            ))
+            .unwrap_err();
+        (error, observer.join().unwrap())
+    });
+    assert!(
+        observed_post,
+        "POST was not observed before fixture watchdog: {error:?}"
+    );
+    assert!(
+        matches!(
+            &error,
+            PushError::Uncertain { cause: PushFailure::Cancelled, report }
+                if report.refs[0].status.is_none()
+        ),
+        "{error:?}"
+    );
     assert_eq!(server.requests(), ["GET", "POST"]);
+}
+
+#[rstest]
+#[case::server_failure("delayed-discovery/post-failure")]
+#[case::stalled_status("delayed-discovery/post-stall")]
+#[case::invalid_media("delayed-discovery/post-media")]
+fn discovery_deadline_does_not_reach_post_fault(#[case] fault: &str) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let server = Server::new(dest.git_dir(), fault, "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let prepared = prepared(
+        &f,
+        vec![command(
+            "refs/heads/main",
+            None,
+            tip(&f.repo, "refs/heads/main"),
+        )],
+        &[],
+    );
+    let cancel = AtomicBool::new(false);
+    let error = runtime()
+        .block_on(push::send_http(
+            &remote,
+            prepared,
+            TransportControl {
+                cancel: &cancel,
+                deadline: Some(Instant::now() + Duration::from_secs(1)),
+            },
+        ))
+        .unwrap_err();
+    eprintln!("{fault}: {error:?}; requests: {:?}", server.requests());
+    assert!(
+        matches!(&error, PushError::NotSent(PushFailure::Deadline)),
+        "{error:?}"
+    );
+    assert!(!server.requests().iter().any(|method| method == "POST"));
 }
 
 #[cfg(unix)]
@@ -800,7 +924,10 @@ fn cancelled_status_body_preserves_completed_acknowledgements() {
         .block_on(push::send_http(&remote, prepared, control))
         .unwrap_err();
     let PushError::Uncertain { cause, report } = error else {
-        panic!("expected uncertain")
+        panic!(
+            "expected uncertain, got {error:?}; requests: {:?}",
+            server.requests()
+        )
     };
     assert!(matches!(cause, girt::push::PushFailure::Deadline));
     assert_eq!(report.refs[0].status, Some(Status::Ok));
@@ -885,7 +1012,10 @@ fn complete_git_report_does_not_hide_truncated_http() {
         ))
         .unwrap_err();
     let PushError::Uncertain { report, .. } = error else {
-        panic!("expected uncertain")
+        panic!(
+            "expected uncertain, got {error:?}; requests: {:?}",
+            server.requests()
+        )
     };
     assert!(report.all_succeeded());
     assert_eq!(tip(&dest, "refs/heads/main"), id);

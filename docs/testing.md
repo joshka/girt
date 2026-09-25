@@ -59,6 +59,12 @@ remediation tasks; resolve correctness or layering blockers before depending on 
 milestones execute on each supported OS and retain exact revisions and logs. They do not replace
 capability-specific native testing.
 
+When a transport fault test requires a post-send outcome, synchronize cancellation with an observed
+request before asserting uncertainty. Keep fixture watchdogs separate from the transport deadline
+being tested: slow discovery can legitimately expire an overall deadline before mutation. Assert the
+specific structured error and retained effects, and include request observations in failure
+diagnostics. See [R14's HTTP repair](evidence/r14-http.md) for a controlled example.
+
 ## Parameterized Tests
 
 Use `rstest` with named `#[case::name(...)]` inputs for parameterized unit and integration tests.
