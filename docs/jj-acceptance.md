@@ -111,8 +111,9 @@ publication. Retained readers and retries must have explicit lifetime and consis
 
 R14's [acceptance matrix](evidence/r14.md) distinguishes successful import from opening. Pack
 v3/index v1 reads are delivered in R14; [R39 evidence](evidence/r39.md) records alternates and known
-storage extensions, R15 file-backed resources and R16 refresh. R40 supplies bounded imported reflog
-roots before R31. R37/R38 remain required backend/index capabilities before C02/R34.
+storage extensions, R15 file-backed resources and [R16 explicit refresh](evidence/r16.md). R40
+supplies bounded imported reflog roots before R31. R37/R38 remain required backend/index
+capabilities before C02/R34.
 
 ### A06 — Config layers and remote editing
 
