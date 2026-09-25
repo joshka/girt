@@ -183,6 +183,7 @@ impl References<'_> {
             super::reftable::backend::prepare(self, edits).map(PreparedBackend::Reftable)
         } else {
             self.prepare_files_transaction(edits)
+                .map(Box::new)
                 .map(PreparedBackend::Files)
         }
     }
@@ -593,7 +594,7 @@ fn append_record(writer: &mut impl Write, record: &[u8]) -> Result<(), (usize, i
 mod tests;
 
 pub(crate) enum PreparedBackend {
-    Files(Prepared),
+    Files(Box<Prepared>),
     Reftable(super::reftable::backend::Prepared),
 }
 
