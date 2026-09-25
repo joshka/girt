@@ -23,6 +23,12 @@
 //! overrides. Symlink blobs must be nonempty, NUL-free and at most 1024 bytes. Mode changes replace
 //! files, with permissions 0644/0755; ownership, ACLs and other metadata are not preserved.
 //!
+//! Preparation also projects the nested-repository marker policy across the planned operations,
+//! including retained siblings and directories. A non-root directory containing `HEAD`, `objects`
+//! and `refs` (including ASCII case aliases) is refused even when these are ordinary files. This
+//! deliberately excludes some valid Git trees so checkout cannot trigger its own live guard after
+//! starting to mutate the worktree. The live guards remain active at every mutation boundary.
+//!
 //! Preparation holds the index lock, verifies trees/blobs, clean tracked content, names and
 //! obstructions, then constructs the replacement index before worktree mutation. Mutation removes
 //! changed tracked leaves, removes only known empty directories needed for directory-to-file

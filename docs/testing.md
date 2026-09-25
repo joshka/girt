@@ -19,7 +19,10 @@ risks involved; one test can satisfy several criteria without duplicating assert
   both directions where applicable. Round trips alone can hide a bug shared by reader and writer;
   include independent expected values or Git-generated input.
 - **Failure behavior:** Test relevant corruption, resource limits, partial writes, cleanup, and
-  concurrency guarantees. Document what may remain after failure.
+  concurrency guarantees. Document what may remain after failure. For workflows with live mutation
+  guards, project their preconditions over planned intermediate/final states, including retained
+  data, before the first mutation. Keep the live guards to detect independent changes; a workflow
+  must not predictably reject its own output only after applying earlier operations.
 - **Documentation:** Update affected contracts, examples, status, compatibility evidence, and
   limitations. Record fixture provenance and the Git versions and platforms exercised.
 - **Validation:** Run the applicable [development checks](../CONTRIBUTING.md#development-checks).
@@ -1008,3 +1011,31 @@ Core-only Linux and Windows libraries compile. Native execution of this checkout
 Linux/Windows remains pending; compilation is not runtime evidence. Windows checkout is explicitly
 unsupported. The status parent `e5380d364a91d437a1190a058501e58073b2109f` and index ancestor
 `beb052d387c74968ad4199014e51dcfed67b2c28` remain unchanged. No changes were published or merged.
+
+#### Checkout Closing Review Remediation
+
+The closing review reproduced a valid Git tree whose ordinary `d/HEAD`, `d/objects` and `d/refs`
+files activate checkout's conservative nested-repository guard after previous operations.
+Preparation now projects marker presence through the operation sequence, including retained
+untracked/tracked siblings, directories surviving child deletion, created directories and ASCII
+aliases. The live mutation guards are unchanged. Unsupported plans fail in preparation with no
+applied operations, unchanged worktree/index bytes and a released owned lock. This intentionally
+retains the restricted marker policy rather than claiming Git-default support for those trees.
+
+Twenty-four additional local cases cover initial/tracked refusal, final-verification-only targets,
+file/directory transitions, mixed retained/target markers, symlink markers, root exemption, a valid
+remove-before-add transition, a hypothetical unsafe intermediate ordering, and live marker insertion
+after preparation. Ordered prefix lookup replaces the all-target scan for each absent expected path;
+component-boundary cases and a 96-directory deletion workload verify behavior. A deterministic
+checkpoint proves cancellation during that final expected-path pass leaves the prior index and
+reports the completed removals. This is bounded structural evidence, not a measured speedup claim.
+
+On 2026-09-24, remediation revision `63755c63bcb32898bd5f49f484f3e27c00d60560` passed `just check`:
+1,236 unit tests, 515 integration cases, 19 doctests, all-feature/all-target Clippy and docs.rs,
+with warnings denied. Checkout now has 89 focused local cases. The original external public-API
+reproduction was rerun unchanged: the marker target fails during preparation with an empty applied
+report, `existing` and its index entry survive, and Git still accepts the same target. Its
+independent clone/checkout/edit/refusal scenario also passes. Warning-denying private Rustdoc,
+global-config Markdown lint and core-only Linux/Windows library cross-compilation passed. Native
+platform CI for this remediation remains a separate pending checkpoint; Windows checkout remains
+unsupported.

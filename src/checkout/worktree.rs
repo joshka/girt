@@ -50,7 +50,7 @@ pub(super) fn run(
         }
         report.stage = Stage::Publication;
         hook("before publication", b"")?;
-        plan.verify_target(cancel)?;
+        plan.verify_target(cancel, hook)?;
         check(cancel)?;
         edit.publish()?;
         report.index_published = true;
@@ -227,6 +227,7 @@ impl<'a> Plan<'a> {
             plan.verify_leaf(&parent, path, *leaf, &mut budget, cancel)?;
         }
         plan.build_operations(cancel)?;
+        plan.check_planned_markers(cancel)?;
         Ok(plan)
     }
 
@@ -292,6 +293,62 @@ impl<'a> Plan<'a> {
         for (path, leaf) in &self.target {
             if self.old.get(path) != Some(leaf) {
                 self.operations.push(op(path, Action::Install));
+            }
+        }
+        Ok(())
+    }
+
+    // The live guard intentionally recognizes marker names even when they are ordinary files.
+    // Project their presence through the actual operation order so our own output cannot activate
+    // that guard after an earlier mutation. Counts retain distinct ASCII aliases on case-sensitive
+    // filesystems; conservative folding also covers case-insensitive destinations.
+    fn check_planned_markers(&self, cancel: &AtomicBool) -> Result<(), Error> {
+        let mut directory_paths = directories(&self.old);
+        directory_paths.extend(directories(&self.target));
+        let mut markers = BTreeMap::new();
+        for path in directory_paths {
+            check(cancel)?;
+            let mut counts = [0usize; 3];
+            if self.expected[&path]
+                .as_ref()
+                .is_some_and(|stat| kind(stat) == FileType::Directory)
+            {
+                let parent = self.parent(&path, cancel)?;
+                let fd = open_directory(&parent, name(&path), &path)?;
+                self.guard_directory(&fd, &path)?;
+                identity(
+                    &path,
+                    self.expected[&path].as_ref().unwrap(),
+                    &fstat(&fd).map_err(|e| io(&path, e))?,
+                )?;
+                let mut budget = self.limits.max_directory_entries;
+                for child in names(&fd, &path, &mut budget, cancel)? {
+                    check(cancel)?;
+                    if let Some(slot) = marker_slot(&child) {
+                        counts[slot] += 1;
+                    }
+                }
+            }
+            reject_marker_set(&path, &counts)?;
+            markers.insert(path, counts);
+        }
+        for operation in &self.operations {
+            check(cancel)?;
+            if let Some(slot) = marker_slot(name(&operation.path))
+                && let Some(counts) = markers.get_mut(parent_path(&operation.path))
+            {
+                match operation.action {
+                    Action::Remove | Action::RemoveDirectory => {
+                        counts[slot] = counts[slot].checked_sub(1).ok_or_else(|| {
+                            refused(&operation.path, "marker disappeared during preparation")
+                        })?;
+                    }
+                    Action::CreateDirectory | Action::Install => counts[slot] += 1,
+                }
+                reject_marker_set(parent_path(&operation.path), counts)?;
+            }
+            if operation.action == Action::CreateDirectory {
+                markers.insert(operation.path.clone(), [0; 3]);
             }
         }
         Ok(())
@@ -596,7 +653,7 @@ impl<'a> Plan<'a> {
         Ok(())
     }
 
-    fn verify_target(&self, cancel: &AtomicBool) -> Result<(), Error> {
+    fn verify_target(&self, cancel: &AtomicBool, hook: &mut Hook<'_>) -> Result<(), Error> {
         self.root_fd()?;
         let mut budget = self.limits.max_worktree_bytes;
         for (path, leaf) in &self.target {
@@ -607,12 +664,10 @@ impl<'a> Plan<'a> {
         }
         // Removed paths not reused as directories/leaves must still be absent.
         for (path, stat) in &self.expected {
-            if stat.is_none()
-                && self
-                    .target
-                    .keys()
-                    .all(|p| !p.starts_with(&joined(path, b"")))
-            {
+            check(cancel)?;
+            hook("verify expected", path)?;
+            check(cancel)?;
+            if stat.is_none() && !has_descendant(&self.target, path) {
                 // An absent ancestor makes its old descendants absent as well.
                 if prefixes(parent_path(path)).any(|p| {
                     self.expected
@@ -627,6 +682,32 @@ impl<'a> Plan<'a> {
         }
         Ok(())
     }
+}
+
+// One lower-bound lookup replaces a full target scan for each removed path. The slash
+// distinguishes descendants from neighboring names such as "a-other" or "ab".
+fn has_descendant(leaves: &Leaves, path: &[u8]) -> bool {
+    let prefix = joined(path, b"");
+    leaves
+        .range::<[u8], _>((
+            std::ops::Bound::Included(prefix.as_slice()),
+            std::ops::Bound::Unbounded,
+        ))
+        .next()
+        .is_some_and(|(candidate, _)| candidate.starts_with(&prefix))
+}
+
+fn marker_slot(name: &[u8]) -> Option<usize> {
+    [b"HEAD".as_slice(), b"objects", b"refs"]
+        .iter()
+        .position(|marker| name.eq_ignore_ascii_case(marker))
+}
+
+fn reject_marker_set(path: &[u8], counts: &[usize; 3]) -> Result<(), Error> {
+    if counts.iter().all(|count| *count != 0) {
+        return Err(refused(path, "planned nested repository markers"));
+    }
+    Ok(())
 }
 
 fn flatten(

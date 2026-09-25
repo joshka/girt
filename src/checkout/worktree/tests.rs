@@ -812,3 +812,316 @@ fn unchanged_checkout_discards_unverified_tree_cache() {
             .is_empty()
     );
 }
+
+impl Fixture {
+    // Original multi-path trees use one payload so namespace policy, not content conversion,
+    // determines these scenarios. Recursive grouping constructs independent tree objects.
+    fn paths(&self, paths: &[&str]) -> ObjectId {
+        let store = self.repo.loose_objects().unwrap();
+        let blob = store.write_blob(b"fixture\n").unwrap();
+        let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for path in paths {
+            let (first, rest) = path.split_once('/').unwrap_or((path, ""));
+            children.entry(first).or_default().push(rest);
+        }
+        let entries = children
+            .into_iter()
+            .map(|(name, suffixes)| {
+                let (mode, id) = if suffixes == [""] {
+                    (EntryMode::Blob, blob)
+                } else {
+                    (EntryMode::Tree, self.paths(&suffixes))
+                };
+                TreeEntry {
+                    name: name.as_bytes().to_vec(),
+                    mode,
+                    id,
+                }
+            })
+            .collect();
+        store.write_tree(&Tree::new(entries).unwrap()).unwrap()
+    }
+
+    fn seed_paths(&self, paths: &[&str], files: &[&str], directories: &[&str]) -> Option<ObjectId> {
+        let old = if paths.is_empty() {
+            None
+        } else {
+            Some(self.paths(paths))
+        };
+        if old.is_some() {
+            self.checkout(None, old).unwrap();
+        }
+        for path in files {
+            let path = self.root().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"retained\n").unwrap();
+        }
+        for path in directories {
+            fs::create_dir_all(self.root().join(path)).unwrap();
+        }
+        old
+    }
+}
+
+// Capture all worktree names/types/bytes without following links. Repository metadata is
+// independently checked by the tests; access times are deliberately outside this snapshot.
+fn namespace_snapshot(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+    fn visit(root: &Path, relative: &Path, output: &mut BTreeMap<std::path::PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(root.join(relative)).unwrap() {
+            let entry = entry.unwrap();
+            if relative.as_os_str().is_empty() && entry.file_name() == ".git" {
+                continue;
+            }
+            let path = relative.join(entry.file_name());
+            let metadata = fs::symlink_metadata(entry.path()).unwrap();
+            let bytes = if metadata.is_dir() {
+                visit(root, &path, output);
+                b"directory".to_vec()
+            } else if metadata.is_symlink() {
+                let mut bytes = b"symlink:".to_vec();
+                bytes
+                    .extend_from_slice(fs::read_link(entry.path()).unwrap().as_os_str().as_bytes());
+                bytes
+            } else {
+                let mut bytes = b"file:".to_vec();
+                bytes.extend(fs::read(entry.path()).unwrap());
+                bytes
+            };
+            output.insert(path, bytes);
+        }
+    }
+    let mut output = BTreeMap::new();
+    visit(root, Path::new(""), &mut output);
+    output
+}
+
+#[rstest]
+#[case::initial(&[], &[], &[], &["d/HEAD", "d/objects", "d/refs", "d/z"])]
+#[case::final_verification_only(&[], &[], &[], &["d/HEAD", "d/objects", "d/refs"])]
+#[case::tracked(&["existing"], &[], &[], &["d/HEAD", "d/objects", "d/refs", "d/z"])]
+#[case::leaf_to_directory(&["d"], &[], &[], &["d/HEAD", "d/objects", "d/refs"])]
+#[case::retained_files(&["existing"], &["d/HEAD", "d/objects"], &[], &["d/refs", "d/z"])]
+#[case::retained_tracked(&["existing", "d/HEAD"], &["d/objects"], &[], &["d/HEAD", "d/refs"])]
+#[case::retained_directory(&["existing"], &["d/HEAD"], &["d/objects"], &["d/refs"])]
+#[case::emptied_directory_retained(&["existing", "d/objects/old"], &["d/HEAD"], &[], &["d/refs"])]
+#[case::marker_directory_to_file(&["existing", "d/objects/old"], &["d/HEAD"], &[], &["d/objects", "d/refs"])]
+#[case::planned_directories(&["existing"], &[], &[], &["d/HEAD", "d/objects/child", "d/refs/child"])]
+#[case::planned_aliases(&[], &[], &[], &["d/head", "d/OBJECTS", "d/Refs"])]
+#[case::retained_alias(&["existing"], &["d/head"], &[], &["d/objects", "d/refs"])]
+fn refuses_planned_markers_without_mutation(
+    #[case] baseline: &[&str],
+    #[case] retained_files: &[&str],
+    #[case] retained_directories: &[&str],
+    #[case] target: &[&str],
+) {
+    let f = Fixture::new();
+    let old = f.seed_paths(baseline, retained_files, retained_directories);
+    let target = f.paths(target);
+    let before = namespace_snapshot(f.root());
+    let index = fs::read(f.repo.git_dir().join("index")).ok();
+    let head = fs::read(f.repo.git_dir().join("HEAD")).unwrap();
+    let failure = f.checkout(old, Some(target)).unwrap_err();
+    assert_eq!(failure.report.stage, Stage::Preparation);
+    assert!(failure.report.applied.is_empty());
+    assert!(failure.cleanup.is_empty());
+    assert!(!failure.report.index_published);
+    assert_eq!(namespace_snapshot(f.root()), before);
+    assert_eq!(fs::read(f.repo.git_dir().join("index")).ok(), index);
+    assert_eq!(fs::read(f.repo.git_dir().join("HEAD")).unwrap(), head);
+    assert!(!f.repo.git_dir().join("index.lock").exists());
+}
+
+#[test]
+fn retained_dangling_symlink_counts_as_a_marker() {
+    let f = Fixture::new();
+    let old = f.seed_paths(&["existing"], &["d/objects"], &[]);
+    symlink("missing", f.root().join("d/HEAD")).unwrap();
+    let target = f.paths(&["d/refs"]);
+    let before = namespace_snapshot(f.root());
+    let index = f.index_bytes();
+    let failure = f.checkout(old, Some(target)).unwrap_err();
+    assert_eq!(failure.report.stage, Stage::Preparation);
+    assert!(failure.report.applied.is_empty());
+    assert_eq!(namespace_snapshot(f.root()), before);
+    assert_eq!(f.index_bytes(), index);
+}
+
+#[test]
+fn removing_a_marker_before_adding_another_is_supported() {
+    let f = Fixture::new();
+    let old = f.seed_paths(&["d/HEAD"], &["d/objects"], &[]);
+    let target = f.paths(&["d/refs"]);
+    f.checkout(old, Some(target)).unwrap();
+    assert!(!f.root().join("d/HEAD").exists());
+    assert_eq!(fs::read(f.root().join("d/objects")).unwrap(), b"retained\n");
+    assert_eq!(fs::read(f.root().join("d/refs")).unwrap(), b"fixture\n");
+}
+
+#[test]
+fn projection_checks_intermediate_states_not_only_the_final_tree() {
+    let f = Fixture::new();
+    let old = f.seed_paths(&["d/HEAD"], &["d/objects"], &[]);
+    let target = f.paths(&["d/refs"]);
+    let mut edit = f.repo.edit_index(Default::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut plan = Plan::prepare(
+        &f.repo,
+        f.root(),
+        old,
+        Some(target),
+        &mut edit,
+        Limits::default(),
+        &cancel,
+    )
+    .unwrap();
+    // Reordering the actual two-operation plan would create a transient triple even though its
+    // final namespace is acceptable. The projection must remain correct if scheduling changes.
+    assert_eq!(
+        plan.operations,
+        vec![
+            op(b"d/HEAD", Action::Remove),
+            op(b"d/refs", Action::Install)
+        ]
+    );
+    plan.operations.swap(0, 1);
+    assert!(matches!(
+        plan.check_planned_markers(&cancel),
+        Err(Error::Refused { .. })
+    ));
+    assert_eq!(fs::read(f.root().join("d/HEAD")).unwrap(), b"fixture\n");
+    assert!(!f.root().join("d/refs").exists());
+    edit.abort().unwrap();
+}
+
+#[test]
+fn ordinary_worktree_root_is_not_a_nested_repository() {
+    let f = Fixture::new();
+    let target = f.paths(&["HEAD", "objects", "refs", "z"]);
+    let head = fs::read(f.repo.git_dir().join("HEAD")).unwrap();
+    f.checkout(None, Some(target)).unwrap();
+    assert_eq!(fs::read(f.root().join("z")).unwrap(), b"fixture\n");
+    assert_eq!(fs::read(f.repo.git_dir().join("HEAD")).unwrap(), head);
+}
+
+#[test]
+fn live_marker_guard_remains_active_after_preflight() {
+    let f = Fixture::new();
+    fs::create_dir(f.root().join("d")).unwrap();
+    let target = f.paths(&["d/z"]);
+    let failure = run(
+        &f.repo,
+        None,
+        Some(target),
+        Limits::default(),
+        &AtomicBool::new(false),
+        &mut |event, _| {
+            if event == "prepared" {
+                fs::write(f.root().join("d/.git"), b"foreign marker").unwrap();
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(failure.report.stage, Stage::Worktree);
+    assert!(failure.report.applied.is_empty());
+    assert_eq!(
+        fs::read(f.root().join("d/.git")).unwrap(),
+        b"foreign marker"
+    );
+    assert!(!f.root().join("d/z").exists());
+}
+
+#[rstest]
+#[case::descendant(b"a/b", b"a", true)]
+#[case::same_leaf(b"a", b"a", false)]
+#[case::neighbor(b"ab/c", b"a", false)]
+#[case::earlier_neighbor(b"a-other/c", b"a", false)]
+#[case::nested_prefix(b"a/b/c", b"a/b", true)]
+fn descendant_lookup_respects_component_boundaries(
+    #[case] target: &[u8],
+    #[case] path: &[u8],
+    #[case] expected: bool,
+) {
+    let leaves = BTreeMap::from([(
+        target.to_vec(),
+        TreeValue {
+            id: ObjectId::for_blob(b""),
+            mode: EntryMode::Blob,
+        },
+    )]);
+    assert_eq!(has_descendant(&leaves, path), expected);
+}
+
+fn deletion_heavy_paths() -> (Vec<String>, Vec<String>) {
+    let old = (0..96)
+        .flat_map(|n| [format!("dir-{n:03}/old"), format!("dir-{n:03}/keep")])
+        .collect();
+    let target = (0..96).map(|n| format!("dir-{n:03}/keep")).collect();
+    (old, target)
+}
+
+#[test]
+fn deletion_heavy_checkout_verifies_absence_across_small_directories() {
+    let f = Fixture::new();
+    let (old, target) = deletion_heavy_paths();
+    let old = f.seed_paths(
+        &old.iter().map(String::as_str).collect::<Vec<_>>(),
+        &[],
+        &[],
+    );
+    let target = f.paths(&target.iter().map(String::as_str).collect::<Vec<_>>());
+    let report = f.checkout(old, Some(target)).unwrap();
+    assert_eq!(report.applied.len(), 96);
+    assert!(!f.root().join("dir-000/old").exists());
+    assert!(!f.root().join("dir-095/old").exists());
+    assert_eq!(
+        fs::read(f.root().join("dir-095/keep")).unwrap(),
+        b"fixture\n"
+    );
+    assert_eq!(
+        f.repo
+            .read_index(Default::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .len(),
+        96
+    );
+}
+
+#[test]
+fn cancellation_in_removed_path_verification_preserves_the_old_index() {
+    let f = Fixture::new();
+    let (old, target) = deletion_heavy_paths();
+    let old = f.seed_paths(
+        &old.iter().map(String::as_str).collect::<Vec<_>>(),
+        &[],
+        &[],
+    );
+    let target = f.paths(&target.iter().map(String::as_str).collect::<Vec<_>>());
+    let index = f.index_bytes();
+    let cancel = AtomicBool::new(false);
+    let mut visited = 0;
+    let failure = run(
+        &f.repo,
+        old,
+        Some(target),
+        Limits::default(),
+        &cancel,
+        &mut |event, _| {
+            if event == "verify expected" {
+                visited += 1;
+                cancel.store(true, Ordering::Relaxed);
+            }
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(*failure.cause, Error::Cancelled));
+    assert_eq!(visited, 1);
+    assert_eq!(failure.report.stage, Stage::Publication);
+    assert_eq!(failure.report.applied.len(), 96);
+    assert_eq!(f.index_bytes(), index);
+    assert!(!f.root().join("dir-095/old").exists());
+    assert!(!f.repo.git_dir().join("index.lock").exists());
+}

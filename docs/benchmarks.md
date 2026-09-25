@@ -1077,3 +1077,8 @@ The [source manifest](benchmarks/checkout-baseline.sha256) fingerprints library 
 harness, Cargo manifest and lockfile; verify with
 `shasum -a 256 -c docs/benchmarks/checkout-baseline.sha256`. These are operation baselines, not a
 controlled performance comparison with another implementation.
+
+The checkout baseline above captures revision `b39f91a305b8fb32b2324ff83c82a363837f952c`, before the
+closing-review planned-marker preflight and ordered removed-path lookup. Its source fingerprints
+apply to that historical revision, not the remediated source. No timing comparison for the
+remediation is claimed; the deletion-heavy regression verifies behavior over many small directories.

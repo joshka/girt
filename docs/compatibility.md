@@ -1908,6 +1908,12 @@ Linux preserves non-UTF-8 names. macOS requires ASCII target paths and names in 
 directories. Both reject case-colliding selected paths, filesystem name aliases, NUL, backslashes,
 colons, empty/dot/parent components, case-insensitive `.git` components and components longer than
 255 bytes. Nested ordinary/bare repositories and metadata-directory identities block traversal.
+Preparation projects marker-name presence through the actual planned operation order, including
+retained siblings and directories left empty by tracked deletions. It refuses any planned non-root
+directory with all three `HEAD`, `objects` and `refs` names, conservatively including ASCII case
+aliases. Entry types do not narrow this predicate: even three ordinary files are unsupported,
+although Git accepts that tree. This preflight prevents checkout from activating its own live guard
+midway through mutation; it does not disable guards on existing or newly created directories.
 Gitlinks, submodule recursion, sparse/split indexes, index v3/v4 and non-`TREE` extensions are
 unsupported. Windows and other platforms refuse checkout before locking or reading the index;
 portable tests cover that boundary without claiming Windows materialization support. Native hard
