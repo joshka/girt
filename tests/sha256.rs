@@ -158,7 +158,7 @@ fn public_objects_interoperate_both_directions(
         git(&path, &["cat-file", "tag", &tag_id.to_string()], b""),
         tag.as_bytes()
     );
-    let mut fields = tag.fields().clone();
+    let mut fields = tag.to_fields().unwrap();
     fields.name = b"v2".to_vec();
     let imported_tag = Tag::new(fields).unwrap();
     let imported_tag_id = hash(&path, "tag", imported_tag.as_bytes());
@@ -223,7 +223,7 @@ fn exact_signed_commit_and_opaque_headers(#[case] format: ObjectFormat) {
         .write_tree(&Tree::new(format, vec![]).unwrap())
         .unwrap();
     let original = commit(tree, vec![], -1);
-    let mut fields = original.fields().clone();
+    let mut fields = original.to_fields().unwrap();
     fields.extra_headers = vec![
         CommitHeader {
             name: b"gpgsig".to_vec(),
@@ -258,7 +258,7 @@ fn exact_signed_commit_and_opaque_headers(#[case] format: ObjectFormat) {
         .parse()
         .unwrap();
     let parsed = loose.read_commit(id, 4000).unwrap();
-    assert_eq!(parsed.fields().author.seconds, -1);
+    assert_eq!(parsed.to_fields().unwrap().author.seconds, -1);
     assert_eq!(parsed.as_bytes(), payload);
     assert_eq!(loose.write_commit(&parsed).unwrap(), id);
     assert_eq!(
@@ -272,8 +272,11 @@ fn exact_signed_commit_and_opaque_headers(#[case] format: ObjectFormat) {
     let view = girt::CommitPayload::parse(&payload).unwrap();
     let unsigned = view.without_headers(&[3, 5]).unwrap();
     let decoded = Commit::parse(format, &unsigned).unwrap();
-    assert_eq!(decoded.fields().extra_headers.len(), 1);
-    assert_eq!(decoded.fields().extra_headers[0].name, b"x-unknown");
+    assert_eq!(decoded.to_fields().unwrap().extra_headers.len(), 1);
+    assert_eq!(
+        decoded.to_fields().unwrap().extra_headers[0].name,
+        b"x-unknown"
+    );
 }
 
 #[test]
@@ -475,8 +478,8 @@ fn imported_noncanonical_hex_and_dates_retain_bytes(#[case] format: ObjectFormat
     let id = std::str::from_utf8(&out).unwrap().trim().parse().unwrap();
     let parsed = loose.read_commit(id, 2000).unwrap();
     assert_eq!(parsed.as_bytes(), payload.as_bytes());
-    assert_eq!(parsed.fields().author.seconds, 1);
-    assert_eq!(parsed.fields().extra_headers.len(), 2);
+    assert_eq!(parsed.to_fields().unwrap().author.seconds, 1);
+    assert_eq!(parsed.to_fields().unwrap().extra_headers.len(), 2);
     assert_eq!(loose.write_commit(&parsed).unwrap(), id);
     assert_eq!(
         git(

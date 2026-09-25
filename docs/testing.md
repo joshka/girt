@@ -107,6 +107,12 @@ A capability may be complete within an explicitly limited scope. Validation on o
 establish support on other platforms, and recognizing a format does not establish that it is
 implemented. Keep these distinctions visible in the completion report.
 
+The portable `decoding` integration suite exercises R07 in SHA-1 and SHA-256, including executable
+Git interpretation, loose/history reads, tag peeling and resource/corruption errors. Its transfer
+case is SHA-1-only because negotiation remains owned by R26/R29. Linux/macOS run it in the full
+suite; Windows explicitly selects it. Retained provider-capture comparisons need no installed key or
+signing provider.
+
 ## Native Platform Coverage
 
 The platform workflow runs the full all-feature suite on Ubuntu 22.04/24.04 and macOS 14. Windows

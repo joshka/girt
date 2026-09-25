@@ -152,6 +152,23 @@ fn parse_line(
     let rest = &line[2 * width + 2..];
     let tab = rest.iter().position(|b| *b == b'\t').unwrap_or(rest.len());
     let identity = &rest[..tab];
+    let date = crate::IdentityRef::parse(identity)
+        .map_err(|_| malformed(path, "invalid reflog identity"))?
+        .date_bytes;
+    let zone = date
+        .trim_ascii_start()
+        .splitn(2, |&b| b == b' ')
+        .nth(1)
+        .unwrap_or_default();
+    if !date.first().is_some_and(u8::is_ascii_whitespace)
+        || zone.len() != 5
+        || !matches!(zone[0], b'+' | b'-')
+        || !zone[1..].iter().all(u8::is_ascii_digit)
+        || &zone[1..3] > b"23".as_slice()
+        || &zone[3..5] > b"59".as_slice()
+    {
+        return Err(malformed(path, "invalid reflog date framing"));
+    }
     let mut committer = Signature::parse(identity)
         .map_err(|_| malformed(path, "invalid reflog identity or date"))?;
     // Reflogs preserve and validate the raw name, including padding that commit interpretation

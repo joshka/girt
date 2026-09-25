@@ -132,7 +132,7 @@ fn agrees_with_git_commit_tree_in_both_directions(#[case] messages: &[&[u8]]) {
     );
     let parsed = objects.read_commit(git_id, git_payload.len()).unwrap();
 
-    assert_eq!(parsed.fields(), expected.fields());
+    assert_eq!(parsed.to_fields().unwrap(), expected.to_fields().unwrap());
     assert_eq!(parsed.encode(), git_payload);
     assert_eq!(expected.encode(), git_payload);
     assert_eq!(expected.id(), git_id);
@@ -269,7 +269,8 @@ fn fixed_unit_identity_agrees_with_git() {
     assert_eq!(
         Commit::parse(girt::ObjectFormat::Sha1, payload)
             .unwrap()
-            .fields()
+            .to_fields()
+            .unwrap()
             .tree,
         Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap().id()
     );
@@ -323,12 +324,13 @@ fn caller_can_resolve_collision_by_decrementing_across_epoch() {
     assert_eq!(
         Commit::parse(girt::ObjectFormat::Sha1, decremented.as_bytes())
             .unwrap()
-            .fields()
+            .to_fields()
+            .unwrap()
             .committer
             .seconds,
         -1
     );
-    assert_eq!(decremented.fields().author.seconds, 0);
+    assert_eq!(decremented.to_fields().unwrap().author.seconds, 0);
 }
 
 #[rstest]
@@ -359,9 +361,6 @@ fn interprets_identity_without_losing_original_bytes(
 #[case::malformed(b"now +0000")]
 #[case::overflow(b"9223372036854775808 +0000")]
 #[case::missing(b"")]
-#[case::hours(b"1 +2400")]
-#[case::minutes(b"1 -0060")]
-#[case::short_zone(b"1 +000")]
 fn retains_uninterpretable_dates_for_caller_policy(#[case] date: &[u8]) {
     let bytes = [
         b"author A <a> ".as_slice(),

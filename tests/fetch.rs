@@ -567,7 +567,7 @@ fn disconnected_haves_fall_back_to_complete_transfer() {
         &fixture.records[fixture.records.len() - 2].2,
     )
     .unwrap();
-    let mut fields = template.fields().clone();
+    let mut fields = template.to_fields().unwrap();
     fields.tree = tree;
     fields.message = b"Disconnected local history".to_vec();
     let commit = loose

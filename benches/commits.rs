@@ -42,8 +42,9 @@ fn commits(criterion: &mut Criterion) {
         let commit = fixture(size);
         let payload = commit.as_bytes();
         group.throughput(Throughput::Bytes(payload.len() as u64));
+        let fields = commit.to_fields().unwrap();
         group.bench_function(BenchmarkId::new("construct_with_clone", size), |b| {
-            b.iter(|| Commit::new(black_box(commit.fields().clone())).unwrap());
+            b.iter(|| Commit::new(black_box(fields.clone())).unwrap());
         });
         group.bench_function(BenchmarkId::new("parse", size), |b| {
             b.iter(|| Commit::parse(girt::ObjectFormat::Sha1, black_box(payload)).unwrap())

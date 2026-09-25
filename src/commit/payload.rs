@@ -5,11 +5,12 @@ use super::CommitError;
 /// A borrowed commit payload with structural headers and uninterpreted values.
 ///
 /// Use this view to inspect identity bytes or recover signing input even when dates or required
-/// fields cannot be decoded by [`crate::Commit::parse`]. Parsing checks only header framing: each
+/// fields cannot be interpreted. [`Self::parse`] checks only header framing: each
 /// header starts with a nonempty printable ASCII name, a space, and an arbitrary value;
 /// continuation lines start with one space. Required fields, their ordering, object IDs, and dates
 /// are unchecked. A blank line separates headers from an arbitrary byte message. The original bytes
 /// are borrowed; only header ranges allocate, with memory proportional to the number of headers.
+/// [`Self::from_bytes`] also indexes legacy framing without requiring a separator or final LF.
 ///
 /// Header indices identify occurrences in payload order, including repeated names. Removal does
 /// not select by hash format or assume that multiple signature headers sign the same payload.
@@ -85,6 +86,38 @@ impl<'a> CommitPayload<'a> {
         Err(CommitError::MissingSeparator)
     }
 
+    /// Indexes imported physical headers without requiring canonical framing or a separator.
+    ///
+    /// The first empty line starts the message. Without one the message is empty. A leading
+    /// space extends the preceding record when one exists; orphan continuations, tab-leading
+    /// lines and lines without a framing space remain opaque records. Unterminated final records
+    /// are retained. This view performs no semantic validation and has no external effects.
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        let mut headers: Vec<Range<usize>> = Vec::new();
+        let mut start = 0;
+        for line in bytes.split_inclusive(|&b| b == b'\n') {
+            let end = start + line.len();
+            if line == b"\n" {
+                return Self {
+                    bytes,
+                    headers,
+                    message_start: end,
+                };
+            }
+            if line.starts_with(b" ") && !headers.is_empty() {
+                headers.last_mut().expect("nonempty").end = end;
+            } else {
+                headers.push(start..end);
+            }
+            start = end;
+        }
+        Self {
+            bytes,
+            headers,
+            message_start: bytes.len(),
+        }
+    }
+
     /// Borrows the original payload, including all header framing and message bytes.
     pub fn as_bytes(&self) -> &'a [u8] {
         self.bytes
@@ -93,14 +126,21 @@ impl<'a> CommitPayload<'a> {
     /// Iterates over every header occurrence in original order, including required headers.
     pub fn headers(&self) -> impl ExactSizeIterator<Item = CommitHeaderRef<'a>> + '_ {
         self.headers.iter().map(|span| {
-            let line = &self.bytes[span.start..span.end - 1];
-            let space = line
-                .iter()
-                .position(|&byte| byte == b' ')
-                .expect("checked header");
-            CommitHeaderRef {
-                name: &line[..space],
-                value: &line[space + 1..],
+            let raw = &self.bytes[span.clone()];
+            let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+            let first = line.split(|&b| b == b'\n').next().unwrap_or_default();
+            let space = first.iter().position(|&b| b == b' ');
+            match space {
+                Some(space) => CommitHeaderRef {
+                    name: &line[..space],
+                    value: &line[space + 1..],
+                    has_value_separator: true,
+                },
+                None => CommitHeaderRef {
+                    name: first,
+                    value: &[],
+                    has_value_separator: false,
+                },
             }
         })
     }
@@ -147,7 +187,12 @@ impl<'a> CommitPayload<'a> {
 /// A header occurrence borrowing its exact name and folded value from a [`CommitPayload`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommitHeaderRef<'a> {
-    /// Nonempty printable ASCII name; spelling and case are unchanged.
+    /// Whether the first physical line contains a framing space. Always true after strict
+    /// [`CommitPayload::parse`]; legacy bare records from [`CommitPayload::from_bytes`] report
+    /// false. Signature recognition must require this field as well as the exact header name.
+    pub has_value_separator: bool,
+
+    /// Exact name bytes. Legacy records can have an empty or non-ASCII name.
     pub name: &'a [u8],
 
     /// Exact value bytes, including LF and framing spaces on continuations, without the final LF.

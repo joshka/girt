@@ -109,7 +109,7 @@ fn fetch(c: &mut Criterion) {
                 .data(),
         )
         .unwrap();
-        let mut fields = commit.fields().clone();
+        let mut fields = commit.to_fields().unwrap();
         fields.parents = vec![old];
         fields.message = b"Incremental transfer benchmark\n".to_vec();
         let next = fixture

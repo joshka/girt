@@ -15,15 +15,13 @@ pub(crate) fn visit<E: From<Error>>(
         ObjectKind::Commit => {
             let commit = Commit::parse(object.object_format(), object.data())
                 .map_err(|source| Error::Commit { id, source })?;
-            edge(commit.fields().tree, ObjectKind::Tree)?;
-            for &parent in &commit.fields().parents {
+            edge(commit.tree(), ObjectKind::Tree)?;
+            for &parent in commit.parents() {
                 edge(parent, ObjectKind::Commit)?;
             }
         }
         ObjectKind::Tree => {
             let tree = Tree::parse(object.object_format(), object.data())
-                .map_err(|source| Error::Tree { id, source })?;
-            tree.validate()
                 .map_err(|source| Error::Tree { id, source })?;
             for entry in tree.entries() {
                 match entry.mode {
@@ -36,7 +34,7 @@ pub(crate) fn visit<E: From<Error>>(
         ObjectKind::Tag => {
             let tag = Tag::parse(object.object_format(), object.data())
                 .map_err(|source| Error::Tag { id, source })?;
-            edge(tag.fields().target, tag.fields().target_kind)?;
+            edge(tag.target(), tag.target_kind())?;
         }
     }
     Ok(())

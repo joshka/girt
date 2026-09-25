@@ -77,6 +77,11 @@ absent after failure; they are not progress callbacks. Limits already belong to 
 paths, URLs, environment values, reference names, object IDs, identities, credentials, signatures or
 object contents are recorded by these spans.
 
+`objects.peel` owns its synchronous `objects.read` children and records categorical completion. It
+exposes no IDs, tag names, payloads or identity bytes. Cancellation is checked on both sides of each
+blocking read; tracing does not add cancellation inside storage I/O. Its errors preserve the failing
+chain link independently of instrumentation.
+
 ## Async Lifetimes and Worker Handoff
 
 Async operations use `Instrument` to enter their span only while polling or dropping the inner

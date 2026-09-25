@@ -281,6 +281,8 @@ fn filtered_operations_never_modify_caller_fields() {
     use tracing_subscriber::layer::SubscriberExt;
     let root = tempfile::tempdir().unwrap();
     let loose = girt::LooseObjects::new(root.path(), ObjectFormat::Sha1);
+    let (_repo_dir, repo) = repository();
+    let objects = repo.objects(PackLimits::default()).unwrap();
     let capture = Capture::default();
     let dispatch = tracing::Dispatch::new(
         tracing_subscriber::registry()
@@ -295,6 +297,15 @@ fn filtered_operations_never_modify_caller_fields() {
             effects = "caller_owned"
         )
         .in_scope(|| {
+            assert!(
+                objects
+                    .peel(
+                        ObjectId::null(ObjectFormat::Sha1),
+                        girt::PeelLimits::default(),
+                        &AtomicBool::new(false)
+                    )
+                    .is_err()
+            );
             assert!(
                 loose
                     .read_blob(ObjectId::for_blob(ObjectFormat::Sha1, SECRET), 100)
@@ -454,4 +465,46 @@ fn sha1_transfer_cannot_publish_into_sha256_repository() {
             .fields
             .contains_key("effects")
     );
+}
+
+#[test]
+fn peel_span_owns_read_children_and_redacts_payloads() {
+    let (_root, repo) = repository();
+    let id = repo.loose_objects().write_blob(SECRET).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let capture = Capture::default();
+    let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
+        objects.peel(id, girt::PeelLimits::default(), &AtomicBool::new(false))
+    })
+    .unwrap();
+    assert_eq!(result.target, id);
+    let peel = capture.named("objects.peel");
+    assert_eq!(peel.fields["outcome"], "success");
+    assert_eq!(
+        capture.parent_name(&capture.named("objects.read")),
+        "objects.peel"
+    );
+    assert!(capture.spans().iter().all(|s| s.closed));
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.events().is_empty());
+}
+
+#[rstest]
+#[case::missing(false, "failure", "missing")]
+#[case::cancelled(true, "cancelled", "cancelled")]
+fn peel_failure_classification(#[case] cancel: bool, #[case] outcome: &str, #[case] class: &str) {
+    let (_root, repo) = repository();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let capture = Capture::default();
+    let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
+        objects.peel(
+            ObjectId::for_blob(ObjectFormat::Sha1, SECRET),
+            girt::PeelLimits::default(),
+            &AtomicBool::new(cancel),
+        )
+    });
+    assert!(result.is_err());
+    let span = capture.named("objects.peel");
+    assert_eq!(span.fields["outcome"], outcome);
+    assert_eq!(span.fields["failure_class"], class);
 }

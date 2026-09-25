@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::{FetchError, FetchLimits, FetchUpdate, FetchUpdateKind, check_cancelled};
 use crate::refs::RefName;
-use crate::{HistoryLimits, ObjectId, ObjectKind, Objects, PackLimits, Tag};
+use crate::{HistoryLimits, ObjectId, ObjectKind, Objects, PackLimits, PeelLimits};
 
 /// Bounds for reopening installed objects and checking remote-tracking update ancestry.
 ///
@@ -42,6 +42,9 @@ pub enum FetchUpdateError {
     /// Failed reading, parsing, peeling, cancellation or a tag-depth limit.
     #[error(transparent)]
     Object(#[from] FetchError),
+    /// Annotated-tag resolution failed before reference publication.
+    #[error(transparent)]
+    Peel(#[from] crate::PeelError),
     /// Commit ancestry could not be established within the explicit history bounds.
     #[error(transparent)]
     History(#[from] crate::HistoryError),
@@ -106,34 +109,20 @@ fn commit_update_kind(
 
 fn peel_commit(
     objects: &Objects,
-    mut id: ObjectId,
+    id: ObjectId,
     limits: FetchUpdateLimits,
     cancel: &AtomicBool,
-) -> Result<Option<ObjectId>, FetchError> {
-    let mut expected = None;
-    for depth in 0..=limits.max_tag_depth {
-        check_cancelled(cancel)?;
-        let object = objects
-            .read(id, limits.history.read)?
-            .ok_or(FetchError::Missing(id))?;
-        if expected.is_some_and(|kind| object.kind() != kind) {
-            return Err(FetchError::Kind(id));
-        }
-        match object.kind() {
-            ObjectKind::Commit => return Ok(Some(id)),
-            ObjectKind::Tag => {
-                if depth == limits.max_tag_depth {
-                    return Err(FetchError::Limit("update tag depth"));
-                }
-                let tag = Tag::parse(crate::ObjectFormat::Sha1, object.data())
-                    .map_err(|source| FetchError::Tag { id, source })?;
-                id = tag.fields().target;
-                expected = Some(tag.fields().target_kind);
-            }
-            _ => return Ok(None),
-        }
-    }
-    unreachable!("bounded peeling returns or rejects the last tag")
+) -> Result<Option<ObjectId>, FetchUpdateError> {
+    let result = objects.peel(
+        id,
+        PeelLimits {
+            max_tags: limits.max_tag_depth,
+            max_bytes: limits.verification.max_known_bytes,
+            read: limits.history.read,
+        },
+        cancel,
+    )?;
+    Ok((result.kind == ObjectKind::Commit).then_some(result.target))
 }
 
 #[cfg(test)]

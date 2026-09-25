@@ -42,16 +42,32 @@ fn formats(c: &mut Criterion) {
             tree.id()
         );
         group.throughput(Throughput::Bytes(commit.len() as u64));
-        group.bench_function(BenchmarkId::new("parse_commit", &label), |b| {
+        group.bench_function(BenchmarkId::new("parse_commit_graph", &label), |b| {
             b.iter(|| Commit::parse(format, black_box(commit.as_bytes())).unwrap());
+        });
+        group.bench_function(BenchmarkId::new("parse_commit_and_fields", &label), |b| {
+            b.iter(|| {
+                Commit::parse(format, black_box(commit.as_bytes()))
+                    .unwrap()
+                    .to_fields()
+                    .unwrap()
+            });
         });
         let tag = format!(
             "object {}\ntype tree\ntag v1\ntagger A <a> 1 +0000\n\nmessage\n",
             tree.id()
         );
         group.throughput(Throughput::Bytes(tag.len() as u64));
-        group.bench_function(BenchmarkId::new("parse_tag", &label), |b| {
+        group.bench_function(BenchmarkId::new("parse_tag_target", &label), |b| {
             b.iter(|| Tag::parse(format, black_box(tag.as_bytes())).unwrap());
+        });
+        group.bench_function(BenchmarkId::new("parse_tag_and_fields", &label), |b| {
+            b.iter(|| {
+                Tag::parse(format, black_box(tag.as_bytes()))
+                    .unwrap()
+                    .to_fields()
+                    .unwrap()
+            });
         });
         let directory = tempfile::tempdir().unwrap();
         let objects = LooseObjects::new(directory.path(), format);

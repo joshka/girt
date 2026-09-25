@@ -36,8 +36,9 @@ fn tags(criterion: &mut Criterion) {
         let tag = fixture(size);
         let payload = tag.as_bytes();
         group.throughput(Throughput::Bytes(payload.len() as u64));
+        let fields = tag.to_fields().unwrap();
         group.bench_function(BenchmarkId::new("construct_with_clone", size), |b| {
-            b.iter(|| Tag::new(black_box(tag.fields().clone())).unwrap());
+            b.iter(|| Tag::new(black_box(fields.clone())).unwrap());
         });
         group.bench_function(BenchmarkId::new("parse", size), |b| {
             b.iter(|| Tag::parse(girt::ObjectFormat::Sha1, black_box(payload)).unwrap())

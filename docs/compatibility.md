@@ -9,9 +9,29 @@ dual-hash conversion is provided.
 Explicit format arguments select standalone pack/index/reflog codecs, including empty artifacts.
 Repository operations derive the format from common configuration, never from artifact lengths.
 Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain their
-historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec limits. The
+historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec limits, and
+[R07](evidence/r07.md) supersedes the earlier strict commit/tag/tree reading restrictions. The
 [R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
 including the selected Windows scope and exact tested revision.
+
+## Imported Object Decoding and Tag Peeling
+
+R07 reads historical tree modes, legacy commit metadata/framing, and tags with unreadable tagger
+metadata in both object formats. Graph consumers use the leading tree/parent or tag target records
+without demanding construction-ready identities. `Commit::author`, `Commit::committer`, and
+`Tag::tagger` expose absence separately from identity errors; `IdentityRef::date` reports date
+interpretation failures while retaining name, email and exact date bytes. `to_fields` performs an
+explicit fallible conversion to editable construction fields. Canonical constructors remain separate
+from import acceptance.
+
+`Objects::peel` retains the original tip and ordered tag identities, verifies declared target kinds,
+and returns a terminal identity/kind within tag, byte and per-read limits. Contextual errors retain
+the original tip, failing identity, referring tag and depth. Fetch update validation uses the same
+operation. Transfer edge discovery follows readable trees in stored order; tree comparison and
+checkout still require their own name/order validation. Pure decoding and peeling do not publish
+objects or references. The [R07 evidence](evidence/r07.md) records executable-Git differences
+between reading, display, canonical writing and strict fsck, plus signature-provider payload
+captures.
 
 ## Current Capabilities and Evidence
 

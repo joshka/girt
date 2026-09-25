@@ -211,7 +211,7 @@ impl Graph {
                 }
                 let commit = Commit::parse(object.object_format(), object.data())
                     .map_err(|source| HistoryError::Parse { id, source })?;
-                let parents = &commit.fields().parents;
+                let parents = commit.parents();
                 remaining = remaining
                     .checked_sub(parents.len())
                     .ok_or(HistoryError::Limit("parent occurrences"))?;

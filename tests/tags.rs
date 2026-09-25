@@ -130,7 +130,7 @@ fn agrees_with_git_in_both_directions(#[case] kind: ObjectKind) {
     });
     let expected = expected.unwrap();
     let parsed = objects.read_tag(git_id, payload.len()).unwrap();
-    assert_eq!(parsed.fields(), expected.fields());
+    assert_eq!(parsed.to_fields().unwrap(), expected.to_fields().unwrap());
     assert_eq!(parsed.encode(), payload);
     assert_eq!(expected.encode(), payload);
     assert_eq!(expected.id(), git_id);

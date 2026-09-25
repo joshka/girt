@@ -964,9 +964,8 @@ fn tag_peeling_budget_failure_prevents_publication() {
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(matches!(
         *error.source,
-        FetchFinishFailure::Update(girt::fetch::FetchUpdateError::Object(
-            girt::fetch::FetchError::Limit("update tag depth")
-        ))
+        FetchFinishFailure::Update(girt::fetch::FetchUpdateError::Peel(error))
+            if matches!(*error.source, girt::PeelFailure::Depth)
     ));
     assert_eq!(
         stored(&repository, "refs/remotes/origin/value"),

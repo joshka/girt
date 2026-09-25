@@ -717,7 +717,7 @@ mod commit_storage_tests {
     }
 
     #[rstest::rstest]
-    #[case::separator(b"tree abc", CommitError::MissingSeparator)]
+    #[case::separator(b"tree abc", CommitError::RequiredHeader)]
     #[case::identity(b"tree abc\n\n", CommitError::InvalidObjectId)]
     fn reports_commit_parse_error_after_identity_verification(
         #[case] payload: &[u8],

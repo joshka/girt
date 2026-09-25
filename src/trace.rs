@@ -230,6 +230,7 @@ pub(crate) fn fetch_finish(
         Update(e) => match e {
             crate::fetch::FetchUpdateError::Object(e) => fetch(e),
             crate::fetch::FetchUpdateError::History(e) => history(e),
+            crate::fetch::FetchUpdateError::Peel(e) => peel(e),
             crate::fetch::FetchUpdateError::NonFastForward(_) => "precondition",
         },
     }
@@ -319,4 +320,17 @@ pub(crate) fn push_report(span: &tracing::Span, report: &crate::push::PushReport
         .record("rejected", rejected)
         .record("pending", pending)
         .record("unpack", unpack);
+}
+
+/// Categorical read-only tag resolution failures.
+pub(crate) fn peel(error: &crate::PeelError) -> &'static str {
+    use crate::PeelFailure::*;
+    match error.source.as_ref() {
+        Missing => "missing",
+        Read(e) => object(e),
+        Tag(_) | Commit(_) | Cycle => "corrupt",
+        Kind { .. } => "wrong_kind",
+        Depth | Bytes => "limit",
+        Cancelled => "cancelled",
+    }
 }

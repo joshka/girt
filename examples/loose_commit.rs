@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = objects.write_commit(&commit)?;
     let restored = objects.read_commit(id, 4096)?;
     assert_eq!(restored, commit);
-    let restored_tree = objects.read_tree(restored.fields().tree, 4096)?;
+    let restored_tree = objects.read_tree(restored.tree(), 4096)?;
     assert_eq!(
         objects.read_blob(restored_tree.entries()[0].id, 1024)?,
         b"Hello from a commit!\n"

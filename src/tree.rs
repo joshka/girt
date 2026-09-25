@@ -27,8 +27,11 @@ use crate::ObjectId;
 /// expect a changed identity if sorting changes the payload; invalid or duplicate names still need
 /// an explicit correction. Validation returns a result, not a new type or a repaired tree.
 ///
-/// Parsing supports only the five exact mode spellings in [`EntryMode`]; historical permissions
-/// and zero-padded modes are rejected. Every accepted payload encodes byte-for-byte unchanged.
+/// Parsing interprets octal modes by type and owner-execute bits, including historical permission
+/// bits and leading zeros. Other numeric types follow Git's gitlink interpretation. Only the low
+/// mode bits affect interpretation; arbitrarily padded or large octal text is accepted, while
+/// non-octal digits are rejected. [`Tree::new`] emits canonical [`EntryMode`] spellings. Every
+/// accepted payload encodes byte-for-byte unchanged.
 ///
 /// Names are bytes, without UTF-8 conversion. No operation resolves object references or checks
 /// their existence or type. This API does not traverse directories, access storage, validate
@@ -64,6 +67,7 @@ use crate::ObjectId;
 pub struct Tree {
     format: crate::ObjectFormat,
     entries: Vec<TreeEntry>,
+    original: Vec<u8>,
 }
 
 impl Tree {
@@ -87,7 +91,13 @@ impl Tree {
         }
         validate_names(&entries)?;
         entries.sort_by(TreeEntry::git_cmp);
-        Ok(Self { format, entries })
+        let original = encode_entries(&entries);
+        let tree = Self {
+            format,
+            entries,
+            original,
+        };
+        Ok(tree)
     }
 
     /// Parses a tree payload, excluding the `tree <length>\0` object header.
@@ -104,6 +114,7 @@ impl Tree {
     /// payload's format; these binary records have no reliable format autodetection. Empty trees
     /// also retain the selected format for hashing.
     pub fn parse(format: crate::ObjectFormat, mut payload: &[u8]) -> Result<Self, TreeError> {
+        let original = payload.to_vec();
         let mut entries = Vec::new();
 
         while !payload.is_empty() {
@@ -134,7 +145,11 @@ impl Tree {
             payload = &payload[format.digest_len()..];
         }
 
-        Ok(Self { format, entries })
+        Ok(Self {
+            format,
+            entries,
+            original,
+        })
     }
 
     /// The format selected for this tree, including an empty tree.
@@ -178,26 +193,28 @@ impl Tree {
     /// Returns an owned buffer without an object header or compression. Preserves parsed order and
     /// names even when [`Tree::validate`] would fail; never silently repairs an existing object.
     pub fn encode(&self) -> Vec<u8> {
-        let mut payload = Vec::new();
-
-        for entry in &self.entries {
-            payload.extend_from_slice(entry.mode.bytes());
-            payload.push(b' ');
-            payload.extend_from_slice(&entry.name);
-            payload.push(0);
-            payload.extend_from_slice(entry.id.as_bytes());
-        }
-
-        payload
+        self.original.clone()
     }
 
     /// Hashes `tree <decimal payload length>\0` followed by the exact encoded payload.
     ///
-    /// Allocates a temporary payload buffer. Does not validate or normalize a parsed tree.
+    /// Hashes retained bytes directly without validation, normalization, or a temporary buffer.
     pub fn id(&self) -> ObjectId {
         self.format
-            .hash_object(crate::ObjectKind::Tree, &self.encode())
+            .hash_object(crate::ObjectKind::Tree, &self.original)
     }
+}
+
+fn encode_entries(entries: &[TreeEntry]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for entry in entries {
+        payload.extend_from_slice(entry.mode.bytes());
+        payload.push(b' ');
+        payload.extend_from_slice(&entry.name);
+        payload.push(0);
+        payload.extend_from_slice(entry.id.as_bytes());
+    }
+    payload
 }
 
 /// One tree entry, with an uninterpreted byte name and a format-bearing reference.
@@ -264,14 +281,24 @@ impl EntryMode {
     }
 
     fn parse(bytes: &[u8]) -> Result<Self, TreeError> {
-        match bytes {
-            b"100644" => Ok(Self::Blob),
-            b"100755" => Ok(Self::Executable),
-            b"120000" => Ok(Self::Symlink),
-            b"40000" => Ok(Self::Tree),
-            b"160000" => Ok(Self::Gitlink),
-            _ => Err(TreeError::UnsupportedMode),
+        if bytes.is_empty() {
+            return Err(TreeError::UnsupportedMode);
         }
+        let mut mode = 0u32;
+        for &byte in bytes {
+            if !(b'0'..=b'7').contains(&byte) {
+                return Err(TreeError::UnsupportedMode);
+            }
+            mode = mode.wrapping_mul(8).wrapping_add(u32::from(byte - b'0'));
+        }
+        // Interpret the type and owner-execute bit as Git's tree readers do.
+        Ok(match mode & 0o170000 {
+            0o040000 => Self::Tree,
+            0o100000 if mode & 0o100 != 0 => Self::Executable,
+            0o100000 => Self::Blob,
+            0o120000 => Self::Symlink,
+            _ => Self::Gitlink,
+        })
     }
 
     fn terminator(self) -> u8 {
@@ -288,7 +315,7 @@ pub enum TreeError {
     /// No space separates the mode from the name.
     #[error("missing tree mode delimiter")]
     MissingModeDelimiter,
-    /// The mode is not one of the five supported exact octal spellings.
+    /// The mode is empty or contains non-octal bytes.
     #[error("unsupported or malformed tree entry mode")]
     UnsupportedMode,
     /// No NUL separates the name from the raw identity.
@@ -537,10 +564,6 @@ mod tests {
     #[case::empty(b" a\0")]
     #[case::non_octal(b"100648 a\0")]
     #[case::negative(b"-100644 a\0")]
-    #[case::historical_permissions(b"100664 a\0")]
-    #[case::padded_tree(b"040000 a\0")]
-    #[case::unknown_type(b"140000 a\0")]
-    #[case::overflow(b"777777777777777777777777 a\0")]
     fn rejects_unsupported_mode_spellings(#[case] prefix: &[u8]) {
         assert_eq!(
             Tree::parse(crate::ObjectFormat::Sha1, &record(prefix)),

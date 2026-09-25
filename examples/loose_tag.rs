@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let restored = objects.read_tag(id, 4096)?;
     assert_eq!(restored, tag);
     assert_eq!(
-        objects.read_blob(restored.fields().target, 1024)?,
+        objects.read_blob(restored.target(), 1024)?,
         b"Release artifact\n"
     );
     println!("Stored annotated tag object {id} targeting blob {target}");

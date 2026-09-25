@@ -4,19 +4,19 @@ use crate::{CommitError, ObjectId, Signature};
 ///
 /// A tag object names an object and carries optional tagger metadata and a message. It is
 /// independent of a tag reference: creating or storing it does not create `refs/tags/...`.
-/// Targets may be blobs, trees, commits, or other tags. No target lookup or peeling occurs.
+/// Targets may be blobs, trees, commits, or other tags. Use [`crate::Objects::peel`] to resolve
+/// them through storage; parsing a tag alone performs no lookup.
 ///
 /// [`Self::parse`] preserves accepted bytes, including uppercase IDs, date spelling, absent
 /// taggers, extra header lines, and opaque signatures embedded in the message. Names and messages
 /// need not be UTF-8. [`Self::new`] validates decoded fields and emits canonical framing;
 /// reconstructing parsed fields can therefore change identity. Fields are immutable once stored.
 ///
-/// Supported framing is `object`, `type`, `tag`, an optional `tagger`, then opaque extra lines.
-/// Each header ends in LF. A blank line introduces the message; without it, the payload must end
-/// after a header newline and the message is empty. Required headers cannot be reordered or
-/// repeated. IDs must contain the selected format's 40 or 64 hexadecimal digits. Tagger dates use
-/// the same grammar as [`crate::Commit`]. Foreign-format IDs and other date grammars are
-/// unsupported.
+/// Reading requires leading `object`, `type`, and `tag` lines with LF terminators and an exact
+/// format-width hexadecimal target ID. Later known headers do not replace those target records.
+/// The first physical tagger is available separately through [`Self::tagger`]; malformed dates
+/// do not block target decoding. Unknown, repeated, folded and unterminated trailing records
+/// remain byte-identical. Without an empty separator line the message is empty.
 ///
 /// This is not full fsck validation. Target existence/type, reference-name rules, and cryptographic
 /// signatures are not checked. Memory grows with the input and decoded fields; bound input before
@@ -33,13 +33,14 @@ use crate::{CommitError, ObjectId, Signature};
 ///     message: b"First release\n".to_vec(),
 /// })?;
 /// let parsed = Tag::parse(girt::ObjectFormat::Sha1, tag.as_bytes())?;
-/// assert_eq!(parsed.fields().name, b"v1");
+/// assert_eq!(parsed.to_fields()?.name, b"v1");
 /// assert_eq!(parsed.id(), tag.id());
 /// # Ok::<(), girt::TagError>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tag {
-    fields: TagFields,
+    target: ObjectId,
+    target_kind: ObjectKind,
     payload: Vec<u8>,
 }
 
@@ -71,33 +72,27 @@ impl Tag {
         }
         payload.push(b'\n');
         payload.extend_from_slice(&fields.message);
-        Ok(Self { fields, payload })
+        Self::parse(fields.target.format(), &payload)
     }
 
-    /// Copies supported framing into decoded fields while retaining the exact original bytes.
+    /// Decodes mandatory target records while retaining all imported bytes.
     ///
-    /// Empty names, negative dates, and NUL/CR in header values remain inspectable. Call
-    /// [`Self::validate`] separately to apply construction rules without discarding these bytes.
-    /// Extra lines are opaque, including spaces and repeated unknown keys; no commit-style
-    /// continuation decoding is applied to them.
+    /// Does not require a tagger or interpret its date. Extra records remain opaque; repeated
+    /// target keys do not replace the first three physical records.
     ///
     /// # Errors
     ///
-    /// Returns [`TagError`] for missing, reordered, or repeated known headers, unterminated
-    /// headers, invalid or foreign-format IDs, unsupported target types, or unreadable tagger
-    /// metadata.
+    /// Returns [`TagError`] for missing, reordered or unterminated mandatory records, invalid or
+    /// foreign-format IDs, or unknown target types. No object lookup occurs.
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TagError> {
-        let (headers, message) = match payload.windows(2).position(|pair| pair == b"\n\n") {
-            Some(separator) => (&payload[..separator], &payload[separator + 2..]),
-            None => (
-                payload
-                    .strip_suffix(b"\n")
-                    .ok_or(TagError::UnterminatedHeader)?,
-                b"".as_slice(),
-            ),
+        let mut physical = payload.split_inclusive(|&byte| byte == b'\n');
+        let mut required = || {
+            physical
+                .next()
+                .and_then(|line| line.strip_suffix(b"\n"))
+                .ok_or(TagError::UnterminatedHeader)
         };
-        let mut lines = headers.split(|&byte| byte == b'\n').peekable();
-        let target_bytes = required_line(lines.next(), b"object ")?;
+        let target_bytes = required_line(Some(required()?), b"object ")?;
         if target_bytes.len() != format.digest_len() * 2 {
             return Err(TagError::InvalidObjectId);
         }
@@ -105,45 +100,97 @@ impl Tag {
             .ok()
             .and_then(|value| value.parse().ok())
             .ok_or(TagError::InvalidObjectId)?;
-        let target_kind = ObjectKind::parse(required_line(lines.next(), b"type ")?)?;
-        let name = required_line(lines.next(), b"tag ")?.to_vec();
-        let tagger = if lines
-            .peek()
-            .is_some_and(|line| line.starts_with(b"tagger "))
-        {
-            Some(
-                Signature::parse(required_line(lines.next(), b"tagger ")?)
-                    .map_err(TagError::Tagger)?,
-            )
-        } else {
-            None
-        };
-        let mut extra_headers = Vec::new();
-        for line in lines {
-            check_extra_line(line)?;
-            extra_headers.push(line.to_vec());
-        }
+        let target_kind = ObjectKind::parse(required_line(Some(required()?), b"type ")?)?;
+        required_line(Some(required()?), b"tag ")?;
         Ok(Self {
-            fields: TagFields {
-                target,
-                target_kind,
-                name,
-                tagger,
-                extra_headers,
-                message: message.to_vec(),
-            },
+            target,
+            target_kind,
             payload: payload.to_vec(),
         })
     }
 
     /// The format of the target reference.
     pub fn object_format(&self) -> crate::ObjectFormat {
-        self.fields.target.format()
+        self.target.format()
     }
 
-    /// Borrows decoded fields; clone them for explicit reconstruction with [`Self::new`].
-    pub fn fields(&self) -> &TagFields {
-        &self.fields
+    /// Copies editable construction fields, interpreting the first tagger if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TagError::Tagger`] for an uninterpretable identity or date. Target access and
+    /// peeling do not require this conversion. Reconstructing fields can change the object ID.
+    pub fn to_fields(&self) -> Result<TagFields, TagError> {
+        let tagger = self
+            .tagger()?
+            .map(crate::IdentityRef::signature)
+            .transpose()
+            .map_err(TagError::Tagger)?;
+        let extra_headers = self
+            .headers()
+            .skip(3)
+            .filter(|line| !line.starts_with(b"tagger "))
+            .map(<[u8]>::to_vec)
+            .collect();
+        Ok(TagFields {
+            target: self.target,
+            target_kind: self.target_kind,
+            name: self.name().to_vec(),
+            tagger,
+            extra_headers,
+            message: self.message().to_vec(),
+        })
+    }
+
+    fn headers(&self) -> impl Iterator<Item = &[u8]> {
+        self.payload
+            .split(|&b| b == b'\n')
+            .take_while(|line| !line.is_empty())
+    }
+
+    /// Imported tag name bytes, without applying reference-name or construction validation.
+    pub fn name(&self) -> &[u8] {
+        self.headers()
+            .nth(2)
+            .expect("parsed third header")
+            .strip_prefix(b"tag ")
+            .expect("parsed tag name")
+    }
+
+    /// Exact message bytes, including any embedded signature armor.
+    pub fn message(&self) -> &[u8] {
+        self.payload
+            .windows(2)
+            .position(|p| p == b"\n\n")
+            .map_or(&[], |i| &self.payload[i + 2..])
+    }
+
+    /// Referenced object identity, without resolving it.
+    pub fn target(&self) -> ObjectId {
+        self.target
+    }
+
+    /// Declared target kind; use object-store peeling to verify it.
+    pub fn target_kind(&self) -> ObjectKind {
+        self.target_kind
+    }
+
+    /// Borrows the first tagger's identity independently of date interpretation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TagError::Tagger`] for malformed identity delimiters.
+    pub fn tagger(&self) -> Result<Option<crate::IdentityRef<'_>>, TagError> {
+        let headers = self
+            .payload
+            .split(|&b| b == b'\n')
+            .take_while(|line| !line.is_empty());
+        headers
+            .filter_map(|line| line.strip_prefix(b"tagger "))
+            .next()
+            .map(crate::IdentityRef::parse)
+            .transpose()
+            .map_err(TagError::Tagger)
     }
 
     /// Checks construction rules without modifying the retained payload.
@@ -156,7 +203,7 @@ impl Tag {
     /// begin with a reserved header key (`object`, `type`, `tag`, `tagger`) followed by a space or
     /// end of line. Messages are unrestricted. Absent taggers are valid for this API.
     pub fn validate(&self) -> Result<(), TagError> {
-        self.fields.validate()
+        self.to_fields()?.validate()
     }
 
     /// Borrows the exact payload without its object header or compression.
@@ -324,7 +371,8 @@ mod tests {
             &payload(b"tagger A <a> 1 +0000\n\nrelease\n"),
         )
         .unwrap()
-        .fields()
+        .to_fields()
+        .unwrap()
         .clone()
     }
 
@@ -343,8 +391,9 @@ mod tests {
         assert_eq!(
             Tag::parse(crate::ObjectFormat::Sha1, tag.as_bytes())
                 .unwrap()
-                .fields(),
-            &fields
+                .to_fields()
+                .unwrap(),
+            fields
         );
     }
 
@@ -357,9 +406,13 @@ mod tests {
         let input = payload(tail);
         let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(tag.encode(), input);
-        assert_eq!(tag.fields().message, b"");
+        assert_eq!(tag.to_fields().unwrap().message, b"");
         assert_eq!(
-            tag.fields().tagger.as_ref().map(|person| person.seconds),
+            tag.to_fields()
+                .unwrap()
+                .tagger
+                .as_ref()
+                .map(|person| person.seconds),
             seconds
         );
         assert_eq!(tag.validate(), Ok(()));
@@ -375,7 +428,7 @@ mod tests {
         fields.message = message.to_vec();
         let tag = Tag::new(fields).unwrap();
         let parsed = Tag::parse(crate::ObjectFormat::Sha1, tag.as_bytes()).unwrap();
-        assert_eq!(parsed.fields().message, message);
+        assert_eq!(parsed.to_fields().unwrap().message, message);
         assert_eq!(parsed.encode(), tag.encode());
     }
 
@@ -385,7 +438,7 @@ mod tests {
             payload(b"tagger A <a> 1 +0000\nx first\n continued\nx second\nbare-line\n\nbody");
         let parsed = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(
-            parsed.fields().extra_headers,
+            parsed.to_fields().unwrap().extra_headers,
             [
                 b"x first".to_vec(),
                 b" continued".to_vec(),
@@ -394,7 +447,10 @@ mod tests {
             ]
         );
         assert_eq!(parsed.encode(), input);
-        assert_eq!(Tag::new(parsed.fields().clone()).unwrap().encode(), input);
+        assert_eq!(
+            Tag::new(parsed.to_fields().unwrap()).unwrap().encode(),
+            input
+        );
     }
 
     #[test]
@@ -404,10 +460,13 @@ mod tests {
             TARGET.to_uppercase()
         );
         let tag = Tag::parse(crate::ObjectFormat::Sha1, input.as_bytes()).unwrap();
-        assert_eq!(tag.fields().tagger.as_ref().unwrap().seconds, 42);
+        assert_eq!(
+            tag.to_fields().unwrap().tagger.as_ref().unwrap().seconds,
+            42
+        );
         assert_eq!(tag.encode(), input.as_bytes());
         assert_eq!(tag.validate(), Ok(()));
-        assert_ne!(Tag::new(tag.fields().clone()).unwrap().id(), tag.id());
+        assert_ne!(Tag::new(tag.to_fields().unwrap()).unwrap().id(), tag.id());
     }
 
     #[rstest]
@@ -422,7 +481,7 @@ mod tests {
         assert_eq!(parsed.encode(), input);
         assert_eq!(parsed.validate(), Err(TagError::InvalidName));
         assert_eq!(
-            Tag::new(parsed.fields().clone()),
+            Tag::new(parsed.to_fields().unwrap()),
             Err(TagError::InvalidName)
         );
     }
@@ -465,7 +524,10 @@ mod tests {
     fn constructs_negative_tagger_seconds() {
         let input = payload(b"tagger A <a> -1 +0000\n\n");
         let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
-        assert_eq!(Tag::new(tag.fields().clone()).unwrap().as_bytes(), input);
+        assert_eq!(
+            Tag::new(tag.to_fields().unwrap()).unwrap().as_bytes(),
+            input
+        );
     }
 
     #[rstest]
@@ -475,19 +537,23 @@ mod tests {
         let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
         assert_eq!(tag.encode(), input);
         assert_eq!(tag.validate(), Err(TagError::Tagger(error)));
-        assert_eq!(Tag::new(tag.fields().clone()), Err(TagError::Tagger(error)));
+        assert_eq!(
+            Tag::new(tag.to_fields().unwrap()),
+            Err(TagError::Tagger(error))
+        );
     }
 
     #[rstest]
     #[case::identity("not an identity", CommitError::InvalidSignature)]
     #[case::overflow("A <a> 9223372036854775808 +0000", CommitError::InvalidDate)]
-    #[case::offset("A <a> 1 +2400", CommitError::InvalidDate)]
     fn rejects_unreadable_tagger(#[case] person: &str, #[case] error: CommitError) {
         assert_eq!(
             Tag::parse(
                 crate::ObjectFormat::Sha1,
                 &payload(format!("tagger {person}\n\n").as_bytes())
-            ),
+            )
+            .unwrap()
+            .to_fields(),
             Err(TagError::Tagger(error))
         );
     }
@@ -516,7 +582,7 @@ mod tests {
     )]
     #[case::missing_name(
         b"object aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ntype tag\n",
-        TagError::RequiredHeader
+        TagError::UnterminatedHeader
     )]
     fn rejects_malformed_headers(#[case] input: &[u8], #[case] error: TagError) {
         assert_eq!(Tag::parse(crate::ObjectFormat::Sha1, input), Err(error));
@@ -528,11 +594,11 @@ mod tests {
     #[case::name(b"tag other\n\n")]
     #[case::misplaced_tagger(b"x extra\ntagger A <a> 1 +0000\n\n")]
     #[case::repeated_tagger(b"tagger A <a> 1 +0000\ntagger A <a> 1 +0000\n\n")]
-    fn rejects_repeated_or_misplaced_headers(#[case] tail: &[u8]) {
-        assert_eq!(
-            Tag::parse(crate::ObjectFormat::Sha1, &payload(tail)),
-            Err(TagError::InvalidHeader)
-        );
+    fn retains_repeated_or_misplaced_headers(#[case] tail: &[u8]) {
+        let input = payload(tail);
+        let tag = Tag::parse(crate::ObjectFormat::Sha1, &input).unwrap();
+        assert_eq!(tag.encode(), input);
+        assert_eq!(tag.target_kind(), ObjectKind::Blob);
     }
 
     #[test]

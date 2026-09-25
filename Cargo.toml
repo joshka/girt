@@ -240,3 +240,7 @@ harness = false
 [[bench]]
 name = "object_formats"
 harness = false
+
+[[bench]]
+name = "peeling"
+harness = false

@@ -196,6 +196,7 @@ mod object;
 mod objects;
 pub mod pack;
 mod packet;
+mod peel;
 pub mod push;
 pub mod refs;
 pub mod remote;
@@ -207,7 +208,8 @@ mod tree;
 mod tree_compare;
 
 pub use commit::{
-    Commit, CommitError, CommitFields, CommitHeader, CommitHeaderRef, CommitPayload, Signature,
+    Commit, CommitError, CommitFields, CommitHeader, CommitHeaderRef, CommitPayload, IdentityDate,
+    IdentityRef, Signature,
 };
 pub use config::{Config, ConfigError};
 pub use history::{HistoryError, HistoryLimits};
@@ -218,6 +220,7 @@ pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,
     PackWritten, write_pack, write_pack_with_compression,
 };
+pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repository::{InitError, InitKind, OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

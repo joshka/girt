@@ -136,11 +136,7 @@ mod supported {
                 .map(|id| {
                     let object =
                         read_object(&objects, id, b"HEAD", ObjectKind::Commit, &mut limits)?;
-                    Ok::<_, Error>(
-                        Commit::parse(repo.object_format(), object.data())?
-                            .fields()
-                            .tree,
-                    )
+                    Ok::<_, Error>(Commit::parse(repo.object_format(), object.data())?.tree())
                 })
                 .transpose()?,
         };
