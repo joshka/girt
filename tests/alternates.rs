@@ -293,6 +293,7 @@ fn recognizes_known_extensions_without_fetching(
 }
 
 #[rstest]
+#[case::suffix(b"\"bad\"tail\n")]
 #[case::nul(b"bad\0path\n")]
 #[case::quote(b"\"unfinished\n")]
 #[case::escape(b"\"bad\\q\"\n")]

@@ -141,7 +141,12 @@ fn unquote(record: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut input = record[1..].iter().copied();
     while let Some(byte) = input.next() {
         match byte {
-            b'"' => return Ok(result),
+            b'"' => {
+                if input.next().is_some() {
+                    return Err("trailing bytes after quoted path");
+                }
+                return Ok(result);
+            }
             b'\\' => {
                 let escaped = input.next().ok_or("unfinished path escape")?;
                 let byte = match escaped {
@@ -194,7 +199,6 @@ mod tests {
     #[case::quoted(b"\"a b\"", b"a b")]
     #[case::octal(b"\"a\\040b\"", b"a b")]
     #[case::escaped(b"\"a\\nb\"", b"a\nb")]
-    #[case::suffix(b"\"a\"trailing", b"a")]
     #[case::cr(b"a\r", b"a\r")]
     fn preserves_path_bytes(#[case] input: &[u8], #[case] expected: &[u8]) {
         assert_eq!(
@@ -209,6 +213,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case::suffix(b"\"a\"trailing")]
     #[case::nul(b"a\0b")]
     #[case::quoted_nul(b"\"a\\000b\"")]
     #[case::empty(b"\"\"")]
