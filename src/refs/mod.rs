@@ -9,6 +9,7 @@ mod enumerate;
 mod name;
 mod packed;
 mod reflog;
+pub mod reftable;
 mod store;
 mod transaction;
 
