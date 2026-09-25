@@ -51,7 +51,7 @@ pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
         PackArtifacts { source, .. } => object(source),
         Loose(e) => loose(e),
         Unsupported(_) | IndexVersion(_) | PackVersion(_) | ObjectType(_) => "unsupported",
-        Corrupt(_) | DeltaCycle => "corrupt",
+        Alternate { .. } | Corrupt(_) | DeltaCycle => "corrupt",
         Limit(_) => "limit",
         MissingBase(_) => "missing",
     }

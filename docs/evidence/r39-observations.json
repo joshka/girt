@@ -1,0 +1,309 @@
+{
+  "git": "git version 2.55.0",
+  "observations": [
+    {
+      "format": "sha1",
+      "case": "relative",
+      "bytes": "2e2e2f2e2e2f736861312d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "case": "quoted",
+      "bytes": "222e2e2f2e2e2f736861312d622f6f626a65637473220a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "case": "CR",
+      "bytes": "2e2e2f2e2e2f736861312d622f6f626a656374730d0a",
+      "code": 128,
+      "stdout": "",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha1-b/objects? does not exist; check .git/objects/info/alternates\nfatal: git cat-file 12343dcf930fd51a3307c6e31c072857e0194a4d: bad file\n"
+    },
+    {
+      "format": "sha1",
+      "case": "empty-comment",
+      "bytes": "0a2369676e6f7265640a2e2e2f2e2e2f736861312d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "case": "quote-suffix",
+      "bytes": "222e2e2f2e2e2f736861312d622f6f626a656374732269676e6f7265640a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha1-a/objects/gnored does not exist; check .git/objects/info/alternates\n"
+    },
+    {
+      "format": "sha1",
+      "case": "NUL",
+      "bytes": "2e2e2f2e2e2f736861312d622f6f626a656374730069676e6f7265640a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "case": "bad-escape",
+      "bytes": "226261645c71220a2e2e2f2e2e2f736861312d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha1-a/objects/\"bad\\q\" does not exist; check .git/objects/info/alternates\n"
+    },
+    {
+      "format": "sha1",
+      "extension": "noop",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "noop",
+      "value": "nonsense",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "noop",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "noop",
+      "value": null,
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "preciousObjects",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "preciousObjects",
+      "value": "nonsense",
+      "code": 128,
+      "stdout": "",
+      "stderr": "fatal: bad boolean config value 'nonsense' for 'extensions.preciousobjects'\n"
+    },
+    {
+      "format": "sha1",
+      "extension": "preciousObjects",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "preciousObjects",
+      "value": null,
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "partialClone",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "partialClone",
+      "value": "nonsense",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "partialClone",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha1",
+      "extension": "partialClone",
+      "value": null,
+      "code": 128,
+      "stdout": "",
+      "stderr": "error: missing value for 'extensions.partialclone'\nfatal: bad config line 6 in file ./config\n"
+    },
+    {
+      "format": "sha256",
+      "case": "relative",
+      "bytes": "2e2e2f2e2e2f7368613235362d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "case": "quoted",
+      "bytes": "222e2e2f2e2e2f7368613235362d622f6f626a65637473220a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "case": "CR",
+      "bytes": "2e2e2f2e2e2f7368613235362d622f6f626a656374730d0a",
+      "code": 128,
+      "stdout": "",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha256-b/objects? does not exist; check .git/objects/info/alternates\nfatal: git cat-file c60ee7a870c7ddaaaf3987bd2e031bf21930c536f73d5358ca5438d3b64892c8: bad file\n"
+    },
+    {
+      "format": "sha256",
+      "case": "empty-comment",
+      "bytes": "0a2369676e6f7265640a2e2e2f2e2e2f7368613235362d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "case": "quote-suffix",
+      "bytes": "222e2e2f2e2e2f7368613235362d622f6f626a656374732269676e6f7265640a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha256-a/objects/gnored does not exist; check .git/objects/info/alternates\n"
+    },
+    {
+      "format": "sha256",
+      "case": "NUL",
+      "bytes": "2e2e2f2e2e2f7368613235362d622f6f626a656374730069676e6f7265640a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "case": "bad-escape",
+      "bytes": "226261645c71220a2e2e2f2e2e2f7368613235362d622f6f626a656374730a",
+      "code": 0,
+      "stdout": "original R39 probe",
+      "stderr": "error: object directory /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp96nza_vw/sha256-a/objects/\"bad\\q\" does not exist; check .git/objects/info/alternates\n"
+    },
+    {
+      "format": "sha256",
+      "extension": "noop",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "noop",
+      "value": "nonsense",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "noop",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "noop",
+      "value": null,
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "preciousObjects",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "preciousObjects",
+      "value": "nonsense",
+      "code": 128,
+      "stdout": "",
+      "stderr": "fatal: bad boolean config value 'nonsense' for 'extensions.preciousobjects'\n"
+    },
+    {
+      "format": "sha256",
+      "extension": "preciousObjects",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "preciousObjects",
+      "value": null,
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "partialClone",
+      "value": "true",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "partialClone",
+      "value": "nonsense",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "partialClone",
+      "value": "",
+      "code": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "format": "sha256",
+      "extension": "partialClone",
+      "value": null,
+      "code": 128,
+      "stdout": "",
+      "stderr": "error: missing value for 'extensions.partialclone'\nfatal: bad config line 6 in file ./config\n"
+    }
+  ]
+}

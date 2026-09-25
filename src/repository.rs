@@ -29,7 +29,9 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
 /// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 objects are
 /// supported, including shallow roots and relative linked-worktree paths. Includes and enabled
-/// worktree configuration are resolved. Alternates and other extensions are rejected explicitly.
+/// worktree configuration are resolved. Local alternates, `noop`, `preciousObjects`, and
+/// `partialClone` are recognized. Unknown extensions remain explicit errors. Precious-object
+/// metadata is retained in [`Self::config`]; no pruning or lazy fetching is performed.
 /// Object access uses [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for
 /// bounded loose/packed reads. Opening repository metadata alone does not validate object storage.
 ///
@@ -240,7 +242,6 @@ impl Repository {
             source,
         })?;
         let (format_version, object_format) = validate_config(&config, &config_path)?;
-        reject_storage_features(&object_dir)?;
         let mut inputs = inputs.clone();
         inputs.context.git_dirs.push(git_dir.clone());
         if let Some(logical_git_dir) = logical_git_dir {
@@ -390,7 +391,30 @@ impl Repository {
         &self,
         limits: crate::PackLimits,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
-        let mut objects = crate::Objects::open(self.object_format, &self.object_dir, limits)?;
+        self.objects_with_alternates(limits, crate::AlternateLimits::default())
+    }
+
+    /// Opens object storage with aggregate pack and alternate-discovery bounds.
+    ///
+    /// Uses primary-first, depth-first alternates-file order; each store searches loose objects
+    /// before filename-ordered packs. Canonical aliases/cycles are visited once. Missing alternate
+    /// directories are skipped. Metadata and packs form a fixed snapshot; loose files remain live.
+    /// Reopen to observe topology changes. Concurrent edits can yield an I/O or metadata error;
+    /// callers needing a consistent graph must exclude writers. No borrowed store is modified.
+    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_OBJECT_DIRECTORY` are ignored, as with opening.
+    /// HTTP alternates metadata is inert. Missing promised objects return absence without fetching.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage errors for malformed paths, inaccessible directories, corrupt packs or
+    /// exceeded aggregate limits. A corrupt duplicate fails at the first searched candidate.
+    pub fn objects_with_alternates(
+        &self,
+        packs: crate::PackLimits,
+        alternates: crate::AlternateLimits,
+    ) -> Result<crate::Objects, crate::ObjectReadError> {
+        let mut objects =
+            crate::Objects::open(self.object_format, &self.object_dir, packs, alternates)?;
         objects.shallow = self.shallow.clone();
         Ok(objects)
     }
@@ -431,7 +455,10 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
             && (entry.subsection.is_some()
                 || !entry.name.eq_ignore_ascii_case(b"objectformat")
                     && !entry.name.eq_ignore_ascii_case(b"worktreeconfig")
-                    && !entry.name.eq_ignore_ascii_case(b"relativeworktrees"))
+                    && !entry.name.eq_ignore_ascii_case(b"relativeworktrees")
+                    && !entry.name.eq_ignore_ascii_case(b"noop")
+                    && !entry.name.eq_ignore_ascii_case(b"preciousobjects")
+                    && !entry.name.eq_ignore_ascii_case(b"partialclone"))
         {
             return Err(unsupported(
                 path,
@@ -455,6 +482,10 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
         ));
     }
     extension_boolean(config, path, "relativeworktrees")?;
+    extension_boolean(config, path, "preciousobjects")?;
+    if config.value("extensions", None, "partialclone") == Some(None) {
+        return Err(malformed(path, "implicit extensions.partialClone"));
+    }
     let mut object_format = ObjectFormat::Sha1;
     if let Some(value) = config.value("extensions", None, "objectformat") {
         if version == 0 {
@@ -556,21 +587,6 @@ fn resolve_worktree(
         return Ok(Some(root));
     }
     Ok(None)
-}
-
-fn reject_storage_features(objects: &Path) -> Result<(), OpenError> {
-    for (path, feature) in [
-        (objects.join("info/alternates"), "object alternates"),
-        (
-            objects.join("info/http-alternates"),
-            "HTTP object alternates",
-        ),
-    ] {
-        if exists(&path)? {
-            return Err(unsupported(&path, feature));
-        }
-    }
-    Ok(())
 }
 
 fn validate_head(path: &Path) -> Result<(), OpenError> {

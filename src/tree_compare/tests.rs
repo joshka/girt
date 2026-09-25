@@ -41,6 +41,7 @@ impl Fixture {
             crate::ObjectFormat::Sha1,
             self.0.path(),
             PackLimits::default(),
+            crate::AlternateLimits::default(),
         )
         .unwrap()
     }

@@ -187,6 +187,7 @@ mod tests {
             crate::ObjectFormat::Sha1,
             root.path(),
             PackLimits::default(),
+            crate::AlternateLimits::default(),
         )
         .unwrap();
         (root, objects, commit, blob)

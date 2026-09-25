@@ -296,14 +296,11 @@ fn rejects_malformed_settings(#[case] bytes: &[u8]) {
 
 #[rstest]
 #[case::alternates("objects/info/alternates")]
-fn rejects_unsupported_storage(#[case] path: &str) {
+fn permits_alternate_metadata(#[case] path: &str) {
     let root = tempfile::tempdir().unwrap();
     init(root.path(), true);
     std::fs::write(root.path().join(path), b"unsupported\n").unwrap();
-    assert!(matches!(
-        Repository::open(root.path()),
-        Err(OpenError::Unsupported { .. })
-    ));
+    assert!(Repository::open(root.path()).is_ok());
 }
 
 #[test]

@@ -1,6 +1,9 @@
+mod alternates;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+
+pub use alternates::AlternateLimits;
 
 use crate::pack::Pack;
 use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
@@ -43,7 +46,8 @@ impl Object {
     }
 }
 
-/// Bounds the pack snapshot retained by [`crate::Repository::objects`].
+/// Bounds the aggregate pack snapshot across primary and borrowed stores retained by
+/// [`crate::Repository::objects`].
 ///
 /// Index-derived tables require additional memory proportional to index bytes. These are input
 /// bounds, not a total heap limit. Zero values permit no indexed packs. Unindexed files are
@@ -105,11 +109,12 @@ impl Default for ReadLimits {
 /// identities are checked on reads, including every base and intermediate delta; opening is not a
 /// full pack fsck.
 ///
-/// Loose objects take precedence and are read fresh on each call. Corruption never falls through
-/// to a duplicate packed copy. Packs remain readable after Git repacks/deletes the original files;
-/// reopen the reader to discover new packs. Concurrent repacking during opening can cause an I/O
-/// error: retry by opening a new reader. The object directory and its ancestors must be trusted,
-/// as with [`LooseObjects`]. This is not a snapshot of loose files or repository references.
+/// Within each store, loose objects take precedence and are read fresh on each call. Corruption
+/// never falls through to a duplicate packed copy. Packs remain readable after Git repacks/deletes
+/// the original files; reopen the reader to discover new packs. Concurrent repacking during opening
+/// can cause an I/O error: retry by opening a new reader. The object directory and its ancestors
+/// must be trusted, as with [`LooseObjects`]. This is not a snapshot of loose files or repository
+/// references.
 ///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
@@ -120,7 +125,9 @@ impl Default for ReadLimits {
 /// boundaries; raw reads preserve commit parents. Reopen the repository or refresh its shallow
 /// snapshot, then create a new reader after Git deepening. Loose objects, packs and boundaries are
 /// not captured in one filesystem transaction; exclude concurrent depth changes while opening.
-/// Alternates and partial repositories remain outside the opener's supported scope. Loose writes
+/// Local alternate stores use the same format and aggregate pack limits; see
+/// [`crate::Repository::objects_with_alternates`] for topology and precedence. Complete
+/// partial-clone stores are readable; no missing-object fetch is attempted. Loose writes
 /// use [`LooseObjects`]; validated received-pack installation uses
 /// [`crate::fetch::ReceivedFetch::install`].
 ///
@@ -142,9 +149,15 @@ impl Default for ReadLimits {
 /// ```
 #[derive(Debug)]
 pub struct Objects {
+    format: ObjectFormat,
+    stores: Vec<Store>,
+    pub(crate) shallow: crate::ShallowRoots,
+}
+
+#[derive(Debug)]
+struct Store {
     loose: LooseObjects,
     packs: Vec<Pack>,
-    pub(crate) shallow: crate::ShallowRoots,
 }
 
 impl Objects {
@@ -155,13 +168,14 @@ impl Objects {
 
     /// Format shared by all objects in this store.
     pub fn object_format(&self) -> ObjectFormat {
-        self.loose.object_format()
+        self.format
     }
 
     pub(crate) fn open(
         format: ObjectFormat,
         directory: &Path,
         limits: PackLimits,
+        alternates: AlternateLimits,
     ) -> Result<Self, ObjectReadError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -174,56 +188,16 @@ impl Objects {
         );
 
         let operation = || {
-            let loose = LooseObjects::new(directory, format);
-            let pack_directory = directory.join("pack");
-            let entries = match fs::read_dir(&pack_directory) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    return Ok(Self {
-                        loose,
-                        packs: vec![],
-                        shallow: crate::ShallowRoots::empty(format),
-                    });
-                }
-                Err(source) => {
-                    return Err(ObjectReadError::Path {
-                        path: pack_directory,
-                        source,
-                    });
-                }
-            };
-            let mut paths = Vec::new();
-            for entry in entries {
-                let path = entry
-                    .map_err(|source| ObjectReadError::Path {
-                        path: pack_directory.clone(),
-                        source,
-                    })?
-                    .path();
-                if path.extension().is_some_and(|extension| extension == "idx") {
-                    if paths.len() == limits.max_packs {
-                        return Err(ObjectReadError::Limit("pack count"));
-                    }
-                    paths.push(path);
-                }
-            }
-            paths.sort();
+            let directories = alternates::discover(directory, alternates)?;
             let mut remaining = limits.max_bytes;
-            let mut packs = Vec::new();
-            for path in paths {
-                let index = read_bounded(&path, &mut remaining)?;
-                let data = read_bounded(&path.with_extension("pack"), &mut remaining)?;
-                packs.push(Pack::open(format, &index, data).map_err(|source| {
-                    ObjectReadError::PackArtifacts {
-                        pack: path.with_extension("pack"),
-                        index: path,
-                        source: Box::new(source),
-                    }
-                })?);
+            let mut count = limits.max_packs;
+            let mut stores = Vec::new();
+            for directory in directories {
+                stores.push(Store::open(format, &directory, &mut remaining, &mut count)?);
             }
             Ok(Self {
-                loose,
-                packs,
+                format,
+                stores,
                 shallow: crate::ShallowRoots::empty(format),
             })
         };
@@ -265,14 +239,16 @@ impl Objects {
 
         let operation = || {
             let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
-            match self.loose.read_raw(id, loose_limit) {
-                Ok(object) => return Ok(Some(object)),
-                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            for pack in &self.packs {
-                if let Some(position) = pack.find(id) {
-                    return pack.read(position, limits).map(Some);
+            for store in &self.stores {
+                match store.loose.read_raw(id, loose_limit) {
+                    Ok(object) => return Ok(Some(object)),
+                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                for pack in &store.packs {
+                    if let Some(position) = pack.find(id) {
+                        return pack.read(position, limits).map(Some);
+                    }
                 }
             }
             Ok(None)
@@ -285,6 +261,62 @@ impl Objects {
         crate::trace::finish(&span, &result, crate::trace::object);
 
         result
+    }
+}
+
+impl Store {
+    fn open(
+        format: ObjectFormat,
+        directory: &Path,
+        remaining: &mut usize,
+        count: &mut usize,
+    ) -> Result<Self, ObjectReadError> {
+        let loose = LooseObjects::new(directory, format);
+        let pack_directory = directory.join("pack");
+        let entries = match fs::read_dir(&pack_directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    loose,
+                    packs: vec![],
+                });
+            }
+            Err(source) => {
+                return Err(ObjectReadError::Path {
+                    path: pack_directory,
+                    source,
+                });
+            }
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let path = entry
+                .map_err(|source| ObjectReadError::Path {
+                    path: pack_directory.clone(),
+                    source,
+                })?
+                .path();
+            if path.extension().is_some_and(|extension| extension == "idx") {
+                *count = count
+                    .checked_sub(1)
+                    .ok_or(ObjectReadError::Limit("pack count"))?;
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        let mut packs = Vec::new();
+        for path in paths {
+            let index = read_bounded(&path, remaining)?;
+            let data = read_bounded(&path.with_extension("pack"), remaining)?;
+            packs.push(Pack::open(format, &index, data).map_err(|source| {
+                ObjectReadError::PackArtifacts {
+                    pack: path.with_extension("pack"),
+                    index: path,
+                    source: Box::new(source),
+                }
+            })?);
+        }
+        Ok(Self { loose, packs })
     }
 }
 
@@ -311,6 +343,14 @@ fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Vec<u8>, ObjectRea
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectReadError {
+    /// An alternates record cannot be interpreted as a supported native path.
+    #[error("invalid alternate path in {path}: {reason}")]
+    Alternate {
+        /// Alternates metadata file containing the record.
+        path: PathBuf,
+        /// Structural or platform restriction.
+        reason: &'static str,
+    },
     /// A recognized storage feature is outside the implemented subset.
     #[error("unsupported object storage: {0}")]
     Unsupported(&'static str),

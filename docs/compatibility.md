@@ -619,10 +619,10 @@ paths, and no parent discovery. The runnable example is exercised with hostile G
 global configuration settings in its child process; those settings do not affect opening.
 
 Opening checks HEAD's marker shape without resolving its reference and requires object and refs
-directories. It reads format-aware shallow snapshots and rejects alternates files, including empty
-ones. History follows declared shallow boundaries without changing raw commit parents. The
-repository opener does not inspect packs. `Repository::objects` opens bounded pack snapshots;
-`Repository::loose_objects` continues to search only loose storage.
+directories. It reads format-aware shallow snapshots and permits local alternates metadata. History
+follows declared shallow boundaries without changing raw commit parents. The repository opener does
+not inspect packs. `Repository::objects` opens bounded pack snapshots; `Repository::loose_objects`
+continues to search only loose storage.
 
 File-content snapshots before and after successful and rejected opening establish absence of file
 creation, deletion or content changes. Filesystem access times are not covered by that guarantee.
@@ -834,9 +834,10 @@ Pack bytes and index tables are retained for the reader's lifetime. Decoded obje
 Repacking after opening cannot invalidate the owned bytes, but new packs require reopening. Races
 while opening can return I/O errors; callers may reopen. Loose reads remain live. Trusted paths and
 ancestors are required; this API does not secure hostile concurrent filesystem mutation. Multi-pack
-indexes, bitmap/reverse indexes, alternates, partial repositories, thin packs, live pack
-installation, transport, and traversal are outside this capability. Auxiliary acceleration files are
-ignored.
+indexes and bitmap/reverse indexes are ignored. Local alternate stores and complete partial-clone
+stores are supported without network retrieval; [R39 evidence](evidence/r39.md) records their bounds
+and topology contract. Thin packs still require transport import; raw stored-pack reads do not
+resolve external bases.
 
 ### Independent Evidence
 

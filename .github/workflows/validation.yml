@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      alternates_only:
+        description: Run only focused native alternate storage checks
+        type: boolean
+        default: false
       http_only:
         description: Run only focused Windows HTTP regression checks
         type: boolean
@@ -15,7 +19,7 @@ permissions:
 
 jobs:
   unix:
-    if: ${{ !inputs.http_only }}
+    if: ${{ !inputs.http_only && !inputs.alternates_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +84,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    if: ${{ !inputs.http_only }}
+    if: ${{ !inputs.http_only && !inputs.alternates_only }}
     # Portable integrations are explicit; process adapters remain unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -151,3 +155,30 @@ jobs:
         run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable -- --show-output
       - name: HTTP test Clippy
         run: cargo +stable clippy --locked --no-default-features --features http --test http --test http_portable -- -D warnings
+
+  alternates:
+    if: ${{ inputs.alternates_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain and environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Both-format alternate and repository contracts
+        run: cargo +stable test --locked --no-default-features --test alternates --test repositories --test packs
+      - name: Parser units and tracing build
+        run: cargo +stable test --locked --all-features --lib objects::alternates
+      - name: Scoped Clippy
+        run: cargo +stable clippy --locked --all-features --lib --test alternates --test repositories --test packs -- -D warnings
+      - name: Original Git observations
+        run: python tests/fixtures/alternates/observe.py
