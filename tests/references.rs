@@ -1,5 +1,4 @@
 //! Git CLI fixtures generated at runtime; no upstream source or fixtures are used.
-#![cfg(unix)]
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -443,6 +442,7 @@ fn linked_worktree_routes_shared_and_private_refs(
     assert!(!repo.common_dir().join(private).exists());
 }
 
+#[cfg(unix)]
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]

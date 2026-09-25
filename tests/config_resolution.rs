@@ -129,6 +129,9 @@ fn nested_relative_includes_preserve_order_provenance_and_snapshot() {
 #[case::case_sensitive("gitdir:REPO/", false)]
 #[case::relative("gitdir:./repo/", true)]
 #[case::home("gitdir:~/repo/", true)]
+#[case::home_glob("gitdir:~/r*/", true)]
+#[case::home_exact("gitdir:~/repo/.git", true)]
+#[case::home_no_recursive_suffix("gitdir:~/repo", false)]
 #[case::unknown("future:condition", false)]
 #[case::hasconfig("hasconfig:remote.*.url:https://example.com/**", true)]
 #[case::hasconfig_miss("hasconfig:remote.*.url:ssh://**", false)]
@@ -153,9 +156,7 @@ fn conditions_match_git(#[case] condition: &str, #[case] matches: bool) {
     } else {
         b"base\0"
     };
-    assert_eq!(actual, expected);
     assert_eq!(
-        actual,
         observed(
             root.path(),
             &[
@@ -170,8 +171,11 @@ fn conditions_match_git(#[case] condition: &str, #[case] matches: bool) {
                 "demo.value"
             ],
             &[]
-        )
+        ),
+        expected,
+        "Git condition semantics"
     );
+    assert_eq!(actual, expected, "girt condition semantics");
 }
 
 #[test]

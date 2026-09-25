@@ -461,8 +461,16 @@ impl<'a> Resolver<'a> {
             bytes.push(b'/');
             bytes.extend_from_slice(rest);
             bytes
-        } else if pattern.starts_with(b"~/") {
-            os_bytes(&self.expand(pattern, location)?)
+        } else if let Some(rest) = pattern.strip_prefix(b"~/") {
+            // Keep glob syntax out of PathBuf::join: Windows verbatim paths normalize
+            // components and lose the trailing slash that requests recursive matching.
+            let home = self.expand(b"~/", location)?;
+            let mut bytes = os_bytes(&home);
+            if bytes.last() != Some(&b'/') {
+                bytes.push(b'/');
+            }
+            bytes.extend_from_slice(rest);
+            bytes
         } else {
             pattern.to_vec()
         };
@@ -615,6 +623,30 @@ mod tests {
                 .values("a", None, "b")
                 .count(),
             2
+        );
+    }
+
+    #[rstest]
+    #[case::recursive("~/repo/", true)]
+    #[case::wildcard("~/r*/", true)]
+    #[case::exact("~/repo/.git", true)]
+    #[case::not_recursive("~/repo", false)]
+    fn home_condition_preserves_pattern_syntax(#[case] pattern: &str, #[case] matches: bool) {
+        let root = tempfile::tempdir().unwrap();
+        let home = std::fs::canonicalize(root.path()).unwrap();
+        let mut inputs = ConfigInputs::default();
+        inputs.context.git_dirs.push(home.join("repo/.git"));
+        inputs.context.home = Some(home);
+        let resolver = Resolver::new(&inputs);
+        let location = SourceLocation {
+            path: None,
+            line: 1,
+        };
+        assert_eq!(
+            resolver
+                .condition(format!("gitdir:{pattern}").as_bytes(), &location)
+                .unwrap(),
+            matches
         );
     }
 

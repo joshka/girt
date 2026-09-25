@@ -1,5 +1,5 @@
 //! Real Git http-backend on disposable loopback servers; Python 3 and Git required.
-#![cfg(all(unix, feature = "http"))]
+#![cfg(feature = "http")]
 #[path = "support/http_git.rs"]
 mod http_git;
 #[path = "support/pack_git.rs"]
@@ -640,6 +640,7 @@ fn attempted_push_http_failures_are_uncertain_and_not_retried(#[case] fault: &st
     assert_eq!(server.requests(), ["GET", "POST"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn server_can_accept_one_ref_and_reject_another() {
     use std::os::unix::fs::PermissionsExt;

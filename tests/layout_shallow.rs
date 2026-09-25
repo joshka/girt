@@ -738,9 +738,10 @@ fn ordinary_names_do_not_stop_discovery(
     create_marker(&child.join(name), directory);
     let before = std::fs::read_dir(&child).unwrap().count();
     let expected = canonical(root.path().join(".git"));
+    let observed = git(&child, &["rev-parse", "--absolute-git-dir"], b"");
     assert_eq!(
-        git(&child, &["rev-parse", "--absolute-git-dir"], b""),
-        format!("{}\n", expected.display()).as_bytes()
+        canonical(std::str::from_utf8(&observed).unwrap().trim()),
+        expected
     );
     assert_eq!(Repository::discover(&child).unwrap().git_dir(), expected);
     assert!(matches!(
@@ -774,9 +775,10 @@ fn bare_discovery_signature(
     init_bare_child(root.path(), format, complete);
     let expected = canonical(root.path().join(expected));
     assert_eq!(Repository::discover(&child).unwrap().git_dir(), expected);
+    let observed = git(&child, &["rev-parse", "--absolute-git-dir"], b"");
     assert_eq!(
-        git(&child, &["rev-parse", "--absolute-git-dir"], b""),
-        format!("{}\n", expected.display()).as_bytes()
+        canonical(std::str::from_utf8(&observed).unwrap().trim()),
+        expected
     );
 }
 
