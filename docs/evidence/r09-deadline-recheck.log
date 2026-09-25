@@ -1,0 +1,27 @@
+Final source revision: 356cc843b1b44dad5af473676e02c90b2f84408a
+Initial default-parallelism run, with concurrent cross-builds:
+---- deadline_interrupts_stalled_hook_with_uncertain_outcome::case_2_after_commit stdout ----
+
+thread 'deadline_interrupts_stalled_hook_with_uncertain_outcome::case_2_after_commit' (132607090) panicked at tests/push.rs:524:5:
+assertion failed: dest.git_dir().join("hook-ready").exists()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    deadline_interrupts_stalled_hook_with_uncertain_outcome::case_2_after_commit
+
+test result: FAILED. 23 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.88s
+
+error: test failed, to rerun pass `--test push`
+error: recipe `test` failed on line 10 with exit code 101
+
+Isolated rerun (cargo test --all-features --test push deadline_interrupts_stalled_hook_with_uncertain_outcome -- --test-threads=1):
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/push.rs (target/debug/deps/push-c8c11de385a816b2)
+
+running 2 tests
+test deadline_interrupts_stalled_hook_with_uncertain_outcome::case_1_before_commit ... ok
+test deadline_interrupts_stalled_hook_with_uncertain_outcome::case_2_after_commit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 4.32s
+

@@ -121,8 +121,11 @@ preserving unrelated text, inherited settings and branch remote sections. Exerci
 URLs, concurrent edits, locks, parse/write failures and unchanged old bytes. Isolate HOME and config
 sources. jj retains remote selection/naming and view updates; girt owns general file semantics.
 
-R08 resolution is complete with [retained evidence](evidence/r08.md). R09 retains mutation,
-concurrent writes and preservation of unrelated text; A06 is not fully complete until R09 closes.
+R08 resolution and R09 direct-file mutation are complete with [R08 evidence](evidence/r08.md) and
+[R09 evidence](evidence/r09.md). File/effective scope, preserved text, held locks, source
+preconditions and failure cleanup are covered. Multi-file inherited-setting orchestration and
+remote-tracking reference composition remain explicitly assigned to R28; native platform evidence
+continues under R36/C02.
 
 ### A07 — Repository layouts and shallow state
 

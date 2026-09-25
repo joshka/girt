@@ -1,0 +1,38 @@
+Implementation: 356cc843b1b44dad5af473676e02c90b2f84408a
+Commands, sequentially:
+cargo check --lib --no-default-features --target x86_64-pc-windows-msvc
+cargo check --lib --no-default-features --target x86_64-unknown-linux-gnu
+cargo test --no-default-features --test config_edit
+cargo run --example edit_config
+
+    Blocking waiting for file lock on build directory
+    Checking girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.97s
+    Checking girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.96s
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.27s
+     Running tests/config_edit.rs (target/debug/deps/config_edit-d13ad598165f89ed)
+
+running 10 tests
+test explicit_unicode_file_path_is_preserved ... ok
+test competing_threads_cannot_overwrite_from_stale_snapshot ... ok
+test git_reads_lossless_unusual_syntax::case_2_bytes ... ok
+test git_reads_lossless_unusual_syntax::case_1_deprecated ... ok
+test branch_and_refspec_changes_agree_with_git::case_2_remove ... ok
+test branch_and_refspec_changes_agree_with_git::case_1_rename ... ok
+test includes_globals_and_inherited_only_remotes_are_never_rewritten ... ok
+test add_set_append_remove_url_agree_with_git::case_2_sha256 ... ok
+test add_set_append_remove_url_agree_with_git::case_1_sha1 ... ok
+test repeated_fetch_push_and_reset_values_remain_ordered ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.76s
+     Running `target/debug/examples/edit_config`
+
+RUSTDOCFLAGS='-D warnings' cargo doc --all-features --no-deps --document-private-items
+ Documenting girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.11s
+   Generated /Users/joshka/local/girt/target/doc/girt/index.html
