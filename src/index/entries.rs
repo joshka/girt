@@ -1,10 +1,11 @@
 use crate::ObjectId;
 
-/// One candidate tree leaf, with a byte path and cached stat information.
+/// One candidate tree leaf or collapsed sparse directory, with a byte path and cached stat data.
 ///
 /// Fields are editable drafts. [`super::Index::new`] and [`super::Index::replace_entries`] check
 /// paths and relationships before accepting them. Paths must have nonempty `/`-separated
-/// components other than `.`, `..`, or `.git`, and contain no NUL. No UTF-8, case folding,
+/// components other than `.`, `..`, or `.git`, and contain no NUL. Sparse directories add one
+/// trailing slash. No UTF-8, case folding,
 /// platform aliases, backslashes, drive letters or checkout-safety checks are applied.
 /// IDs are preserved even when zero; object existence and type remain caller obligations.
 #[derive(Clone, Debug, Eq, PartialEq)]

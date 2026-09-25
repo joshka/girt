@@ -8,6 +8,11 @@ on:
       - 'tests/colocation.rs'
       - '.github/workflows/index.yml'
   workflow_dispatch:
+    inputs:
+      r38_only:
+        description: Reuse unaffected tracing evidence and run scoped R38 coverage
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,8 +60,14 @@ jobs:
       - name: Index tests with tracing
         run: "cargo +stable test --locked --no-default-features --features tracing --lib index::"
       - name: Colocation with tracing
+        if: ${{ !inputs.r38_only }}
         run: "cargo +stable test --locked --no-default-features --features tracing --test colocation --test tracing"
+      - name: R38 index and colocation with tracing
+        if: ${{ inputs.r38_only }}
+        run: cargo +stable test --locked --no-default-features --features tracing --test index --test colocation
+      - name: R38 resource observations
+        run: cargo +stable run --release --locked --no-default-features --example index_storage_resources
       - name: Public workflow
         run: cargo +stable run --locked --no-default-features --example index
       - name: Clippy
-        run: cargo +stable clippy --locked --no-default-features --lib --test index --test colocation --example index -- -D warnings
+        run: cargo +stable clippy --locked --no-default-features --lib --test index --test colocation --example index --example index_storage_resources -- -D warnings

@@ -13,7 +13,8 @@ use crate::ObjectId;
 /// The original encoding is retained alongside decoded entries. Edits encode canonical name
 /// lengths, maximal shared prefixes and zero padding. Construction sorts entries; parsing never
 /// repairs their order. Equality compares version, entries and extensions, ignoring alternative
-/// byte encodings. Editing applies the extension policy in [`Self::replace_entries`].
+/// byte encodings. Split replacement records resolve before validation; sorted additions are merged
+/// with shared entries. Editing applies the extension policy in [`Self::replace_entries`].
 #[derive(Clone, Debug)]
 pub struct Index {
     pub(super) format: crate::ObjectFormat,
@@ -51,7 +52,7 @@ impl Eq for Index {}
 /// Opaque optional extension preserved in its original position and byte representation.
 ///
 /// Optional payload semantics are not validated or used. The mandatory `link` extension is
-/// validated during shared-index resolution.
+/// validated during shared-index resolution; `sdir` marks validated sparse directory entries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Extension {
     pub(super) signature: [u8; 4],
@@ -454,7 +455,7 @@ impl Index {
         Ok(out)
     }
 
-    fn encoded_len(&self, limits: Limits) -> Result<usize, Error> {
+    pub(super) fn encoded_len(&self, limits: Limits) -> Result<usize, Error> {
         check_count(
             self.entries.len(),
             limits.max_entries.min(u32::MAX as usize),

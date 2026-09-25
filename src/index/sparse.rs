@@ -51,6 +51,7 @@ pub enum SparseError {
     Read {
         /// Requested identity.
         id: ObjectId,
+
         /// Underlying object-store failure.
         #[source]
         source: crate::ObjectReadError,
@@ -66,6 +67,7 @@ pub enum SparseError {
     Tree {
         /// Requested identity.
         id: ObjectId,
+
         /// Parse or structural validation cause.
         #[source]
         source: crate::TreeError,
@@ -98,6 +100,7 @@ impl Index {
         cancelled: &AtomicBool,
     ) -> Result<(), SparseError> {
         check(cancelled)?;
+        self.encoded_len(limits)?;
         if objects.object_format() != self.object_format() {
             ObjectId::null(objects.object_format())
                 .require_format(self.object_format())
@@ -372,5 +375,76 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn rejects_corrupt_tree_and_depth_without_editing(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(format, root.path().join("repo"), InitKind::Worktree).unwrap();
+        let empty = Tree::new(format, vec![]).unwrap();
+        let child = repo.loose_objects().write_tree(&empty).unwrap();
+        let tree = Tree::new(
+            format,
+            vec![TreeEntry {
+                name: b"nested".to_vec(),
+                mode: EntryMode::Tree,
+                id: child,
+            }],
+        )
+        .unwrap();
+        let id = repo.loose_objects().write_tree(&tree).unwrap();
+        let mut index = Index::new(format, vec![directory(id)], Limits::default()).unwrap();
+        let before = index.encode(Limits::default()).unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let limits = SparseLimits {
+            max_depth: 0,
+            ..SparseLimits::default()
+        };
+        assert!(matches!(
+            index.expand_sparse(&objects, Limits::default(), limits, &AtomicBool::new(false)),
+            Err(SparseError::Index(Error::Limit("sparse depth")))
+        ));
+        let hex = id.to_string();
+        std::fs::write(
+            repo.git_dir()
+                .join("objects")
+                .join(&hex[..2])
+                .join(&hex[2..]),
+            b"broken compressed object",
+        )
+        .unwrap();
+        assert!(matches!(
+            index.expand_sparse(
+                &objects,
+                Limits::default(),
+                SparseLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(SparseError::Read { .. })
+        ));
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn empty_tree_expansion_removes_directory(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(format, root.path().join("repo"), InitKind::Worktree).unwrap();
+        let tree = Tree::new(format, vec![]).unwrap();
+        let id = repo.loose_objects().write_tree(&tree).unwrap();
+        let mut index = Index::new(format, vec![directory(id)], Limits::default()).unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        index
+            .expand_sparse(
+                &objects,
+                Limits::default(),
+                SparseLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert!(index.entries().is_empty());
+        assert!(index.extensions().is_empty());
     }
 }

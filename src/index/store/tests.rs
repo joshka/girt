@@ -374,3 +374,102 @@ fn differing_entry(mut entry: Entry, difference: u8) -> Entry {
     }
     entry
 }
+
+fn specialized_index(repo: &Repository, sparse: bool) -> Vec<u8> {
+    let format = repo.object_format();
+    if sparse {
+        let mut entry = Entry::new(
+            b"dir/".to_vec(),
+            Mode::SparseDirectory,
+            ObjectId::null(format),
+        );
+        entry.skip_worktree = true;
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        edit.replace_entries(vec![entry]).unwrap();
+        edit.commit().unwrap();
+        return fs::read(repo.git_dir().join("index")).unwrap();
+    }
+    let shared = populated(repo);
+    let hash = &shared[shared.len() - format.digest_len()..];
+    let id = ObjectId::from_bytes(format, hash).unwrap();
+    fs::write(
+        repo.git_dir().join(format!("sharedindex.{id}")),
+        shared.clone(),
+    )
+    .unwrap();
+    let mut bytes = b"DIRC\0\0\0\x02\0\0\0\0link".to_vec();
+    bytes.extend_from_slice(&((format.digest_len() + 40) as u32).to_be_bytes());
+    bytes.extend_from_slice(hash);
+    // Two original empty EWAH bitmaps: bit count, word count, one run word, run pointer.
+    bytes.extend_from_slice(b"\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\0\0\0\0\0");
+    bytes.extend_from_slice(b"\0\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\0\0\0\0\0");
+    bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
+    fs::write(repo.git_dir().join("index"), &bytes).unwrap();
+    bytes
+}
+
+#[rstest]
+#[case::split_sha1(crate::ObjectFormat::Sha1, false)]
+#[case::split_sha256(crate::ObjectFormat::Sha256, false)]
+#[case::sparse_sha1(crate::ObjectFormat::Sha1, true)]
+#[case::sparse_sha256(crate::ObjectFormat::Sha256, true)]
+fn specialized_publication_faults_and_recovery(
+    #[case] format: crate::ObjectFormat,
+    #[case] sparse: bool,
+) {
+    let (_root, repo) = repository(format);
+    let before = specialized_index(&repo, sparse);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.replace_entries(vec![]).unwrap();
+    drop(edit.file.take());
+    edit.file = Some(File::open(&edit.lock_path).unwrap());
+    assert!(matches!(
+        edit.commit(),
+        Err(StorageError::Io {
+            operation: "write lock",
+            ..
+        })
+    ));
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.replace_entries(vec![]).unwrap();
+    assert!(
+        edit.publish_with_rename(|_, _| Err(io::Error::other("injected rename")))
+            .is_err()
+    );
+    edit.abort().unwrap();
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    // A fresh guard can recover after inspecting the failed attempt's unchanged destination.
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.replace_entries(vec![]).unwrap();
+    edit.commit().unwrap();
+    assert!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::split_sha1(crate::ObjectFormat::Sha1, false)]
+#[case::split_sha256(crate::ObjectFormat::Sha256, false)]
+#[case::sparse_sha1(crate::ObjectFormat::Sha1, true)]
+#[case::sparse_sha256(crate::ObjectFormat::Sha256, true)]
+fn specialized_publication_preserves_concurrent_main(
+    #[case] format: crate::ObjectFormat,
+    #[case] sparse: bool,
+) {
+    let (_root, repo) = repository(format);
+    specialized_index(&repo, sparse);
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    fs::write(repo.git_dir().join("index"), b"concurrent replacement").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(_))));
+    assert_eq!(
+        fs::read(repo.git_dir().join("index")).unwrap(),
+        b"concurrent replacement"
+    );
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
