@@ -64,8 +64,9 @@ R02 closes the identity/hash and current-boundary-refusal subset only; see its
 [evidence and ownership audit](evidence/r02.md). Both-format codecs, storage, refs, indexes and
 transport remain open under their owning tasks. R04 codec/loose-storage evidence is recorded in
 [its completion report](evidence/r04.md). R05 pack/ref/reflog/index propagation and retained
-transport boundaries are recorded in [its completion report](evidence/r05.md). Native matrix refresh
-remains R06.
+transport boundaries are recorded in [its completion report](evidence/r05.md). The
+[R06 completion report](evidence/r06.md) records the native matrix refresh and its platform
+boundaries.
 
 ### A03 — Instrumentation, errors and scheduling
 
@@ -244,8 +245,8 @@ Benchmark initial/incremental preparation and sending without unnecessary whole-
 
 ### A16 — Native CI and platform coverage
 
-**Tasks:** R06, C02, C03, R34. Execute applicable tests on native Linux, macOS and Windows for both
-hash formats. Extend the existing `.github/workflows/validation.yml` selection as capabilities
+**Tasks:** R06, R36, C02, C03, R34. Execute applicable tests on native Linux, macOS and Windows for
+both hash formats. Extend the existing `.github/workflows/validation.yml` selection as capabilities
 arrive. Record OS/filesystem/toolchain/Git versions, exact revisions and logs. Exercise portable
 refs/index/worktrees, Unicode and OS paths, locks/permissions, transport/process cancellation and
 maintenance. Cross-compilation is supplementary. Scheduled milestones do not excuse omitting a

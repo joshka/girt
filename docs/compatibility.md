@@ -9,8 +9,9 @@ dual-hash conversion is provided.
 Explicit format arguments select standalone pack/index/reflog codecs, including empty artifacts.
 Repository operations derive the format from common configuration, never from artifact lengths.
 Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain their
-historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec limits. R06 owns the
-native Linux/Windows refresh for these increments; local macOS tests do not establish those hosts.
+historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec limits. The
+[R06 evidence](evidence/r06.md) records the native Linux/macOS/Windows refresh for these increments,
+including the selected Windows scope and exact tested revision.
 
 ## Current Capabilities and Evidence
 
@@ -30,9 +31,9 @@ operation limits remain per phase; no process-wide heap or hard CPU-latency guar
 | Linux x86_64   | Full suite through raw checkout, including HTTP and SSH. |
 | Windows x86_64 | Portable integration suites and bounded HTTP runtime.    |
 
-The [final roadmap validation](#final-roadmap-validation) records the current native results and the
-Windows exclusions. Run IDs, counts and environments apply only to their stated revisions; later
-code changes require new evidence.
+The [R06 native validation](evidence/r06.md) records the latest native results and Windows
+exclusions at `f79b50843a47aeed7b468acb7b4a133f35e98a10`. Run IDs, counts and environments apply
+only to their stated revisions; later code changes require new evidence.
 
 ## Platform and Git-Version Validation
 

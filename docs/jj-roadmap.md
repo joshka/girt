@@ -55,7 +55,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R03 | Optional tracing and operation failure visibility           | R02                             | Complete              | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling); [evidence](evidence/r03.md)                                                                              |
 | R04 | SHA-256 object codecs and loose repository storage          | R02                             | Complete              | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation); [evidence](evidence/r04.md) |
 | R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Complete              | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r05.md)     |
-| R06 | Native CI foundation for both formats                       | R05                             | In progress           | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage)                                                                                                                 |
+| R06 | Native CI foundation for both formats                       | R05                             | Complete              | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r06.md)                                                                                    |
 | R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Planned               | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation)                 |
 | R08 | Layered config resolution and provenance                    | R03                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
 | R09 | Lossless config and remote mutation                         | R08                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
@@ -101,9 +101,10 @@ a jj adapter.
 
 R04 completion and earlier storage boundaries are recorded in [its evidence](evidence/r04.md). R05
 completes pack/ref/reflog/index format propagation; its [evidence](evidence/r05.md) records
-validation, public API changes and remaining boundaries. R06 owns the native matrix refresh.
-Transport negotiation remains with R26/R29; R11/R12 retain broader refs and index semantics.
-Concrete format/refresh follow-ups are assigned in
+validation, public API changes and remaining boundaries. R06 completes the native matrix refresh;
+its [evidence](evidence/r06.md) records the tested revision, selected suites, public error-field
+changes and Windows fixture correction. Transport negotiation remains with R26/R29; R11/R12 retain
+broader refs and index semantics. Concrete format/refresh follow-ups are assigned in
 [R05 remaining owners](evidence/r05.md#remaining-owners).
 
 R07 owns the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-ups); byte retention
@@ -119,8 +120,8 @@ R36 audits and organizes native Windows integration coverage alongside R11/R12, 
 required by C02. Inventory supported public operations and excluded suites, distinguishing
 unsupported capabilities from omitted portable tests. Exercise SHA-1 and SHA-256 where supported,
 retain explicit capability exclusions with their owners, and record native execution evidence and
-remaining gaps against A16. R06 continues validating its current selected suites; R36 is queued
-follow-up work and does not expand R06's coverage claims.
+remaining gaps against A16. R06 records validation of its selected suites; R36 is queued follow-up
+work and does not expand R06's coverage claims.
 
 ## Superseding the Earlier Queue
 
