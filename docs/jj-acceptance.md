@@ -279,6 +279,11 @@ refs/index/worktrees, Unicode and OS paths, locks/permissions, transport/process
 maintenance. Cross-compilation is supplementary. Scheduled milestones do not excuse omitting a
 capability's required platform evidence; unavailable native runs remain an open gate.
 
+R36's [operation and suite inventory](evidence/r36.md) distinguishes executable portable coverage
+from unsupported adapters and platform-specific fixtures. Its Windows expansion does not close C02's
+UNC/WSL/ACL evidence, future worktree/maintenance capabilities, or any required native
+status/checkout implementation.
+
 ### A17 — GC, repack and expiry
 
 **Tasks:** R31–R33. **Consumer:** `lib/src/git_backend.rs` no-GC ref maintenance and `run_git_gc`

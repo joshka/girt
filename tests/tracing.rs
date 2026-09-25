@@ -243,7 +243,6 @@ impl std::io::Write for FailingWriter {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn reference_transaction_has_prepare_and_publication_children() {
     use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};

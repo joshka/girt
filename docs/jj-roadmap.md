@@ -88,7 +88,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned               | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R38                | Planned               | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                                       |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned               | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
-| R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Planned; close by C02 | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage)                                                                                                                 |
+| R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | In progress           | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage)                                                                                                                 |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Planned               | Both-format table/stack reads, conditional publication and compaction, Git interoperability, corruption/race/fault and native evidence; required before R34.                 |
 | R38 | Split and sparse index storage                              | R12, R14                        | Planned               | Resolve split shared-index dependencies and sparse directory trees; Git/jj observations, both-format corruption, race/fault and native evidence; required before R34.        |
 
@@ -128,8 +128,9 @@ R36 audits and organizes native Windows integration coverage alongside R11/R12, 
 required by C02. Inventory supported public operations and excluded suites, distinguishing
 unsupported capabilities from omitted portable tests. Exercise SHA-1 and SHA-256 where supported,
 retain explicit capability exclusions with their owners, and record native execution evidence and
-remaining gaps against A16. R06 records validation of its selected suites; R36 is queued follow-up
-work and does not expand R06's coverage claims.
+remaining gaps against A16. R06 records validation of its selected suites; R36 is follow-up work and
+does not expand R06's coverage claims. Its [inventory and evidence](evidence/r36.md) retain the
+remaining capability and platform owners.
 
 ## Superseding the Earlier Queue
 

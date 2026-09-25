@@ -485,6 +485,6 @@ pub enum CloneFailure {
     Publication(#[from] crate::refs::TransactionError),
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "workflow_tests.rs"]
 mod tests;

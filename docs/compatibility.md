@@ -62,6 +62,19 @@ only to their stated revisions; later code changes require new evidence.
 
 ## Platform and Git-Version Validation
 
+### R36 Coverage Inventory
+
+[R36 evidence](evidence/r36.md) inventories the current Windows selection and repairs the R08/R10
+home-condition and discovery failures. The existing platform workflow adds reference and HTTP
+integrations; portable fetch planning, clone completion, enumeration and tracing units no longer
+inherit Unix-only fixture gates. Exact native results and remaining exclusions are recorded there.
+R11/R12 retain their focused ref/index evidence. C02 remains the broader storage/layout gate;
+Windows status/checkout refusals and unsupported local/SSH transport do not establish parity.
+
+The completed [R12 broad run](https://github.com/joshka/girt/actions/runs/36126493241) at
+`0e42acf744437732604355e719e70a2eae3ead99` passes all three Unix jobs and fails the nine known
+Windows cases. It is retained as the R36 baseline, not a green Windows milestone.
+
 ### Final Roadmap Validation
 
 [Run 36089083146](https://github.com/joshka/girt/actions/runs/36089083146) passed all four native

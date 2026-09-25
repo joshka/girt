@@ -2,20 +2,11 @@ use rstest::rstest;
 
 use super::*;
 use crate::fetch::FetchFinishFailure;
-use crate::{Commit, CommitFields, Signature, Tree};
+use crate::{Commit, CommitFields, ObjectFormat, ObjectKind, PackObject, Signature};
 
 fn ready() -> (tempfile::TempDir, CloneReady) {
     let root = tempfile::tempdir().unwrap();
-    let source = Repository::init(
-        crate::ObjectFormat::Sha1,
-        root.path().join("source"),
-        InitKind::Bare,
-    )
-    .unwrap();
-    let objects = source.loose_objects();
-    let tree = objects
-        .write_tree(&Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap())
-        .unwrap();
+    let tree = ObjectFormat::Sha1.hash_object(ObjectKind::Tree, b"");
     let who = Signature {
         name: b"Clone".to_vec(),
         email: b"clone@example.com".to_vec(),
@@ -31,16 +22,38 @@ fn ready() -> (tempfile::TempDir, CloneReady) {
         message: b"original clone fixture\n".to_vec(),
     })
     .unwrap();
-    let id = objects.write_commit(&commit).unwrap();
-    source
-        .references()
-        .unwrap()
-        .update_without_reflog(
-            &RefName::new("refs/heads/main").unwrap(),
-            Target::Direct(id),
-            Expected::Absent,
-        )
-        .unwrap();
+    let encoded = commit.encode();
+    let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, &encoded);
+    let mut pack = Vec::new();
+    crate::write_pack(
+        ObjectFormat::Sha1,
+        &[
+            PackObject {
+                id: tree,
+                kind: ObjectKind::Tree,
+                data: b"",
+            },
+            PackObject {
+                id,
+                kind: ObjectKind::Commit,
+                data: &encoded,
+            },
+        ],
+        &mut pack,
+        &mut Vec::new(),
+        Default::default(),
+    )
+    .unwrap();
+    // The completion tests need a validated transfer, not an owned child process.
+    let mut response =
+        packet(format!("{id} HEAD\0side-band-64k symref=HEAD:refs/heads/main\n").as_bytes());
+    response.extend(packet(format!("{id} refs/heads/main\n").as_bytes()));
+    response.extend(b"0000");
+    response.extend(packet(b"NAK\n"));
+    let mut band = vec![1];
+    band.extend(pack);
+    response.extend(packet(&band));
+    response.extend(b"0000");
     let request = CloneRequest::prepare_tracking(
         root.path().join("copy"),
         InitKind::Bare,
@@ -49,16 +62,32 @@ fn ready() -> (tempfile::TempDir, CloneReady) {
         Reflog::Preserve,
     )
     .unwrap();
-    let ready = request
-        .receive_local(
-            source.git_dir(),
-            FetchLimits::default(),
-            TransportControl::new(&AtomicBool::new(false)),
-            |_| ControlFlow::Continue(()),
-        )
-        .unwrap();
-    (root, ready)
+    let mut plan = None;
+    let received = crate::fetch::receive(
+        &mut response.as_slice(),
+        &mut Vec::new(),
+        |advertisement| super::super::plan::select(request.plan(advertisement), &mut plan),
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    );
+    let (plan, received) = selected(plan, received).unwrap();
+    (
+        root,
+        CloneReady {
+            request,
+            head: plan.head,
+            received,
+        },
+    )
 }
+
+fn packet(bytes: &[u8]) -> Vec<u8> {
+    let mut packet = format!("{:04x}", bytes.len() + 4).into_bytes();
+    packet.extend_from_slice(bytes);
+    packet
+}
+
 fn initialized(ready: &CloneReady) -> (Repository, CloneReport) {
     let repo = Repository::init(
         crate::ObjectFormat::Sha1,

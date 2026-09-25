@@ -834,3 +834,27 @@ fn inaccessible_discovery_candidate_does_not_fall_back(
         matches!(found, Err(OpenError::Io { source, .. }) if source.kind() == std::io::ErrorKind::PermissionDenied)
     );
 }
+
+#[rstest]
+fn unicode_worktree_discovery_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let worktree = root.path().join("répo-仓库");
+    std::fs::create_dir(&worktree).unwrap();
+    init(&worktree, format);
+    let child = worktree.join("nested directory");
+    std::fs::create_dir(&child).unwrap();
+    let expected = canonical(worktree.join(".git"));
+    let observed = git(&child, &["rev-parse", "--absolute-git-dir"], b"");
+    assert_eq!(
+        canonical(std::str::from_utf8(&observed).unwrap().trim()),
+        expected
+    );
+    assert_eq!(Repository::discover(&child).unwrap().git_dir(), expected);
+    // On Windows canonicalization supplies a verbatim drive path; both spellings must open.
+    assert_eq!(
+        Repository::discover(canonical(&child)).unwrap().git_dir(),
+        expected
+    );
+}

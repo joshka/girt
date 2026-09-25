@@ -195,7 +195,7 @@ fn collect_loose(
             for child in children {
                 let child = child.map_err(|source| io_error(&path, source))?;
                 let component = child.file_name();
-                // References::new rejects non-Unix storage; this branch preserves Unix bytes.
+                // Preserve Unix filename bytes; other hosts require Unicode filesystem names.
                 #[cfg(unix)]
                 let component = {
                     use std::os::unix::ffi::OsStrExt;
@@ -230,7 +230,7 @@ fn collect_loose(
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use rstest::rstest;
 
@@ -334,6 +334,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_symlink_directory_without_traversing_it() {
         let (_root, repo) = fixture();
@@ -345,6 +346,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn private_namespace_symlink_is_rejected_in_its_own_worktree() {
         let (_root, repo) = fixture();

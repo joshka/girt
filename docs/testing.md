@@ -130,6 +130,8 @@ The Windows integration selection follows implemented operations, not just file 
   storage. Portable cases use Git-created refs/worktrees; packed checkout/status cases are
   explicitly scoped to macOS/Linux; files-reference rejection cases require Unix.
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
+- `decoding`: Both-format tolerant tree/tag/commit interpretation, peeling and corruption/resource
+  boundaries. Its transfer case is SHA-1-only pending R26/R29.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.
 - `index`: SHA-1/SHA-256 v2/v3/v4 parsing/encoding, held-lock replacement, Git stat/flag
@@ -139,30 +141,41 @@ The Windows integration selection follows implemented operations, not just file 
   rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.
 - `checkout_portable`: Cancellation before locking and explicit unsupported-platform checkout
-  rejection. Actual checkout and native symlink tests run only on macOS/Linux.
+  rejection. The `checkout` suite and native symlink tests run only on macOS/Linux.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `layout_shallow`: Both-format relative/moved layouts, worktree inventory and shallow-depth
   observations. Filesystem symlink/permission cases are Unix-only; raw byte paths are Linux-only.
   Case-alias cases require a case-insensitive native volume and report absence when unavailable.
+- `config_edit`: Lossless configuration/remote edits, lock cleanup, races and Git interpretation.
 - `config_resolution`: Portable layered configuration, conditions, provenance, environment and Git
   observations in both formats; arbitrary-byte filenames are Linux-only.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
 - `references_portable`: R11 conditional refs, imported reflogs and packed/shadowed deletion execute
   in both formats on Windows. Reference unit/fault tests also run natively.
-- `references`, `fetch_workflow`, `clone`: Broader suite organization remains R36; these suites are
-  not added to the Windows selection by R11.
-- `fetch`, `push`: Excluded: mixed suites use unsupported owned local-process adapters and refs.
-- `ssh`: Excluded: the adapter and its process-lifetime implementation are macOS/Linux-only.
-- `http`: Excluded: broader suite uses girt refs, Unix hooks, and orchestration/clone publication.
+- `references`: Both-format loose/packed/symbolic reads, publication, deletion, worktree routing,
+  reflogs and concurrent Git writers. Non-UTF-8 argv cases remain Unix-only; raw filename cases are
+  Linux-only. Windows storage-name refusals also run in `references_portable`.
+- `http`: SHA-1 fetch/push, TLS trust/hostname checks, authentication, limits, cancellation,
+  uncertain/partial outcomes and HTTP-backed fetch/clone publication. Its shell-hook fixture is
+  Unix-only; the remaining suite is selected on Windows with `http_portable`.
+- `fetch`, `push`, `fetch_workflow`, `clone`: Local-process integration fixtures remain excluded on
+  Windows because that adapter is unsupported (R25). Portable fetch planning and clone completion
+  units execute on Windows; HTTP exercises public fetch/clone publication. R27/R28/R30 retain the
+  broader transfer, publication and cancellation corpus as transport capabilities arrive.
+- `ssh`: Excluded: the adapter and its process-lifetime implementation are macOS/Linux-only (R24).
 
-Git may manage refs inside Windows fixtures without establishing girt reference-storage support.
-Tree symlink modes and non-UTF-8 entry names are object bytes; those tests do not create Windows
-symlinks or non-UTF-8 filesystem paths. The Linux-only repository path case remains Linux-only. The
-portable HTTP suite uses loopback plaintext HTTP, Python and Git's public CGI backend, finite
-network deadlines and bounded CGI execution. It validates fetch downloads on an owned worker and
-installs objects without publishing local refs. Windows TLS trust/HTTPS, upload cancellation,
-uncertain push acknowledgements and the full Unix HTTP fault matrix remain outside that suite.
+Git-managed refs inside fixtures do not by themselves establish girt reference-storage support; the
+reference suites exercise girt operations explicitly. Tree symlink modes and non-UTF-8 entry names
+are object bytes, not Windows filesystem symlinks or byte filenames. Windows raw status and checkout
+remain unsupported, with refusal-only tests; C02 retains assessment and assignment of any required
+native implementation before R34.
+
+HTTP fixtures use disposable loopback servers, Python and Git's public CGI backend. TLS fixtures
+also need OpenSSL. Protocol operations remain SHA-1-only pending R26/R29; two-format storage tests
+do not establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records exact native results
+and the C02/R19/R20 UNC, WSL, ACL and worktree-administration exclusions. Maintenance remains with
+R31–R33. A CI compile or explicit unsupported error does not close those capability gaps.
 
 When adding an integration suite, decide its Windows applicability here and in the workflow. Keep
 unsupported operations separate from fixture assumptions; do not disable otherwise portable coverage
@@ -170,13 +183,13 @@ because another suite requires a Unix backend. Record exact native run revisions
 [compatibility evidence](compatibility.md#platform-and-git-version-validation).
 
 The portable `tracing` integration suite uses original local data and loopback HTTP fixtures. Run it
-with `tracing` alone and with `tracing,http`; Unix reference/clone completion cases are explicitly
-scoped. Windows CI runs both configurations. The `tracing,ssh` library is checked independently;
-existing SSH process and cancellation tests run under all features and SSH-only on supported native
-platforms. Named SHA-1/SHA-256 cases in `object_ids`, `sha256`, `packs`, `index`, and Unix
-`references` establish format-specific execution; a successful compile or a suite's filename is not
-sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for checkout
-and temporary-fixture storage.
+with `tracing` alone and with `tracing,http`; reference and HTTP clone completion cases run on
+Windows too. Windows CI runs both configurations. The `tracing,ssh` library is checked
+independently; existing SSH process and cancellation tests run under all features and SSH-only on
+supported native platforms. Named SHA-1/SHA-256 cases in `object_ids`, `sha256`, `packs`, `index`,
+and `references` establish format-specific execution; a successful compile or a suite's filename is
+not sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for
+checkout and temporary-fixture storage.
 
 ## Historical Capability Completion Records
 

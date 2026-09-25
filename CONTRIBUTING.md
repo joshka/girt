@@ -55,7 +55,7 @@ conditions, and recorded results.
 The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
 checks on macOS and Linux, with a separate Windows portable-test job. Its explicit
 [integration selection](docs/testing.md#native-platform-coverage) covers storage, objects,
-repository operations, remote mapping, and a bounded HTTP runtime suite. See
+repository operations, remote mapping, references, and HTTP runtime suites. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
 making support claims. Local cross-compilation does not replace executing the test suite on the
 target OS.
@@ -98,9 +98,9 @@ Keep documentation consistent with what the library actually implements.
 
 ## HTTP Fixtures
 
-The optional `http` feature uses a caller-owned Tokio runtime. Its Unix interoperability tests need
-Git, Python 3 and OpenSSL on PATH and use only disposable loopback servers. `just check` enables
-this feature; also run `cargo check --no-default-features` when changing feature gates. See
+The optional `http` feature uses a caller-owned Tokio runtime. Its interoperability tests need Git,
+Python 3 and OpenSSL on PATH and use only disposable loopback servers. `just check` enables this
+feature; also run `cargo check --no-default-features` when changing feature gates. See
 [HTTP setup and contracts](docs/http.md) for the example, TLS fixtures and async processing
 boundary.
 

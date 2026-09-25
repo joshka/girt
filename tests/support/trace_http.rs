@@ -190,7 +190,6 @@ fn abandoning_download_on_worker_closes_original_spans() {
     assert!(other.spans().is_empty());
 }
 
-#[cfg(unix)]
 #[test]
 fn clone_finish_owns_fetch_installation_phases() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
