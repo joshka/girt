@@ -64,7 +64,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted            | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete            | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted            | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
-| R14 | External object-store acceptance and required formats       | R07, R10                        | In progress         | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                    |
+| R14 | External object-store acceptance and required formats       | R07, R10                        | Validation blocked  | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Planned             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Planned             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Planned             | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics)                                                                                                                    |
@@ -277,3 +277,12 @@ interpretation is R40. R15 retains file-backed resource work and R16 refresh. R3
 reftable and split/sparse owners. Recommended serial placement is R39, R15, R16, R37, R38, R40, then
 R17; include all of these in C02. R31 depends on R40 for imported retention roots. Opening success,
 baseline omissions and explicit refusals do not close required compatibility gaps.
+
+R14's first Windows broad run exposes existing HTTP/tracing test failures; its native evidence
+retains exact failures and retry results. C02 owns structured diagnostic improvements, deterministic
+post-send fault synchronization and span-capture/lifetime investigation under parallel native tests.
+
+R14's unchanged Windows retry passes its 50 pack cases, units, Clippy and tracing, but repeats three
+HTTP push fault failures. R14 remains validation blocked; arrange a bounded native-test diagnostic
+and synchronization repair before coordinator acceptance or successor dispatch. The complete
+[attempt history](evidence/r14.md#windows-retry-and-acceptance-blocker) preserves both failures.

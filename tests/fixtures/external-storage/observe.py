@@ -39,12 +39,22 @@ def observe(root, name, fmt, mutate, env):
     reflog_read["stdout_bytes"] = len(reflog_read["stdout"].encode())
     if len(reflog_read["stdout"]) > 2048:
         reflog_read["stdout"] = reflog_read["stdout"][:2048] + "<truncated>"
+    detached_reflog = None
+    if name.startswith("reflog_"):
+        head = repo / ".git/HEAD"
+        original_head = head.read_bytes()
+        head.write_text(tip + "\n")
+        detached_reflog = run(["git", "reflog", "show", "--format=%H %gn %gs", "HEAD"], repo, env)
+        detached_reflog["stdout_bytes"] = len(detached_reflog["stdout"].encode())
+        if len(detached_reflog["stdout"]) > 2048:
+            detached_reflog["stdout"] = detached_reflog["stdout"][:2048] + "<truncated>"
+        head.write_bytes(original_head)
     index_before = run(["git", "ls-files", "--sparse", "--stage"], repo, env)
     init = run(["jj", "--config", "signing.behavior='drop'", "git", "init", "--colocate"], repo, env)
     log = run(["jj", "--ignore-working-copy", "log", "--no-graph", "-r", "all()", "-T", "description"], repo, env) if init["exit"] == 0 else None
     status = run(["jj", "status"], repo, env) if init["exit"] == 0 else None
     return {"format": fmt, "case": name, "git": git, "jj_init": init, "jj_log": log,
-            "git_reflog": reflog_read, "index_before": index_before,
+            "git_reflog": reflog_read, "git_reflog_detached": detached_reflog, "index_before": index_before,
             "index_after": run(["git", "ls-files", "--sparse", "--stage"], repo, env),
             "imported": bool(log and "external fixture" in log["stdout"]), "jj_status": status}
 
@@ -126,9 +136,11 @@ def reflog(kind):
     def mutate(repo, base, fmt, tip, env):
         identity = {"short_zone": "A <a@b> 1 +01", "suffix_zone": "A <a@b> 1 +0000suffix",
                     "overflow": "A <a@b> 9223372036854775808 +0000"}.get(kind, "A <a@b> 1 +0000")
+        if kind in ("short_zone_long_date", "unterminated_long_date"):
+            identity = "A <a@b> 1700000000 " + ("+01" if kind == "short_zone_long_date" else "+0000")
         message = {"cr": b"a\rb", "nul": b"a\x00b", "large": b"x" * 1048576}.get(kind, b"fixture")
         line = ("0" * len(tip) + " " + tip + " " + identity + "\t").encode() + message
-        if kind != "unterminated":
+        if kind not in ("unterminated", "unterminated_long_date"):
             line += b"\n"
         (repo / ".git/logs/HEAD").write_bytes(line)
     return mutate
@@ -161,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix="girt-r14-") as tmp:
               ("commit_graph", command("commit-graph", "write", "--reachable")),
               ("auxiliary_indexes", auxiliary)]
     cases += [("reflog_" + k, reflog(k)) for k in
-              ("short_zone", "suffix_zone", "overflow", "cr", "nul", "large", "unterminated")]
+              ("short_zone", "suffix_zone", "overflow", "cr", "nul", "large", "unterminated", "short_zone_long_date", "unterminated_long_date")]
     rows = [observe(root, name, fmt, fn, env) for fmt in ("sha1", "sha256") for name, fn in cases]
     result = {"git": checked(["git", "--version"], root, env),
               "jj": checked(["jj", "--version"], root, env), "cases": rows}

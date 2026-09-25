@@ -26,6 +26,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -39,7 +40,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : vquoqswt 6be4709b (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : knloqwwl 58f69d60 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -67,6 +68,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -80,7 +82,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : klurlrkm 823d0d98 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qoqkltms 378daa20 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -108,6 +110,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -121,7 +124,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ppnnwszx 159f1262 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltkqwsvv 5ff94aae (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -149,6 +152,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -162,7 +166,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : lxuqmxon 1012e813 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : suzrtunz 506278b1 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -186,6 +190,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -219,6 +224,7 @@
         "stderr": "error: object directory /private<fixture>/sha1-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: bad object HEAD\n",
         "stdout_bytes": 0
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -256,6 +262,7 @@
         "stderr": "error: object directory /private<fixture>/sha1-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -269,7 +276,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kwzrmyls fde36ed5 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : nxwsxwyr c21407ad (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -297,6 +304,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -310,7 +318,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : qvytuxws 4aff7b95 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : wqpvstvu e0deb225 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -338,6 +346,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -351,7 +360,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : rmsxpzns b499c6bd (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : konrqwyn abbd9ede (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -379,6 +388,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -392,7 +402,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ypytltyu 127e687e (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : wkrtlslx 2e349969 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -420,6 +430,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -433,7 +444,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltntulyo 8cdc45ec (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : pqmmzmno 098305ce (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -461,6 +472,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -474,7 +486,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : lksmnpoy eda017fc (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : llmqqytz dd78c38b (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -502,6 +514,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -515,7 +528,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kostzzqo 1fda2737 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lwrvnrvl abacb5ef (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -543,6 +556,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n040000 a06fbdf1fb39d67b4f0ba9297affab93622b0361 0\tout/\n",
@@ -556,7 +570,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : ykssxzvr bba0cd8f (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : zuylnozq 3f252f46 (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -584,6 +598,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -597,7 +612,7 @@
       "imported": false,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : xzrttuso fc244abf (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : snvyqrpz 479a8c55 (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
         "stderr": ""
       }
     },
@@ -625,6 +640,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tnew\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -638,7 +654,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : uvlzwvrz ec4566b8 (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : otxzmqln d29c0350 (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -666,6 +682,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -679,7 +696,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : qyxltvql 94e9dbf2 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : tmnzwuty 60bea548 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -707,6 +724,7 @@
         "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n",
         "stdout_bytes": 0
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 128,
         "stdout": "",
@@ -720,7 +738,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : plsxlsry 75c31381 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : rtvkqmvo 8a6bcd0a (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -748,6 +766,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -761,7 +780,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : mtvrmmvm 03897f19 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : vzxwtnzu a956c47d (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -789,6 +808,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -802,7 +822,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ylutvstz ba5d6e80 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : uxnwslqr 37fe409f (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -830,6 +850,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -843,7 +864,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : vutklzkq 0cc7e2f6 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : tvqtrzrt f0afde4f (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -871,6 +892,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -884,7 +906,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : msqswvqw 45979d46 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : tskrwqos 3ad39ea0 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -912,6 +934,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -925,7 +948,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : knrqtxno ddd021df (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : suqkossn f2d779f1 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -953,6 +976,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -966,7 +990,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : snmrslms 55bd58c0 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : uqnzszsl 726588d9 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -994,6 +1018,7 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1007,7 +1032,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : lxwvtrwu 6abc93af (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : usrpqxtm 936ed837 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1035,6 +1060,12 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1048,7 +1079,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : sxqwvpsr 3ff8dc11 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : uklxqzxo 366ec009 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1076,6 +1107,12 @@
         "stderr": "",
         "stdout_bytes": 58
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A suffix\tfixture\n",
+        "stderr": "",
+        "stdout_bytes": 58
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1089,7 +1126,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : lytrpnkv 22e6b065 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : mlnltzzo 7017b67e (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1117,6 +1154,12 @@
         "stderr": "",
         "stdout_bytes": 51
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A fixture\n",
+        "stderr": "",
+        "stdout_bytes": 51
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1130,7 +1173,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : xowvuxww 580713da (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xmxzqkxr 29a2f690 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1158,6 +1201,12 @@
         "stderr": "",
         "stdout_bytes": 47
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A a\rb\n",
+        "stderr": "",
+        "stdout_bytes": 47
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1171,7 +1220,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kkxykqus b6f8e2e6 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : wtwtpqow d48d5971 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1199,6 +1248,12 @@
         "stderr": "",
         "stdout_bytes": 44
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A \n",
+        "stderr": "",
+        "stdout_bytes": 44
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1212,7 +1267,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kyoktyty 3036aeaa (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lxspslxl 810a2943 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1240,6 +1295,12 @@
         "stderr": "",
         "stdout_bytes": 1048620
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx<truncated>",
+        "stderr": "",
+        "stdout_bytes": 1048620
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1253,7 +1314,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : sqqwxsky 4d68fe90 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : vurksmny b5088a5d (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1281,6 +1342,12 @@
         "stderr": "",
         "stdout_bytes": 84
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
@@ -1294,7 +1361,101 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : txryzyqx fca80711 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ymlypxmu 64dfd8f4 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_short_zone_long_date",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : zxrqllwq ec97c654 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_unterminated_long_date",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : pnxzkswr 27995e65 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1322,6 +1483,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1335,7 +1497,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : lqknzovw 0da169f6 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qsztlqmy c039dca1 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1363,6 +1525,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1376,7 +1539,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : xkupozvu 29dd86e5 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : vwzzuxoq 489e3a9c (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1404,6 +1567,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1417,7 +1581,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ouxppzzv 97058e26 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lpsxnmvz 6f304073 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1445,6 +1609,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1458,7 +1623,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : pwpllkwx b85c1f79 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : znyrpwtv 8c895c03 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1482,6 +1647,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1515,6 +1681,7 @@
         "stderr": "error: object directory /private<fixture>/sha256-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: bad object HEAD\n",
         "stdout_bytes": 0
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1552,6 +1719,7 @@
         "stderr": "error: object directory /private<fixture>/sha256-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1565,7 +1733,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kkywmkyu 26486c4f (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : nvrlswvn 094e8b91 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1593,6 +1761,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1606,7 +1775,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : wlkvsyok 1b3f0962 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : swvlvxzr 90aff209 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1634,6 +1803,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1647,7 +1817,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ymxkqvvp eaacca5a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xmsypynl 4dcc56cc (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1675,6 +1845,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1688,7 +1859,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : qlmqwvpx 7578e8ca (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : oytspxvu aa0b5046 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1716,6 +1887,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1729,7 +1901,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : mokylwmt 331f239a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xsnlslnr 0d1ba7b1 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1757,6 +1929,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1770,7 +1943,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : oylswrvu c9371c0f (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qvmntpoy ec4028c8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1798,6 +1971,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1811,7 +1985,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : townywry 76c0f9ea (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : wynksvzp 9599f61a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1839,6 +2013,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n040000 0204c863e50859be2e4aed1e25331fd29853eca0427c5d4169eb7bae6532da5c 0\tout/\n",
@@ -1852,7 +2027,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : xlmltzws b4c97b08 (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : nzpptsom f44d30de (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1880,6 +2055,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1893,7 +2069,7 @@
       "imported": false,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : znxnmlkx bd0b750c (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : zoxqpmmw 887cb7c4 (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
         "stderr": ""
       }
     },
@@ -1921,6 +2097,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813 0\tnew\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1934,7 +2111,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : loztkoyz 03f77829 (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : uuuuuwuz 59765981 (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -1962,6 +2139,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -1975,7 +2153,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : xrwptxzy f28ae072 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : tluswyqx d5a51f75 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2003,6 +2181,7 @@
         "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n",
         "stdout_bytes": 0
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 128,
         "stdout": "",
@@ -2016,7 +2195,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : rkmuqtsk 258cb5a9 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ksnsspnv 9d8106c6 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2044,6 +2223,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2057,7 +2237,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : plyowtxo 28d307e8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : osrlpork 9f897178 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2085,6 +2265,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2098,7 +2279,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : znqkuokr f0b0b477 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : plzwvzty abb8de9e (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2126,6 +2307,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2139,7 +2321,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : qynunrwx c8da2d7a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : yyzppksn 44991e2c (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2167,6 +2349,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2180,7 +2363,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : zoprroyv 79a6fc46 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : zzxvvntl 761dc214 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2208,6 +2391,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2221,7 +2405,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : xzyszzlp 9d9b0200 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qznronwz d77fe3a2 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2249,6 +2433,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2262,7 +2447,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : yqpwqory 874fe2a8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lvnsnxrk 20808f2f (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2290,6 +2475,7 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": null,
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2303,7 +2489,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : kxwpzpnn 490c982b (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : zustosqv 7371134e (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2331,6 +2517,12 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2344,7 +2536,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltxqkwyx 25fc44bb (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ttoqsmvs ad9e9edc (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2372,6 +2564,12 @@
         "stderr": "",
         "stdout_bytes": 82
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A suffix\tfixture\n",
+        "stderr": "",
+        "stdout_bytes": 82
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2385,7 +2583,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : yutqqxvz c5be7d45 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xwrysmzv 4c040ed5 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2413,6 +2611,12 @@
         "stderr": "",
         "stdout_bytes": 75
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A fixture\n",
+        "stderr": "",
+        "stdout_bytes": 75
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2426,7 +2630,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : unxuxonp ef13372d (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : rsyzppvm 4f6395e8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2454,6 +2658,12 @@
         "stderr": "",
         "stdout_bytes": 71
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A a\rb\n",
+        "stderr": "",
+        "stdout_bytes": 71
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2467,7 +2677,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltnqopxu 54afedd8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ntkwxxym 1f8e10df (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2495,6 +2705,12 @@
         "stderr": "",
         "stdout_bytes": 68
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A \n",
+        "stderr": "",
+        "stdout_bytes": 68
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2508,7 +2724,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : nvvxpxqp b5374bc8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ktwlmzyr 783c5fc4 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2536,6 +2752,12 @@
         "stderr": "",
         "stdout_bytes": 1048644
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx<truncated>",
+        "stderr": "",
+        "stdout_bytes": 1048644
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2549,7 +2771,7 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : nooqooup 5b8f4d96 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qmtpuvtr f8a9f188 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     },
@@ -2577,6 +2799,12 @@
         "stderr": "",
         "stdout_bytes": 108
       },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
       "index_before": {
         "exit": 0,
         "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
@@ -2590,7 +2818,101 @@
       "imported": true,
       "jj_status": {
         "exit": 0,
-        "stdout": "The working copy has no changes.\nWorking copy  (@) : ysswslwl cf119d1e (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lqmnkzsp d20b0522 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_short_zone_long_date",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kqzsvmoz 79c3b83e (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_unterminated_long_date",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "git_reflog_detached": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : yssmwqzu 92452f5c (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
         "stderr": ""
       }
     }
