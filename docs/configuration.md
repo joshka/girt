@@ -99,8 +99,9 @@ configuration edge case. Repository layouts and shallow snapshots are described 
 `append` writes a quoted assignment under a repeated section at EOF. Section rename/remove operates
 on all matching headers, including empty headers and deprecated dotted syntax. Untargeted bytes,
 comments, line endings, unknown keys and occurrence order survive. Removed syntax leaves surrounding
-whitespace and comments; an edited header or value uses canonical quoting. NUL and subsection
-newlines are rejected. No include expansion or typed URL interpretation happens in this layer.
+whitespace and comments; an edited header or value uses canonical quoting. Inert comments retain NUL
+bytes. NUL in names, subsections and values, and subsection newlines, are rejected. No include
+expansion or typed URL interpretation happens in this layer.
 
 `Repository::edit_config(max_bytes)` locks the common local file independently of the repository's
 cached effective snapshot. `ConfigEdit::open(path, max_bytes)` explicitly selects another OS-native

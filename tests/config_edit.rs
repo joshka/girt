@@ -355,3 +355,59 @@ fn explicit_unicode_file_path_is_preserved() {
         Some(Some(b"yes".as_slice()))
     );
 }
+
+#[rstest]
+#[case::trailing(b"[x]\nk=a # \0 hi\nnext=b\n", b"[x]\nk=\"changed\" # \0 hi\nnext=b\n")]
+#[case::standalone(b"[x]\nk=a\n; \0\nnext=b\n", b"[x]\nk=\"changed\"\n; \0\nnext=b\n")]
+#[case::header(b"[x] # \0\nk=a\nnext=b\n", b"[x] # \0\nk=\"changed\"\nnext=b\n")]
+#[case::crlf(
+    b"[x]\r\nk=a ; \0\r\nnext=b\r\n",
+    b"[x]\r\nk=\"changed\" ; \0\r\nnext=b\r\n"
+)]
+fn inert_nul_comments_survive_resolution_and_edit(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] original: &[u8],
+    #[case] edited: &[u8],
+) {
+    let (dir, repo) = init(format);
+    let path = dir.path().join("config");
+    let mut bytes = std::fs::read(&path).unwrap();
+    let prefix = bytes.len();
+    bytes.extend_from_slice(original);
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(git(dir.path(), &["config", "--get", "x.k"]), b"a\n");
+    let reopened = Repository::open(dir.path()).unwrap();
+    let inputs = ConfigInputs {
+        files: vec![ConfigFile {
+            path: path.clone(),
+            scope: ConfigScope::Local,
+            optional: false,
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        Config::resolve(&inputs).unwrap().value("x", None, "next"),
+        Some(Some(b"b".as_slice()))
+    );
+    let mut document = Document::parse(&bytes).unwrap();
+    assert_eq!(document.as_bytes(), bytes);
+    let occurrence = document
+        .config()
+        .entries()
+        .iter()
+        .position(|e| e.section == b"x" && e.name == b"k")
+        .unwrap();
+    document.set_value(occurrence, b"changed").unwrap();
+    let mut expected = bytes[..prefix].to_vec();
+    expected.extend_from_slice(edited);
+    assert_eq!(document.as_bytes(), expected);
+    let mut edit = reopened.edit_config(4096).unwrap();
+    edit.document_mut()
+        .set_value(occurrence, b"changed")
+        .unwrap();
+    edit.commit().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
+    assert_eq!(git(dir.path(), &["config", "--get", "x.k"]), b"changed\n");
+    assert_eq!(git(dir.path(), &["config", "--get", "x.next"]), b"b\n");
+    assert_eq!(repo.object_format(), reopened.object_format());
+}

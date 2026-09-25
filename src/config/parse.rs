@@ -58,7 +58,8 @@ impl Config {
     /// A UTF-8 BOM is accepted only at the start. Escape sequences are `\n`, `\t`, `\b`,
     /// `\\`, and `\"`; backslash-newline joins physical lines. Unquoted surrounding whitespace
     /// is removed, while quoted whitespace is preserved. An absent `=` is distinct from an empty
-    /// value. NUL bytes and malformed syntax return an error.
+    /// value. Comments may contain uninterpreted NUL bytes; NUL in names, subsections or values
+    /// and malformed syntax return an error.
     ///
     /// # Errors
     ///
@@ -76,15 +77,6 @@ impl Config {
     ) -> Result<(Self, Layout), ConfigError> {
         let offset = usize::from(bytes.starts_with(b"\xef\xbb\xbf")) * 3;
         let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
-        if let Some(position) = bytes.iter().position(|byte| *byte == 0) {
-            return Err(ConfigError {
-                line: 1 + bytes[..position]
-                    .iter()
-                    .filter(|byte| **byte == b'\n')
-                    .count(),
-                reason: "NUL in configuration",
-            });
-        }
         let mut parser = Parser {
             bytes,
             pos: 0,
@@ -402,6 +394,13 @@ mod tests {
     #[case::escape(b"[core]\nx = \\q")]
     #[case::quote(b"[core]\nx = \"no")]
     #[case::nul(b"[core]\nx = \0")]
+    #[case::nul_quoted(b"[core]\nx = \"a\0b\"")]
+    #[case::nul_key(b"[core]\nx\0 = a")]
+    #[case::nul_section(b"[co\0re]\nx=a")]
+    #[case::nul_subsection(b"[core \"a\0b\"]\nx=a")]
+    #[case::nul_subsection_escape(b"[core \"a\\\0b\"]\nx=a")]
+    #[case::nul_between(b"[core]\n\0\nx=a")]
+    #[case::quoted_comment(b"[core]\nx=\"#\0\"")]
     #[case::double_cr_escape(b"[core]\nx = a\\\r\r\nb\n")]
     fn rejects_syntax(#[case] input: &[u8]) {
         assert!(Config::parse(input).is_err());
