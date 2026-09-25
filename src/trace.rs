@@ -47,6 +47,7 @@ pub(crate) fn loose(error: &crate::Error) -> &'static str {
 pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
     use crate::ObjectReadError::*;
     match error {
+        Cancelled => "cancelled",
         Path { source, .. } => io(source),
         PackArtifacts { source, .. } => object(source),
         Loose(e) => loose(e),

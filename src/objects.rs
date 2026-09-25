@@ -1,11 +1,13 @@
 mod alternates;
-use std::fs::{self, File};
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::{fs, io};
 
 pub use alternates::AlternateLimits;
 
-use crate::pack::Pack;
+use crate::pack::FilePack;
+use crate::pack::reader::check_cancelled;
 use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 
 /// An owned, identity-verified object kind and exact uncompressed payload.
@@ -49,13 +51,22 @@ impl Object {
 /// Bounds the aggregate pack snapshot across primary and borrowed stores retained by
 /// [`crate::Repository::objects`].
 ///
-/// Index-derived tables require additional memory proportional to index bytes. These are input
-/// bounds, not a total heap limit. Zero values permit no indexed packs. Unindexed files are
-/// ignored.
+/// Artifact bytes bound validation work, not retained pack memory. Index input and derived tables
+/// have a separate bound. These are per-reader bounds, not a process RSS quota. Zero values permit
+/// no indexed packs. Unindexed files are ignored.
 #[derive(Debug, Clone, Copy)]
 pub struct PackLimits {
-    /// Maximum sum of `.idx` and `.pack` file bytes (default 512 MiB).
+    /// Maximum sum of `.idx` and `.pack` file bytes validated (default 64 GiB on 64-bit).
     pub max_bytes: usize,
+    /// Maximum aggregate index input bytes (default 64 MiB).
+    ///
+    /// Opening temporarily parses one bounded index. Input and derived allocations together
+    /// are bounded by four times this value, excluding allocator overhead and path storage.
+    pub max_index_bytes: usize,
+    /// Maximum retained file handles (default 512); each pair needs two.
+    pub max_open_files: usize,
+    /// Maximum directory entries examined across all pack directories (default 1,000,000).
+    pub max_directory_entries: usize,
     /// Maximum number of index/pack pairs (default 256).
     pub max_packs: usize,
 }
@@ -63,7 +74,10 @@ pub struct PackLimits {
 impl Default for PackLimits {
     fn default() -> Self {
         Self {
-            max_bytes: 512 * 1024 * 1024,
+            max_bytes: usize::try_from(64_u64 * 1024 * 1024 * 1024).unwrap_or(usize::MAX),
+            max_index_bytes: 64 * 1024 * 1024,
+            max_open_files: 512,
+            max_directory_entries: 1_000_000,
             max_packs: 256,
         }
     }
@@ -74,7 +88,7 @@ impl Default for PackLimits {
 /// Every base and reconstructed payload must fit `max_object_bytes`. Delta programs have their
 /// own limit. `max_decode_bytes` charges every inflated program/base and every reconstructed
 /// result, including intermediate results, before allocating its buffer. It therefore also bounds
-/// retained decoding bytes, but excludes pack snapshots, allocator overhead, traversal bookkeeping,
+/// retained decoding bytes, but excludes index tables, allocator overhead, traversal bookkeeping,
 /// and fixed zlib scratch space. Loose reads use the smaller of object and decode limits, plus a
 /// small framing allowance. No decoded objects are cached between reads.
 #[derive(Debug, Clone, Copy)]
@@ -85,6 +99,11 @@ pub struct ReadLimits {
     pub max_delta_bytes: usize,
     /// Maximum cumulative decoded/reconstructed bytes for one read (default 256 MiB).
     pub max_decode_bytes: usize,
+    /// Maximum cumulative compressed entry bytes per packed read (default 256 MiB).
+    ///
+    /// Charges complete entry ranges before inflation, including bases; loose reads retain
+    /// their existing output-size policy. This is a work bound, not retained input memory.
+    pub max_input_bytes: usize,
     /// Maximum number of delta edges (default 64); zero permits ordinary objects only.
     pub max_delta_depth: usize,
 }
@@ -96,25 +115,37 @@ impl Default for ReadLimits {
             max_delta_bytes: 64 * 1024 * 1024,
             max_decode_bytes: 256 * 1024 * 1024,
             max_delta_depth: 64,
+            max_input_bytes: 256 * 1024 * 1024,
         }
     }
 }
 
-/// Reads loose objects and an immutable, validated snapshot of local packs.
+/// Reads loose objects and validated, pinned local pack/index files.
 ///
-/// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening loads
+/// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening streams
 /// all `.idx`/`.pack` pairs in the repository's object format in filename order and verifies index
 /// v1/v2 structure, checksums, pack v2/v3 headers/counts, offset ranges, and v2 entry CRCs.
 /// Legacy v1 indexes have no entry CRCs. Entry framing, zlib streams, delta programs, and object
 /// identities are checked on reads, including every base and intermediate delta; opening is not a
 /// full pack fsck.
 ///
+/// Pack bytes are never retained in full. Index identities are read from disk; bounded offset
+/// tables stay in memory. Each pair pins two handles, shared internally through `Arc`. Short
+/// seek/read operations serialize on each artifact; simultaneous reads have independent cursors.
+/// Cloning shares pack handles and offset tables, while copying the bounded store topology.
+/// No decoded-object or negative cache is retained. [`PackLimits`] bounds aggregate opening
+/// work, index memory and handles; [`ReadLimits`] bounds each packed decode. Concurrent reads
+/// and caller-owned results multiply memory use. Cancellation is available through
+/// [`crate::Repository::objects_controlled`] and [`Self::read_controlled`].
+///
 /// Within each store, loose objects take precedence and are read fresh on each call. Corruption
 /// never falls through to a duplicate packed copy. Packs remain readable after Git repacks/deletes
-/// the original files; reopen the reader to discover new packs. Concurrent repacking during opening
-/// can cause an I/O error: retry by opening a new reader. The object directory and its ancestors
-/// must be trusted, as with [`LooseObjects`]. This is not a snapshot of loose files or repository
-/// references.
+/// the original files where the OS permits unlinking open files; reopen to discover new packs.
+/// Artifacts must remain immutable while readers use them: pinned handles do not defend against
+/// in-place writes. Opening is not an atomic pair or topology snapshot. Exclude writers when a
+/// consistent view is required. Refresh and concurrent publication contracts remain deferred. The
+/// object directory and its ancestors must be trusted, as with [`LooseObjects`]. This is not a
+/// snapshot of loose files or repository references.
 ///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
@@ -147,17 +178,17 @@ impl Default for ReadLimits {
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Objects {
     format: ObjectFormat,
     stores: Vec<Store>,
     pub(crate) shallow: crate::ShallowRoots,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Store {
     loose: LooseObjects,
-    packs: Vec<Pack>,
+    packs: Vec<Arc<FilePack>>,
 }
 
 impl Objects {
@@ -177,6 +208,22 @@ impl Objects {
         limits: PackLimits,
         alternates: AlternateLimits,
     ) -> Result<Self, ObjectReadError> {
+        Self::open_controlled(
+            format,
+            directory,
+            limits,
+            alternates,
+            &AtomicBool::new(false),
+        )
+    }
+
+    pub(crate) fn open_controlled(
+        format: ObjectFormat,
+        directory: &Path,
+        limits: PackLimits,
+        alternates: AlternateLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Self, ObjectReadError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -188,12 +235,13 @@ impl Objects {
         );
 
         let operation = || {
+            check_cancelled(cancelled)?;
             let directories = alternates::discover(directory, alternates)?;
-            let mut remaining = limits.max_bytes;
-            let mut count = limits.max_packs;
+            check_cancelled(cancelled)?;
+            let mut budget = limits;
             let mut stores = Vec::new();
             for directory in directories {
-                stores.push(Store::open(format, &directory, &mut remaining, &mut count)?);
+                stores.push(Store::open(format, &directory, &mut budget, cancelled)?);
             }
             Ok(Self {
                 format,
@@ -228,6 +276,24 @@ impl Objects {
         id: ObjectId,
         limits: ReadLimits,
     ) -> Result<Option<Object>, ObjectReadError> {
+        self.read_controlled(id, limits, &AtomicBool::new(false))
+    }
+
+    /// Reads with cooperative cancellation between stores, pack lookups and decode chunks.
+    ///
+    /// Loose reads, index lookups, object hashing and individual delta applications finish before
+    /// the next checkpoint. Blocked filesystem calls cannot be interrupted. No partial object is
+    /// returned; all per-read buffers are released when the call returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same storage errors as [`Self::read`], or [`ObjectReadError::Cancelled`].
+    pub fn read_controlled(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<Object>, ObjectReadError> {
         #[cfg(feature = "tracing")]
         let span = tracing::trace_span!(
             target: "girt",
@@ -238,19 +304,28 @@ impl Objects {
         );
 
         let operation = || {
+            check_cancelled(cancelled)?;
             let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
             for store in &self.stores {
+                check_cancelled(cancelled)?;
                 match store.loose.read_raw(id, loose_limit) {
-                    Ok(object) => return Ok(Some(object)),
+                    Ok(object) => {
+                        check_cancelled(cancelled)?;
+                        return Ok(Some(object));
+                    }
                     Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
                 }
                 for pack in &store.packs {
-                    if let Some(position) = pack.find(id) {
-                        return pack.read(position, limits).map(Some);
+                    check_cancelled(cancelled)?;
+                    if let Some(position) = pack.find(id)? {
+                        let object = pack.read(position, limits, cancelled)?;
+                        check_cancelled(cancelled)?;
+                        return Ok(Some(object));
                     }
                 }
             }
+            check_cancelled(cancelled)?;
             Ok(None)
         };
         #[cfg(feature = "tracing")]
@@ -268,8 +343,8 @@ impl Store {
     fn open(
         format: ObjectFormat,
         directory: &Path,
-        remaining: &mut usize,
-        count: &mut usize,
+        budget: &mut PackLimits,
+        cancelled: &AtomicBool,
     ) -> Result<Self, ObjectReadError> {
         let loose = LooseObjects::new(directory, format);
         let pack_directory = directory.join("pack");
@@ -290,6 +365,11 @@ impl Store {
         };
         let mut paths = Vec::new();
         for entry in entries {
+            check_cancelled(cancelled)?;
+            budget.max_directory_entries = budget
+                .max_directory_entries
+                .checked_sub(1)
+                .ok_or(ObjectReadError::Limit("pack directory entries"))?;
             let path = entry
                 .map_err(|source| ObjectReadError::Path {
                     path: pack_directory.clone(),
@@ -297,7 +377,8 @@ impl Store {
                 })?
                 .path();
             if path.extension().is_some_and(|extension| extension == "idx") {
-                *count = count
+                budget.max_packs = budget
+                    .max_packs
                     .checked_sub(1)
                     .ok_or(ObjectReadError::Limit("pack count"))?;
                 paths.push(path);
@@ -306,43 +387,35 @@ impl Store {
         paths.sort();
         let mut packs = Vec::new();
         for path in paths {
-            let index = read_bounded(&path, remaining)?;
-            let data = read_bounded(&path.with_extension("pack"), remaining)?;
-            packs.push(Pack::open(format, &index, data).map_err(|source| {
-                ObjectReadError::PackArtifacts {
-                    pack: path.with_extension("pack"),
-                    index: path,
-                    source: Box::new(source),
-                }
-            })?);
+            budget.max_open_files = budget
+                .max_open_files
+                .checked_sub(2)
+                .ok_or(ObjectReadError::Limit("pack file handles"))?;
+            packs.push(Arc::new(
+                FilePack::open(format, &path, budget, cancelled).map_err(
+                    |source| match source {
+                        ObjectReadError::Limit(_)
+                        | ObjectReadError::Cancelled
+                        | ObjectReadError::Path { .. } => source,
+                        source => ObjectReadError::PackArtifacts {
+                            pack: path.with_extension("pack"),
+                            index: path,
+                            source: Box::new(source),
+                        },
+                    },
+                )?,
+            ));
         }
         Ok(Self { loose, packs })
     }
 }
 
-fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Vec<u8>, ObjectReadError> {
-    let at_path = |source| ObjectReadError::Path {
-        path: path.to_owned(),
-        source,
-    };
-    let file = File::open(path).map_err(at_path)?;
-    if file.metadata().map_err(at_path)?.len() > *remaining as u64 {
-        return Err(ObjectReadError::Limit("pack snapshot bytes"));
-    }
-    let mut bytes = Vec::new();
-    file.take((*remaining as u64).saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(at_path)?;
-    if bytes.len() > *remaining {
-        return Err(ObjectReadError::Limit("pack snapshot bytes"));
-    }
-    *remaining -= bytes.len();
-    Ok(bytes)
-}
-
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectReadError {
+    /// The caller requested cancellation; no partial object is returned.
+    #[error("object storage cancelled")]
+    Cancelled,
     /// An alternates record cannot be interpreted as a supported native path.
     #[error("invalid alternate path in {path}: {reason}")]
     Alternate {
@@ -377,10 +450,10 @@ pub enum ObjectReadError {
     /// The existing loose reader rejected the object; preserves its concrete cause.
     #[error("loose object: {0}")]
     Loose(#[from] crate::Error),
-    /// The index version is not 2 (headerless legacy indexes report version 1).
+    /// The index version is neither supported headerless v1 nor headered v2.
     #[error("unsupported pack index version {0}")]
     IndexVersion(u32),
-    /// The pack version is not 2.
+    /// The pack version is neither 2 nor 3.
     #[error("unsupported pack version {0}")]
     PackVersion(u32),
     /// Reserved or unknown packed object type.

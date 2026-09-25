@@ -780,6 +780,7 @@ fn known_only_installation_can_exceed_default_snapshot_count() {
         .unwrap();
     let snapshot = PackLimits {
         max_packs: 257,
+        max_open_files: 514,
         ..PackLimits::default()
     };
     repeat_snapshot_pair(&repo, installed.checksum.unwrap(), snapshot.max_packs);

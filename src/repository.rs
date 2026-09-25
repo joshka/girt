@@ -419,6 +419,34 @@ impl Repository {
         Ok(objects)
     }
 
+    /// Opens bounded file-backed storage with cooperative cancellation.
+    ///
+    /// Checks cancellation around alternate discovery and bounded index parsing, between directory
+    /// entries, and every 64 KiB during pack validation. Individual filesystem calls cannot be
+    /// interrupted. Run the whole operation on a caller-owned blocking worker when needed.
+    /// On failure all opened artifacts are closed and no files are changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors from [`Self::objects_with_alternates`] or
+    /// [`crate::ObjectReadError::Cancelled`].
+    pub fn objects_controlled(
+        &self,
+        packs: crate::PackLimits,
+        alternates: crate::AlternateLimits,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::Objects, crate::ObjectReadError> {
+        let mut objects = crate::Objects::open_controlled(
+            self.object_format,
+            &self.object_dir,
+            packs,
+            alternates,
+            cancelled,
+        )?;
+        objects.shallow = self.shallow.clone();
+        Ok(objects)
+    }
+
     /// Connects to the existing loose-object API without creating directories or files.
     ///
     /// Both openable formats support loose storage. Subsequent reads/writes retain

@@ -1,6 +1,6 @@
 use crate::{ObjectId, ObjectReadError as Error};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Entry {
     pub id: ObjectId,
     pub offset: usize,
@@ -164,12 +164,14 @@ impl Index {
         })
     }
 
+    #[cfg(test)]
     pub fn find(&self, id: ObjectId) -> Option<usize> {
         self.entries
             .binary_search_by_key(&id, |entry| entry.id)
             .ok()
     }
 
+    #[cfg(test)]
     pub fn at_offset(&self, offset: usize) -> Result<usize, Error> {
         let position = self
             .offsets

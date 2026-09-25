@@ -124,6 +124,13 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
         }),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
     ));
+    assert!(matches!(
+        a.objects(PackLimits {
+            max_open_files: 1,
+            ..PackLimits::default()
+        }),
+        Err(ObjectReadError::Limit("pack file handles"))
+    ));
     assert_eq!(snapshot(fixture.root.path()), before);
     // Access the remaining fixture fields to retain the shared generator's warning-free contract.
     assert!(!fixture.records.is_empty());
@@ -153,6 +160,20 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
             ..PackLimits::default()
         }),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
+    ));
+    assert!(matches!(
+        a.objects(PackLimits {
+            max_open_files: 3,
+            ..PackLimits::default()
+        }),
+        Err(ObjectReadError::Limit("pack file handles"))
+    ));
+    assert!(matches!(
+        a.objects(PackLimits {
+            max_index_bytes: fs::metadata(&primary_index).unwrap().len() as usize,
+            ..PackLimits::default()
+        }),
+        Err(ObjectReadError::Limit("pack index bytes"))
     ));
 }
 

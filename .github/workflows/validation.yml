@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      storage_only:
+        description: Run only focused file-backed storage checks
+        type: boolean
+        default: false
       alternates_only:
         description: Run only focused native alternate storage checks
         type: boolean
@@ -19,7 +23,7 @@ permissions:
 
 jobs:
   unix:
-    if: ${{ !inputs.http_only && !inputs.alternates_only }}
+    if: ${{ !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -84,7 +88,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    if: ${{ !inputs.http_only && !inputs.alternates_only }}
+    if: ${{ !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
     # Portable integrations are explicit; process adapters remain unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -182,3 +186,39 @@ jobs:
         run: cargo +stable clippy --locked --all-features --lib --test alternates --test repositories --test packs -- -D warnings
       - name: Original Git observations
         run: python tests/fixtures/alternates/observe.py
+
+  storage:
+    if: ${{ inputs.storage_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Storage behavior and original decoder corpus
+        run: cargo +stable test --locked --all-features --lib --test packs --test alternates --test repositories
+      - name: Scoped Clippy
+        run: cargo +stable clippy --locked --all-features --lib --test packs --test alternates --test repositories --example storage_resources --bench packs -- -D warnings
+      - name: Large original Git fixture
+        run: python tests/fixtures/file-storage/generate.py large-store sha1
+      - name: Build isolated resource probe
+        run: cargo +stable build --locked --release --example storage_resources
+      - name: Measure reader resources and cancellation
+        run: python tests/fixtures/file-storage/measure.py large-store
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: storage-${{ matrix.os }}
+          path: |
+            large-store/workload.json
+            storage-measurements.json

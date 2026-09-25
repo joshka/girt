@@ -1,17 +1,21 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use flate2::{Decompress, FlushDecompress, Status};
 
 use super::delta::{apply, byte, charge, size};
+#[cfg(test)]
 use super::index::{Index, verify_hash, word};
 use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct Pack {
     index: Index,
     data: Vec<u8>,
 }
 
+#[cfg(test)]
 impl Pack {
     pub fn open(
         format: crate::ObjectFormat,
@@ -49,97 +53,165 @@ impl Pack {
         self.index.find(id)
     }
 
-    pub fn read(&self, mut position: usize, limits: ReadLimits) -> Result<Object, Error> {
-        let format = self.index.pack_hash.format();
-        let width = format.digest_len();
-        let mut remaining = limits.max_decode_bytes;
-        let mut pending = Vec::new();
-        let mut seen = HashSet::new();
-        let mut object = loop {
-            if !seen.insert(position) {
-                return Err(Error::DeltaCycle);
-            }
-            let entry = &self.index.entries[position];
-            let mut input = &self.data[entry.offset..entry.end];
-            let header = byte(&mut input)?;
-            let kind = (header >> 4) & 7;
-            let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
-            let base = match kind {
-                1..=4 => None,
-                6 => {
-                    let mut next = byte(&mut input)?;
-                    let mut distance = (next & 127) as usize;
-                    while next & 128 != 0 {
-                        next = byte(&mut input)?;
-                        distance = distance
-                            .checked_add(1)
-                            .and_then(|n| n.checked_mul(128))
-                            .and_then(|n| n.checked_add((next & 127) as usize))
-                            .ok_or(Error::Corrupt("delta offset overflow"))?;
-                    }
-                    if distance == 0 {
-                        return Err(Error::Corrupt("zero delta distance"));
-                    }
-                    let offset = entry
-                        .offset
-                        .checked_sub(distance)
-                        .ok_or(Error::Corrupt("delta offset before pack"))?;
-                    Some(self.index.at_offset(offset)?)
-                }
-                7 => {
-                    let raw = input
-                        .get(..width)
-                        .ok_or(Error::Corrupt("truncated base identity"))?;
-                    let id = ObjectId::from_bytes(format, raw).unwrap();
-                    input = &input[width..];
-                    Some(self.index.find(id).ok_or(Error::MissingBase(id))?)
-                }
-                other => return Err(Error::ObjectType(other)),
-            };
-            let limit = if base.is_some() {
-                limits.max_delta_bytes
-            } else {
-                limits.max_object_bytes
-            };
-            if length > limit {
-                return Err(Error::Limit(if base.is_some() {
-                    "delta program bytes"
-                } else {
-                    "object bytes"
-                }));
-            }
-            if base.is_some() && pending.len() >= limits.max_delta_depth {
-                return Err(Error::Limit("delta depth"));
-            }
-            charge(&mut remaining, length)?;
-            let data = inflate(input, length)?;
-            if let Some(base) = base {
-                pending.push((position, data));
-                position = base;
-            } else {
-                let kind = match kind {
-                    1 => ObjectKind::Commit,
-                    2 => ObjectKind::Tree,
-                    3 => ObjectKind::Blob,
-                    4 => ObjectKind::Tag,
-                    _ => unreachable!("non-delta kinds validated above"),
-                };
-                let object = Object { kind, data, format };
-                verify_identity(&object, entry.id)?;
-                break object;
-            }
-        };
-        while let Some((position, program)) = pending.pop() {
-            object.data = apply(
-                &object.data,
-                &program,
-                limits.max_object_bytes,
-                &mut remaining,
-            )?;
-            verify_identity(&object, self.index.entries[position].id)?;
-        }
-        Ok(object)
+    pub fn read(&self, position: usize, limits: ReadLimits) -> Result<Object, Error> {
+        decode(self, position, limits, &AtomicBool::new(false))
     }
+}
+
+pub(super) trait Source {
+    fn format(&self) -> crate::ObjectFormat;
+    fn entry(&self, position: usize) -> Result<super::index::Entry, Error>;
+    fn find(&self, id: ObjectId) -> Result<Option<usize>, Error>;
+    fn at_offset(&self, offset: usize) -> Result<usize, Error>;
+    fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error>;
+    fn inflate(
+        &self,
+        start: usize,
+        end: usize,
+        expected: usize,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<u8>, Error>;
+}
+
+#[cfg(test)]
+impl Source for Pack {
+    fn format(&self) -> crate::ObjectFormat {
+        self.index.pack_hash.format()
+    }
+    fn entry(&self, position: usize) -> Result<super::index::Entry, Error> {
+        Ok(self.index.entries[position].clone())
+    }
+    fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
+        Ok(self.find(id))
+    }
+    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
+        self.index.at_offset(offset)
+    }
+    fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error> {
+        Ok(self.data[entry.offset..entry.end.min(entry.offset.saturating_add(64))].to_vec())
+    }
+    fn inflate(
+        &self,
+        start: usize,
+        end: usize,
+        expected: usize,
+        _: &AtomicBool,
+    ) -> Result<Vec<u8>, Error> {
+        inflate(&self.data[start..end], expected)
+    }
+}
+
+pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), Error> {
+    if cancelled.load(Ordering::Relaxed) {
+        Err(Error::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn decode(
+    source: &impl Source,
+    mut position: usize,
+    limits: ReadLimits,
+    cancelled: &AtomicBool,
+) -> Result<Object, Error> {
+    let format = source.format();
+    let width = format.digest_len();
+    let mut remaining = limits.max_decode_bytes;
+    let mut input_remaining = limits.max_input_bytes;
+    let mut pending = Vec::new();
+    let mut seen = HashSet::new();
+    let mut object = loop {
+        if !seen.insert(position) {
+            return Err(Error::DeltaCycle);
+        }
+        check_cancelled(cancelled)?;
+        let entry = source.entry(position)?;
+        input_remaining = input_remaining
+            .checked_sub(entry.end - entry.offset)
+            .ok_or(Error::Limit("compressed entry bytes"))?;
+        let prefix = source.prefix(&entry)?;
+        let mut input = prefix.as_slice();
+        let header = byte(&mut input)?;
+        let kind = (header >> 4) & 7;
+        let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
+        let base = match kind {
+            1..=4 => None,
+            6 => {
+                let mut next = byte(&mut input)?;
+                let mut distance = (next & 127) as usize;
+                while next & 128 != 0 {
+                    next = byte(&mut input)?;
+                    distance = distance
+                        .checked_add(1)
+                        .and_then(|n| n.checked_mul(128))
+                        .and_then(|n| n.checked_add((next & 127) as usize))
+                        .ok_or(Error::Corrupt("delta offset overflow"))?;
+                }
+                if distance == 0 {
+                    return Err(Error::Corrupt("zero delta distance"));
+                }
+                let offset = entry
+                    .offset
+                    .checked_sub(distance)
+                    .ok_or(Error::Corrupt("delta offset before pack"))?;
+                Some(source.at_offset(offset)?)
+            }
+            7 => {
+                let raw = input
+                    .get(..width)
+                    .ok_or(Error::Corrupt("truncated base identity"))?;
+                let id = ObjectId::from_bytes(format, raw).unwrap();
+                input = &input[width..];
+                Some(source.find(id)?.ok_or(Error::MissingBase(id))?)
+            }
+            other => return Err(Error::ObjectType(other)),
+        };
+        let limit = if base.is_some() {
+            limits.max_delta_bytes
+        } else {
+            limits.max_object_bytes
+        };
+        if length > limit {
+            return Err(Error::Limit(if base.is_some() {
+                "delta program bytes"
+            } else {
+                "object bytes"
+            }));
+        }
+        if base.is_some() && pending.len() >= limits.max_delta_depth {
+            return Err(Error::Limit("delta depth"));
+        }
+        charge(&mut remaining, length)?;
+        let start = entry.offset + prefix.len() - input.len();
+        let data = source.inflate(start, entry.end, length, cancelled)?;
+        if let Some(base) = base {
+            pending.push((position, data));
+            position = base;
+        } else {
+            let kind = match kind {
+                1 => ObjectKind::Commit,
+                2 => ObjectKind::Tree,
+                3 => ObjectKind::Blob,
+                4 => ObjectKind::Tag,
+                _ => unreachable!("non-delta kinds validated above"),
+            };
+            let object = Object { kind, data, format };
+            verify_identity(&object, entry.id)?;
+            break object;
+        }
+    };
+    while let Some((position, program)) = pending.pop() {
+        check_cancelled(cancelled)?;
+        object.data = apply(
+            &object.data,
+            &program,
+            limits.max_object_bytes,
+            &mut remaining,
+        )?;
+        verify_identity(&object, source.entry(position)?.id)?;
+    }
+    Ok(object)
 }
 
 fn verify_identity(object: &Object, expected: ObjectId) -> Result<(), Error> {
@@ -149,6 +221,7 @@ fn verify_identity(object: &Object, expected: ObjectId) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(test)]
 fn inflate(input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
     let (data, consumed) = inflate_prefix(input, expected)?;
     if consumed != input.len() {

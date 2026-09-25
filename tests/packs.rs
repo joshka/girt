@@ -463,3 +463,133 @@ fn reads_symlinked_object_directory(#[case] format: girt::ObjectFormat) {
         fixture.delta
     );
 }
+
+#[rstest]
+#[case::index_bytes(PackLimits { max_index_bytes: 1, ..PackLimits::default() }, "pack index bytes")]
+#[case::handles(PackLimits { max_open_files: 1, ..PackLimits::default() }, "pack file handles")]
+#[case::directory(PackLimits { max_directory_entries: 0, ..PackLimits::default() }, "pack directory entries")]
+fn rejects_file_resource_limits(#[case] limits: PackLimits, #[case] expected: &str) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    assert!(
+        matches!(fixture.repo.objects(limits), Err(ObjectReadError::Limit(reason)) if reason == expected)
+    );
+    // A failed opening leaves no reader state that can poison a later independent attempt.
+    assert!(fixture.repo.objects(PackLimits::default()).is_ok());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn exact_file_limits_and_compressed_work(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let index_bytes = fs::metadata(&fixture.index_path).unwrap().len() as usize;
+    let pack_bytes = fs::metadata(fixture.index_path.with_extension("pack"))
+        .unwrap()
+        .len() as usize;
+    let limits = PackLimits {
+        max_bytes: index_bytes + pack_bytes,
+        max_index_bytes: index_bytes,
+        max_open_files: 2,
+        max_packs: 1,
+        ..PackLimits::default()
+    };
+    let objects = fixture.repo.objects(limits).unwrap();
+    let read = ReadLimits {
+        max_input_bytes: 0,
+        ..ReadLimits::default()
+    };
+    assert!(matches!(
+        objects.read(fixture.delta, read),
+        Err(ObjectReadError::Limit("compressed entry bytes"))
+    ));
+    assert!(
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn cancelled_open_and_read_are_retryable(#[case] format: girt::ObjectFormat) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let fixture = Fixture::new(format, true, 4);
+    let cancelled = AtomicBool::new(true);
+    assert!(matches!(
+        fixture.repo.objects_controlled(
+            PackLimits::default(),
+            girt::AlternateLimits::default(),
+            &cancelled
+        ),
+        Err(ObjectReadError::Cancelled)
+    ));
+    cancelled.store(false, Ordering::Relaxed);
+    let objects = fixture
+        .repo
+        .objects_controlled(
+            PackLimits::default(),
+            girt::AlternateLimits::default(),
+            &cancelled,
+        )
+        .unwrap();
+    cancelled.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        objects.read_controlled(fixture.delta, ReadLimits::default(), &cancelled),
+        Err(ObjectReadError::Cancelled)
+    ));
+    cancelled.store(false, Ordering::Relaxed);
+    assert!(
+        objects
+            .read_controlled(fixture.delta, ReadLimits::default(), &cancelled)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn cloned_readers_share_files_with_independent_cursors(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 32);
+    let reader = fixture.repo.objects(PackLimits::default()).unwrap();
+    let other = reader.clone();
+    let expected = reader.read(fixture.delta, ReadLimits::default()).unwrap();
+    let result = std::thread::scope(|scope| {
+        let first = scope.spawn(|| reader.read(fixture.delta, ReadLimits::default()).unwrap());
+        let second = scope.spawn(|| other.read(fixture.ordinary, ReadLimits::default()).unwrap());
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert_eq!(result.0, expected);
+    assert_eq!(result.1.unwrap().id(), fixture.ordinary);
+    drop(reader);
+    assert_eq!(
+        other.read(fixture.delta, ReadLimits::default()).unwrap(),
+        expected
+    );
+}
+
+#[rstest]
+#[case::index("idx")]
+#[case::pack("pack")]
+fn truncated_pinned_artifacts_preserve_io_failure(#[case] extension: &str) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let path = fs::canonicalize(fixture.index_path.with_extension(extension)).unwrap();
+    // Git indexes may be read-only. Recreate this fixture artifact before pinning it.
+    let bytes = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, bytes).unwrap();
+    let reader = fixture.repo.objects(PackLimits::default()).unwrap();
+    // In-place writes violate the immutable-artifact contract; observable short reads must still
+    // return an error rather than panic, deadlock or become object absence.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(0)
+        .unwrap();
+    assert!(
+        matches!(reader.read(fixture.delta, ReadLimits::default()), Err(ObjectReadError::Path { path: found, source }) if found == path && source.kind() == std::io::ErrorKind::UnexpectedEof)
+    );
+}

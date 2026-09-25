@@ -72,9 +72,50 @@ fn packs(c: &mut Criterion) {
     }
 }
 
+// Optional large-store input is generated separately so fixture construction is never timed.
+fn large_storage(c: &mut Criterion) {
+    let Ok(path) = std::env::var("GIRT_STORAGE_WORKLOAD") else {
+        return;
+    };
+    let repository = girt::Repository::open(&path).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(std::path::Path::new(&path).join("workload.json")).unwrap(),
+    )
+    .unwrap();
+    let small = report["small"].as_str().unwrap().parse().unwrap();
+    let large = report["large"].as_str().unwrap().parse().unwrap();
+    let objects = repository.objects(PackLimits::default()).unwrap();
+    let mut group = c.benchmark_group("large-storage");
+    group
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(20));
+    group.bench_function("open-validate-warm", |b| {
+        b.iter(|| {
+            repository
+                .objects(black_box(PackLimits::default()))
+                .unwrap()
+        })
+    });
+    group.measurement_time(Duration::from_secs(2));
+    group.bench_function("small-warm", |b| {
+        b.iter(|| {
+            objects
+                .read(black_box(small), ReadLimits::default())
+                .unwrap()
+        })
+    });
+    group.bench_function("32mib-warm", |b| {
+        b.iter(|| {
+            objects
+                .read(black_box(large), ReadLimits::default())
+                .unwrap()
+        })
+    });
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(2));
-    targets = packs
+    targets = packs, large_storage
 }
 criterion_main!(benches);

@@ -86,8 +86,13 @@ fn open_read(
     limits: ReadLimits,
 ) -> Result<crate::Object, Error> {
     let (index, data) = fixture(format, entries);
-    let pack = Pack::open(format, &index, data)?;
-    pack.read(pack.find(id).unwrap(), limits)
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)?;
+    pack.read(pack.find(id)?.unwrap(), limits, &cancelled)
 }
 
 #[rstest]
@@ -672,6 +677,7 @@ fn permits_exact_depth_and_decode_budget(#[case] format: ObjectFormat) {
         max_delta_bytes: 5,
         max_decode_bytes: 8,
         max_delta_depth: 1,
+        ..ReadLimits::default()
     };
     assert_eq!(
         open_read(format, &entries, id, limits).unwrap().data(),
@@ -863,5 +869,61 @@ fn rejects_truncated_legacy_index(#[case] format: ObjectFormat) {
     assert!(matches!(
         Pack::open(format, &index, data),
         Err(Error::Corrupt("index table length"))
+    ));
+}
+
+fn open_file_pair(
+    format: ObjectFormat,
+    index: &[u8],
+    data: &[u8],
+) -> Result<super::FilePack, Error> {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    super::FilePack::open(
+        format,
+        &path,
+        &mut crate::PackLimits::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn file_validation_rejects_entry_crc(#[case] format: ObjectFormat) {
+    let (mut index, data) = ordinary(format);
+    index[1032 + format.digest_len()] ^= 1;
+    reseal(format, &mut index);
+    assert!(matches!(
+        open_file_pair(format, &index, &data),
+        Err(Error::Corrupt("entry CRC"))
+    ));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn file_validation_rejects_pack_checksum(#[case] format: ObjectFormat) {
+    let (index, mut data) = ordinary(format);
+    *data.last_mut().unwrap() ^= 1;
+    assert!(matches!(
+        open_file_pair(format, &index, &data),
+        Err(Error::Corrupt("pack checksum"))
+    ));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn file_validation_rejects_pair_disagreement(#[case] format: ObjectFormat) {
+    let (mut index, data) = ordinary(format);
+    let position = index.len() - 2 * format.digest_len();
+    index[position] ^= 1;
+    reseal(format, &mut index);
+    assert!(matches!(
+        open_file_pair(format, &index, &data),
+        Err(Error::Corrupt("index/pack checksum disagreement"))
     ));
 }
