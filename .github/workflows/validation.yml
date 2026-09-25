@@ -38,6 +38,10 @@ jobs:
       - run: cargo +stable run --locked --example push_local
       - run: cargo +stable run --locked --features http --example http_local
       - run: cargo +stable run --locked --features ssh --example ssh_local
+      - run: cargo +stable run --locked --example content_diff
+      - run: cargo +stable run --locked --example index
+      - run: cargo +stable run --locked --example status
+      - run: cargo +stable run --locked --example checkout
       - name: Rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
@@ -73,3 +77,5 @@ jobs:
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}
         run: cargo +stable test --locked --no-default-features --features http --test http_portable
+      - run: cargo +stable run --locked --example content_diff
+      - run: cargo +stable run --locked --example index
