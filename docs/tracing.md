@@ -109,6 +109,10 @@ Preparation, installation and finish values do not retain tracing context automa
 caller span and dispatch explicitly when scheduling those operations. Join owned workers even after
 cancellation; tracing does not extend cancellation or process-cleanup guarantees.
 
+Colocation adds `colocation.commit`, with nested index and reference preparation/publication spans.
+Operation metadata uses `operation.inspect` and `operation.cleanup`; cleanup records the number of
+removed nodes. These spans record categorical outcomes without metadata paths or payload bytes.
+
 ## Cost and Future Instrumentation
 
 Without the feature, tracing calls, fields, context storage and the direct tracing dependency are

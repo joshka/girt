@@ -171,7 +171,10 @@ impl References<'_> {
         result
     }
 
-    fn prepare_transaction(&self, edits: &[RefEdit]) -> Result<Prepared, TransactionError> {
+    pub(crate) fn prepare_transaction(
+        &self,
+        edits: &[RefEdit],
+    ) -> Result<Prepared, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -431,7 +434,7 @@ struct Operation {
     logs: Vec<(RefName, Vec<u8>)>,
 }
 
-struct Prepared {
+pub(crate) struct Prepared {
     packed_lock: Lock,
     replacement: Vec<u8>,
     locks: BTreeMap<RefName, Lock>,
@@ -440,7 +443,7 @@ struct Prepared {
 }
 
 impl Prepared {
-    fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
+    pub(crate) fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",

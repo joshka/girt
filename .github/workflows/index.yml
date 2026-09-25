@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/index.rs'
+      - 'tests/colocation.rs'
       - '.github/workflows/index.yml'
   workflow_dispatch:
 
@@ -47,11 +48,15 @@ jobs:
           Write-Output "Temporary directory: $env:TEMP"
       - name: Core index and fault tests
         run: "cargo +stable test --locked --no-default-features --lib index::"
+      - name: Colocation and operation faults
+        run: "cargo +stable test --locked --no-default-features --lib repository::"
       - name: Both-format Git interoperability
-        run: cargo +stable test --locked --no-default-features --test index
+        run: cargo +stable test --locked --no-default-features --test index --test colocation
       - name: Index tests with tracing
         run: "cargo +stable test --locked --no-default-features --features tracing --lib index::"
+      - name: Colocation with tracing
+        run: "cargo +stable test --locked --no-default-features --features tracing --test colocation --test tracing"
       - name: Public workflow
         run: cargo +stable run --locked --no-default-features --example index
       - name: Clippy
-        run: cargo +stable clippy --locked --no-default-features --lib --test index --example index -- -D warnings
+        run: cargo +stable clippy --locked --no-default-features --lib --test index --test colocation --example index -- -D warnings

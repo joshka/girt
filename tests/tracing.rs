@@ -701,3 +701,81 @@ fn config_resolution_obeys_exact_target_filter_and_initial_outcome() {
     assert!(span.closed);
     assert!(capture.events().is_empty());
 }
+
+#[test]
+fn colocation_and_operation_spans_preserve_hierarchy_and_redaction() {
+    let capture = Capture::default();
+    let (_root, repo) = repository();
+    std::fs::write(repo.git_dir().join("MERGE_MSG"), SECRET).unwrap();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        repo.operation_state(Default::default())
+            .unwrap()
+            .cleanup()
+            .unwrap();
+        repo.edit_colocation(Default::default())
+            .unwrap()
+            .commit(
+                girt::refs::Target::Symbolic(
+                    girt::refs::RefName::new(b"refs/heads/R03_SECRET").unwrap(),
+                ),
+                girt::refs::Expected::Exists,
+                girt::refs::Reflog::Preserve,
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        capture.named("operation.inspect").fields["outcome"],
+        "success"
+    );
+    assert_eq!(capture.named("operation.cleanup").fields["removed"], "1");
+    assert_eq!(
+        capture.named("colocation.commit").fields["outcome"],
+        "success"
+    );
+    assert_eq!(
+        capture.parent_name(&capture.named("index.commit")),
+        "colocation.commit"
+    );
+    assert_eq!(
+        capture.parent_name(&capture.named("refs.publish")),
+        "colocation.commit"
+    );
+    assert!(capture.spans().iter().all(|span| span.closed));
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.events().is_empty());
+}
+
+#[test]
+fn operation_failure_and_filtered_completion_keep_parent_untouched() {
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::SubscriberExt;
+    let (_root, repo) = repository();
+    std::fs::write(repo.git_dir().join("MERGE_MSG"), SECRET).unwrap();
+    let capture = Capture::default();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        let state = repo.operation_state(Default::default()).unwrap();
+        std::fs::write(repo.git_dir().join("MERGE_MSG"), b"changed R03_SECRET").unwrap();
+        assert!(state.cleanup().is_err());
+    });
+    assert_eq!(
+        capture.named("operation.cleanup").fields["failure_class"],
+        "conflict"
+    );
+    assert_eq!(capture.named("operation.cleanup").fields["removed"], "0");
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    let filtered = Capture::default();
+    let subscriber = tracing_subscriber::registry().with(filtered.clone().with_filter(
+        tracing_subscriber::filter::filter_fn(|metadata| metadata.name() == "outer"),
+    ));
+    tracing::subscriber::with_default(subscriber, || {
+        let parent = tracing::info_span!("outer", outcome = "untouched");
+        parent.in_scope(|| {
+            repo.operation_state(Default::default())
+                .unwrap()
+                .cleanup()
+                .unwrap();
+        });
+    });
+    assert_eq!(filtered.named("outer").fields["outcome"], "untouched");
+    assert_eq!(filtered.spans().len(), 1);
+}

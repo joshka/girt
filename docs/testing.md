@@ -137,6 +137,8 @@ The Windows integration selection follows implemented operations, not just file 
 - `index`: SHA-1/SHA-256 v2/v3/v4 parsing/encoding, held-lock replacement, Git stat/flag
   observations, byte paths, and linked/separate-gitdir routing. No checkout or reference-backend
   operation is required.
+- `colocation`: Both-format conditional HEAD/index composition, flagged entries, stat reuse,
+  linked-worktree routing and Git-generated operation metadata cleanup.
 - `status_portable`: Cancellation before storage access and explicit unsupported-platform status
   rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.

@@ -32,5 +32,40 @@ fn benchmark(c: &mut Criterion) {
         group.finish();
     }
 }
-criterion_group!(benches, benchmark);
+fn stat_reuse(c: &mut Criterion) {
+    let mut group = c.benchmark_group("index_stat_reuse");
+    for count in [100, 10_000, 100_000] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = girt::Repository::init(
+            girt::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            girt::InitKind::Bare,
+        )
+        .unwrap();
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        let entries: Vec<_> = (0..count)
+            .map(|n| {
+                Entry::new(
+                    format!("file-{n:08}").into_bytes(),
+                    Mode::Regular,
+                    ObjectId::for_blob(girt::ObjectFormat::Sha1, b"content"),
+                )
+            })
+            .collect();
+        edit.replace_entries(entries.clone()).unwrap();
+        group.throughput(Throughput::Elements(count));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(count),
+            &entries,
+            |b, entries| {
+                b.iter(|| {
+                    edit.replace_entries_reusing_stat(black_box(entries.clone()))
+                        .unwrap()
+                });
+            },
+        );
+    }
+    group.finish();
+}
+criterion_group!(benches, benchmark, stat_reuse);
 criterion_main!(benches);

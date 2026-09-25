@@ -1,13 +1,17 @@
 //! Repository location, opening, and creation.
+mod colocation;
 mod discover;
 mod init;
+mod operation;
 mod shallow;
 mod worktrees;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+pub use colocation::{ColocationEdit, ColocationError};
 pub use init::{InitError, InitKind};
 pub(crate) use init::{initial_branch, initial_config};
+pub use operation::{OperationCleanupError, OperationError, OperationLimits, OperationState};
 pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};

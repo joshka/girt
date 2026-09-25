@@ -2088,3 +2088,41 @@ used as input.
 Run `cargo run --example checkout` for a disposable public lifecycle. See the
 [completion evidence](testing.md#raw-tree-checkout-completion) and
 [benchmark workload](benchmarks.md#raw-tree-checkout-baseline) for validation scope.
+
+## Colocation and Operation Metadata
+
+`Repository::edit_colocation` locks the per-worktree index before reading it. Callers derive entry
+changes through `ColocationEdit::index_mut`; `IndexEdit::replace_entries_reusing_stat` copies cached
+stat words only when path, stage, object ID, mode and all flags match the locked draft. Other
+entries retain caller-supplied stat words. Existing extension invalidation and conservative
+racy-stat publication rules apply. Intent-to-add and skip-worktree are explicit draft data: girt
+neither creates working files nor decides which placeholders or sparse entries jj should retain.
+jj's merged-tree staging, reset and materialization policies stay with jj. These primitives do not
+invoke raw status or checkout, whose extended-flag refusal remains a separate contract.
+
+`ColocationEdit::commit` prepares and locks a conditional stored HEAD update before publishing the
+index, then publishes HEAD under those reference locks. A direct target detaches without updating
+the previous branch; a symbolic target may name an unborn branch but does not delete an existing
+branch. Expected-old and reflog policy are explicit. Preparation failure changes neither file; index
+failure preserves its old bytes and does not attempt HEAD publication. A later HEAD failure reports
+that the index is published and retains reference/reflog outcomes. The two publications are not
+atomic together and are never rolled back. Callers needing another order can compose the existing
+index and reference primitives directly.
+
+`Repository::operation_state` snapshots the recognized merge, cherry-pick/revert, rebase and
+sequencer metadata in the worktree Git directory, including linked layouts. It also captures
+AUTO_MERGE, REBASE_HEAD and BISECT_LOG. The latter is a colocation cleanup artifact, not complete
+bisect-reset support. Inspection retains opaque bytes and simultaneous roots without inferring a
+single command or parsing payloads. Unknown external roots, ORIG_HEAD, refs, logs, index and working
+files are preserved. Regular descendants of recognized operation directories belong to the snapshot;
+symlinks, special nodes and unexpected root types are refused. Byte, node and depth limits bound
+inspection; depth has an additional hard cap of 128.
+
+`OperationState::cleanup` rechecks the complete snapshot before deleting children before parents.
+Preflight failure deletes nothing. Later failure returns exact removed paths and the underlying
+cause; callers inspect again before recovery. Git supplies no common operation-state lock: callers
+must exclude operation writers throughout inspection and cleanup and keep metadata directories
+trusted and stable. Rechecking detects observed changes but cannot exclude later writers or ABA
+replacement. Cleanup discards metadata only and does not abort/reset working files. No crash
+recovery or durability guarantee is added. Independent fixtures and limitations are recorded in
+[R13 evidence](evidence/r13.md).

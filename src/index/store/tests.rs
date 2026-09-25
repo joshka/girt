@@ -334,3 +334,43 @@ fn versioned_publication_fault_and_race_preserve_bytes(
     );
     assert!(!repo.git_dir().join("index.lock").exists());
 }
+
+#[rstest]
+#[case::same(0, 17)]
+#[case::path(1, 0)]
+#[case::stage(2, 0)]
+#[case::mode(3, 0)]
+#[case::id(4, 0)]
+#[case::assume_valid(5, 0)]
+#[case::intent(6, 0)]
+#[case::skip(7, 0)]
+fn stat_reuse_requires_identical_entry(#[case] difference: u8, #[case] expected_size: u32) {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let mut original = Entry::new(
+        b"a".to_vec(),
+        Mode::Regular,
+        ObjectId::for_blob(repo.object_format(), b"a"),
+    );
+    original.stat.size = 17;
+    edit.replace_entries(vec![original.clone()]).unwrap();
+    let draft = differing_entry(original.clone(), difference);
+    edit.replace_entries_reusing_stat(vec![draft]).unwrap();
+    assert_eq!(edit.index().entries()[0].stat.size, expected_size);
+}
+
+fn differing_entry(mut entry: Entry, difference: u8) -> Entry {
+    entry.stat = Stat::default();
+    match difference {
+        0 => {}
+        1 => entry.path = b"b".to_vec(),
+        2 => entry.stage = crate::index::Stage::Ours,
+        3 => entry.mode = Mode::Executable,
+        4 => entry.id = ObjectId::for_blob(entry.id.format(), b"different"),
+        5 => entry.assume_valid = true,
+        6 => entry.intent_to_add = true,
+        7 => entry.skip_worktree = true,
+        _ => unreachable!(),
+    }
+    entry
+}

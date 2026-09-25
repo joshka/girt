@@ -211,6 +211,40 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Reuses locked cached stat words for unchanged draft entries, then validates replacement.
+    ///
+    /// Matches path, stage, mode, object ID and all flags. Changed/new entries retain the caller's
+    /// supplied stat words; no filesystem verification occurs. The caller still owns staging and
+    /// skip-worktree/intent-to-add choices. Derived cache extensions are invalidated exactly as in
+    /// [`Self::replace_entries`]. Publication retains the conservative racy-stat timestamp policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation/extension errors without changing the draft index or storage.
+    pub fn replace_entries_reusing_stat(&mut self, mut entries: Vec<Entry>) -> Result<(), Error> {
+        let old = self.index.entries();
+        for entry in &mut entries {
+            let found = old.binary_search_by(|candidate| {
+                candidate
+                    .path
+                    .cmp(&entry.path)
+                    .then(candidate.stage.cmp(&entry.stage))
+            });
+            if let Ok(position) = found {
+                let previous = &old[position];
+                if previous.id == entry.id
+                    && previous.mode == entry.mode
+                    && previous.assume_valid == entry.assume_valid
+                    && previous.intent_to_add == entry.intent_to_add
+                    && previous.skip_worktree == entry.skip_worktree
+                {
+                    entry.stat = previous.stat;
+                }
+            }
+        }
+        self.replace_entries(entries)
+    }
+
     /// Selects framing under the guard's extension and resource policy.
     ///
     /// # Errors
