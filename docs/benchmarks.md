@@ -1226,3 +1226,11 @@ cargo bench --bench repositories -- 'config/resolve' \
 These local warm-cache observations establish no performance gate or cold-storage claim. Criterion's
 comparison to the exploratory run is not treated as a demonstrated speedup. See
 [R08 acceptance evidence](evidence/r08.md) for bounds, fixtures and remaining platform owners.
+
+## Repository Layout and Shallow Baselines
+
+R10 adds warm-cache enumeration of 10/100 linked registrations, declared shallow boundaries in the
+existing packed-history harness, and shallow-metadata/empty-inventory operations in the tracing
+harness. Fixture creation is outside measurement. The [retained R10 report](evidence/r10.md) records
+exact source, commands, intervals and limitations, including disabled/no-subscriber/interested-sink
+tracing modes. These baselines establish observations, not a speedup claim or numerical gate.

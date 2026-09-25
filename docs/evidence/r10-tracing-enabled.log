@@ -1,0 +1,32 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `bench` profile [optimized] target(s) in 5.77s
+     Running benches/tracing.rs (target/release/deps/tracing-b1d1bc02a9e881f8)
+Benchmarking tracing_no_subscriber/shallow_metadata_128
+Benchmarking tracing_no_subscriber/shallow_metadata_128: Warming up for 1.0000 s
+Benchmarking tracing_no_subscriber/shallow_metadata_128: Collecting 30 samples in estimated 2.0035 s (66k iterations)
+Benchmarking tracing_no_subscriber/shallow_metadata_128: Analyzing
+tracing_no_subscriber/shallow_metadata_128
+                        time:   [30.288 µs 30.642 µs 30.967 µs]
+Benchmarking tracing_no_subscriber/worktrees_empty
+Benchmarking tracing_no_subscriber/worktrees_empty: Warming up for 1.0000 s
+Benchmarking tracing_no_subscriber/worktrees_empty: Collecting 30 samples in estimated 2.0001 s (2.4M iterations)
+Benchmarking tracing_no_subscriber/worktrees_empty: Analyzing
+tracing_no_subscriber/worktrees_empty
+                        time:   [828.78 ns 836.92 ns 850.08 ns]
+Found 3 outliers among 30 measurements (10.00%)
+  2 (6.67%) high mild
+  1 (3.33%) high severe
+
+Benchmarking tracing_interested_sink/shallow_metadata_128
+Benchmarking tracing_interested_sink/shallow_metadata_128: Warming up for 1.0000 s
+Benchmarking tracing_interested_sink/shallow_metadata_128: Collecting 30 samples in estimated 2.0122 s (62k iterations)
+Benchmarking tracing_interested_sink/shallow_metadata_128: Analyzing
+tracing_interested_sink/shallow_metadata_128
+                        time:   [31.899 µs 32.180 µs 32.493 µs]
+Benchmarking tracing_interested_sink/worktrees_empty
+Benchmarking tracing_interested_sink/worktrees_empty: Warming up for 1.0000 s
+Benchmarking tracing_interested_sink/worktrees_empty: Collecting 30 samples in estimated 2.0008 s (957k iterations)
+Benchmarking tracing_interested_sink/worktrees_empty: Analyzing
+tracing_interested_sink/worktrees_empty
+                        time:   [2.0670 µs 2.0861 µs 2.1098 µs]
+

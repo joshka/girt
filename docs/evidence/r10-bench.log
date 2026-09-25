@@ -1,0 +1,65 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `bench` profile [optimized] target(s) in 6.06s
+     Running benches/history.rs (target/release/deps/history-572c1efa6cf0fd17)
+Benchmarking history/linear/walk-packed-256
+Benchmarking history/linear/walk-packed-256: Warming up for 1.0000 s
+Benchmarking history/linear/walk-packed-256: Collecting 10 samples in estimated 3.1536 s (1045 iterations)
+Benchmarking history/linear/walk-packed-256: Analyzing
+history/linear/walk-packed-256
+                        time:   [3.0128 ms 3.0504 ms 3.0829 ms]
+
+Benchmarking history/linear/walk-shallow-packed-256
+Benchmarking history/linear/walk-shallow-packed-256: Warming up for 1.0000 s
+Benchmarking history/linear/walk-shallow-packed-256: Collecting 10 samples in estimated 3.0787 s (2090 iterations)
+Benchmarking history/linear/walk-shallow-packed-256: Analyzing
+history/linear/walk-shallow-packed-256
+                        time:   [1.4685 ms 1.4850 ms 1.5012 ms]
+
+Benchmarking history/linear/merge-bases-packed-256
+Benchmarking history/linear/merge-bases-packed-256: Warming up for 1.0000 s
+Benchmarking history/linear/merge-bases-packed-256: Collecting 10 samples in estimated 3.0766 s (990 iterations)
+Benchmarking history/linear/merge-bases-packed-256: Analyzing
+history/linear/merge-bases-packed-256
+                        time:   [3.0268 ms 3.0531 ms 3.0751 ms]
+
+Benchmarking history/merge-heavy/walk-packed-256
+Benchmarking history/merge-heavy/walk-packed-256: Warming up for 1.0000 s
+Benchmarking history/merge-heavy/walk-packed-256: Collecting 10 samples in estimated 3.0154 s (1100 iterations)
+Benchmarking history/merge-heavy/walk-packed-256: Analyzing
+history/merge-heavy/walk-packed-256
+                        time:   [2.7762 ms 2.8293 ms 2.8776 ms]
+
+Benchmarking history/merge-heavy/walk-shallow-packed-256
+Benchmarking history/merge-heavy/walk-shallow-packed-256: Warming up for 1.0000 s
+Benchmarking history/merge-heavy/walk-shallow-packed-256: Collecting 10 samples in estimated 3.0443 s (1100 iterations)
+Benchmarking history/merge-heavy/walk-shallow-packed-256: Analyzing
+history/merge-heavy/walk-shallow-packed-256
+                        time:   [2.7982 ms 2.8223 ms 2.8510 ms]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+
+Benchmarking history/merge-heavy/merge-bases-packed-256
+Benchmarking history/merge-heavy/merge-bases-packed-256: Warming up for 1.0000 s
+Benchmarking history/merge-heavy/merge-bases-packed-256: Collecting 10 samples in estimated 3.0291 s (1100 iterations)
+Benchmarking history/merge-heavy/merge-bases-packed-256: Analyzing
+history/merge-heavy/merge-bases-packed-256
+                        time:   [2.7093 ms 2.7421 ms 2.7761 ms]
+
+     Running benches/repositories.rs (target/release/deps/repositories-d8e32c66e2921196)
+Benchmarking repository/worktrees-10-warm
+Benchmarking repository/worktrees-10-warm: Warming up for 1.0000 s
+Benchmarking repository/worktrees-10-warm: Collecting 10 samples in estimated 3.0117 s (1320 iterations)
+Benchmarking repository/worktrees-10-warm: Analyzing
+repository/worktrees-10-warm
+                        time:   [2.2640 ms 2.2931 ms 2.3147 ms]
+
+Benchmarking repository/worktrees-100-warm
+Benchmarking repository/worktrees-100-warm: Warming up for 1.0000 s
+Benchmarking repository/worktrees-100-warm: Collecting 10 samples in estimated 3.8466 s (165 iterations)
+Benchmarking repository/worktrees-100-warm: Analyzing
+repository/worktrees-100-warm
+                        time:   [22.902 ms 23.009 ms 23.156 ms]
+Found 3 outliers among 10 measurements (30.00%)
+  1 (10.00%) low severe
+  2 (20.00%) high mild
+

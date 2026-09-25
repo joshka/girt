@@ -1,0 +1,50 @@
+git version 2.55.0
+jj 0.45.1
+GIT_DIR explicit-path init exit 0
+Done importing changes from the underlying Git repo.
+Working copy  (@) now at: xlptuumu 9c0ed2b2 (empty) (no description set)
+Parent commit (@-)      : ktqswzsm bdf3dff0 master | (empty) original fixture
+Initialized repo in "workspace"
+reopen exit 0 imported fixture True
+GIT_COMMON_DIR explicit-path init exit 0
+Done importing changes from the underlying Git repo.
+Working copy  (@) now at: pmkpkpsq 5942bf42 (empty) (no description set)
+Parent commit (@-)      : ktqswzsm bdf3dff0 master | (empty) original fixture
+Initialized repo in "workspace"
+reopen exit 0 imported fixture True
+GIT_WORK_TREE explicit-path init exit 0
+Done importing changes from the underlying Git repo.
+Working copy  (@) now at: qlpypqyk d290a64c (empty) (no description set)
+Parent commit (@-)      : ktqswzsm bdf3dff0 master | (empty) original fixture
+Initialized repo in "workspace"
+reopen exit 0 imported fixture True
+GIT_OBJECT_DIRECTORY explicit-path init exit 0
+Done importing changes from the underlying Git repo.
+Working copy  (@) now at: ronrmvxp 9b1dd4f5 (empty) (no description set)
+Parent commit (@-)      : ktqswzsm bdf3dff0 master | (empty) original fixture
+Initialized repo in "workspace"
+reopen exit 0 imported fixture True
+GIT_SHALLOW_FILE explicit-path init exit 0
+Done importing changes from the underlying Git repo.
+Working copy  (@) now at: ottrrvym c8e9988b (empty) (no description set)
+Parent commit (@-)      : ktqswzsm bdf3dff0 master | (empty) original fixture
+Initialized repo in "workspace"
+reopen exit 0 imported fixture True
+sha1 null exit 0 count 1 diagnostic 
+sha1 blank exit 128 count  diagnostic fatal: bad shallow line:
+sha1 crlf exit 0 count 1 diagnostic 
+sha1 unterminated exit 0 count 1 diagnostic 
+sha1 duplicate exit 0 count 1 diagnostic 
+sha1 missing exit 0 count 1 diagnostic 
+sha1 wrong-format exit 0 count 1 diagnostic 
+sha256 null exit 0 count 1 diagnostic 
+sha256 blank exit 128 count  diagnostic fatal: bad shallow line:
+sha256 crlf exit 0 count 1 diagnostic 
+sha256 unterminated exit 0 count 1 diagnostic 
+sha256 duplicate exit 0 count 1 diagnostic 
+sha256 missing exit 0 count 1 diagnostic 
+sha256 wrong-format exit 128 count  diagnostic fatal: bad shallow line: 1111111111111111111111111111111111111111
+sha1 jj separate metadata open exit 0
+Initialized repo in "sha1-workspace"
+sha256 jj separate metadata open exit 0
+Initialized repo in "sha256-workspace"

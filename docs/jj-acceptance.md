@@ -140,6 +140,12 @@ and metadata caching. Characterize ownership/trust and repository environment ov
 the consumer. Native Windows UNC/drive paths, WSL relative-path interoperability, Unix non-UTF-8 and
 macOS normalization/case aliases need explicit evidence rather than lexical assumptions.
 
+R10's [implementation evidence](evidence/r10.md) records both-format layout/shallow contracts,
+read-only inventory states, explicit bootstrap/environment behavior, native macOS checks and
+compile-only Linux/Windows checks. R36/C02 retain native UNC/drive/WSL and additional
+permission/byte path evidence. R14 retains external storage/backends; transport depth changes remain
+R26/R27.
+
 ### A08 — References and reflogs
 
 **Task:** R11. **Consumer:** no-GC refs in `lib/src/git_backend.rs`, export/import/reset in

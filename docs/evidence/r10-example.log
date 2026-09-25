@@ -1,0 +1,7 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.31s
+     Running `target/debug/examples/repository_layout .`
+Git directory: /Users/joshka/local/girt/.git
+Common directory: /Users/joshka/local/girt/.git
+Bare: false
+Checkout: Some("/Users/joshka/local/girt")

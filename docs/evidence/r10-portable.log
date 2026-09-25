@@ -1,0 +1,46 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.17s
+     Running tests/layout_shallow.rs (target/debug/deps/layout_shallow-8a9286a52691cc54)
+
+running 38 tests
+test declarations_do_not_hide_missing_or_wrong_kind_boundary_objects::case_2_sha256 ... ok
+test git_directory_case_alias_uses_filesystem_identity::case_2_sha256 ... ok
+test git_directory_case_alias_uses_filesystem_identity::case_1_sha1 ... ok
+test declarations_do_not_hide_missing_or_wrong_kind_boundary_objects::case_1_sha1 ... ok
+test dotgit_directory_symlink_retains_worktree_and_alias_identity::case_1_sha1 ... ok
+test dotgit_directory_symlink_retains_worktree_and_alias_identity::case_2_sha256 ... ok
+test inaccessible_checkout_retains_openable_metadata::case_2_sha256 ... ok
+test linked_inventory_preserves_missing_identity_and_private_state::case_2_sha256 ... ok
+test linked_inventory_preserves_missing_identity_and_private_state::case_1_sha1 ... ok
+test inaccessible_checkout_retains_openable_metadata::case_1_sha1 ... ok
+test malformed_registration_does_not_hide_other_metadata::case_2_sha256 ... ok
+test malformed_registration_does_not_hide_other_metadata::case_1_sha1 ... ok
+test normalization_aliases_share_common_directory_identity::case_2_sha256 ... ok
+test normalization_aliases_share_common_directory_identity::case_1_sha1 ... ok
+test missing_nondeclared_parent_is_error_and_failed_refresh_preserves_snapshot::case_1_sha1 ... ok
+test missing_nondeclared_parent_is_error_and_failed_refresh_preserves_snapshot::case_2_sha256 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_1_sha1 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_2_sha256 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_1_sha1 ... ok
+test moved_checkout_is_visible_then_git_repair_restores_links::case_1_sha1 ... ok
+test separate_metadata_opens_without_inventing_a_checkout::case_1_sha1 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_2_sha256 ... ok
+test separate_metadata_opens_without_inventing_a_checkout::case_2_sha256 ... ok
+test moved_checkout_is_visible_then_git_repair_restores_links::case_2_sha256 ... ok
+test symlink_gitfile_resolves_relative_target_at_caller_location::case_1_sha1 ... ok
+test replaced_checkout_directory_is_invalid_without_losing_registration::case_1_sha1 ... ok
+test replaced_checkout_directory_is_invalid_without_losing_registration::case_2_sha256 ... ok
+test relative_layout_survives_whole_repository_move::case_2_sha256 ... ok
+test relative_layout_survives_whole_repository_move::case_1_sha1 ... ok
+test symlink_gitfile_resolves_relative_target_at_caller_location::case_2_sha256 ... ok
+test unrelated_checkout_is_structured_error::case_1_sha1 ... ok
+test unrelated_checkout_is_structured_error::case_2_sha256 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_1_sha1 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_2_sha256 ... ok
+test shared_settings_and_direct_private_bootstrap_match_git::case_1_sha1 ... ok
+test shared_settings_and_direct_private_bootstrap_match_git::case_2_sha256 ... ok
+test depth_clone_freezes_boundaries_and_refreshes_after_git_deepening::case_2_sha256 ... ok
+test depth_clone_freezes_boundaries_and_refreshes_after_git_deepening::case_1_sha1 ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+

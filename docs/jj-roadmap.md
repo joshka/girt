@@ -59,7 +59,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Complete              | [A01/A04 evidence](evidence/r07.md)                                                                                                                                          |
 | R08 | Layered config resolution and provenance                    | R03                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r08.md)                                                                                   |
 | R09 | Lossless config and remote mutation                         | R08                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
-| R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Planned               | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                                                                                            |
+| R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Ready for acceptance  | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
 | C01 | First architecture and abstraction-debt review              | R01–R10                         | Planned               | [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                                                                                        |
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Planned               | [A08](jj-acceptance.md#a08--references-and-reflogs)                                                                                                                          |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
@@ -111,8 +111,10 @@ R07 resolves the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-u
 graph/identity access and bounded tag peeling. Its [evidence](evidence/r07.md) distinguishes Git
 read/display/write/fsck behavior, exact signature bytes, tested revisions and native limits. R08
 completes layered resolution with provenance; its [evidence](evidence/r08.md) records exact source,
-Git observations, limits, benchmarks and platform boundaries. R09 is the next serial item after
-coordinator acceptance; final jj integration remains R35.
+Git observations, limits, benchmarks and platform boundaries. R09 completion is recorded in
+[its evidence](evidence/r09.md); R10 is ready for acceptance with
+[retained evidence](evidence/r10.md). C01 follows coordinator acceptance; final jj integration
+remains R35.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
 required format, helper, platform, or policy feature, append bounded dependent tasks before marking
@@ -187,3 +189,14 @@ whole-operation atomicity. R35 retains consumer naming/selection and view update
 portable `config_edit` suite natively on Windows; C02 retains Linux/Windows lifecycle evidence.
 Repeated scalar selector ambiguity is an explicit R09 refusal with occurrence editing available; no
 Git CLI regex-selection or warning-producing partial-edit emulation is promised.
+
+## Repository Layout Follow-through
+
+R10 implementation and native macOS evidence are [retained here](evidence/r10.md), ready for
+coordinator acceptance. C01 remains the next checkpoint before R11. R36/C02 own native Linux and
+Windows execution of `layout_shallow`, Windows drive/verbatim/UNC paths and denied-access
+registrations, Linux byte paths, and WSL relative-backlink interoperability. Cross-builds do not
+close these native requirements. R19/R20 retain registration, repair, locks and pruning; R26/R27
+retain shallow negotiation/depth changes, and R29 retains shallow push policy. Current transport
+guards prevent unsupported use without claiming those future requirements complete. R14 retains
+external storage/backends; R35 re-inventories consumer environment and caching needs.
