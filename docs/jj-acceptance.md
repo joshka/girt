@@ -183,6 +183,11 @@ publication. Supply recognized merge/rebase/cherry-pick operation-state inspecti
 partial-failure evidence. jj keeps merged-tree staging, reset policy and working-file
 materialization.
 
+R12's [scoped evidence](evidence/r12.md) covers full v2/v3/v4 indexes and native index validation in
+both hash formats. R38 retains split shared-index and sparse-directory storage before R34; R13
+retains workflow and operation-state semantics. Explicit refusal and opening acceptance are not
+claims of full split/sparse parity.
+
 ### A10 — Ignore and exclude semantics
 
 **Task:** R17. **Consumer:** `lib/src/gitignore.rs`, `cli/src/cli_util.rs` global excludes.

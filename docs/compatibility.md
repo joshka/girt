@@ -2016,11 +2016,11 @@ directory with all three `HEAD`, `objects` and `refs` names, conservatively incl
 aliases. Entry types do not narrow this predicate: even three ordinary files are unsupported,
 although Git accepts that tree. This preflight prevents checkout from activating its own live guard
 midway through mutation; it does not disable guards on existing or newly created directories.
-Gitlinks, submodule recursion, sparse/split indexes, index v3/v4 and non-`TREE` extensions are
-unsupported. Windows and other platforms refuse checkout before locking or reading the index;
-portable tests cover that boundary without claiming Windows materialization support. Native hard
-links, symlinks and POSIX modes are required; filesystem emulation and shared-permission policies
-are excluded.
+Gitlinks, submodule recursion, sparse/split indexes, intent-to-add/skip-worktree entries and
+non-`TREE` extensions are unsupported. Full v2/v3/v4 framing is accepted. Windows and other
+platforms refuse checkout before locking or reading the index; portable tests cover that boundary
+without claiming Windows materialization support. Native hard links, symlinks and POSIX modes are
+required; filesystem emulation and shared-permission policies are excluded.
 
 ### Phases and Failure Recovery
 

@@ -18,7 +18,8 @@
 //! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. macOS paths
 //! and names in enumerated directories must be ASCII. Both platforms conservatively reject ASCII
 //! case aliases, metadata names, unsafe components, gitlinks, nested repositories and non-`TREE`
-//! index extensions. Path components are limited to 255 bytes. Windows returns unsupported. Raw
+//! index extensions. Intent-to-add and skip-worktree entries require caller policy and are refused.
+//! Path components are limited to 255 bytes. Windows returns unsupported. Raw
 //! checkout preserves blob bytes without attributes, filters, EOL conversion, ignores or config
 //! overrides. Symlink blobs must be nonempty, NUL-free and at most 1024 bytes. Mode changes replace
 //! files, with permissions 0644/0755; ownership, ACLs and other metadata are not preserved.

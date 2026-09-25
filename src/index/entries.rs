@@ -28,7 +28,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Creates a stage-zero draft with zero stat words and assume-valid cleared.
+    /// Creates a stage-zero draft with zero stat words and all three entry flags cleared.
     ///
     /// Does not validate the path; validation occurs when constructing/replacing index entries.
     pub fn new(path: Vec<u8>, mode: Mode, id: ObjectId) -> Self {
