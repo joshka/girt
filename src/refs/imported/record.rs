@@ -39,7 +39,7 @@ pub struct ReflogFields<'a> {
     pub seconds: i128,
     /// Signed timezone offset in minutes; noncanonical HHMM minutes are arithmetic.
     pub offset_minutes: i16,
-    /// Exact message bytes; files exclude one tab separator and final LF, binary includes its LF.
+    /// Message bytes without the files tab separator and one final storage LF on either backend.
     pub message: &'a [u8],
 }
 
@@ -55,7 +55,7 @@ pub enum ReflogInterpretationError {
     /// Identity brackets or decimal date framing cannot be interpreted.
     #[error("malformed reflog identity or date")]
     Identity,
-    /// Seconds exceed i128 or the arithmetic offset exceeds i16 minutes.
+    /// Decimal seconds exceed i128.
     #[error("reflog date exceeds interpretation range")]
     DateRange,
 }
@@ -96,7 +96,7 @@ impl ImportedRecord {
                 email: &value.email,
                 seconds: i128::from(value.seconds),
                 offset_minutes: value.offset_minutes,
-                message: &value.message,
+                message: value.message.strip_suffix(b"\n").unwrap_or(&value.message),
             }),
         }
     }

@@ -263,7 +263,7 @@ fn reads_original_git_binary_history(
     assert_eq!(log.recoverable_roots().collect::<Vec<_>>(), [tip]);
     assert_eq!(
         log.records()[0].fields().unwrap().message,
-        b"commit (initial): original\n"
+        b"commit (initial): original"
     );
     assert_eq!(
         git::git(
@@ -340,6 +340,7 @@ fn binary_unsigned_fields_and_stack_failures_remain_explicit(
         i128::from(u64::MAX)
     );
     assert_eq!(log.recoverable_roots().collect::<Vec<_>>(), [tip]);
+    assert_eq!(log.records()[0].fields().unwrap().message, b"a\0b\r");
     let limits = StackLimits {
         records: Limits {
             bytes: 1,
