@@ -639,12 +639,14 @@ mod git_format_tests {
             .join(format!("pack-{}", imported.checksum));
         std::fs::write(base.with_extension("pack"), &pack).unwrap();
         std::fs::write(base.with_extension("idx"), &imported.index).unwrap();
+        // Git for Windows does not accept Rust's verbatim absolute paths here.
+        let git_base = base.strip_prefix(repo.git_dir()).unwrap();
         let report = git(
             repo.git_dir(),
             &[
                 "verify-pack",
                 "-v",
-                base.with_extension("idx").to_str().unwrap(),
+                git_base.with_extension("idx").to_str().unwrap(),
             ],
             b"",
         );
@@ -669,7 +671,7 @@ mod git_format_tests {
                 "--index-version=2",
                 "-o",
                 "independent.idx",
-                base.with_extension("pack").to_str().unwrap(),
+                git_base.with_extension("pack").to_str().unwrap(),
             ],
             b"",
         );
