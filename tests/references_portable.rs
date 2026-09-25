@@ -275,3 +275,46 @@ fn prepared_git_writer_excludes_conditional_girt_writer(#[case] format: ObjectFo
         None
     );
 }
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn symbolic_unborn_head_logging_agrees_with_git(#[case] format: ObjectFormat) {
+    let (root, repo, tip) = fixture(format);
+    let before = fs::read(root.path().join("HEAD")).unwrap();
+    git::git(
+        root.path(),
+        &["update-ref", "refs/heads/target", &tip.to_string()],
+        b"",
+    );
+    fs::create_dir_all(root.path().join("logs")).unwrap();
+    fs::write(root.path().join("logs/HEAD"), b"").unwrap();
+    git::git(
+        root.path(),
+        &["symbolic-ref", "-m", "switch", "HEAD", "refs/heads/target"],
+        b"",
+    );
+    let git_records = repo
+        .references()
+        .unwrap()
+        .reflog(&name("HEAD"))
+        .unwrap()
+        .unwrap();
+    fs::write(root.path().join("HEAD"), before).unwrap();
+    fs::write(root.path().join("logs/HEAD"), b"").unwrap();
+    let mut head = edit(tip, "HEAD");
+    head.target = Some(Target::Symbolic(name("refs/heads/target")));
+    head.expected = Expected::Exists;
+    repo.references().unwrap().transaction(&[head]).unwrap();
+    let records = repo
+        .references()
+        .unwrap()
+        .reflog(&name("HEAD"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(records.len(), git_records.len());
+    assert_eq!(records[0].old, git_records[0].old);
+    assert_eq!(records[0].new, git_records[0].new);
+    assert_eq!(records[0].old, ObjectId::null(format));
+    assert_eq!(records[0].new, tip);
+}

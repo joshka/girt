@@ -1,5 +1,10 @@
 # Git Compatibility Evidence
 
+R11 extends the files backend to portable conditional refs and reflogs; its current
+[contracts](reference-transactions.md) and [evidence](evidence/r11.md) supersede historical
+Unix-only reference and strict imported-reflog restrictions below. Reftable is still required under
+R37 before full readiness. Historical validation records retain their original scope.
+
 SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-tree index v2 use
 the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and
 loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation, including Git

@@ -6,8 +6,9 @@ use crate::{ObjectId, Signature};
 
 /// One format-bearing reflog record, in oldest-to-newest file order.
 ///
-/// Zero IDs represent absence. Parsing preserves message and identity bytes, but normalizes the
-/// numeric timestamp and timezone (including negative zero). An omitted message separator maps to
+/// Zero IDs represent absence. Parsing preserves message and email bytes, trims name delimiter
+/// whitespace, and normalizes numeric timestamps/timezones. Use [`ReflogRecord`] to retain the
+/// original lexical record. An omitted message separator maps to
 /// an empty message. Object existence and continuity
 /// between records are not checked.
 #[derive(Clone, Debug, Eq, PartialEq)]

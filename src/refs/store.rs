@@ -1037,3 +1037,47 @@ mod ownership_tests {
         assert_eq!(fs::read(replacement).unwrap(), b"foreign");
     }
 }
+
+#[cfg(test)]
+mod termination_tests {
+    use super::*;
+
+    // Invoked in a child test process so exit bypasses guard destructors without terminating
+    // the test runner. No signal handler or other process-global policy is installed.
+    #[test]
+    fn child_exits_with_owned_lock() {
+        let Some(root) = std::env::var_os("GIRT_R11_EXIT_LOCK_ROOT") else {
+            return;
+        };
+        let _lock = Lock::acquire(PathBuf::from(root).join("ref")).unwrap();
+        std::process::exit(0);
+    }
+
+    #[test]
+    fn termination_leaves_a_stale_lock_for_explicit_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "refs::store::termination_tests::child_exits_with_owned_lock",
+            ])
+            .env("GIRT_R11_EXIT_LOCK_ROOT", &directory)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(directory.join("ref.lock").exists());
+        assert!(matches!(
+            Lock::acquire(directory.join("ref")),
+            Err(ReferenceError::Locked(_))
+        ));
+        // The caller now knows this specific child has exited. Only it can authorize removing
+        // that stale lock; the storage API never steals it speculatively.
+        fs::remove_file(directory.join("ref.lock")).unwrap();
+        let lock = Lock::acquire(directory.join("ref")).unwrap();
+        lock.publish_retaining_lock(b"recovered").unwrap();
+        drop(lock);
+        assert_eq!(fs::read(directory.join("ref")).unwrap(), b"recovered");
+        assert!(!directory.join("ref.lock").exists());
+    }
+}
