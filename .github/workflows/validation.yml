@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      ignore_only:
+        description: Run focused ignore compatibility and performance checks
+        type: boolean
+        default: false
       storage_only:
         description: Run only focused file-backed storage checks
         type: boolean
@@ -23,7 +27,7 @@ permissions:
 
 jobs:
   unix:
-    if: ${{ !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
+    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,7 +92,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    if: ${{ !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
+    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
     # Portable integrations are explicit; process adapters remain unsupported.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -225,3 +229,46 @@ jobs:
           path: |
             large-store/workload.json
             storage-measurements.json
+
+  ignore:
+    if: ${{ inputs.ignore_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Unit and public compatibility cases
+        run: "cargo +stable test --locked --no-default-features --lib --test ignore ignore::"
+      - name: Both-format Git comparisons
+        run: cargo +stable test --locked --no-default-features --test ignore
+      - name: Tracing feature composition
+        run: "cargo +stable test --locked --no-default-features --features tracing --lib --test ignore ignore::"
+      - name: Clippy
+        run: cargo +stable clippy --locked --no-default-features --lib --test ignore --bench ignore --example ignore_batch -- -D warnings
+      - name: Build batch adapter
+        run: cargo +stable build --locked --release --example ignore_batch
+      - name: Independent adversarial observations
+        run: python tests/fixtures/ignore/observe.py > ignore-observations.json
+      - name: Large source resources
+        run: python tests/fixtures/ignore/resources.py > ignore-resources.json
+      - name: Representative matched batches
+        run: cargo +stable bench --locked --bench ignore -- --noplot
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ignore-${{ matrix.os }}
+          path: |
+            ignore-observations.json
+            ignore-resources.json
+            target/criterion

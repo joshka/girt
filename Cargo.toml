@@ -256,3 +256,7 @@ doc-scrape-examples = true
 [[bench]]
 name = "reftable"
 harness = false
+
+[[bench]]
+name = "ignore"
+harness = false
