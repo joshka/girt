@@ -61,6 +61,11 @@ SHA-1 working-tree index v2 entries can be parsed, constructed and encoded with 
 paths, conflict stages and explicit extension restrictions. No working files are created. Run
 `cargo run --example index`; see [index scope](docs/compatibility.md#working-tree-index).
 
+`Repository::raw_status` separates staged changes, literal working-file changes, conflicts and
+unchecked gitlinks on macOS/Linux. It verifies content without refreshing the index and exposes
+untracked/normalization policy explicitly. Run `cargo run --example status`; see
+[raw status boundaries](docs/compatibility.md#raw-working-tree-status).
+
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The default writer streams
 ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection

@@ -11,14 +11,15 @@ The current API supports SHA-1 loose objects, pack/index v2, complete-history qu
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
 explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
 tracking-layout clone into bare or ordinary no-checkout repositories, recursive tree comparison, and
-byte-preserving content diff and SHA-1 working-tree index v2 read/replacement. The single-reference
-no-reflog operations remain available. HTTP and SSH downloads share owned validation state.
-Installation takes explicit destination snapshot limits. Read and operation limits remain per phase;
-no process-wide heap or hard CPU-latency guarantee is implied.
+byte-preserving content diff, SHA-1 working-tree index v2 read/replacement, and raw read-only
+working-tree status on macOS/Linux. The single-reference no-reflog operations remain available. HTTP
+and SSH downloads share owned validation state. Installation takes explicit destination snapshot
+limits. Read and operation limits remain per phase; no process-wide heap or hard CPU-latency
+guarantee is implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Full suite through content diff, including HTTP and SSH.    |
+| macOS arm64    | Full suite through raw status, including HTTP and SSH.      |
 | Linux x86_64   | Full suite through tree comparison, including HTTP and SSH. |
 | Windows x86_64 | Portable integration suites and bounded HTTP runtime.       |
 
@@ -1796,3 +1797,71 @@ have focused unit coverage. The portable integration suite is explicitly selecte
 native execution on Windows/Linux remains pending for this increment. No new dependency was added.
 Status, staging policy, checkout, filters/attributes, merge resolution and filesystem scanning
 remain outside this slice.
+
+## Raw Working-Tree Status
+
+`Repository::raw_status` compares HEAD (including unborn/detached HEAD) or an explicit tree with
+this worktree's index, then verifies working files against stage-zero entries. Staged results reuse
+`TreeChange`; unstaged results distinguish content/mode changes, missing paths and obstructions.
+Conflicts retain their exact index stages. Missing index storage means an empty index, not an empty
+baseline tree. Index blobs, including conflict stages, are identity/type verified through the
+existing loose/packed reader. Baseline leaf targets and submodule commit targets are not resolved.
+
+The API and every report explicitly select literal bytes and POSIX modes. Attributes, clean filters,
+EOL conversion, ignore rules, `core.filemode`, `core.symlinks`, global config and environmental
+normalization policy are not applied. Thus raw status can differ from Git status for a CRLF working
+file with `text eol=lf`, an ignored file, or an assume-valid entry. Assume-valid is deliberately
+ignored: all indexed blob content is verified, even when cached stat words match. No hooks or filter
+commands run. Consumers must own normalization policy if they require Git-default status.
+
+Untracked policy is either `Omit` or `RawFilesWithoutIgnores`. The latter lists every encountered
+untracked leaf, including ignored and special files, without reading its content; empty directories
+are omitted. Both policies enumerate visited directory names for exact byte matching. Gitlinks are
+always reported as unchecked and never traversed. Nested `.git` markers and the conservative bare
+repository marker combination `HEAD`/`objects`/`refs` stop traversal and appear as boundaries. The
+root `.git` marker is excluded silently. Known Git/common/object directories are excluded by
+filesystem identity, including a separate Git directory located inside the worktree.
+
+Filesystem traversal uses existing rustix descriptor-relative no-follow operations on macOS/Linux;
+no dependency was added. Unsafe index components and metadata aliases are rejected before platform
+path conversion. Symlink leaves are compared using target bytes, never followed. Symlink or file
+ancestors, directories replacing files and special tracked files are explicit obstructions. Exact
+name matching prevents case-insensitive lookup from making a differently spelled index path clean.
+Linux preserves non-UTF-8 filename bytes. Both platforms reject NUL, backslashes, colons,
+empty/dot/parent components and case-insensitive `.git` components. macOS non-ASCII relative names
+are explicitly unsupported because normalization aliases are not implemented. Other platforms reject
+traversal before storage access; no Windows worktree-status support is claimed.
+
+Limits cover index reads, baseline tree flattening, pack snapshots, object reconstruction and total
+index/HEAD payload bytes, worktree file/total bytes, visited directory entries, generated paths and
+retained ancestor prefixes. Directory depth is capped at 128 even with a larger caller limit;
+symlink target reads additionally cap their buffer at one MiB plus one truncation-detection byte.
+Cancellation is checked between synchronous phases/entries and file-read chunks. Reference
+resolution retains its existing 32-hop selection and unbounded metadata-byte contract. Repository
+opening and metadata/object trust assumptions are inherited; these are not process-wide memory,
+wall-clock or hostile repository-storage guarantees.
+
+Identity, mode, size, mtime and ctime observations are checked around file reads and directory
+traversal. HEAD and index are reread before return. An observed change is an error without a partial
+report. This is not an atomic snapshot: later changes, ABA replacement and changes invisible to
+filesystem timestamps may escape detection. Directory descriptors pin inspected directories if
+concurrently moved. Mount manipulation, hostile hardlinks and metadata replacement remain outside
+the trust boundary. Reads may update access times; girt performs no writes or index refresh. A
+report must never serve as authorization to overwrite files during future checkout work.
+
+Original unit fixtures cover byte/content and mode changes, restored-mtime edits, symlinks, socket
+and ancestor obstructions, exact-case lookup, metadata containment, resource limits, cancellation
+and deterministic concurrent file/directory/HEAD/index changes. `tests/status.rs` independently
+generates Git fixtures with isolated configuration, no rename detection, no optional index refresh
+and explicit native mode/symlink behavior. It covers staged/unstaged combinations, conflicts,
+unborn/missing index, loose/packed objects, raw normalization/ignore differences, linked/separate
+worktrees and absence of writes. No upstream implementation or test source was used.
+`tests/status_portable.rs` separately checks cancellation and explicit platform rejection; Windows
+CI selects it deliberately. Native Linux/Windows execution of this increment remains pending.
+
+The 2026-09-24 macOS arm64 run at `9affad69fac53f2c022f47f46b40f8ee7cc588af` used Rust/Cargo 1.98.1
+and Git 2.55.0. Full checks passed 1,146 units, 507 integrations and 19 doctests, including 37 local
+status cases and 35 status integration cases. See the
+[completion record](testing.md#raw-working-tree-status-completion) for checks and cross-compilation
+evidence, and the [baseline](benchmarks.md#raw-working-tree-status-baseline) for representative
+warm-storage measurements. No publication, merge or checkout is part of this increment.

@@ -34,6 +34,14 @@
 //! `TREE` cache. Index operations never create working files or apply staging policy.
 //! Run `cargo run --example index` for a disposable repository example.
 //!
+//! # Observing working-tree status
+//!
+//! [`Repository::raw_status`] separates staged tree/index changes, raw index/worktree changes,
+//! conflicts and unchecked gitlinks. It verifies content instead of trusting cached stat data,
+//! applies no normalization or ignores, and never refreshes the index. macOS/Linux traversal
+//! avoids symlink ancestors and repository metadata. Reports are observations, not atomic
+//! snapshots or checkout preconditions. Run `cargo run --example status` for a disposable fixture.
+//!
 //! # Creating and finding a repository
 //!
 //! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
@@ -156,6 +164,7 @@ pub mod push;
 pub mod refs;
 pub mod remote;
 mod repository;
+pub mod status;
 mod tag;
 pub mod transport;
 mod tree;

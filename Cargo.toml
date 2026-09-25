@@ -208,3 +208,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "index"
 harness = false
+
+[[example]]
+name = "status"
+doc-scrape-examples = true
+
+[[bench]]
+name = "status"
+harness = false

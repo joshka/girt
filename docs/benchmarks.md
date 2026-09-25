@@ -1008,3 +1008,37 @@ library sources, the harness, manifest and lockfile; verify with
 numerical acceptance gate, not tail latencies, peak-memory measurements, storage performance,
 cross-platform evidence or a controlled comparison with another implementation. Path depth and
 conflict shapes also affect validation cost; these fixtures represent shallow ordinary paths.
+
+## Raw Working-Tree Status Baseline
+
+`cargo bench --bench status -- --sample-size 20 --warm-up-time 1 --measurement-time 3` measures
+complete `Repository::raw_status` calls against an explicit baseline tree matching the index. Each
+fixture contains 100 or 1,000 root-level regular files with 1-KiB contents and one shared loose blob
+identity. Clean cases have no changes. Changed cases replace every tenth working file with seven
+bytes; their staged results remain empty. Untracked scanning is omitted. Fixture construction,
+object/index publication and correctness assertions occur before sampling.
+
+Timing includes opening the object reader, both index reads, verified tree traversal, repeated
+per-entry blob verification, descriptor-relative name enumeration and working-file reads, result
+construction and destruction. It excludes repository opening and HEAD resolution. Filesystem caches
+are warm. The shared blob is deliberately verified for every index occurrence, matching the current
+resource contract; these measurements do not represent a stat-cache optimization.
+
+The 2026-09-24 run used Criterion 0.8.2, the default optimized bench profile, Rust/Cargo 1.98.1,
+macOS 26.6.2 (25G83), aarch64-apple-darwin and an Apple M2 Max with 96 GiB RAM. No builds or tests
+from this task overlapped sampling. Desktop load, thermals and CPU placement were uncontrolled.
+
+| Working tree        | Files | Median ms | 95% CI, ms    |
+| ------------------- | ----- | --------- | ------------- |
+| Clean               | 100   | 4.479     | 4.236–4.902   |
+| Ten percent changed | 100   | 4.329     | 4.194–4.374   |
+| Clean               | 1,000 | 41.507    | 40.978–42.116 |
+| Ten percent changed | 1,000 | 41.525    | 41.210–42.074 |
+
+The [CSV](benchmarks/status-baseline.csv) retains medians and confidence intervals in nanoseconds.
+The [source manifest](benchmarks/status-baseline.sha256) fingerprints library sources, the harness,
+Cargo manifest and lockfile; verify with `shasum -a 256 -c docs/benchmarks/status-baseline.sha256`.
+These are warm loose-storage baselines, not tail latencies, cold/packed-storage measurements,
+peak-memory evidence or cross-platform performance claims. Similar clean/changed costs are expected
+because both verify working content; small differences do not establish a performance improvement.
+No numerical regression gate is imposed.

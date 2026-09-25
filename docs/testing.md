@@ -93,6 +93,9 @@ The Windows integration selection follows implemented operations, not just file 
   structural tree comparison and byte-preserving content diff.
 - `index`: SHA-1 v2 parsing/encoding, held-lock replacement, Git stat/flag observations, byte paths,
   and linked/separate-gitdir routing. No checkout or reference-backend operation is required.
+- `status_portable`: Cancellation before storage access and explicit unsupported-platform status
+  rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
+  on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
@@ -912,3 +915,49 @@ wall-clock timing dependence, that regression and all-target Clippy passed at
 Rust/Cargo 1.98.1 and Git 2.55.0. Native Linux/Windows execution for this increment remains pending.
 No crash-durability or broader platform claim is made. The content-diff parent
 `d3b47737320afbd9c2224384cea68c7c2ff5cbd5` is preserved unchanged.
+
+### Raw Working-Tree Status Completion
+
+Acceptance is a useful read-only HEAD/tree-to-index and index-to-working-file workflow, with raw
+normalization and untracked policy visible in the API and results. The
+[status contract](compatibility.md#raw-working-tree-status) owns platform and snapshot limitations.
+
+- [x] Parameterized local cases cover raw content, assume-valid verification, file/symlink byte
+      bounds, mode changes, equal-size edits with restored mtime, invalid paths, case aliases,
+      obstructions and metadata boundaries.
+- [x] Deterministic checkpoints exercise cancellation and concurrent file, directory, ancestor, HEAD
+      and index observations. Results fail without partial reports; snapshots verify no file
+      content/mtime writes or index lock creation.
+- [x] Independent Git CLI fixtures cover staged/unstaged combinations, conflicts, unborn/detached
+      HEAD, missing index, file/directory and symlink changes, loose/packed blobs and
+      linked/separate worktree routing. Raw EOL/ignore/assume-valid differences are asserted
+      deliberately.
+- [x] Missing, wrong-kind and corrupt objects, malformed index, unsafe byte paths, exhausted
+      index/tree/object/worktree bounds and unchecked gitlinks have explicit failure/result
+      evidence.
+- [x] `examples/status.rs` demonstrates the public workflow in a disposable repository or a supplied
+  existing checkout. Rustdoc states raw normalization, ignores, stat verification and non-atomic
+  snapshot limits, including the boundary against using observations to authorize checkout.
+- [x] `benches/status.rs` measures clean and ten-percent-changed 100/1,000-file working trees with
+      warm storage, complete raw calls and result destruction. The
+      [baseline](benchmarks.md#raw-working-tree-status-baseline) retains source fingerprints and
+      confidence intervals; no numerical gate is imposed.
+- [x] `status_portable` is explicitly selected for Windows cancellation/unsupported-platform
+  behavior. Actual traversal and native symlink tests are macOS/Linux-only; Linux byte filenames
+  and macOS non-ASCII rejection are independently gated.
+
+On 2026-09-24, revision `9affad69fac53f2c022f47f46b40f8ee7cc588af` passed `just check`: 1,146 unit
+tests, 507 integration cases and 19 doctests, plus all-feature/all-target Clippy and docs.rs with
+warnings denied. The status-specific evidence comprises 37 local cases, 34 Git/workflow cases and
+one portable cancellation case on macOS arm64, Rust/Cargo 1.98.1 and Git 2.55.0. The runnable
+example, warning-denying private Rustdoc, rendered navigation/contracts/examples, nightly
+formatting, rumdl, global-config Markdown lint and benchmark fingerprint verification passed.
+
+Core-only Linux and Windows libraries compile. Linux core test targets also compile using the
+installed Zig C compiler with `CRATE_CC_NO_DEFAULTS=1` and
+`CC_x86_64_unknown_linux_gnu='zig cc -target x86_64-linux-gnu'`; this resolves the existing
+Criterion C dependency's missing cross-compiler without a repository change. Linux core-library
+Clippy passed with warnings denied. Native Linux/Windows execution remains pending; compilation is
+not runtime evidence. The index parent `beb052d387c74968ad4199014e51dcfed67b2c28` and content-diff
+ancestor `d3b47737320afbd9c2224384cea68c7c2ff5cbd5` remain unchanged. Subsequent changes only record
+this validation evidence.
