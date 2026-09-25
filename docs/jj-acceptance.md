@@ -225,8 +225,9 @@ observations and unchanged jj behavior. jj owns traversal and tracked-file selec
 large pattern/path sets and bound adversarial matching work.
 
 [R17 evidence](evidence/r17.md) records the new pure byte matcher, explicit caller-loaded sources,
-case selection, ancestor exclusions, bounded work and original both-format observations. Native
-validation remains pending; R35 retains final consumer dependency replacement.
+case selection, ancestor exclusions, bounded work and original both-format observations. Scoped
+native validation passes on all four hosts, with Windows CLI path interpretation recorded separately
+from byte matching. R35 retains final consumer dependency replacement.
 
 ### A11 — Inferred copies and renames
 

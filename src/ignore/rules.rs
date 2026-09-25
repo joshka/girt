@@ -39,7 +39,7 @@ pub struct Limits {
     pub sources: usize,
     /// Retained non-comment, nonempty rules; default 100,000.
     pub patterns: usize,
-    /// Maximum physical line length before trimming; default 4096 bytes.
+    /// Maximum line bytes excluding LF and the initial BOM, before trimming; default 4096.
     pub line_bytes: usize,
     /// Maximum query or source-directory path length; default 4096 bytes.
     pub path_bytes: usize,
