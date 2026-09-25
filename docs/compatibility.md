@@ -15,20 +15,71 @@ The single-reference no-reflog operations remain available. HTTP and SSH downloa
 validation state. Installation takes explicit destination snapshot limits. Read and operation limits
 remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
-| Platform       | Current evidence boundary                                |
-| -------------- | -------------------------------------------------------- |
-| macOS arm64    | Tree comparison: local runtime evidence recorded below.  |
-| Linux x86_64   | Architecture revision: full runtime suite and examples.  |
-| Windows x86_64 | Architecture revision: portable units and doctests only. |
+| Platform       | Current evidence boundary                                   |
+| -------------- | ----------------------------------------------------------- |
+| macOS arm64    | Full suite through tree comparison, including HTTP and SSH. |
+| Linux x86_64   | Full suite through tree comparison, including HTTP and SSH. |
+| Windows x86_64 | Portable integration suites and bounded HTTP runtime.       |
 
-The latest [tree comparison evidence](testing.md#tree-comparison-completion) is macOS-only;
-Linux/Windows runtime results below predate recent reference/fetch/clone increments.
-
-The architecture validation below records native runtime results and independent core-only,
-HTTP-only, and SSH-only library compilation. Run IDs, counts and environments apply only to their
-stated revisions; later code changes require new evidence.
+The [portable integration validation](#portable-integration-validation) records the current native
+results and the Windows exclusions. Run IDs, counts and environments apply only to their stated
+revisions; later code changes require new evidence.
 
 ## Platform and Git-Version Validation
+
+### Portable Integration Validation
+
+[Run 36078287817](https://github.com/joshka/girt/actions/runs/36078287817) passed all four jobs on
+2026-09-25 UTC at revision `86ba2618b4d3ec598428d24a7b075ba3c205608e`, published on
+`joshka/portable-platform-validation`. This revision includes repository initialization/discovery,
+reference enumeration/deletion, reflog transactions, remote/refspec mapping, fetch orchestration,
+clone, and recursive tree comparison. Native results are:
+
+| Native runner       | Units | Integration | Doctests | Total |
+| ------------------- | ----- | ----------- | -------- | ----- |
+| Ubuntu 22.04 x86_64 | 960   | 441         | 16       | 1417  |
+| Ubuntu 24.04 x86_64 | 960   | 441         | 16       | 1417  |
+| macOS 14 arm64      | 960   | 439         | 16       | 1415  |
+| Windows 2022 x86_64 | 793   | 207         | 16       | 1016  |
+
+Unix runtime suites enable all features. Windows units and doctests enable all features, while
+integration coverage consists of 200 core-only tests across nine explicitly selected suites and
+seven HTTP-only tests. The [suite inventory](testing.md#native-platform-coverage) records operations
+and exclusions. Windows now exercises objects and loose storage, pack/index reading and writing,
+history queries, structural tree comparison, repository opening/initialization/discovery, and
+remote/refspec mapping against Git. The Linux-only filesystem-path and ref-name cases account for
+the two additional Linux tests.
+
+Windows HTTP runtime evidence covers real Git download, owned-worker validation, object installation
+and known-object reuse; pushing objects with Git publishing the remote ref; rejection of
+authentication failures, server errors and redirects without retries; truncated RPC bodies; and
+stalled-discovery deadlines. These fixtures use disposable loopback plaintext HTTP and a bounded Git
+CGI subprocess. Windows HTTPS/trust validation, upload cancellation, uncertain push reports and the
+broader Unix fault matrix remain untested. Reference storage, reflog transactions and composed
+fetch/clone publication remain unsupported on Windows, as do the owned local-process and SSH
+adapters. Git's own ref operations in a fixture do not establish girt ref support.
+
+Every runner passed isolated core-only, HTTP-only and SSH-only library compilation and
+all-feature/all-target Clippy with warnings rejected. Windows SSH feature compilation does not
+provide an SSH adapter. Unix runners also passed warning-denying private Rustdoc and local fetch,
+local push, HTTP and SSH examples. All hosts used Rust 1.98.1; Git was 2.55.0 on Unix and
+2.55.0.windows.5 on Windows with the MSVC toolchain. These compilation checks are separate from the
+runtime counts above; no performance, crash-durability or network-filesystem evidence was added.
+
+[The preceding run](https://github.com/joshka/girt/actions/runs/36077535098), revision
+`9be3b78a6aa122a23d8cb0d19194ceca35350e0b`, passed all Unix jobs but found a Windows fixture
+assertion comparing Git's `C:/...` spelling to Rust's canonical `\\?\C:\...` spelling.
+Canonicalizing Git's reported path fixed the assertion without changing library behavior. The final
+Windows run executed all selected suites with no ignored or filtered tests. Portable tests now use
+`--no-fail-fast`, and HTTP runs independently after other step failures so its result remains
+visible. An earlier superseded run was cancelled after local Clippy identified needless borrows in
+the new fixture; no result is claimed for it.
+
+Local `just check` passed on the initial portable-suite revision (1,415 tests); the path correction
+then passed its focused regression, all-target/all-feature Clippy and formatting. `actionlint`,
+rumdl and markdownlint-cli2 also passed. This result record is a later Markdown-only child, not a
+CI-tested revision. Earlier capability sections retain their original revision-specific evidence;
+this native run supplies the later platform results.
 
 ### Architecture Revision Validation
 
