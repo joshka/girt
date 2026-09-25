@@ -78,6 +78,40 @@ A capability may be complete within an explicitly limited scope. Validation on o
 establish support on other platforms, and recognizing a format does not establish that it is
 implemented. Keep these distinctions visible in the completion report.
 
+## Native Platform Coverage
+
+The platform workflow runs the full all-feature suite on Ubuntu 22.04/24.04 and macOS 14. Windows
+runs all-feature library units and doctests, an explicit core-only integration selection, and a
+separate HTTP-only runtime suite. All hosts independently compile core-only, HTTP-only, and SSH-only
+libraries and run all-feature/all-target Clippy. Compilation is not runtime evidence; SSH feature
+compilation on Windows does not expose a Windows SSH adapter.
+
+The Windows integration selection follows implemented operations, not just file portability:
+
+- `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
+- `packs`, `history`, `tree_compare`: Pack/index I/O, deltas, graph queries, structural tree
+  comparison.
+- `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
+- `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
+- `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
+- `references`, `fetch_workflow`, `clone`: Excluded: require girt's unsupported Windows ref backend.
+- `fetch`, `push`: Excluded: mixed suites use unsupported owned local-process adapters and refs.
+- `ssh`: Excluded: the adapter and its process-lifetime implementation are macOS/Linux-only.
+- `http`: Excluded: broader suite uses girt refs, Unix hooks, and orchestration/clone publication.
+
+Git may manage refs inside Windows fixtures without establishing girt reference-storage support.
+Tree symlink modes and non-UTF-8 entry names are object bytes; those tests do not create Windows
+symlinks or non-UTF-8 filesystem paths. The Linux-only repository path case remains Linux-only. The
+portable HTTP suite uses loopback plaintext HTTP, Python and Git's public CGI backend, finite
+network deadlines and bounded CGI execution. It validates fetch downloads on an owned worker and
+installs objects without publishing local refs. Windows TLS trust/HTTPS, upload cancellation,
+uncertain push acknowledgements and the full Unix HTTP fault matrix remain outside that suite.
+
+When adding an integration suite, decide its Windows applicability here and in the workflow. Keep
+unsupported operations separate from fixture assumptions; do not disable otherwise portable coverage
+because another suite requires a Unix backend. Record exact native run revisions in
+[compatibility evidence](compatibility.md#platform-and-git-version-validation).
+
 ## Historical Capability Completion Records
 
 The following sections record evidence collected when each capability landed. Counts, commands, API
