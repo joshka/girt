@@ -69,7 +69,7 @@ jobs:
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
           --test blobs --test trees --test commits --test tags --test packs
-          --test history --test repositories --test remotes --test tree_compare --test content_diff --test index --test status_portable
+          --test history --test repositories --test remotes --test tree_compare --test content_diff --test index --test status_portable --test checkout_portable
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}
         run: cargo +stable test --locked --no-default-features --features http --test http_portable

@@ -12,14 +12,14 @@ fetch, conditional branch/tag push, reference enumeration, and conditional trans
 explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
 tracking-layout clone into bare or ordinary no-checkout repositories, recursive tree comparison, and
 byte-preserving content diff, SHA-1 working-tree index v2 read/replacement, and raw read-only
-working-tree status on macOS/Linux. The single-reference no-reflog operations remain available. HTTP
-and SSH downloads share owned validation state. Installation takes explicit destination snapshot
-limits. Read and operation limits remain per phase; no process-wide heap or hard CPU-latency
-guarantee is implied.
+working-tree status and conservative raw tree checkout on macOS/Linux. The single-reference
+no-reflog operations remain available. HTTP and SSH downloads share owned validation state.
+Installation takes explicit destination snapshot limits. Read and operation limits remain per phase;
+no process-wide heap or hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Full suite through raw status, including HTTP and SSH.      |
+| macOS arm64    | Full suite through raw checkout, including HTTP and SSH.    |
 | Linux x86_64   | Full suite through tree comparison, including HTTP and SSH. |
 | Windows x86_64 | Portable integration suites and bounded HTTP runtime.       |
 
@@ -1865,3 +1865,101 @@ status cases and 35 status integration cases. See the
 [completion record](testing.md#raw-working-tree-status-completion) for checks and cross-compilation
 evidence, and the [baseline](benchmarks.md#raw-working-tree-status-baseline) for representative
 warm-storage measurements. No publication, merge or checkout is part of this increment.
+
+## Raw Tree Checkout
+
+`Repository::checkout_tree(baseline, target, limits, cancel)` materializes a selected SHA-1 tree and
+publishes its index on macOS/Linux. This is tree checkout: HEAD, refs, reflogs and configuration
+stay unchanged. Callers supply the baseline tree rather than asking checkout to infer intent from
+HEAD. Every normal index entry must match that baseline by path, mode and ID. Staged differences
+relative to it, conflicts, gitlinks, dirty or missing tracked files and unsupported index extensions
+are refused before worktree mutation, even for paths unchanged in the target. A previous raw status
+report never substitutes for these independent checks.
+
+`None` denotes an empty tree. A missing or empty index requires an empty baseline, which supports
+unborn repositories and initial checkout after either girt or Git no-checkout clone. A missing index
+with a nonempty baseline is rejected. An existing nonempty index cannot be bypassed by choosing an
+empty baseline. HEAD is not read or validated; after checkout of a different tree, Git can report
+staged changes relative to HEAD. Unverified `TREE` caches are discarded, including when entries are
+unchanged. New index entries have zero cached stat words and cleared assume-valid flags. Git status
+verifies their content; stat-only plumbing such as `git diff-files` may first need
+`git update-index --refresh`.
+
+Checkout preserves literal blob bytes, owner-executable mode and native symlink targets. It does not
+run filters, apply attributes/EOL conversion, consult ignores or honor
+`core.filemode`/`core.symlinks` overrides. Files receive 0644 or 0755 permissions; prior ownership,
+ACLs and other metadata are not preserved. Symlink payloads must contain 1 through 1024 non-NUL
+bytes. Empty-tree input is supported; empty directories encoded in trees are not materialized
+because Git's index records only leaves.
+
+### Preconditions and Filesystem Boundaries
+
+Callers must exclude other worktree writers and root/ancestor renames throughout the operation, and
+protect metadata, objects and mount topology from replacement. The per-worktree index lock excludes
+cooperating index writers. Component-wise descriptor-relative opens never follow symlink ancestors;
+regular-file writes use exclusively created temporary files, and exclusive `linkat` installation
+refuses newly appeared destinations. Symlinks are installed as links themselves, never followed.
+File identity and content are checked independently; path/ancestor identity is checked again at
+mutation boundaries. Final target verification precedes index publication. These mechanisms detect
+observed changes but cannot prevent an arbitrary writer racing the last unlink check, directory
+rename or ABA replacement. Hostile hardlink/mount manipulation is outside the contract.
+
+Linux preserves non-UTF-8 names. macOS requires ASCII target paths and names in traversed
+directories. Both reject case-colliding selected paths, filesystem name aliases, NUL, backslashes,
+colons, empty/dot/parent components, case-insensitive `.git` components and components longer than
+255 bytes. Nested ordinary/bare repositories and metadata-directory identities block traversal.
+Gitlinks, submodule recursion, sparse/split indexes, index v3/v4 and non-`TREE` extensions are
+unsupported. Windows and other platforms refuse checkout before locking or reading the index;
+portable tests cover that boundary without claiming Windows materialization support. Native hard
+links, symlinks and POSIX modes are required; filesystem emulation and shared-permission policies
+are excluded.
+
+### Phases and Failure Recovery
+
+Preparation acquires the index lock, verifies the baseline/target trees and blobs, checks clean
+tracked content and obstructions, and validates the complete replacement index. Bounds cover tree
+traversal, unique retained blob payloads, files, path prefixes, depth and directory enumerations.
+Directory names are enumerated again at mutation boundaries, so wide directories can require
+quadratic work. Cancellation is checked between entries and 64-KiB file I/O chunks; one syscall or
+object decode cannot be interrupted. There is no wall-clock deadline or background worker.
+
+Mutation removes changed tracked leaves, removes known empty directories only when necessary for a
+directory-to-file transition, creates missing directories, then installs changed leaves. Unknown
+contents, including empty subdirectories, obstruct transitions; no recursive cleanup or force mode
+is provided. Unrelated files and directories are retained. Publication rechecks all target content
+and original index bytes, then writes and renames the owned index lock. The index uses its existing
+conservative timestamp policy. There is no batch atomicity, crash durability or rollback journal.
+
+A failure reports the last entered stage, every completed namespace operation in order, whether the
+index was published, and separate cleanup failures identifying owned artifacts that may remain.
+Multiple operations can name one path. A post-mutation inspection failure still reports that
+mutation. If index publication fails, successful worktree changes remain with the prior index,
+except for independent writers. Cleanup checks temporary identity and refuses observed replacements;
+it never recursively deletes a directory. Explicit index abort reports lock cleanup failures. Drop
+remains best effort for callers that abandon an index edit without explicit abort.
+
+Recovery requires inspecting both the report and actual files. Do not blindly retry with the old
+baseline or remove reported artifacts without verifying ownership and excluding writers. A failed
+update may leave tracked paths absent or changed and newly created empty directories. A successful
+return means the selected tree and index were verified and published under the exclusion contract,
+not that another writer cannot change them afterward.
+
+### Checkout Evidence and Provenance
+
+Original local tests exercise initial checkout, additions/deletions, modes, symlinks and tracked
+file/directory transitions; staged/conflicted/dirty states; unsafe paths, aliases, gitlinks and
+nested repositories; object corruption and bounds. Deterministic checkpoints cover changed files,
+symlink/directory/root substitution, newly appeared destinations, cancellation, write/install/delete
+faults, post-mutation failures, cleanup failures and index-publication preconditions. Index storage
+units separately inject descriptor-write and rename failures and verify original-byte preservation.
+
+Independent Git CLI fixtures create their own commits and compare `ls-files --stage`, `write-tree`,
+status, raw objects and unchanged HEAD. Both girt and Git no-checkout clones become usable
+checkouts, then accept subsequent Git commits and `fsck`. Linked and separate worktrees route the
+index correctly. An attributes fixture proves the deliberate difference between raw LF
+materialization and Git's CRLF checkout conversion. No upstream implementation or test source was
+used as input.
+
+Run `cargo run --example checkout` for a disposable public lifecycle. See the
+[completion evidence](testing.md#raw-tree-checkout-completion) and
+[benchmark workload](benchmarks.md#raw-tree-checkout-baseline) for validation scope.

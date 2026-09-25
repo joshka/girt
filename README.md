@@ -66,6 +66,11 @@ unchecked gitlinks on macOS/Linux. It verifies content without refreshing the in
 untracked/normalization policy explicitly. Run `cargo run --example status`; see
 [raw status boundaries](docs/compatibility.md#raw-working-tree-status).
 
+`Repository::checkout_tree` materializes a selected tree with raw bytes and POSIX modes on
+macOS/Linux, then publishes its index without switching HEAD. It requires an explicit clean baseline
+and refuses staged/unstaged changes and untracked obstructions. Run `cargo run --example checkout`;
+see [checkout lifecycle and failure outcomes](docs/compatibility.md#raw-tree-checkout).
+
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The default writer streams
 ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection

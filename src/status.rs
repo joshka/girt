@@ -17,6 +17,6 @@
 mod types;
 mod workflow;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-mod worktree;
+pub(crate) mod worktree;
 
 pub use types::*;

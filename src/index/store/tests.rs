@@ -155,19 +155,17 @@ fn rename_failure_preserves_original() {
     let (_root, repo) = repository();
     let before = populated(&repo);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
-    // Point publication at an absent source while leaving its owned descriptor valid. This
-    // injects rename failure on every host without racing another process.
-    let original_lock = edit.lock_path.clone();
-    edit.lock_path = repo.git_dir().join("missing.lock");
+    let error = edit.publish_with_rename(|_, _| Err(io::Error::other("injected rename failure")));
     assert!(matches!(
-        edit.commit(),
+        error,
         Err(StorageError::Io {
             operation: "replace index",
             ..
         })
     ));
+    edit.abort().unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
-    fs::remove_file(original_lock).unwrap();
+    assert!(!repo.git_dir().join("index.lock").exists());
 }
 #[test]
 fn bounded_read_preserves_storage() {
@@ -242,4 +240,22 @@ fn symlink_index_is_rejected_without_following_it() {
     ));
     assert_eq!(fs::read(target).unwrap(), b"keep");
     assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_abort_does_not_remove_replaced_lock() {
+    let (_root, repo) = repository();
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    fs::rename(
+        repo.git_dir().join("index.lock"),
+        repo.git_dir().join("owned.lock"),
+    )
+    .unwrap();
+    fs::write(repo.git_dir().join("index.lock"), b"foreign").unwrap();
+    assert!(matches!(edit.abort(), Err(StorageError::Changed(_))));
+    assert_eq!(
+        fs::read(repo.git_dir().join("index.lock")).unwrap(),
+        b"foreign"
+    );
 }

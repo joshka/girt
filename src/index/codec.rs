@@ -159,6 +159,12 @@ impl Index {
         Ok(())
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn discard_tree_cache(&mut self) {
+        self.extensions
+            .retain(|extension| extension.signature != *b"TREE");
+    }
+
     /// Parses a complete index, copying paths and optional extensions into owned storage.
     ///
     /// SHA-1 input must be selected by the caller; the header does not identify the hash format.

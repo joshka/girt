@@ -96,6 +96,8 @@ The Windows integration selection follows implemented operations, not just file 
 - `status_portable`: Cancellation before storage access and explicit unsupported-platform status
   rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.
+- `checkout_portable`: Cancellation before locking and explicit unsupported-platform checkout
+  rejection. Actual checkout and native symlink tests run only on macOS/Linux.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
@@ -961,3 +963,48 @@ Clippy passed with warnings denied. Native Linux/Windows execution remains pendi
 not runtime evidence. The index parent `beb052d387c74968ad4199014e51dcfed67b2c28` and content-diff
 ancestor `d3b47737320afbd9c2224384cea68c7c2ff5cbd5` remain unchanged. Subsequent changes only record
 this validation evidence.
+
+### Raw Tree Checkout Completion
+
+Acceptance is a usable explicit-baseline tree checkout with no HEAD/ref switching: materialize a
+no-checkout clone or replace clean tracked content, publish the matching index, and preserve user
+content on refusal or partial failure. The [checkout contract](compatibility.md#raw-tree-checkout)
+owns platform, normalization, concurrency and recovery limits.
+
+- [x] Focused local cases cover raw bytes, executable/symlink modes, additions/deletions and
+      file/directory transitions, staged/unstaged/conflicted state, obstructions, nested
+      repositories, gitlinks, unsafe/colliding paths, corrupt/missing/wrong-kind objects and
+      exhausted budgets.
+- [x] Deterministic checkpoints cover changes after planning and at mutation boundaries, ancestor
+      directory/symlink/root replacement, destination substitution, cancellation before/during work,
+      write/install/delete faults, publication preconditions and exact completed operations.
+- [x] Temporary and index-lock cleanup failures are observable; replaced artifacts are preserved.
+      Post-mutation failure still reports completed operations. Index units inject write and rename
+      failures and check preservation of original index bytes.
+- [x] Independent Git CLI fixtures verify no-checkout clone through both girt and Git, subsequent
+      Git use, raw bytes, modes, `ls-files`, refreshed `diff-files`, `write-tree`, status and
+      `fsck`. HEAD remains unchanged; linked/separate worktrees route metadata correctly. Raw
+      attributes/EOL behavior is compared deliberately against Git checkout conversion.
+- [x] The disposable `examples/checkout.rs` demonstrates initialization, explicit baseline
+      selection, mutation, publication, partial reports and owner-controlled cleanup. Public Rustdoc
+      explains lifecycle stages, caller exclusion, deferred filters and recovery.
+- [x] Windows explicitly selects `checkout_portable` for cancellation and unsupported-platform
+      evidence. Actual checkout and native symlink cases remain macOS/Linux-only; Linux byte names
+      and macOS non-ASCII rejection are separately gated.
+- [x] The [Criterion workload](benchmarks.md#raw-tree-checkout-baseline) measures complete initial
+      and tracked-update operations for 10/100 root files with 1-KiB blobs, retaining source
+      fingerprints and confidence intervals without a numerical gate.
+
+On 2026-09-24, revision `0429350cc1a64b665a18044c507fd8b640244e52` passed `just check`: 1,212 unit
+tests, 515 integration cases and 19 doctests, plus all-feature/all-target Clippy and docs.rs with
+warnings denied. Checkout-specific coverage comprises 65 local cases, seven Git/workflow cases and
+one portable cancellation case on macOS arm64, Rust/Cargo 1.98.1 and Git 2.55.0. The runnable
+example, warning-denying private Rustdoc and rendered public navigation/contracts/scraped example
+were checked. The subsequent lock-identity acquisition error refinement at
+`cb230d2a0f2b9d2141b4578319e4b481639fdcaf` passed all 65 checkout units, all 16 index-storage units,
+all-target Clippy and docs.rs again. No new dependency was added.
+
+Core-only Linux and Windows libraries compile. Native execution of this checkout increment on
+Linux/Windows remains pending; compilation is not runtime evidence. Windows checkout is explicitly
+unsupported. The status parent `e5380d364a91d437a1190a058501e58073b2109f` and index ancestor
+`beb052d387c74968ad4199014e51dcfed67b2c28` remain unchanged. No changes were published or merged.

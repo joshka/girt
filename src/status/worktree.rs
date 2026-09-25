@@ -365,7 +365,7 @@ fn difference(entry: &index::Entry, actual: &BTreeMap<Vec<u8>, Observed>) -> Opt
     }
 }
 
-pub(super) fn validate_path(path: &[u8]) -> Result<(), Error> {
+pub(crate) fn validate_path(path: &[u8]) -> Result<(), Error> {
     if path.is_empty()
         || path.contains(&0)
         || path.contains(&b'\\')
@@ -382,12 +382,12 @@ pub(super) fn validate_path(path: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-fn directory_flags() -> OFlags {
+pub(crate) fn directory_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
 }
 
 // Opening the absolute root component-by-component avoids following a substituted ancestor.
-fn open_root(path: &Path) -> Result<OwnedFd, Error> {
+pub(crate) fn open_root(path: &Path) -> Result<OwnedFd, Error> {
     let mut fd = rustix::fs::open("/", directory_flags(), Mode::empty())
         .map_err(|source| io(b"", source))?;
     for component in path.components() {
@@ -408,7 +408,7 @@ fn open_root(path: &Path) -> Result<OwnedFd, Error> {
     Ok(fd)
 }
 
-fn repository_marker(fd: &OwnedFd, path: &[u8]) -> Result<bool, Error> {
+pub(crate) fn repository_marker(fd: &OwnedFd, path: &[u8]) -> Result<bool, Error> {
     if optional_stat(fd, b".git", path)?.is_some() {
         return Ok(true);
     }
@@ -418,7 +418,7 @@ fn repository_marker(fd: &OwnedFd, path: &[u8]) -> Result<bool, Error> {
         && optional_stat(fd, b"refs", path)?.is_some())
 }
 
-fn optional_stat(fd: &OwnedFd, name: &[u8], path: &[u8]) -> Result<Option<Stat>, Error> {
+pub(crate) fn optional_stat(fd: &OwnedFd, name: &[u8], path: &[u8]) -> Result<Option<Stat>, Error> {
     match statat(fd, OsStr::from_bytes(name), AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => Ok(Some(stat)),
         Err(rustix::io::Errno::NOENT) => Ok(None),
@@ -426,7 +426,7 @@ fn optional_stat(fd: &OwnedFd, name: &[u8], path: &[u8]) -> Result<Option<Stat>,
     }
 }
 
-fn same(path: &[u8], before: &Stat, after: &Stat) -> Result<(), Error> {
+pub(crate) fn same(path: &[u8], before: &Stat, after: &Stat) -> Result<(), Error> {
     if before.st_dev != after.st_dev
         || before.st_ino != after.st_ino
         || before.st_mode != after.st_mode

@@ -216,3 +216,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "status"
 harness = false
+
+[[example]]
+name = "checkout"
+doc-scrape-examples = true
+
+[[bench]]
+name = "checkout"
+harness = false

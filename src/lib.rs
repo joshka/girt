@@ -49,6 +49,15 @@
 //! directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive ancestor.
 //! Discovery stops at malformed or unsupported metadata rather than selecting an outer repository.
 //!
+//! # Checking out a selected tree
+//!
+//! [`Repository::checkout_tree`] materializes raw blob bytes and publishes a matching index on
+//! macOS/Linux. Supply an explicit baseline matching the clean index, or `None` for an initial
+//! no-checkout clone. The operation refuses staged/unstaged changes and untracked obstructions;
+//! HEAD and refs remain unchanged. [`checkout`] documents caller exclusion, supported names,
+//! preparation/mutation/publication phases and per-path failure reports. Run
+//! `cargo run --example checkout` for a disposable lifecycle example.
+//!
 //! # Cloning without checkout
 //!
 //! [`clone::CloneRequest::prepare_tracking`] selects a new destination, layout, stored origin URL,
@@ -145,8 +154,10 @@
 //! macOS/Linux. Both use a caller-owned Tokio runtime; fetch pack validation remains an explicit
 //! synchronous step. Files references support enumeration, reads, symbolic resolution, and explicit
 //! no-reflog updates and deletion, plus conditional batches and caller-controlled reflog appends.
-//! The working-tree index and working-tree conversion are not implemented.
+//! SHA-1 working-tree index v2, raw status and conservative raw tree checkout are available.
+//! Attribute/filter/EOL conversion, branch switching, sparse checkout and submodules are deferred.
 
+pub mod checkout;
 pub mod clone;
 mod commit;
 pub mod config;

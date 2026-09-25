@@ -13,8 +13,10 @@ use crate::Repository;
 /// [`Self::replace_entries`] then [`Self::commit`]. Missing storage starts as an empty index.
 /// Dropping without committing abandons the edit and removes only the acquired lock. Existing
 /// locks are never stolen. Cleanup is best effort; a filesystem cleanup failure can leave the
-/// owned lock for manual removal. Processes must honor Git's lock protocol; malicious directory,
-/// symlink or lock replacement is outside this contract.
+/// owned lock for manual removal. [`Self::abort`] explicitly reports cleanup errors; failed reads
+/// and commits retain both operation and cleanup causes. Unix cleanup/publication rechecks the
+/// acquired lock inode, refusing an observed replacement. Processes must honor Git's lock protocol;
+/// arbitrary directory, symlink or lock replacement is outside this contract.
 ///
 /// Publication uses a same-directory rename, with atomic replacement where the host filesystem
 /// supports it. No fsync or crash durability is promised. No shared-repository permission policy
@@ -26,6 +28,7 @@ pub struct IndexEdit {
     lock_path: PathBuf,
     file: Option<File>,
     original: Option<Vec<u8>>,
+    lock_identity: fs::Metadata,
     index: Index,
     limits: Limits,
     published: bool,
@@ -34,6 +37,16 @@ pub struct IndexEdit {
 /// Synchronous index storage failure, retaining path and underlying causes.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    /// The operation failed and its owned lock could not be removed. Both causes are retained;
+    /// the cleanup cause identifies the lock requiring manual recovery.
+    #[error("{operation}; additionally, lock cleanup failed: {cleanup}")]
+    Cleanup {
+        /// Primary failure.
+        #[source]
+        operation: Box<StorageError>,
+        /// Failed removal of the acquired lock.
+        cleanup: Box<StorageError>,
+    },
     /// Read, lock write, metadata update or rename failed. Original index bytes are unchanged
     /// by a failed publication; a concurrent writer's changes are never rolled back.
     #[error("cannot {operation} {path}: {source}")]
@@ -111,18 +124,33 @@ impl Repository {
                     io_error("create lock", &lock_path, source)
                 }
             })?;
+        let lock_identity = file.metadata().map_err(|source| StorageError::Cleanup {
+            operation: Box::new(io_error("inspect acquired lock", &lock_path, source)),
+            cleanup: Box::new(io_error(
+                "identify lock for cleanup",
+                &lock_path,
+                io::Error::other("cannot safely remove lock without its file identity"),
+            )),
+        })?;
         let mut edit = IndexEdit {
             destination,
             lock_path,
+            lock_identity,
             file: Some(file),
             original: None,
             index: Index::default(),
             limits,
             published: false,
         };
-        edit.original = read_bytes(&edit.destination, limits)?;
-        if let Some(bytes) = &edit.original {
-            edit.index = parse(&edit.destination, bytes, limits)?;
+        let result = (|| {
+            edit.original = read_bytes(&edit.destination, limits)?;
+            if let Some(bytes) = &edit.original {
+                edit.index = parse(&edit.destination, bytes, limits)?;
+            }
+            Ok(())
+        })();
+        if let Err(operation) = result {
+            return Err(with_cleanup(operation, edit.abort()));
         }
         Ok(edit)
     }
@@ -163,6 +191,39 @@ impl IndexEdit {
     /// bytes, apart from independent concurrent changes. The acquired lock is cleaned on failure
     /// where possible. Successful return reports publication, not crash durability.
     pub fn commit(mut self) -> Result<(), StorageError> {
+        if let Err(operation) = self.publish() {
+            return Err(with_cleanup(operation, self.abort()));
+        }
+        Ok(())
+    }
+
+    /// Releases the owned lock without publishing and reports cleanup failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
+    /// recovery; no index or working-tree content is changed.
+    pub fn abort(mut self) -> Result<(), StorageError> {
+        self.published = true; // Do not silently retry an explicitly reported cleanup failure.
+        self.check_lock_identity()?;
+        drop(self.file.take());
+        fs::remove_file(&self.lock_path)
+            .map_err(|source| io_error("remove owned index lock", &self.lock_path, source))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn discard_tree_cache(&mut self) {
+        self.index.discard_tree_cache();
+    }
+
+    pub(crate) fn publish(&mut self) -> Result<(), StorageError> {
+        self.publish_with_rename(|from, to| fs::rename(from, to))
+    }
+
+    fn publish_with_rename(
+        &mut self,
+        rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
+    ) -> Result<(), StorageError> {
         let bytes = self
             .index
             .encode(self.limits)
@@ -173,11 +234,30 @@ impl IndexEdit {
         self.check_original()?;
         self.write_lock(&bytes)?;
         self.check_original()?;
-        // Closing before rename also permits replacement on hosts that restrict open-file moves.
+        self.check_lock_identity()?;
         drop(self.file.take());
-        fs::rename(&self.lock_path, &self.destination)
+        rename(&self.lock_path, &self.destination)
             .map_err(|source| io_error("replace index", &self.destination, source))?;
         self.published = true;
+        Ok(())
+    }
+
+    fn check_lock_identity(&self) -> Result<(), StorageError> {
+        let current = fs::symlink_metadata(&self.lock_path)
+            .map_err(|source| io_error("inspect owned index lock", &self.lock_path, source))?;
+        if !current.is_file() {
+            return Err(StorageError::Changed(self.lock_path.clone()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let owned = &self.lock_identity;
+            if current.dev() != owned.dev() || current.ino() != owned.ino() {
+                return Err(StorageError::Changed(self.lock_path.clone()));
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = &self.lock_identity;
         Ok(())
     }
 
@@ -201,8 +281,8 @@ impl IndexEdit {
 }
 impl Drop for IndexEdit {
     fn drop(&mut self) {
-        drop(self.file.take());
-        if !self.published {
+        if !self.published && self.check_lock_identity().is_ok() {
+            drop(self.file.take());
             let _ = fs::remove_file(&self.lock_path);
         }
     }
@@ -246,3 +326,13 @@ fn io_error(operation: &'static str, path: &Path, source: io::Error) -> StorageE
 
 #[cfg(test)]
 mod tests;
+
+fn with_cleanup(operation: StorageError, cleanup: Result<(), StorageError>) -> StorageError {
+    match cleanup {
+        Ok(()) => operation,
+        Err(cleanup) => StorageError::Cleanup {
+            operation: Box::new(operation),
+            cleanup: Box::new(cleanup),
+        },
+    }
+}

@@ -1042,3 +1042,38 @@ These are warm loose-storage baselines, not tail latencies, cold/packed-storage 
 peak-memory evidence or cross-platform performance claims. Similar clean/changed costs are expected
 because both verify working content; small differences do not establish a performance improvement.
 No numerical regression gate is imposed.
+
+## Raw Tree Checkout Baseline
+
+`cargo bench --bench checkout` measures complete `Repository::checkout_tree` calls for initial
+checkout and replacement of every tracked file, with 10 or 100 root-level files and 1-KiB contents.
+Each fixture has one shared loose blob per tree; updates use distinct old/new payloads. Repository,
+objects and baseline worktree construction occur outside each timed iteration through Criterion's
+`iter_batched_ref` with `PerIteration`. Temporary-repository cleanup is outside timing. The measured
+operation includes preparation, locking, object verification, independent raw worktree checks,
+namespace mutations, final verification, index publication and report destruction. Caches are warm.
+
+The harness uses ten samples, one-second warmup and three-second measurement targets. Repeated name
+enumeration protects mutation boundaries but can make wide-directory work quadratic. These
+small-directory measurements do not establish large-checkout throughput or a stat-cache
+optimization. No tail-latency, crash-durability, cold-storage, peak-memory or cross-platform claim
+is made, and no numerical regression gate is imposed. Final estimates and source fingerprints are
+retained below.
+
+The 2026-09-24 run used Criterion 0.8.2, Rust/Cargo 1.98.1, the default optimized bench profile,
+macOS 26.6.2 (25G83), aarch64-apple-darwin and an Apple M2 Max with 96 GiB RAM. No builds or tests
+from this task overlapped the retained sampling run. Desktop activity, thermals and CPU placement
+were uncontrolled.
+
+| Checkout       | Files | Median ms | 95% CI, ms      |
+| -------------- | ----- | --------- | --------------- |
+| Initial        | 10    | 7.657     | 7.496–8.109     |
+| Tracked update | 10    | 10.400    | 10.112–10.800   |
+| Initial        | 100   | 80.406    | 78.811–82.126   |
+| Tracked update | 100   | 114.926   | 113.744–116.986 |
+
+The [CSV](benchmarks/checkout-baseline.csv) retains medians and confidence intervals in nanoseconds.
+The [source manifest](benchmarks/checkout-baseline.sha256) fingerprints library sources, the
+harness, Cargo manifest and lockfile; verify with
+`shasum -a 256 -c docs/benchmarks/checkout-baseline.sha256`. These are operation baselines, not a
+controlled performance comparison with another implementation.
