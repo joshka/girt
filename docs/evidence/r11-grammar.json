@@ -1,0 +1,134 @@
+[
+  {
+    "girt": "ok records=1 bytes=106",
+    "format": "sha1",
+    "case": "canonical",
+    "input_bytes": 106,
+    "input_sha256": "3054c56a9bfdc8debb8a908f99e11cf4d247fa68c3d8ab67ac79138f33e8851f",
+    "status": 0,
+    "output_bytes": 51,
+    "output_prefix_hex": "373235386261336431663639626531626330626461623463656631383964393137666436666361382041206d6573736167650a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: unterminated reflog record",
+    "format": "sha1",
+    "case": "missing_newline",
+    "input_bytes": 105,
+    "input_sha256": "a2f3fcf57d8478c98b602be75149cf08fcdc759465184d17dc33f5ea1d0c26fe",
+    "status": 0,
+    "output_bytes": 44,
+    "output_prefix_hex": "373235386261336431663639626531626330626461623463656631383964393137666436666361382041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: NUL or CR in reflog record",
+    "format": "sha1",
+    "case": "crlf",
+    "input_bytes": 107,
+    "input_sha256": "c14019b71f8326d453e7c8e21eb2a329e8608deead597ce2a1dedb2ed638deb2",
+    "status": 0,
+    "output_bytes": 52,
+    "output_prefix_hex": "373235386261336431663639626531626330626461623463656631383964393137666436666361382041206d6573736167650d0a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: NUL or CR in reflog record",
+    "format": "sha1",
+    "case": "nul",
+    "input_bytes": 102,
+    "input_sha256": "aec9968afbcf500116c48bfa6673d682f793a08c2c732c57e2fa80d0a4838dcf",
+    "status": 0,
+    "output_bytes": 44,
+    "output_prefix_hex": "373235386261336431663639626531626330626461623463656631383964393137666436666361382041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "ok records=1 bytes=98",
+    "format": "sha1",
+    "case": "no_message_separator",
+    "input_bytes": 98,
+    "input_sha256": "e543bf043ded2dc21beb1711ed9c62d774a70368d74d59dc7cc339b9bebc59df",
+    "status": 0,
+    "output_bytes": 44,
+    "output_prefix_hex": "373235386261336431663639626531626330626461623463656631383964393137666436666361382041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "ok records=1 bytes=1048675",
+    "format": "sha1",
+    "case": "message_1m",
+    "input_bytes": 1048675,
+    "input_sha256": "9c74015db13160806020dee7888de5e77857142780f69f8547cd0cb87f746927",
+    "status": 0,
+    "output_bytes": 1048620,
+    "output_prefix_hex": "37323538626133643166363962653162633062646162346365663138396439313766643666636138204120787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
+    "stderr": ""
+  },
+  {
+    "girt": "ok records=1 bytes=154",
+    "format": "sha256",
+    "case": "canonical",
+    "input_bytes": 154,
+    "input_sha256": "67bc79d5e9206223544f96be3b49f797441e4dd534b99ec1e31d37d806baa1ac",
+    "status": 0,
+    "output_bytes": 75,
+    "output_prefix_hex": "313338323231323736303464663033316330316566643830623439383762633163613564346137376432303761613763626136303838353733613432306538392041206d6573736167650a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: unterminated reflog record",
+    "format": "sha256",
+    "case": "missing_newline",
+    "input_bytes": 153,
+    "input_sha256": "d86defbbb469442118f70864afa83536504bbe0f2493d051fcd7316844259649",
+    "status": 0,
+    "output_bytes": 68,
+    "output_prefix_hex": "313338323231323736303464663033316330316566643830623439383762633163613564346137376432303761613763626136303838353733613432306538392041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: NUL or CR in reflog record",
+    "format": "sha256",
+    "case": "crlf",
+    "input_bytes": 155,
+    "input_sha256": "3f567e402929304d461fb460ab41b5e108b3710f59db2f737e6b670ef42c6200",
+    "status": 0,
+    "output_bytes": 76,
+    "output_prefix_hex": "313338323231323736303464663033316330316566643830623439383762633163613564346137376432303761613763626136303838353733613432306538392041206d6573736167650d0a",
+    "stderr": ""
+  },
+  {
+    "girt": "rejected: malformed reference at <reflog>: NUL or CR in reflog record",
+    "format": "sha256",
+    "case": "nul",
+    "input_bytes": 150,
+    "input_sha256": "0cf4a14eff027e709adeb20a4b8823d7b3b68250ee6c71686f56218e48d5715f",
+    "status": 0,
+    "output_bytes": 68,
+    "output_prefix_hex": "313338323231323736303464663033316330316566643830623439383762633163613564346137376432303761613763626136303838353733613432306538392041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "ok records=1 bytes=146",
+    "format": "sha256",
+    "case": "no_message_separator",
+    "input_bytes": 146,
+    "input_sha256": "407231dec9945eb8934ed62a4c589ee5298e61b266dbc1b5274a07bb661edab5",
+    "status": 0,
+    "output_bytes": 68,
+    "output_prefix_hex": "313338323231323736303464663033316330316566643830623439383762633163613564346137376432303761613763626136303838353733613432306538392041200a",
+    "stderr": ""
+  },
+  {
+    "girt": "ok records=1 bytes=1048723",
+    "format": "sha256",
+    "case": "message_1m",
+    "input_bytes": 1048723,
+    "input_sha256": "7bb6343c7735a820fe7cce56dc8a2e27f75a52e64ce0a0fefc9b996af658a7bb",
+    "status": 0,
+    "output_bytes": 1048644,
+    "output_prefix_hex": "31333832323132373630346466303331633031656664383062343938376263316361356434613737643230376161376362613630383835373361343230653839204120787878787878787878787878787878787878787878787878787878787878787878",
+    "stderr": ""
+  }
+]

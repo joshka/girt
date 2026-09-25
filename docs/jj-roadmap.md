@@ -61,7 +61,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R09 | Lossless config and remote mutation                         | R08                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Accepted              | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
 | C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted              | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
-| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | In progress           | [A08](jj-acceptance.md#a08--references-and-reflogs)                                                                                                                          |
+| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Ready for acceptance  | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Planned               | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                    |
@@ -228,9 +228,23 @@ its C02 gate unchanged.
 
 ## Reference Backend Follow-through
 
-R11 observed installed jj 0.45.1 accepting `git init --ref-format=reftable` followed by
-`jj git init --colocate` and `jj status`, in SHA-1 and SHA-256 disposable repositories. This
-establishes a required backend beyond files refs; it does not establish all jj operations. R14
-broadens backend acceptance characterization. R37 implements reftable records and stack reads,
-conditional refs/reflogs and stack publication/compaction with both-format Git and native evidence.
-R34 must not declare full readiness before R37. Files-backend completion does not close that gap.
+R11 observed installed jj 0.45.1 accepting reftable initialization and colocated opening in SHA-1
+and SHA-256 disposable repositories. A stronger nonempty-repository probe shows that jj does not
+import the existing Git HEAD: it reports the synthetic root parent and cannot export a bookmark at
+that parent. Matching files-backend controls import the tip and export the bookmark. Opening success
+therefore does not establish reftable reference support. R14 must characterize this baseline gap and
+broader backend acceptance. R37 implements reftable records and stack reads, conditional
+refs/reflogs and stack publication/compaction with both-format Git and native evidence. R34 must not
+declare full readiness before R37; files-backend completion does not close that gap.
+
+R14 must also characterize the remaining imported-reflog reader limits against actual consumer
+requirements: CR/NUL and unterminated records, short/suffixed zones and out-of-range dates. R11
+retains explicit refusals and whole-file allocation, with independent observations in its evidence;
+these are not claims that Git rejects those forms. Queue any required wider interpretation or
+resource contract before R34 rather than dropping safe append/precondition validation.
+
+R11's broader Windows run records nine existing native failures: one R08 home-condition match case
+and eight R10 discovery oracle assertions comparing slash paths with verbatim Windows spellings.
+R21/R36 own condition/fixture diagnosis; R36/C02 own path-aware reruns and the wider native gate.
+The separate R11 reference matrix passes on Windows, Linux and macOS. See
+[R11 evidence](evidence/r11.md#native-and-local-validation); R11 does not close these earlier gaps.

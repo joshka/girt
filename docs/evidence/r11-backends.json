@@ -1,0 +1,750 @@
+[
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "init",
+      "--ref-format=files",
+      "--object-format=sha1"
+    ],
+    "status": 0,
+    "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpqg8hgdhv/.git/\n",
+    "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "mktree"
+    ],
+    "status": 0,
+    "stdout": "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "commit-tree",
+      "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "update-ref",
+      "HEAD",
+      "950486a2378d80e4ff4e0bea933f515a7940eab8"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "init",
+      "--colocate"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "config",
+      "--get",
+      "extensions.refStorage"
+    ],
+    "status": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8 refs/heads/master\n49c487844bda240ca2c1d03451900e7c900bf4c9 refs/jj/keep/49c487844bda240ca2c1d03451900e7c900bf4c9\n950486a2378d80e4ff4e0bea933f515a7940eab8 refs/jj/keep/950486a2378d80e4ff4e0bea933f515a7940eab8\na9e7c2ae0bde0fca2dba294d397787dc5b3375f3 refs/jj/keep/a9e7c2ae0bde0fca2dba294d397787dc5b3375f3\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "import"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No import needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "log",
+      "--no-graph",
+      "-r",
+      "all()",
+      "-T",
+      "commit_id"
+    ],
+    "status": 0,
+    "stdout": "49c487844bda240ca2c1d03451900e7c900bf4c9950486a2378d80e4ff4e0bea933f515a7940eab80000000000000000000000000000000000000000",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "status"
+    ],
+    "status": 0,
+    "stdout": "The working copy has no changes.\nWorking copy  (@) : omouxonl 49c48784 (empty) (no description set)\nParent commit (@-): ymuszxql 950486a2 master | (empty) original backend fixture\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "bookmark",
+      "create",
+      "probe",
+      "-r",
+      "@-"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Created 1 bookmarks pointing to ymuszxql 950486a2 master probe | (empty) original backend fixture\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "export"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No export needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref",
+      "refs/heads/probe"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8 refs/heads/probe\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "init",
+      "--ref-format=reftable",
+      "--object-format=sha1"
+    ],
+    "status": 0,
+    "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmp3r_jj8cq/.git/\n",
+    "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "mktree"
+    ],
+    "status": 0,
+    "stdout": "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "commit-tree",
+      "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "update-ref",
+      "HEAD",
+      "950486a2378d80e4ff4e0bea933f515a7940eab8"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "init",
+      "--colocate"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Initialized repo in \".\"\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "config",
+      "--get",
+      "extensions.refStorage"
+    ],
+    "status": 0,
+    "stdout": "reftable\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "950486a2378d80e4ff4e0bea933f515a7940eab8 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "import"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No import needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "log",
+      "--no-graph",
+      "-r",
+      "all()",
+      "-T",
+      "commit_id"
+    ],
+    "status": 0,
+    "stdout": "f651962c119240153290da26c7ae1184faface360000000000000000000000000000000000000000",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "status"
+    ],
+    "status": 0,
+    "stdout": "The working copy has no changes.\nWorking copy  (@) : mtwvuymx f651962c (empty) (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "bookmark",
+      "create",
+      "probe",
+      "-r",
+      "@-"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Warning: Target revision is empty.\nCreated 1 bookmarks pointing to zzzzzzzz 00000000 probe | (empty) (no description set)\nWarning: Failed to export some bookmarks:\n  probe@git: Ref cannot point to the root commit in Git\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "export"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No export needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha1",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref",
+      "refs/heads/probe"
+    ],
+    "status": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "init",
+      "--ref-format=files",
+      "--object-format=sha256"
+    ],
+    "status": 0,
+    "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpbv048cmh/.git/\n",
+    "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "mktree"
+    ],
+    "status": 0,
+    "stdout": "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "commit-tree",
+      "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "update-ref",
+      "HEAD",
+      "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "init",
+      "--colocate"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "config",
+      "--get",
+      "extensions.refStorage"
+    ],
+    "status": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/heads/master\n20ad9ac1794b50fce9abb0c50c921b84f651834d228ad74da1fd832aa57be144 refs/jj/keep/20ad9ac1794b50fce9abb0c50c921b84f651834d228ad74da1fd832aa57be144\na024cacaff4319a1288990e3d04ffb5778d3950996496d0bf719d8ed47d6579e refs/jj/keep/a024cacaff4319a1288990e3d04ffb5778d3950996496d0bf719d8ed47d6579e\nde73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/jj/keep/de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "import"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No import needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "log",
+      "--no-graph",
+      "-r",
+      "all()",
+      "-T",
+      "commit_id"
+    ],
+    "status": 0,
+    "stdout": "a024cacaff4319a1288990e3d04ffb5778d3950996496d0bf719d8ed47d6579ede73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f8567080000000000000000000000000000000000000000000000000000000000000000",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "status"
+    ],
+    "status": 0,
+    "stdout": "The working copy has no changes.\nWorking copy  (@) : xtmztzmq a024caca (empty) (no description set)\nParent commit (@-): yzltpykp de737985 master | (empty) original backend fixture\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "bookmark",
+      "create",
+      "probe",
+      "-r",
+      "@-"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Created 1 bookmarks pointing to yzltpykp de737985 master probe | (empty) original backend fixture\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "jj",
+      "git",
+      "export"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No export needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "files",
+    "command": [
+      "git",
+      "show-ref",
+      "refs/heads/probe"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/heads/probe\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "init",
+      "--ref-format=reftable",
+      "--object-format=sha256"
+    ],
+    "status": 0,
+    "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpp6zjd1z5/.git/\n",
+    "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "mktree"
+    ],
+    "status": 0,
+    "stdout": "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "commit-tree",
+      "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "update-ref",
+      "HEAD",
+      "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "init",
+      "--colocate"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Initialized repo in \".\"\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "config",
+      "--get",
+      "extensions.refStorage"
+    ],
+    "status": 0,
+    "stdout": "reftable\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref"
+    ],
+    "status": 0,
+    "stdout": "de73798514cc966581fccda267bf363230b33637bb77d2b3aedd0e9c5f856708 refs/heads/master\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "import"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No import needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "log",
+      "--no-graph",
+      "-r",
+      "all()",
+      "-T",
+      "commit_id"
+    ],
+    "status": 0,
+    "stdout": "ccbb2725a06344320af4be4922c3ed913e2ea0231f9afae6d948f48641b1ae520000000000000000000000000000000000000000000000000000000000000000",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "status"
+    ],
+    "status": 0,
+    "stdout": "The working copy has no changes.\nWorking copy  (@) : nnwlktml ccbb2725 (empty) (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+    "stderr": ""
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "bookmark",
+      "create",
+      "probe",
+      "-r",
+      "@-"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "Warning: Target revision is empty.\nCreated 1 bookmarks pointing to zzzzzzzz 00000000 probe | (empty) (no description set)\nWarning: Failed to export some bookmarks:\n  probe@git: Ref cannot point to the root commit in Git\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "jj",
+      "git",
+      "export"
+    ],
+    "status": 0,
+    "stdout": "",
+    "stderr": "No export needed in colocated workspaces.\n"
+  },
+  {
+    "format": "sha256",
+    "backend": "reftable",
+    "command": [
+      "git",
+      "show-ref",
+      "refs/heads/probe"
+    ],
+    "status": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+]
