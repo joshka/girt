@@ -179,6 +179,7 @@ pub(super) fn request(
     let mut wants = Vec::new();
     let mut seen = HashSet::new();
     for id in selected {
+        id.require_sha1()?;
         if !advertised.contains(&id) {
             return Err(Error::Unadvertised(id));
         }
@@ -305,6 +306,7 @@ fn read_ack(
             .strip_prefix(b"ACK ")
             .and_then(|id| std::str::from_utf8(id).ok())
             .and_then(|id| id.parse::<ObjectId>().ok())
+            .filter(|id| id.format() == crate::ObjectFormat::Sha1)
             .filter(|id| haves.contains(id))
             .ok_or(Error::Protocol("expected ACK of an offered have"))?;
         if !more {
@@ -373,8 +375,9 @@ pub(super) fn advertise(
         let id = std::str::from_utf8(raw_id)
             .ok()
             .and_then(|id| id.parse::<ObjectId>().ok())
+            .filter(|id| id.format() == crate::ObjectFormat::Sha1)
             .ok_or(Error::Protocol("advertised object ID"))?;
-        if id == ObjectId::from_bytes([0; 20]) {
+        if id == ObjectId::Sha1([0; 20]) {
             if !first || name != b"capabilities^{}" {
                 return Err(Error::Protocol("zero advertised ID"));
             }

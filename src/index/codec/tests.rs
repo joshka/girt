@@ -5,7 +5,11 @@ use super::*;
 fn entry(path: &[u8], stage: Stage) -> Entry {
     Entry {
         stage,
-        ..Entry::new(path.to_vec(), Mode::Regular, ObjectId::for_blob(b"content"))
+        ..Entry::new(
+            path.to_vec(),
+            Mode::Regular,
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"content"),
+        )
     }
 }
 fn encoded() -> Vec<u8> {

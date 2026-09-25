@@ -33,7 +33,7 @@ impl Fixture {
                 state as u8
             })
             .collect();
-        let blob = ObjectId::for_blob(&bytes);
+        let blob = ObjectId::for_blob(girt::ObjectFormat::Sha1, &bytes);
         let mut input = format!("blob\nmark :1\ndata {}\n", bytes.len()).into_bytes();
         input.extend(bytes);
         input.extend(b"\n");

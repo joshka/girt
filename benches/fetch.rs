@@ -210,7 +210,7 @@ fn fetch(c: &mut Criterion) {
             })
         });
     }
-    let id = girt::ObjectId::for_blob(b"advertisement benchmark");
+    let id = girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, b"advertisement benchmark");
     let mut advertisement = Vec::new();
     for i in 0..10_000 {
         let caps = if i == 0 { "\0side-band-64k" } else { "" };

@@ -10,7 +10,7 @@ use girt::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let payload = b"explicit export\0\xff";
-    let id = ObjectId::for_blob(payload);
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, payload);
     let inputs = [PackObject {
         id,
         kind: ObjectKind::Blob,

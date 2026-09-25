@@ -87,11 +87,14 @@ pub(super) fn without_ref(bytes: &[u8], name: &RefName) -> Vec<u8> {
 }
 
 pub(super) fn parse_id(bytes: &[u8], path: &Path) -> Result<ObjectId, ReferenceError> {
+    if bytes.len() != 40 {
+        return Err(malformed(path, "expected SHA-1 reference target"));
+    }
     let id = std::str::from_utf8(bytes)
         .ok()
         .and_then(|v| v.parse::<ObjectId>().ok())
         .ok_or_else(|| malformed(path, "invalid SHA-1 reference target"))?;
-    if id.as_bytes() == &[0; 20] {
+    if id.is_null() {
         return Err(malformed(path, "zero reference target"));
     }
     Ok(id)

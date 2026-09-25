@@ -133,9 +133,15 @@ mod tests {
         )
     }
     #[rstest]
-    #[case::missing_tree(commit(ObjectId::for_blob(b"missing"), vec![]))]
-    #[case::missing_blob(tree(ObjectId::for_blob(b"missing"), EntryMode::Blob))]
-    #[case::missing_tag_target(tag(ObjectId::for_blob(b"missing"), ObjectKind::Blob))]
+    #[case::missing_tree(commit(ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"), vec![]))]
+    #[case::missing_blob(tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
+        EntryMode::Blob
+    ))]
+    #[case::missing_tag_target(tag(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
+        ObjectKind::Blob
+    ))]
     fn rejects_missing_edges(#[case] root: Object) {
         assert!(matches!(
             validate_root(root, vec![], FetchLimits::default()),
@@ -145,16 +151,25 @@ mod tests {
     #[test]
     fn rejects_missing_parent_even_when_tree_is_complete() {
         let tree = object(ObjectKind::Tree, vec![]);
-        let root = commit(tree.id(), vec![ObjectId::for_blob(b"missing")]);
+        let root = commit(
+            tree.id(),
+            vec![ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing")],
+        );
         assert!(matches!(
             validate_root(root, vec![tree], FetchLimits::default()),
             Err(FetchError::Missing(_))
         ));
     }
     #[rstest]
-    #[case::commit_tree(commit(ObjectId::for_blob(b"payload"), vec![]))]
-    #[case::subtree(tree(ObjectId::for_blob(b"payload"), EntryMode::Tree))]
-    #[case::tag_target(tag(ObjectId::for_blob(b"payload"), ObjectKind::Commit))]
+    #[case::commit_tree(commit(ObjectId::for_blob(crate::ObjectFormat::Sha1, b"payload"), vec![]))]
+    #[case::subtree(tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"payload"),
+        EntryMode::Tree
+    ))]
+    #[case::tag_target(tag(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"payload"),
+        ObjectKind::Commit
+    ))]
     fn rejects_wrong_edge_kind(#[case] root: Object) {
         assert!(matches!(
             validate_root(
@@ -167,7 +182,10 @@ mod tests {
     }
     #[test]
     fn skips_gitlinks_to_external_submodules() {
-        let root = tree(ObjectId::for_blob(b"external"), EntryMode::Gitlink);
+        let root = tree(
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
+            EntryMode::Gitlink,
+        );
         assert!(validate_root(root, vec![], FetchLimits::default()).is_ok());
     }
     #[test]

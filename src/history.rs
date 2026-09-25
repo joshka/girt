@@ -259,7 +259,7 @@ mod tests {
 
     fn graph(parents: Vec<Vec<usize>>) -> Graph {
         let ids: Vec<_> = (0..parents.len())
-            .map(|i| ObjectId::for_blob(&i.to_le_bytes()))
+            .map(|i| ObjectId::for_blob(crate::ObjectFormat::Sha1, &i.to_le_bytes()))
             .collect();
         let positions = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         Graph {
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn discovery_enforces_limit_before_queue_growth() {
         let mut graph = graph(vec![]);
-        let id = ObjectId::for_blob(b"root");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"root");
         assert!(matches!(
             graph.discover(id, 0),
             Err(HistoryError::Limit("commits"))

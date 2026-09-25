@@ -518,7 +518,7 @@ fn git_dangling_symbolic_ref_resolves_to_missing_name() {
 #[test]
 fn dangling_object_id_is_not_object_lookup() {
     let (_root, repo, _first) = fixture();
-    let missing = ObjectId::from_bytes([0x55; 20]);
+    let missing = ObjectId::Sha1([0x55; 20]);
     let refs = repo.references().unwrap();
     refs.update_without_reflog(
         &name("refs/tags/missing"),
@@ -1042,7 +1042,7 @@ fn git_reads_transaction_records_and_girt_reads_git_appends() {
         bytes,
         format!(
             "{} {first} C. Recorder <committer@example.com> 1700000123 -0700\ttransaction\n",
-            ObjectId::from_bytes([0; 20])
+            ObjectId::Sha1([0; 20])
         )
         .as_bytes()
     );
@@ -1137,7 +1137,7 @@ fn transaction_deletes_packed_and_shadowed_refs_without_resurrection() {
             .unwrap()
             .unwrap()[0]
             .new,
-        ObjectId::from_bytes([0; 20])
+        ObjectId::Sha1([0; 20])
     );
     git(
         root.path(),

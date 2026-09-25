@@ -81,6 +81,9 @@ impl PreparedPush {
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         check_cancelled(cancel)?;
+        for id in receiver_roots {
+            id.require_sha1()?;
+        }
         let request = encode_commands(&commands, limits, cancel)?;
         if commands.is_empty() {
             return Ok(Self {
@@ -161,12 +164,16 @@ fn encode_commands(
     let mut request = Vec::new();
     for (i, command) in commands.iter().enumerate() {
         check_cancelled(cancel)?;
+        command.new.require_sha1()?;
+        if let Some(id) = command.expected {
+            id.require_sha1()?;
+        }
         let name = command.name.as_bytes();
         if !name.starts_with(b"refs/heads/") && !name.starts_with(b"refs/tags/") {
             return Err(Error::Unsupported("destination namespace"));
         }
-        if command.new == ObjectId::from_bytes([0; 20])
-            || command.expected == Some(ObjectId::from_bytes([0; 20]))
+        if command.new == ObjectId::Sha1([0; 20])
+            || command.expected == Some(ObjectId::Sha1([0; 20]))
         {
             return Err(Error::Command("zero object ID; deletion is unsupported"));
         }
@@ -185,7 +192,7 @@ fn encode_commands(
         if length > 65520 || length > limits.max_command_bytes.saturating_sub(request.len()) {
             return Err(Error::Limit("command bytes"));
         }
-        let old = command.expected.unwrap_or(ObjectId::from_bytes([0; 20]));
+        let old = command.expected.unwrap_or(ObjectId::Sha1([0; 20]));
         let mut line = format!("{old} {} ", command.new).into_bytes();
         line.extend_from_slice(name);
         line.extend_from_slice(caps);

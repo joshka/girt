@@ -147,7 +147,7 @@ mod tests {
                     TreeEntry {
                         mode: EntryMode::Gitlink,
                         name: b"external".to_vec(),
-                        id: ObjectId::for_blob(b"external"),
+                        id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
                     },
                 ])
                 .unwrap(),

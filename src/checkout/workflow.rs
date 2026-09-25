@@ -25,6 +25,13 @@ impl Repository {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Failure> {
+        for id in baseline.into_iter().chain(target) {
+            id.require_sha1().map_err(|error| Failure {
+                cause: Box::new(error.into()),
+                report: Report::default(),
+                cleanup: vec![],
+            })?;
+        }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         return super::worktree::run(self, baseline, target, limits, cancel, &mut |_, _| Ok(()));
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]

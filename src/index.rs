@@ -21,7 +21,7 @@
 //! let entry = Entry::new(
 //!     b"hello.txt".to_vec(),
 //!     Mode::Regular,
-//!     ObjectId::for_blob(b"hello\n"),
+//!     ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n"),
 //! );
 //! let index = Index::new(vec![entry], Limits::default())?;
 //! let bytes = index.encode(Limits::default())?;

@@ -16,7 +16,7 @@ fn fixture(path: &[u8], content: &[u8]) -> (tempfile::TempDir, Repository, Vec<i
     let entries = vec![index::Entry::new(
         path.to_vec(),
         index::Mode::Regular,
-        ObjectId::for_blob(b"old"),
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"old"),
     )];
     (temp, repo, entries)
 }
@@ -106,7 +106,7 @@ fn reads_symlink_target_without_following_it() {
     fs::remove_file(&path).unwrap();
     symlink("/does/not/exist", &path).unwrap();
     entries[0].mode = index::Mode::Symlink;
-    entries[0].id = ObjectId::for_blob(b"/does/not/exist");
+    entries[0].id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"/does/not/exist");
     assert!(
         observe(&repo, &entries, Limits::default())
             .unwrap()

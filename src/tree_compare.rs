@@ -85,11 +85,11 @@ impl Objects {
     /// path and additions/removals below the directory. Empty directories yield no leaf records.
     /// No rename/copy detection, text diff, path filtering, index or worktree access occurs.
     ///
-    /// Equal subtree IDs, including equal roots, are trusted and skipped without any read. This
-    /// establishes structural identity, **not validity or existence**. Other encountered trees
-    /// are identity-verified by storage, parsed and structurally validated. Blob, symlink and
-    /// gitlink targets are never read, even when changed; dangling or wrong-kind leaf targets
-    /// therefore remain unvalidated. Gitlinks are not interpreted as local subtrees.
+    /// Equal SHA-1 subtree IDs, including equal roots, are trusted and skipped without any read.
+    /// This establishes structural identity, **not validity or existence**. Other encountered
+    /// trees are identity-verified by storage, parsed and structurally validated. Blob, symlink
+    /// and gitlink targets are never read, even when changed; dangling or wrong-kind leaf
+    /// targets therefore remain unvalidated. Gitlinks are not interpreted as local subtrees.
     ///
     /// I/O and comparison are synchronous and read-only. Traversal uses an explicit stack, not
     /// recursion. Set `cancel` from another thread and leave it set until return. Checks occur
@@ -129,6 +129,9 @@ impl Objects {
         limits: TreeCompareLimits,
         cancel: &AtomicBool,
     ) -> Result<Vec<TreeChange>, TreeCompareError> {
+        for id in old.into_iter().chain(new) {
+            id.require_sha1()?;
+        }
         let mut budget = Budget {
             remaining: limits,
             cancel,
@@ -316,6 +319,9 @@ fn charge(remaining: &mut usize, count: usize, name: &'static str) -> Result<(),
 /// A structural comparison failed; no partial result is returned.
 #[derive(Debug, thiserror::Error)]
 pub enum TreeCompareError {
+    /// A root uses a format unsupported by the SHA-1 tree reader.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// A tree to be traversed is absent.
     #[error("missing tree {id} at {path:?}")]
     Missing {

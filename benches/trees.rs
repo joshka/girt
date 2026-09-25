@@ -23,7 +23,7 @@ fn trees(criterion: &mut Criterion) {
             .map(|index| TreeEntry {
                 mode: modes[index % modes.len()],
                 name: format!("entry-{index:06}").into_bytes(),
-                id: ObjectId::from_bytes([0x81; 20]),
+                id: ObjectId::Sha1([0x81; 20]),
             })
             .collect();
         let tree = Tree::new(entries).unwrap();

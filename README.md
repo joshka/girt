@@ -7,12 +7,12 @@ concepts and exact interoperability for supported repository formats and operati
 
 ## Status
 
-The library derives SHA-1 blob identities, encodes blobs, and reads and writes loose blobs, trees,
-commits, and annotated tags in an explicitly selected object directory. Reads validate object
-contents; writes publish complete objects without replacing existing files. In-memory SHA-1 trees
-support byte-preserving names, standard entry modes, payload parsing and encoding, Git ordering, and
-identity. Parsing preserves supported noncanonical trees; construction validates names and
-duplicates. Commits preserve exact payloads and expose tree, ordered parents, identities, dates,
+The library derives SHA-1/SHA-256 object identities, encodes blobs, and reads and writes SHA-1 loose
+blobs, trees, commits, and annotated tags in an explicitly selected object directory. Reads validate
+object contents; writes publish complete objects without replacing existing files. In-memory SHA-1
+trees support byte-preserving names, standard entry modes, payload parsing and encoding, Git
+ordering, and identity. Parsing preserves supported noncanonical trees; construction validates names
+and duplicates. Commits preserve exact payloads and expose tree, ordered parents, identities, dates,
 byte messages, and opaque multiline headers. Construction validates fields separately from parsing
 existing commits. Annotated tags preserve target identity and type, byte names, optional taggers,
 opaque extra headers, and message bytes, including embedded signatures. Storing a tag object does
@@ -28,8 +28,8 @@ reconstruction. The API is experimental.
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
 dependencies and [platform validation](docs/compatibility.md#platform-and-git-version-validation).
-SHA-256, reflog expiry, atomic multi-ref visibility, and a CLI are not implemented. Run
-`cargo run --example reference_transaction` for conditional branch/tag publication with
+SHA-256 storage/codecs, reflog expiry, atomic multi-ref visibility, and a CLI are not implemented.
+Run `cargo run --example reference_transaction` for conditional branch/tag publication with
 caller-supplied reflog identity, timestamps and messages.
 
 Repository discovery searches physical ancestors, with an optional inclusive ceiling. Initialization

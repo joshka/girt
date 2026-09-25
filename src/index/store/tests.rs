@@ -14,7 +14,7 @@ fn populated(repo: &Repository) -> Vec<u8> {
     edit.replace_entries(vec![Entry::new(
         b"a".to_vec(),
         Mode::Regular,
-        ObjectId::for_blob(b"a"),
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
     )])
     .unwrap();
     edit.commit().unwrap();
@@ -107,7 +107,7 @@ fn invalid_edit_preserves_snapshot_and_storage() {
         edit.replace_entries(vec![Entry::new(
             b"../a".to_vec(),
             Mode::Regular,
-            ObjectId::for_blob(b"a")
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a")
         )])
         .is_err()
     );
@@ -205,7 +205,11 @@ fn publication_preserves_stat_words_and_invalidates_timestamp_trust() {
         size: 17,
         ..Stat::default()
     };
-    let mut entry = Entry::new(b"a".to_vec(), Mode::Regular, ObjectId::for_blob(b"a"));
+    let mut entry = Entry::new(
+        b"a".to_vec(),
+        Mode::Regular,
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
+    );
     entry.stat = stat;
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.replace_entries(vec![entry]).unwrap();

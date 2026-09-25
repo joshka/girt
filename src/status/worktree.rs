@@ -282,7 +282,7 @@ impl Scan<'_> {
         self.observations.insert(
             path.to_vec(),
             Observed::Leaf(TreeValue {
-                id: ObjectId::for_blob(&bytes),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, &bytes),
                 mode,
             }),
         );

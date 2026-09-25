@@ -18,8 +18,14 @@ fn blobs(criterion: &mut Criterion) {
             ("pseudorandom", pseudorandom_bytes(size)),
         ] {
             group.bench_function(BenchmarkId::new(format!("hash/{content}"), size), |b| {
-                b.iter(|| ObjectId::for_blob(black_box(&bytes)));
+                b.iter(|| ObjectId::for_blob(girt::ObjectFormat::Sha1, black_box(&bytes)));
             });
+            group.bench_function(
+                BenchmarkId::new(format!("hash_sha256/{content}"), size),
+                |b| {
+                    b.iter(|| ObjectId::for_blob(ObjectFormat::Sha256, black_box(&bytes)));
+                },
+            );
             group.bench_function(
                 BenchmarkId::new(format!("read_cached/{content}"), size),
                 |b| {

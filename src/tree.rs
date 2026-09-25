@@ -42,7 +42,7 @@ use crate::ObjectId;
 /// let tree = Tree::new(vec![TreeEntry {
 ///     mode: EntryMode::Blob,
 ///     name: b"hello.txt".to_vec(),
-///     id: ObjectId::for_blob(b"hello\n"),
+///     id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n"),
 /// }])?;
 ///
 /// let payload = tree.encode();
@@ -62,7 +62,7 @@ pub struct Tree {
 }
 
 impl Tree {
-    /// Consumes entries, validates them, and sorts them into Git's tree order.
+    /// Consumes SHA-1 entries, validates them, and sorts them into Git's tree order.
     ///
     /// # Errors
     ///
@@ -70,8 +70,12 @@ impl Tree {
     /// [`TreeError::DuplicateName`] for repeated byte-identical names, regardless of mode.
     /// Names such as `.git` and platform-specific aliases are not checked: this is structural
     /// validation, not a complete `git fsck` or checkout-safety check. Object IDs are not validated
-    /// against a database, and even all-zero IDs are preserved.
+    /// against a database, and even all-zero IDs are preserved. SHA-256 IDs return
+    /// [`TreeError::ObjectFormat`] before encoding.
     pub fn new(mut entries: Vec<TreeEntry>) -> Result<Self, TreeError> {
+        for entry in &entries {
+            entry.id.require_sha1()?;
+        }
         validate_names(&entries)?;
         entries.sort_by(TreeEntry::git_cmp);
         Ok(Self { entries })
@@ -114,7 +118,7 @@ impl Tree {
             entries.push(TreeEntry {
                 mode,
                 name: name.to_vec(),
-                id: ObjectId::from_bytes(id),
+                id: ObjectId::Sha1(id),
             });
             payload = &payload[20..];
         }
@@ -261,6 +265,9 @@ impl EntryMode {
 /// A tree payload could not be parsed, or entries failed structural validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TreeError {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// No space separates the mode from the name.
     #[error("missing tree mode delimiter")]
     MissingModeDelimiter,
@@ -317,7 +324,7 @@ mod tests {
         TreeEntry {
             mode,
             name: name.to_vec(),
-            id: ObjectId::from_bytes([0x81; 20]),
+            id: ObjectId::Sha1([0x81; 20]),
         }
     }
 
@@ -376,7 +383,7 @@ mod tests {
                 TreeEntry {
                     mode: EntryMode::Blob,
                     name: b"a".to_vec(),
-                    id: ObjectId::from_bytes(raw_id),
+                    id: ObjectId::Sha1(raw_id),
                 },
                 entry(EntryMode::Executable, b"b"),
             ]
@@ -520,5 +527,20 @@ mod tests {
         let payload = [record(b"100644 a\0"), b"100644 b\0short".to_vec()].concat();
 
         assert_eq!(Tree::parse(&payload), Err(TreeError::TruncatedObjectId));
+    }
+}
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sha256_entry_before_encoding() {
+        let result = Tree::new(vec![TreeEntry {
+            mode: EntryMode::Blob,
+            name: b"a".to_vec(),
+            id: ObjectId::Sha256([1; 32]),
+        }]);
+        assert!(matches!(result, Err(TreeError::ObjectFormat(_))));
     }
 }

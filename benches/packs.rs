@@ -47,7 +47,8 @@ fn packs(c: &mut Criterion) {
             })
         });
         c.bench_function(&format!("packs/indexed-miss-{count}"), |b| {
-            let absent = girt::ObjectId::for_blob(b"absent benchmark object");
+            let absent =
+                girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent benchmark object");
             b.iter(|| {
                 objects
                     .read(black_box(absent), ReadLimits::default())

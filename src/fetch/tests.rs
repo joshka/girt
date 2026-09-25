@@ -18,7 +18,7 @@ fn advertised(id: ObjectId, caps: &str) -> Vec<u8> {
     bytes
 }
 fn blob_pack() -> (ObjectId, Vec<u8>) {
-    let id = ObjectId::for_blob(b"fetch fixture");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"fetch fixture");
     let mut pack = Vec::new();
     let written = write_pack(
         &[PackObject {
@@ -182,7 +182,10 @@ fn ignores_unrequested_caps_and_accepts_missing_lf() {
 #[case::ack(b"ACK 1111111111111111111111111111111111111111\n")]
 #[case::flush(b"")]
 fn rejects_unexpected_negotiation(#[case] reply: &[u8]) {
-    let mut bytes = advertised(ObjectId::for_blob(b"x"), "side-band-64k");
+    let mut bytes = advertised(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x"),
+        "side-band-64k",
+    );
     bytes.extend(pkt(reply));
     assert!(matches!(
         run(&bytes, FetchLimits::default()),
@@ -201,7 +204,10 @@ fn preserves_remote_errors(#[case] error: &[u8], #[case] after_nak: bool) {
     ));
 }
 fn remote_error(error: &[u8], after_nak: bool) -> Vec<u8> {
-    let mut bytes = advertised(ObjectId::for_blob(b"x"), "side-band-64k");
+    let mut bytes = advertised(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x"),
+        "side-band-64k",
+    );
     if after_nak {
         bytes.extend(pkt(b"NAK"));
     }
@@ -235,12 +241,15 @@ fn rejects_invalid_sideband() {
 
 #[test]
 fn refuses_unadvertised_want_before_writing() {
-    let bytes = advertised(ObjectId::for_blob(b"x"), "side-band-64k");
+    let bytes = advertised(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x"),
+        "side-band-64k",
+    );
     let mut sent = Vec::new();
     let result = receive(
         &mut bytes.as_slice(),
         &mut sent,
-        |_| vec![ObjectId::for_blob(b"other")],
+        |_| vec![ObjectId::for_blob(crate::ObjectFormat::Sha1, b"other")],
         FetchLimits::default(),
         &AtomicBool::new(false),
         |_| ControlFlow::Continue(()),
@@ -361,7 +370,10 @@ fn interrupted_read_is_not_retried() {
 }
 #[test]
 fn interrupted_write_is_not_retried() {
-    let bytes = advertised(ObjectId::for_blob(b"x"), "side-band-64k");
+    let bytes = advertised(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x"),
+        "side-band-64k",
+    );
     let result = receive(
         &mut bytes.as_slice(),
         &mut Interrupted,
@@ -385,8 +397,40 @@ fn rejects_corrupt_pack_checksum() {
 #[test]
 fn rejects_missing_wanted_identity() {
     let (_, pack) = blob_pack();
-    let id = ObjectId::for_blob(b"not sent");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"not sent");
     assert!(
         matches!(run(&response(id, &pack), FetchLimits::default()), Err(FetchError::Missing(actual)) if actual == id)
     );
+}
+
+#[test]
+fn refuses_sha256_advertisement_without_request_bytes() {
+    let bytes = advertised(ObjectId::Sha256([1; 32]), "side-band-64k");
+    let mut sent = vec![];
+    let result = receive(
+        &mut &bytes[..],
+        &mut sent,
+        select,
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    );
+    assert!(result.is_err());
+    assert!(sent.is_empty());
+}
+
+#[test]
+fn refuses_sha256_selection_without_request_bytes() {
+    let bytes = advertised(ObjectId::Sha1([1; 20]), "side-band-64k");
+    let mut sent = vec![];
+    let result = receive(
+        &mut &bytes[..],
+        &mut sent,
+        |_| vec![ObjectId::Sha256([1; 32])],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    );
+    assert!(matches!(result, Err(FetchError::ObjectFormat(_))));
+    assert!(sent.is_empty());
 }

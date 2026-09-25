@@ -47,32 +47,32 @@ fn entries() -> Vec<TreeEntry> {
         TreeEntry {
             mode: EntryMode::Blob,
             name: b"a0".to_vec(),
-            id: ObjectId::from_bytes([1; 20]),
+            id: ObjectId::Sha1([1; 20]),
         },
         TreeEntry {
             mode: EntryMode::Tree,
             name: b"a".to_vec(),
-            id: ObjectId::from_bytes([2; 20]),
+            id: ObjectId::Sha1([2; 20]),
         },
         TreeEntry {
             mode: EntryMode::Executable,
             name: b"a.c".to_vec(),
-            id: ObjectId::from_bytes([3; 20]),
+            id: ObjectId::Sha1([3; 20]),
         },
         TreeEntry {
             mode: EntryMode::Symlink,
             name: b"link\t\n".to_vec(),
-            id: ObjectId::from_bytes([4; 20]),
+            id: ObjectId::Sha1([4; 20]),
         },
         TreeEntry {
             mode: EntryMode::Gitlink,
             name: b"sub".to_vec(),
-            id: ObjectId::from_bytes([5; 20]),
+            id: ObjectId::Sha1([5; 20]),
         },
         TreeEntry {
             mode: EntryMode::Blob,
             name: b"\xff".to_vec(),
-            id: ObjectId::from_bytes([6; 20]),
+            id: ObjectId::Sha1([6; 20]),
         },
     ]
 }

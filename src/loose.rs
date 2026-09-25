@@ -26,7 +26,7 @@ use crate::{Commit, CommitError, ObjectFormat, ObjectId, Tag, TagError, Tree, Tr
 /// let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1)?;
 /// let bytes = b"hello\0Git\xff";
 /// let id = objects.write_blob(bytes)?;
-/// assert_eq!(id, ObjectId::for_blob(bytes));
+/// assert_eq!(id, ObjectId::for_blob(girt::ObjectFormat::Sha1, bytes));
 /// assert_eq!(objects.read_blob(id, 1024)?, bytes);
 /// # Ok::<(), girt::Error>(())
 /// ```
@@ -79,6 +79,7 @@ impl LooseObjects {
     /// [`Error::TooLarge`] for oversized content, [`Error::UnsupportedObjectType`] for other
     /// types, or [`Error::Corrupt`] for malformed headers, incomplete or trailing compressed
     /// data, or identity mismatches.
+    /// SHA-256 IDs return [`Error::ObjectFormat`] before any filesystem access.
     pub fn read_blob(&self, id: ObjectId, max_size: usize) -> Result<Vec<u8>, Error> {
         self.read_object(id, max_size, "blob")
     }
@@ -152,6 +153,7 @@ impl LooseObjects {
         max_size: usize,
         expected_kind: Option<&str>,
     ) -> Result<crate::Object, Error> {
+        id.require_sha1()?;
         let file = File::open(self.object_path(id))?;
         let mut encoded = decompress(file, max_size.saturating_add(32))?;
         let separator = encoded
@@ -287,6 +289,9 @@ impl LooseObjects {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// A filesystem operation failed. Missing loose objects use [`std::io::ErrorKind::NotFound`].
     #[error("loose object I/O: {0}")]
     Io(#[from] std::io::Error),
@@ -360,7 +365,7 @@ mod tests {
         let directory = root.path().join("objects");
         let objects = LooseObjects::new(&directory, ObjectFormat::Sha1).unwrap();
 
-        let id = ObjectId::for_blob(b"");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"");
         assert!(matches!(objects.read_blob(id, 0), Err(Error::Io(error))
             if error.kind() == std::io::ErrorKind::NotFound));
         assert!(!directory.exists());
@@ -385,7 +390,7 @@ mod tests {
         let tree = Tree::new(vec![crate::TreeEntry {
             mode: crate::EntryMode::Blob,
             name: b"file".to_vec(),
-            id: ObjectId::for_blob(b"contents"),
+            id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"contents"),
         }]);
         tree.unwrap()
     }
@@ -882,5 +887,22 @@ mod tag_storage_tests {
         assert!(objects.write_tag(&tag).is_err());
         assert!(path.is_dir());
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sha256_before_accessing_missing_storage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("missing");
+        let objects = LooseObjects::new(&path, ObjectFormat::Sha1).unwrap();
+        assert!(matches!(
+            objects.read_blob(ObjectId::Sha256([1; 32]), 100),
+            Err(Error::ObjectFormat(_))
+        ));
+        assert!(!path.exists());
     }
 }

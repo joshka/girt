@@ -17,7 +17,10 @@ fn loose_trees(criterion: &mut Criterion) {
             .map(|index| TreeEntry {
                 mode: EntryMode::Blob,
                 name: format!("entry-{index:06}").into_bytes(),
-                id: ObjectId::for_blob(format!("contents-{index}").as_bytes()),
+                id: ObjectId::for_blob(
+                    girt::ObjectFormat::Sha1,
+                    format!("contents-{index}").as_bytes(),
+                ),
             })
             .collect();
         let tree = Tree::new(entries).unwrap();

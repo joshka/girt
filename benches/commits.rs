@@ -18,8 +18,8 @@ fn fixture(size: usize) -> Commit {
         offset_minutes: -420,
     };
     let commit = Commit::new(CommitFields {
-        tree: ObjectId::from_bytes([1; 20]),
-        parents: vec![ObjectId::from_bytes([2; 20]), ObjectId::from_bytes([3; 20])],
+        tree: ObjectId::Sha1([1; 20]),
+        parents: vec![ObjectId::Sha1([2; 20]), ObjectId::Sha1([3; 20])],
         author: person.clone(),
         committer: person,
         extra_headers: vec![CommitHeader {

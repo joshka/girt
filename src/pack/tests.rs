@@ -71,7 +71,10 @@ fn fixture(entries: &[(ObjectId, Vec<u8>)]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn ordinary() -> (Vec<u8>, Vec<u8>) {
-    fixture(&[(ObjectId::for_blob(b"hello"), entry(3, 5, b"", b"hello"))])
+    fixture(&[(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello"),
+        entry(3, 5, b"", b"hello"),
+    )])
 }
 
 fn open_read(
@@ -104,10 +107,10 @@ fn returns_exact_kind_and_payload(#[case] code: u8, #[case] kind: ObjectKind) {
 
 #[rstest]
 #[case::ofs(6, vec![entry(3, 5, b"", b"hello").len() as u8])]
-#[case::reference(7, ObjectId::for_blob(b"hello").as_bytes().to_vec())]
+#[case::reference(7, ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello").as_bytes().to_vec())]
 fn reconstructs_delta(#[case] code: u8, #[case] reference: Vec<u8>) {
-    let base_id = ObjectId::for_blob(b"hello");
-    let id = ObjectId::for_blob(b"hello!");
+    let base_id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello!");
     let base = entry(3, 5, b"", b"hello");
     let program = [5, 6, 0x90, 5, 1, b'!'];
     let object = open_read(
@@ -124,9 +127,9 @@ fn reconstructs_delta(#[case] code: u8, #[case] reference: Vec<u8>) {
 
 #[test]
 fn resolves_forward_reference_and_nested_deltas() {
-    let base = ObjectId::for_blob(b"a");
-    let middle = ObjectId::for_blob(b"ab");
-    let tip = ObjectId::for_blob(b"abc");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a");
+    let middle = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"ab");
+    let tip = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"abc");
     let entries = [
         (
             tip,
@@ -286,7 +289,7 @@ fn rejects_headerless_index_v1() {
 #[case::inside_entry(&[1], "base offset is not an indexed entry")]
 #[case::overflow(&[255; 20], "delta offset overflow")]
 fn rejects_bad_ofs_bases(#[case] base: &[u8], #[case] reason: &str) {
-    let id = ObjectId::for_blob(b"x");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x");
     let error = open_read(
         &[(id, entry(6, 3, base, &[1, 1, 0x80]))],
         id,
@@ -301,8 +304,8 @@ fn rejects_bad_ofs_bases(#[case] base: &[u8], #[case] reason: &str) {
 
 #[test]
 fn rejects_missing_ref_base() {
-    let id = ObjectId::for_blob(b"x");
-    let base = ObjectId::for_blob(b"absent");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"x");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"absent");
     let error = open_read(
         &[(id, entry(7, 3, base.as_bytes(), &[1, 1, 0x80]))],
         id,
@@ -314,8 +317,8 @@ fn rejects_missing_ref_base() {
 
 #[test]
 fn detects_ref_cycles_without_recursion() {
-    let first = ObjectId::for_blob(b"first");
-    let second = ObjectId::for_blob(b"second");
+    let first = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"first");
+    let second = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"second");
     let entries = [
         (first, entry(7, 0, second.as_bytes(), b"")),
         (second, entry(7, 0, first.as_bytes(), b"")),
@@ -331,7 +334,7 @@ fn detects_ref_cycles_without_recursion() {
 #[case::too_long(3, 6, "packed entry length or trailing data")]
 #[case::wrong_identity(3, 5, "object identity")]
 fn rejects_bad_entry_payloads(#[case] kind: u8, #[case] size: usize, #[case] reason: &str) {
-    let id = ObjectId::for_blob(b"other");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"other");
     let error = open_read(
         &[(id, entry(kind, size, b"", b"hello"))],
         id,
@@ -348,7 +351,7 @@ fn rejects_bad_entry_payloads(#[case] kind: u8, #[case] size: usize, #[case] rea
 #[case::invalid(0)]
 #[case::reserved(5)]
 fn rejects_reserved_kinds(#[case] kind: u8) {
-    let id = ObjectId::for_blob(b"");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"");
     assert!(
         matches!(open_read(&[(id, entry(kind, 0, b"", b""))], id, ReadLimits::default()), Err(Error::ObjectType(found)) if found == kind)
     );
@@ -360,8 +363,8 @@ fn rejects_reserved_kinds(#[case] kind: u8) {
 #[case::depth(ReadLimits { max_delta_depth: 0, ..ReadLimits::default() }, "delta depth")]
 #[case::cumulative(ReadLimits { max_decode_bytes: 5, ..ReadLimits::default() }, "cumulative decode bytes")]
 fn enforces_read_limits(#[case] limits: ReadLimits, #[case] reason: &str) {
-    let base = ObjectId::for_blob(b"a");
-    let id = ObjectId::for_blob(b"ab");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"ab");
     let entries = [
         (base, entry(3, 1, b"", b"a")),
         (id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
@@ -391,8 +394,8 @@ fn charges_reconstruction_against_cumulative_limit() {
 
 #[test]
 fn validates_intermediate_identity() {
-    let base = ObjectId::for_blob(b"wrong");
-    let id = ObjectId::for_blob(b"ab");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"wrong");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"ab");
     let entries = [
         (base, entry(3, 1, b"", b"a")),
         (id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
@@ -418,7 +421,10 @@ fn rejects_truncated_packs(#[case] length: usize) {
 fn accepts_empty_pack_and_reports_index_miss() {
     let (index, data) = fixture(&[]);
     let pack = Pack::open(&index, data).unwrap();
-    assert_eq!(pack.find(ObjectId::for_blob(b"")), None);
+    assert_eq!(
+        pack.find(ObjectId::for_blob(crate::ObjectFormat::Sha1, b"")),
+        None
+    );
 }
 
 #[test]
@@ -433,7 +439,7 @@ fn rejects_pack_count_mismatch() {
 
 #[test]
 fn rejects_duplicate_index_ids() {
-    let id = ObjectId::for_blob(b"a");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a");
     let (index, data) = fixture(&[(id, entry(3, 1, b"", b"a")), (id, entry(3, 1, b"", b"a"))]);
     assert!(matches!(
         Pack::open(&index, data),
@@ -444,8 +450,14 @@ fn rejects_duplicate_index_ids() {
 #[test]
 fn rejects_unsorted_index_ids() {
     let (mut index, data) = fixture(&[
-        (ObjectId::for_blob(b"a"), entry(3, 1, b"", b"a")),
-        (ObjectId::for_blob(b"b"), entry(3, 1, b"", b"b")),
+        (
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
+            entry(3, 1, b"", b"a"),
+        ),
+        (
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"b"),
+            entry(3, 1, b"", b"b"),
+        ),
     ]);
     index[1032..1072].rotate_left(20);
     reseal(&mut index);
@@ -458,8 +470,14 @@ fn rejects_unsorted_index_ids() {
 #[test]
 fn rejects_duplicate_pack_offsets() {
     let (mut index, data) = fixture(&[
-        (ObjectId::for_blob(b"a"), entry(3, 1, b"", b"a")),
-        (ObjectId::for_blob(b"b"), entry(3, 1, b"", b"b")),
+        (
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
+            entry(3, 1, b"", b"a"),
+        ),
+        (
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"b"),
+            entry(3, 1, b"", b"b"),
+        ),
     ]);
     let offset: [u8; 4] = index[1080..1084].try_into().unwrap();
     index[1084..1088].copy_from_slice(&offset);
@@ -496,7 +514,7 @@ fn validates_zlib_even_with_valid_pack_checksums(
     #[case] data: fn() -> Vec<u8>,
     #[case] reason: &str,
 ) {
-    let id = ObjectId::for_blob(b"hello");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello");
     let error = open_read(&[(id, data())], id, ReadLimits::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -510,7 +528,7 @@ fn validates_zlib_even_with_valid_pack_checksums(
 #[case::truncated_reference(vec![0x70, 1, 2], "truncated base identity")]
 #[case::truncated_offset(vec![0x60, 0x80], "truncated delta or entry")]
 fn rejects_truncated_entry_metadata(#[case] data: Vec<u8>, #[case] reason: &str) {
-    let id = ObjectId::for_blob(b"hello");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello");
     let error = open_read(&[(id, data)], id, ReadLimits::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -520,8 +538,8 @@ fn rejects_truncated_entry_metadata(#[case] data: Vec<u8>, #[case] reason: &str)
 
 #[test]
 fn permits_exact_depth_and_decode_budget() {
-    let base = ObjectId::for_blob(b"a");
-    let id = ObjectId::for_blob(b"ab");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"ab");
     let entries = [
         (base, entry(3, 1, b"", b"a")),
         (id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
@@ -540,8 +558,8 @@ fn rejects_external_base_even_when_it_exists_in_another_pack() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().join("pack");
     std::fs::create_dir(&directory).unwrap();
-    let base = ObjectId::for_blob(b"a");
-    let id = ObjectId::for_blob(b"ab");
+    let base = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a");
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"ab");
     let (base_index, base_data) = fixture(&[(base, entry(3, 1, b"", b"a"))]);
     let (index, data) = fixture(&[(id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b']))]);
     std::fs::write(directory.join("base.idx"), base_index).unwrap();
@@ -581,7 +599,7 @@ fn delta_inherits_base_kind(#[case] code: u8, #[case] kind: ObjectKind) {
 #[test]
 fn bounds_long_chains_without_recursive_calls() {
     let ids: Vec<_> = (0u64..1025)
-        .map(|number| ObjectId::for_blob(&number.to_be_bytes()))
+        .map(|number| ObjectId::for_blob(crate::ObjectFormat::Sha1, &number.to_be_bytes()))
         .collect();
     let entries: Vec<_> = ids
         .windows(2)

@@ -5,13 +5,13 @@ use sha1::{Digest, Sha1};
 
 /// The hash format used by a Git object database.
 ///
-/// Recognizing a format does not imply storage support: [`crate::LooseObjects`] and [`ObjectId`]
-/// currently support only SHA-1.
+/// Recognizing a format does not imply storage support: [`crate::LooseObjects`] currently supports
+/// only SHA-1.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectFormat {
     /// Git's SHA-1 object format, with 20-byte identities.
     Sha1,
-    /// Git's SHA-256 object format, with 32-byte identities; currently unsupported by girt.
+    /// Git's SHA-256 object format, with 32-byte identities.
     Sha256,
 }
 
@@ -24,49 +24,142 @@ impl fmt::Display for ObjectFormat {
     }
 }
 
-/// A 20-byte SHA-1 Git object identity, independent of object existence or type.
+/// A format-bearing Git identity, independent of object existence or kind.
 ///
-/// Parsing accepts exactly 40 ASCII hexadecimal digits, in either case; display uses lowercase.
-/// SHA-256 identifiers and abbreviated identifiers are rejected. This type does not provide SHA-1
-/// collision detection.
+/// The variants contain exactly the meaningful digest bytes. Ordering places SHA-1 before SHA-256,
+/// then compares bytes lexicographically. Parsing infers the format from exactly 40 or 64 ASCII
+/// hexadecimal digits; display is lowercase. Abbreviations are rejected. Hashing does not provide
+/// collision detection or translate identities between formats.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ObjectId([u8; 20]);
+pub enum ObjectId {
+    /// A SHA-1 digest.
+    Sha1([u8; 20]),
+    /// A SHA-256 digest.
+    Sha256([u8; 32]),
+}
 
 impl ObjectId {
-    /// Hashes the canonical Git blob header and the exact bytes, without text conversion.
-    ///
-    /// ```
-    /// use girt::ObjectId;
-    /// assert_eq!(
-    ///     ObjectId::for_blob(b"").to_string(),
-    ///     "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
-    /// );
-    /// ```
-    pub fn for_blob(bytes: &[u8]) -> Self {
-        Self::for_object("blob", bytes)
+    /// Hashes the canonical blob header and exact bytes in the selected format.
+    pub fn for_blob(format: ObjectFormat, bytes: &[u8]) -> Self {
+        format.hash_object(crate::ObjectKind::Blob, bytes)
     }
 
     pub(crate) fn for_object(kind: &str, bytes: &[u8]) -> Self {
-        let mut hash = Sha1::new();
-        hash.update(object_header(kind, bytes.len()));
-        hash.update(bytes);
-        Self(hash.finalize().into())
+        hash_sha1(kind, bytes)
     }
 
-    /// Constructs an identity from raw SHA-1 bytes without checking object existence.
-    pub const fn from_bytes(bytes: [u8; 20]) -> Self {
-        Self(bytes)
+    /// Constructs an identity from exactly the selected format's raw digest bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the byte length differs from the selected format.
+    pub fn from_bytes(format: ObjectFormat, bytes: &[u8]) -> Result<Self, ParseObjectIdError> {
+        match format {
+            ObjectFormat::Sha1 => bytes.try_into().map(Self::Sha1),
+            ObjectFormat::Sha256 => bytes.try_into().map(Self::Sha256),
+        }
+        .map_err(|_| ParseObjectIdError)
     }
 
-    /// Borrows the raw SHA-1 bytes.
-    pub const fn as_bytes(&self) -> &[u8; 20] {
-        &self.0
+    /// Parses full hexadecimal digits and requires the selected format.
+    ///
+    /// # Errors
+    ///
+    /// Rejects wrong widths, non-ASCII/non-hexadecimal bytes, and the other format.
+    pub fn from_hex(format: ObjectFormat, value: &str) -> Result<Self, ParseObjectIdError> {
+        let id: Self = value.parse()?;
+        if id.format() != format {
+            return Err(ParseObjectIdError);
+        }
+        Ok(id)
     }
+
+    /// Returns the digest format, without inspecting storage.
+    pub const fn format(self) -> ObjectFormat {
+        match self {
+            Self::Sha1(_) => ObjectFormat::Sha1,
+            Self::Sha256(_) => ObjectFormat::Sha256,
+        }
+    }
+
+    /// Borrows only the meaningful digest bytes (20 or 32 bytes).
+    pub const fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Sha1(bytes) => bytes,
+            Self::Sha256(bytes) => bytes,
+        }
+    }
+
+    /// Returns the all-zero sentinel for a selected format; no existence check occurs.
+    pub const fn null(format: ObjectFormat) -> Self {
+        match format {
+            ObjectFormat::Sha1 => Self::Sha1([0; 20]),
+            ObjectFormat::Sha256 => Self::Sha256([0; 32]),
+        }
+    }
+
+    /// Reports whether every meaningful digest byte is zero.
+    pub fn is_null(self) -> bool {
+        self.as_bytes().iter().all(|&b| b == 0)
+    }
+
+    pub(crate) fn require_sha1(self) -> Result<(), ObjectFormatError> {
+        if self.format() == ObjectFormat::Sha1 {
+            Ok(())
+        } else {
+            Err(ObjectFormatError {
+                expected: ObjectFormat::Sha1,
+                actual: self.format(),
+            })
+        }
+    }
+}
+
+impl ObjectFormat {
+    /// Number of raw bytes in a digest of this format.
+    pub const fn digest_len(self) -> usize {
+        match self {
+            Self::Sha1 => 20,
+            Self::Sha256 => 32,
+        }
+    }
+
+    /// Hashes canonical Git framing and an uninterpreted object payload.
+    ///
+    /// Does not validate the payload or translate embedded object references. Storage and codecs
+    /// currently support SHA-1 only. The caller chooses the format appropriate to the payload.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind};
+    /// let id = ObjectFormat::Sha256.hash_object(ObjectKind::Blob, b"hello\n");
+    /// assert_eq!(id.format(), ObjectFormat::Sha256);
+    /// assert_eq!(id.to_string().parse::<ObjectId>()?, id);
+    /// assert_eq!(id.as_bytes().len(), 32);
+    /// # Ok::<(), girt::ParseObjectIdError>(())
+    /// ```
+    pub fn hash_object(self, kind: crate::ObjectKind, bytes: &[u8]) -> ObjectId {
+        match self {
+            Self::Sha1 => hash_sha1(kind.as_str(), bytes),
+            Self::Sha256 => {
+                let mut hash = sha2::Sha256::new();
+                hash.update(object_header(kind.as_str(), bytes.len()));
+                hash.update(bytes);
+                ObjectId::Sha256(hash.finalize().into())
+            }
+        }
+    }
+}
+
+fn hash_sha1(kind: &str, bytes: &[u8]) -> ObjectId {
+    let mut hash = Sha1::new();
+    hash.update(object_header(kind, bytes.len()));
+    hash.update(bytes);
+    ObjectId::Sha1(hash.finalize().into())
 }
 
 impl fmt::Display for ObjectId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
+        for byte in self.as_bytes() {
             write!(f, "{byte:02x}")?;
         }
         Ok(())
@@ -75,24 +168,42 @@ impl fmt::Display for ObjectId {
 
 impl FromStr for ObjectId {
     type Err = ParseObjectIdError;
-
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let format = match value.len() {
+            40 => ObjectFormat::Sha1,
+            64 => ObjectFormat::Sha256,
+            _ => return Err(ParseObjectIdError),
+        };
+        if !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(ParseObjectIdError);
         }
-        let mut bytes = [0; 20];
+        let mut id = Self::null(format);
+        let bytes: &mut [u8] = match &mut id {
+            Self::Sha1(bytes) => bytes,
+            Self::Sha256(bytes) => bytes,
+        };
         for (index, byte) in bytes.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
                 .map_err(|_| ParseObjectIdError)?;
         }
-        Ok(Self(bytes))
+        Ok(id)
     }
 }
 
-/// An identifier was not exactly 40 ASCII hexadecimal digits.
+/// Invalid raw digest length or a string other than 40/64 ASCII hexadecimal digits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("expected a 40-digit SHA-1 object identifier")]
+#[error("expected a format-sized digest or 40/64 hexadecimal digits")]
 pub struct ParseObjectIdError;
+
+/// An identity uses a format unsupported by the selected operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("object format mismatch: expected {expected}, got {actual}")]
+pub struct ObjectFormatError {
+    /// Format required by the operation.
+    pub expected: ObjectFormat,
+    /// Format carried by the supplied identity.
+    pub actual: ObjectFormat,
+}
 
 /// Encodes a blob as `blob <decimal byte length>\0` followed by its unchanged bytes.
 ///
@@ -138,7 +249,10 @@ mod tests {
         let expected_encoding = [header, bytes.as_slice()].concat();
 
         assert_eq!(encode_blob(&bytes), expected_encoding);
-        assert_eq!(ObjectId::for_blob(&bytes).to_string(), expected_id);
+        assert_eq!(
+            ObjectId::for_blob(crate::ObjectFormat::Sha1, &bytes).to_string(),
+            expected_id
+        );
     }
 
     /// Keeps format display names compatible with the names used in Git configuration.
@@ -154,24 +268,108 @@ mod tests {
     #[case::lowercase("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")]
     #[case::uppercase("E69DE29BB2D1D6434B8B29AE775AD8C2E48C5391")]
     fn parses_full_sha1_identifiers(#[case] value: &str) {
-        let id = ObjectId::for_blob(b"");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"");
         assert_eq!(value.parse(), Ok(id));
     }
 
     /// Checks that raw-byte construction and access preserve all identity bytes.
     #[test]
     fn preserves_raw_identity_bytes() {
-        let id = ObjectId::for_blob(b"");
-        assert_eq!(ObjectId::from_bytes(*id.as_bytes()), id);
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"");
+        assert_eq!(
+            ObjectId::from_bytes(id.format(), id.as_bytes()).unwrap(),
+            id
+        );
     }
 
-    /// Rejects abbreviated, SHA-256, non-hexadecimal, and non-ASCII identity strings.
+    /// Rejects abbreviated, non-hexadecimal, and non-ASCII identity strings.
     #[rstest]
     #[case::abbreviated("abc".to_owned())]
-    #[case::sha256("0".repeat(64))]
     #[case::non_hexadecimal("g".repeat(40))]
     #[case::non_ascii("é".repeat(20))]
     fn rejects_invalid_sha1_identifiers(#[case] value: String) {
         assert_eq!(value.parse::<ObjectId>(), Err(ParseObjectIdError));
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use std::collections::{BTreeMap, HashMap};
+
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, 20)]
+    #[case::sha256(ObjectFormat::Sha256, 32)]
+    fn preserves_full_digest_and_null(#[case] format: ObjectFormat, #[case] length: usize) {
+        let mut bytes = vec![0; length];
+        bytes[length - 1] = 0xff;
+        let id = ObjectId::from_bytes(format, &bytes).unwrap();
+        assert_eq!(id.as_bytes(), bytes);
+        assert_eq!(format.digest_len(), length);
+        assert!(!id.is_null());
+        assert!(ObjectId::null(format).is_null());
+        assert_eq!(ObjectId::null(format).to_string(), "0".repeat(length * 2));
+        assert_eq!(
+            ObjectId::from_hex(format, &id.to_string().to_uppercase()),
+            Ok(id)
+        );
+    }
+
+    #[rstest]
+    #[case::sha1_short(ObjectFormat::Sha1, 19)]
+    #[case::sha1_long(ObjectFormat::Sha1, 21)]
+    #[case::sha1_other(ObjectFormat::Sha1, 32)]
+    #[case::sha256_short(ObjectFormat::Sha256, 31)]
+    #[case::sha256_long(ObjectFormat::Sha256, 33)]
+    #[case::sha256_other(ObjectFormat::Sha256, 20)]
+    fn rejects_wrong_raw_width(#[case] format: ObjectFormat, #[case] length: usize) {
+        assert_eq!(
+            ObjectId::from_bytes(format, &vec![0; length]),
+            Err(ParseObjectIdError)
+        );
+    }
+
+    #[rstest]
+    #[case::short_sha1("0".repeat(39))]
+    #[case::long_sha1("0".repeat(41))]
+    #[case::short_sha256("0".repeat(63))]
+    #[case::long_sha256("0".repeat(65))]
+    #[case::invalid_sha256("g".repeat(64))]
+    #[case::unicode_sha256("é".repeat(32))]
+    fn rejects_invalid_hex(#[case] value: String) {
+        assert_eq!(value.parse::<ObjectId>(), Err(ParseObjectIdError));
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn rejects_other_formats_hex(#[case] expected: ObjectFormat, #[case] actual: ObjectFormat) {
+        assert_eq!(
+            ObjectId::from_hex(expected, &ObjectId::null(actual).to_string()),
+            Err(ParseObjectIdError)
+        );
+    }
+
+    /// Equal prefixes, nulls and differences in the final byte remain distinct lookup keys.
+    #[test]
+    fn mixed_format_keys_preserve_all_bytes() {
+        let sha1 = ObjectId::null(ObjectFormat::Sha1);
+        let sha256 = ObjectId::null(ObjectFormat::Sha256);
+        let mut bytes = [0; 32];
+        bytes[31] = 1;
+        let tail = ObjectId::Sha256(bytes);
+        let ordered = BTreeMap::from([(tail, "tail"), (sha256, "sha256"), (sha1, "sha1")]);
+        let hashed = HashMap::from([(sha1, 1), (sha256, 2), (tail, 3)]);
+        assert_eq!(
+            ordered.into_keys().collect::<Vec<_>>(),
+            [sha1, sha256, tail]
+        );
+        assert_eq!(hashed.len(), 3);
+        assert_eq!(hashed[&sha1], 1);
+        assert_eq!(hashed[&sha256], 2);
+        assert_eq!(hashed[&tail], 3);
     }
 }

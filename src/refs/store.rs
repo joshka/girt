@@ -58,6 +58,9 @@ pub struct Resolution {
 /// Reference validation, storage, resolution, or update failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceError {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// Filesystem failure, with its original cause and path.
     #[error("reference I/O at {path}: {source}")]
     Io {
@@ -212,6 +215,7 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        validate_expected(&expected)?;
         if name.as_bytes() == b"HEAD"
             && matches!(&target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
         {
@@ -244,6 +248,7 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        validate_expected(&expected)?;
         let target = Target::Direct(id);
         validate_target(&target)?;
         let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
@@ -286,6 +291,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        validate_expected(&expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
         let packed = packed::parse(&bytes, &packed_lock.destination)?;
@@ -311,6 +317,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        validate_expected(&expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
         let packed = packed::parse(&bytes, &packed_lock.destination)?;
@@ -450,8 +457,17 @@ fn direct_id(target: Option<Target>) -> Option<ObjectId> {
     }
 }
 pub(super) fn validate_target(target: &Target) -> Result<(), ReferenceError> {
-    if matches!(target, Target::Direct(id) if id.as_bytes() == &[0; 20]) {
+    if let Target::Direct(id) = target {
+        id.require_sha1()?;
+    }
+    if matches!(target, Target::Direct(id) if id.is_null()) {
         return Err(ReferenceError::ZeroId);
+    }
+    Ok(())
+}
+pub(super) fn validate_expected(expected: &Expected) -> Result<(), ReferenceError> {
+    if let Expected::Value(Target::Direct(id)) = expected {
+        id.require_sha1()?;
     }
     Ok(())
 }
@@ -636,7 +652,7 @@ mod tests {
         RefName::new(value).unwrap()
     }
     fn id() -> ObjectId {
-        ObjectId::from_bytes([1; 20])
+        ObjectId::Sha1([1; 20])
     }
 
     #[rstest]
@@ -645,7 +661,7 @@ mod tests {
     fn parses_loose_ids(#[case] bytes: &[u8]) {
         assert_eq!(
             parse_loose(bytes, Path::new("ref")).unwrap(),
-            Target::Direct(ObjectId::from_bytes([0x11; 20]))
+            Target::Direct(ObjectId::Sha1([0x11; 20]))
         );
     }
 
@@ -772,7 +788,7 @@ mod tests {
         assert!(matches!(
             repo.references().unwrap().update_without_reflog(
                 &name(b"refs/new/deep"),
-                Target::Direct(ObjectId::from_bytes([0; 20])),
+                Target::Direct(ObjectId::Sha1([0; 20])),
                 Expected::Any
             ),
             Err(ReferenceError::ZeroId)
@@ -833,11 +849,7 @@ mod chain_tests {
         let refs = repo.references().unwrap();
         let head = RefName::new(b"HEAD").unwrap();
         assert!(matches!(
-            refs.update_resolved_without_reflog(
-                &head,
-                ObjectId::from_bytes([1; 20]),
-                Expected::Absent
-            ),
+            refs.update_resolved_without_reflog(&head, ObjectId::Sha1([1; 20]), Expected::Absent),
             Err(ReferenceError::Depth(32))
         ));
         assert_eq!(refs.resolve(&head, 34).unwrap().id, None);
@@ -882,7 +894,7 @@ mod chain_tests {
         assert!(matches!(
             repo.references().unwrap().update_resolved_without_reflog(
                 &head,
-                ObjectId::from_bytes([1; 20]),
+                ObjectId::Sha1([1; 20]),
                 Expected::Absent
             ),
             Err(ReferenceError::Locked(_))

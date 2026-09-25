@@ -57,7 +57,7 @@ impl Fixture {
 }
 
 fn identity(byte: u8) -> ObjectId {
-    ObjectId::from_bytes([byte; 20])
+    ObjectId::Sha1([byte; 20])
 }
 
 fn named(name: &[u8], mode: EntryMode, id: ObjectId) -> TreeEntry {
@@ -454,4 +454,17 @@ fn deep_tree_uses_an_explicit_stack() {
         .unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path.len(), 4004);
+}
+
+#[test]
+fn equal_sha256_roots_do_not_bypass_format_validation() {
+    let fixture = Fixture::new();
+    let id = ObjectId::Sha256([1; 32]);
+    let result = fixture.objects().compare_trees(
+        Some(id),
+        Some(id),
+        TreeCompareLimits::default(),
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(result, Err(TreeCompareError::ObjectFormat(_))));
 }

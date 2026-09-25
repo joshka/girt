@@ -132,7 +132,7 @@ fn missing_equal_ids_are_not_skipped() {
 #[test]
 fn missing_replacement_fails_after_reading_original() {
     let mut f = Fixture::new();
-    let missing = ObjectId::from_bytes([42; 20]);
+    let missing = ObjectId::Sha1([42; 20]);
     f.change.new.as_mut().unwrap().id = missing;
     assert!(matches!(f.read(8), Err(ContentReadError::Missing(id)) if id == missing));
 }

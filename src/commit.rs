@@ -66,6 +66,7 @@ impl Commit {
     /// # Errors
     ///
     /// Returns the field errors described by [`Self::validate`]. No filesystem operations occur.
+    /// SHA-256 tree/parent identities return [`CommitError::ObjectFormat`].
     pub fn new(fields: CommitFields) -> Result<Self, CommitError> {
         fields.validate()?;
         let mut payload = format!("tree {}\n", fields.tree).into_bytes();
@@ -210,6 +211,10 @@ pub struct CommitFields {
 
 impl CommitFields {
     fn validate(&self) -> Result<(), CommitError> {
+        self.tree.require_sha1()?;
+        for parent in &self.parents {
+            parent.require_sha1()?;
+        }
         self.author.validate()?;
         self.committer.validate()?;
         for header in &self.extra_headers {
@@ -353,6 +358,9 @@ pub struct CommitHeader {
 /// A commit lies outside the supported grammar or fails construction validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CommitError {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// The blank line separating headers from message is missing.
     #[error("missing commit header/message separator")]
     MissingSeparator,
@@ -379,6 +387,9 @@ fn required_line<'a>(line: Option<&'a [u8]>, prefix: &[u8]) -> Result<&'a [u8], 
 }
 
 fn parse_id(value: &[u8]) -> Result<ObjectId, CommitError> {
+    if value.len() != 40 {
+        return Err(CommitError::InvalidObjectId);
+    }
     std::str::from_utf8(value)
         .ok()
         .and_then(|value| value.parse().ok())
@@ -438,9 +449,9 @@ mod tests {
     fn preserves_ordered_merge_parents_including_duplicates() {
         let mut fields = fields();
         fields.parents = vec![
-            ObjectId::from_bytes([2; 20]),
-            ObjectId::from_bytes([1; 20]),
-            ObjectId::from_bytes([2; 20]),
+            ObjectId::Sha1([2; 20]),
+            ObjectId::Sha1([1; 20]),
+            ObjectId::Sha1([2; 20]),
         ];
         let commit = Commit::new(fields.clone()).unwrap();
         let expected = format!(
@@ -704,5 +715,27 @@ mod tests {
             Commit::parse(&payload(PERSON, extra, b"")),
             Err(CommitError::InvalidHeader)
         );
+    }
+}
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[rstest::rstest]
+    #[case::tree(ObjectId::Sha256([1; 32]), ObjectId::Sha1([1; 20]))]
+    #[case::parent(ObjectId::Sha1([1; 20]), ObjectId::Sha256([1; 32]))]
+    fn rejects_sha256_fields(#[case] tree: ObjectId, #[case] parent: ObjectId) {
+        let payload = format!(
+            "tree {}\nauthor A <a> 0 +0000\ncommitter C <c> 0 +0000\n\n",
+            ObjectId::Sha1([1; 20])
+        );
+        let mut fields = Commit::parse(payload.as_bytes()).unwrap().fields().clone();
+        fields.tree = tree;
+        fields.parents = vec![parent];
+        assert!(matches!(
+            Commit::new(fields),
+            Err(CommitError::ObjectFormat(_))
+        ));
     }
 }

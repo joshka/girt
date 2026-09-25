@@ -198,7 +198,7 @@ fn packed_only_deletion_removes_its_peel_line() {
         .unwrap()
         .delete_without_reflog(
             &name(b"refs/tags/keep"),
-            Expected::Value(Target::Direct(ObjectId::from_bytes([0x33; 20]))),
+            Expected::Value(Target::Direct(ObjectId::Sha1([0x33; 20]))),
         )
         .unwrap();
     assert_eq!(

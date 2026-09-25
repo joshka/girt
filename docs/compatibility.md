@@ -1,5 +1,9 @@
 # Git Compatibility Evidence
 
+SHA-1 and SHA-256 object identities and canonical object hashing are supported independently of
+storage. The [R02 evidence](evidence/r02.md) records Git hash observations, format refusals and
+remaining propagation work. SHA-256 repository/storage/codec support remains queued under R04/R05.
+
 Loose storage supports SHA-1 blobs, trees, commits, and tags with canonical object headers. The
 caller can supply an object directory and its known `ObjectFormat::Sha1` format, or use `Repository`
 to open an explicit repository path and detect the format from local configuration. SHA-256 storage

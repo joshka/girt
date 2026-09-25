@@ -22,6 +22,7 @@ tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] 
 flate2 = "1"
 crc32fast = "1"
 sha1 = "0.10"
+sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 

@@ -81,7 +81,7 @@ impl Pack {
                     let raw = input
                         .get(..20)
                         .ok_or(Error::Corrupt("truncated base identity"))?;
-                    let id = ObjectId::from_bytes(raw.try_into().unwrap());
+                    let id = ObjectId::Sha1(raw.try_into().unwrap());
                     input = &input[20..];
                     Some(self.index.find(id).ok_or(Error::MissingBase(id))?)
                 }

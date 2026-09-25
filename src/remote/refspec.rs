@@ -293,7 +293,7 @@ impl Refspecs {
             if !names.insert(&source.name) {
                 return Err(MappingError::DuplicateSource(source.name.clone()));
             }
-            if source.id.as_bytes() == &[0; 20] {
+            if source.id.is_null() {
                 return Err(MappingError::ZeroId(source.name.clone()));
             }
         }

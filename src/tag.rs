@@ -24,7 +24,7 @@ use crate::{CommitError, ObjectId, Signature};
 /// ```
 /// use girt::{ObjectId, ObjectKind, Tag, TagFields};
 /// let tag = Tag::new(TagFields {
-///     target: ObjectId::for_blob(b"release bytes"),
+///     target: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"release bytes"),
 ///     target_kind: ObjectKind::Blob,
 ///     name: b"v1".to_vec(),
 ///     tagger: None,
@@ -50,6 +50,7 @@ impl Tag {
     /// # Errors
     ///
     /// Returns the construction failures described by [`Self::validate`]. Has no external effects.
+    /// SHA-256 target identities return [`TagError::ObjectFormat`].
     pub fn new(fields: TagFields) -> Result<Self, TagError> {
         fields.validate()?;
         let headers = format!(
@@ -95,6 +96,9 @@ impl Tag {
         };
         let mut lines = headers.split(|&byte| byte == b'\n').peekable();
         let target_bytes = required_line(lines.next(), b"object ")?;
+        if target_bytes.len() != 40 {
+            return Err(TagError::InvalidObjectId);
+        }
         let target = std::str::from_utf8(target_bytes)
             .ok()
             .and_then(|value| value.parse().ok())
@@ -194,6 +198,7 @@ pub struct TagFields {
 
 impl TagFields {
     fn validate(&self) -> Result<(), TagError> {
+        self.target.require_sha1()?;
         if self.name.is_empty()
             || self
                 .name
@@ -256,6 +261,9 @@ impl ObjectKind {
 /// Unsupported tag framing or a construction validation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TagError {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// A header has no terminating LF and no message separator precedes it.
     #[error("unterminated tag header")]
     UnterminatedHeader,
@@ -512,5 +520,23 @@ mod tests {
             tag.id().to_string(),
             "1316e0263ce4c0bc7afc85d20286be352811d4cf"
         );
+    }
+}
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sha256_target_before_encoding() {
+        let result = Tag::new(TagFields {
+            target: ObjectId::Sha256([1; 32]),
+            target_kind: ObjectKind::Blob,
+            name: b"v1".to_vec(),
+            tagger: None,
+            extra_headers: vec![],
+            message: vec![],
+        });
+        assert!(matches!(result, Err(TagError::ObjectFormat(_))));
     }
 }

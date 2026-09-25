@@ -52,7 +52,7 @@ impl Index {
         let mut fanout = [0u32; 256];
         for position in 0..count {
             let start = 1032 + position * 20;
-            let id = ObjectId::from_bytes(bytes[start..start + 20].try_into().unwrap());
+            let id = ObjectId::Sha1(bytes[start..start + 20].try_into().unwrap());
             if entries.last().is_some_and(|entry: &Entry| entry.id >= id) {
                 return Err(Error::Corrupt("unsorted or duplicate index identities"));
             }

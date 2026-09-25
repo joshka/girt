@@ -55,6 +55,8 @@ impl ReflogEntry {
     }
 
     pub(super) fn encode(&self) -> Result<Vec<u8>, ReferenceError> {
+        self.old.require_sha1()?;
+        self.new.require_sha1()?;
         validate(&self.committer, &self.message)?;
         let mut bytes = format!("{} {}", self.old, self.new).into_bytes();
         self.committer.encode(b"", &mut bytes);
@@ -170,12 +172,8 @@ mod tests {
     use super::*;
 
     fn record(tail: &[u8]) -> Vec<u8> {
-        let mut bytes = format!(
-            "{} {} ",
-            ObjectId::from_bytes([0; 20]),
-            ObjectId::from_bytes([1; 20])
-        )
-        .into_bytes();
+        let mut bytes =
+            format!("{} {} ", ObjectId::Sha1([0; 20]), ObjectId::Sha1([1; 20])).into_bytes();
         bytes.extend_from_slice(tail);
         bytes
     }

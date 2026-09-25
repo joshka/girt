@@ -314,7 +314,10 @@ fn publishes_nested_tags_trees_binary_blobs_symlinks_and_external_gitlinks() {
     let objects = source.loose_objects().unwrap();
     let blob = objects.write_blob(b"binary\0\xff").unwrap();
     let link = objects.write_blob(b"target").unwrap();
-    let external = ObjectId::for_blob(b"external missing submodule commit");
+    let external = ObjectId::for_blob(
+        girt::ObjectFormat::Sha1,
+        b"external missing submodule commit",
+    );
     let tree = objects
         .write_tree(
             &Tree::new(vec![

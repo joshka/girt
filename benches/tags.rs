@@ -15,7 +15,7 @@ fn fixture(size: usize) -> Tag {
         offset_minutes: -420,
     };
     let tag = Tag::new(TagFields {
-        target: ObjectId::from_bytes([1; 20]),
+        target: ObjectId::Sha1([1; 20]),
         target_kind: ObjectKind::Commit,
         name: b"v1".to_vec(),
         tagger: Some(person),

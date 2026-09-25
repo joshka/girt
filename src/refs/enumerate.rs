@@ -60,7 +60,7 @@ impl References<'_> {
     /// let repo = Repository::init(directory.path().join("repo"), InitKind::Bare)?;
     /// let refs = repo.references()?;
     /// let tag = RefName::new(b"refs/tags/example")?;
-    /// let value = Target::Direct(ObjectId::from_bytes([1; 20]));
+    /// let value = Target::Direct(ObjectId::Sha1([1; 20]));
     /// // Reference storage does not require the target object to exist.
     /// refs.update_without_reflog(&tag, value.clone(), Expected::Absent)?;
     /// let tags = refs.list_namespace(&RefName::new(b"refs/tags")?)?;
@@ -256,7 +256,7 @@ mod tests {
                 },
                 Reference {
                     name: RefName::new(b"refs/tags/z").unwrap(),
-                    target: Target::Direct(ObjectId::from_bytes([0x22; 20]))
+                    target: Target::Direct(ObjectId::Sha1([0x22; 20]))
                 },
             ]
         );

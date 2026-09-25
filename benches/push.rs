@@ -140,7 +140,7 @@ fn push(c: &mut Criterion) {
             &mut response,
             format!(
                 "{} capabilities^{{}}\0report-status",
-                ObjectId::from_bytes([0; 20])
+                ObjectId::Sha1([0; 20])
             )
             .as_bytes(),
         );

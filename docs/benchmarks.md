@@ -1082,3 +1082,10 @@ The checkout baseline above captures revision `b39f91a305b8fb32b2324ff83c82a3638
 closing-review planned-marker preflight and ordered removed-path lookup. Its source fingerprints
 apply to that historical revision, not the remediated source. No timing comparison for the
 remediation is claimed; the deletion-heavy regression verifies behavior over many small directories.
+
+## R02 Format-Aware Hashing
+
+The blob harness now takes explicit formats and includes `hash_sha256` beside the SHA-1 `hash`
+workloads. Both measure identical framing and payload sizes. The [R02 record](evidence/r02.md) links
+retained Criterion results, revision and environment. Historic Criterion comparisons against prior
+local runs do not establish regressions without matching source and workload conditions.

@@ -16,7 +16,7 @@ fn remotes(c: &mut Criterion) {
         let sources: Vec<_> = (0..count)
             .map(|index| RefSource {
                 name: RefName::new(format!("refs/heads/topic/{index}")).unwrap(),
-                id: ObjectId::for_blob(index.to_string().as_bytes()),
+                id: ObjectId::for_blob(girt::ObjectFormat::Sha1, index.to_string().as_bytes()),
             })
             .collect();
         let specs = Refspecs::parse(

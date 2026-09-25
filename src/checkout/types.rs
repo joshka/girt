@@ -114,6 +114,9 @@ pub struct Failure {
 /// Validation, storage, cancellation or filesystem failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A supplied baseline or target uses an unsupported object format.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// Input or worktree state outside the conservative checkout contract.
     #[error("checkout refused at {path:?}: {reason}")]
     Refused {
@@ -130,7 +133,7 @@ pub enum Error {
     Limit(&'static str),
     /// No-follow path/identity validation failed.
     #[error(transparent)]
-    Verification(#[from] crate::status::Error),
+    Verification(#[from] Box<crate::status::Error>),
     /// Index locking, parsing or publication failed.
     #[error(transparent)]
     Index(#[from] index::StorageError),
@@ -158,6 +161,13 @@ pub enum Error {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+// Keep the nested verification cause off every checkout Result's stack footprint.
+impl From<crate::status::Error> for Error {
+    fn from(source: crate::status::Error) -> Self {
+        Self::Verification(Box::new(source))
+    }
+}
+
 pub(super) fn check(cancel: &std::sync::atomic::AtomicBool) -> Result<(), Error> {
     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
         Err(Error::Cancelled)

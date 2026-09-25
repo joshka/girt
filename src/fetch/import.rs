@@ -38,7 +38,7 @@ impl Imported {
         }
         verify_hash(data, "received pack checksum")?;
         let end = data.len() - 20;
-        let checksum = ObjectId::from_bytes(data[end..].try_into().unwrap());
+        let checksum = ObjectId::Sha1(data[end..].try_into().unwrap());
         let mut input = &data[12..end];
         let mut entries = Vec::new();
         let mut remaining = limits.max_decode_bytes;
@@ -136,7 +136,7 @@ fn base(input: &mut &[u8], kind: u8, offset: usize) -> Result<Base, Error> {
             let raw = input
                 .get(..20)
                 .ok_or(Error::Corrupt("truncated base identity"))?;
-            let id = ObjectId::from_bytes(raw.try_into().unwrap());
+            let id = ObjectId::Sha1(raw.try_into().unwrap());
             *input = &input[20..];
             Base::Id(id)
         }
@@ -266,7 +266,7 @@ mod tests {
         Imported::read(bytes, limits, &AtomicBool::new(false))
     }
     fn forward_ref_pack() -> Vec<u8> {
-        let id = ObjectId::for_blob(b"one");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"one");
         pack(&[
             entry(7, id.as_bytes(), b"\x03\x03\x03two"),
             entry(3, b"", b"one"),
@@ -278,7 +278,7 @@ mod tests {
         let bytes = forward_ref_pack();
         let imported = read(&bytes, FetchLimits::default()).unwrap();
         let reader = crate::pack::Pack::open(&imported.index, bytes).unwrap();
-        let id = ObjectId::for_blob(b"two");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"two");
         assert_eq!(
             reader
                 .read(reader.find(id).unwrap(), crate::ReadLimits::default())
@@ -293,7 +293,10 @@ mod tests {
         let ordinary = entry(3, b"", b"one");
         let delta = entry(6, &[ordinary.len() as u8], b"\x03\x03\x03two");
         let imported = read(&pack(&[ordinary, delta]), FetchLimits::default()).unwrap();
-        assert_eq!(imported.objects[&ObjectId::for_blob(b"two")].data(), b"two");
+        assert_eq!(
+            imported.objects[&ObjectId::for_blob(crate::ObjectFormat::Sha1, b"two")].data(),
+            b"two"
+        );
     }
 
     #[rstest]
@@ -323,7 +326,7 @@ mod tests {
 
     #[test]
     fn rejects_external_base() {
-        let id = ObjectId::for_blob(b"external");
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external");
         let bytes = pack(&[entry(7, id.as_bytes(), b"\x08\x03\x03two")]);
         assert!(
             matches!(read(&bytes, FetchLimits::default()), Err(FetchError::Pack(Error::MissingBase(actual))) if actual == id)
@@ -371,7 +374,11 @@ mod tests {
     fn rejects_invalid_delta_program(#[case] program: &[u8]) {
         let bytes = pack(&[
             entry(3, b"", b"one"),
-            entry(7, ObjectId::for_blob(b"one").as_bytes(), program),
+            entry(
+                7,
+                ObjectId::for_blob(crate::ObjectFormat::Sha1, b"one").as_bytes(),
+                program,
+            ),
         ]);
         assert!(matches!(
             read(&bytes, FetchLimits::default()),

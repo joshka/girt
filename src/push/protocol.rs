@@ -112,7 +112,7 @@ pub(super) fn advertise(
         let (id, name) =
             split(reference, b' ').ok_or(Error::Protocol("reference advertisement"))?;
         let id = parse_id(id)?;
-        if id == ObjectId::from_bytes([0; 20]) {
+        if id == ObjectId::Sha1([0; 20]) {
             if count != 0 || name != b"capabilities^{}" {
                 return Err(Error::Protocol("zero advertised ID"));
             }
@@ -223,6 +223,9 @@ fn status(bytes: &[u8]) -> Result<Status, Error> {
     })
 }
 fn parse_id(bytes: &[u8]) -> Result<ObjectId, Error> {
+    if bytes.len() != 40 {
+        return Err(Error::Unsupported("object format"));
+    }
     std::str::from_utf8(bytes)
         .ok()
         .and_then(|id| id.parse().ok())

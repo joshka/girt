@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Supply the Advertisement received by an existing fetch adapter's selection callback.
     // This example uses a synthetic advertisement instead of connecting to a server.
     let tag_name = RefName::new("refs/tags/remote")?;
-    let advertised_id = ObjectId::for_blob(b"advertised fixture");
+    let advertised_id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"advertised fixture");
     let advertisement = Advertisement {
         refs: vec![AdvertisedRef {
             name: tag_name.clone(),

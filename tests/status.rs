@@ -150,7 +150,10 @@ fn unborn_staged_file_is_addition() {
     git(repo.worktree().unwrap(), &["add", "file"]);
     let result = status(&repo);
     assert_eq!(result.staged[0].old, None);
-    assert_eq!(result.staged[0].new.unwrap().id, ObjectId::for_blob(b"new"));
+    assert_eq!(
+        result.staged[0].new.unwrap().id,
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"new")
+    );
     assert!(result.unstaged.is_empty());
 }
 
@@ -197,7 +200,7 @@ fn pack(root: &Path, packed: bool) {
 fn conflicts_are_explicit_and_not_staged_deletions() {
     let (_temp, repo) = fixture();
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));
-    let id = ObjectId::for_blob(b"old");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"old");
     let mut ours = Entry::new(b"file".to_vec(), Mode::Regular, id);
     ours.stage = Stage::Ours;
     let mut theirs = ours.clone();
@@ -273,7 +276,7 @@ fn gitlinks_are_explicitly_unchecked_and_never_traversed() {
     let entry = Entry::new(
         b"sub".to_vec(),
         Mode::Gitlink,
-        ObjectId::for_blob(b"not a local commit"),
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"not a local commit"),
     );
     let index = Index::new(vec![entry], Default::default()).unwrap();
     fs::write(
@@ -357,7 +360,7 @@ fn missing_index_blob_is_an_error_even_when_working_file_is_missing() {
         vec![Entry::new(
             b"file".to_vec(),
             Mode::Regular,
-            ObjectId::for_blob(b"absent"),
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent"),
         )],
         Default::default(),
     )
@@ -464,7 +467,7 @@ fn wrong_kind_index_object_is_an_error() {
 fn corrupt_object_is_not_hidden_by_equal_working_content() {
     let (_temp, repo) = fixture();
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));
-    let hex = ObjectId::for_blob(b"old").to_string();
+    let hex = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"old").to_string();
     let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
     fs::remove_file(&path).unwrap();
     fs::write(path, b"corrupt").unwrap();
@@ -484,7 +487,10 @@ fn missing_baseline_tree_is_not_an_empty_tree() {
     let (_temp, repo) = fixture();
     assert!(matches!(
         repo.raw_status(
-            Baseline::Tree(Some(ObjectId::for_blob(b"absent"))),
+            Baseline::Tree(Some(ObjectId::for_blob(
+                girt::ObjectFormat::Sha1,
+                b"absent"
+            ))),
             Untracked::Omit,
             Limits::default(),
             &AtomicBool::new(false)
@@ -518,7 +524,7 @@ fn unsafe_index_bytes_do_not_reach_filesystem_traversal() {
         vec![Entry::new(
             b".GIT/config".to_vec(),
             Mode::Regular,
-            ObjectId::for_blob(b"missing"),
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, b"missing"),
         )],
         Default::default(),
     )
@@ -545,10 +551,16 @@ fn raw_observation_does_not_modify_any_repository_file() {
     seed(&repo, Some(b"old"), Some(b"new"), Some(b"end"));
     let before = snapshot(repo.worktree().unwrap());
     let result = status(&repo);
-    assert_eq!(result.staged[0].old.unwrap().id, ObjectId::for_blob(b"old"));
-    assert_eq!(result.staged[0].new.unwrap().id, ObjectId::for_blob(b"new"));
+    assert_eq!(
+        result.staged[0].old.unwrap().id,
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"old")
+    );
+    assert_eq!(
+        result.staged[0].new.unwrap().id,
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"new")
+    );
     assert!(
-        matches!(result.unstaged[0].change, Change::Modified(value) if value.id == ObjectId::for_blob(b"end"))
+        matches!(result.unstaged[0].change, Change::Modified(value) if value.id == ObjectId::for_blob(girt::ObjectFormat::Sha1, b"end"))
     );
     assert_eq!(snapshot(repo.worktree().unwrap()), before);
 }

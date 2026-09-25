@@ -1,5 +1,13 @@
 //! An incremental Rust library for Git's data formats and storage.
 //!
+//! # Object identities
+//!
+//! [`ObjectId`] carries SHA-1 or SHA-256 digest bytes. [`ObjectFormat::hash_object`] hashes exact
+//! payloads with Git framing; it does not validate payload structure or translate embedded IDs.
+//! Hex parsing accepts full 40/64-digit identities, while [`ObjectId::from_hex`] requires an
+//! explicit format. Null IDs are format-specific sentinels. Codecs, repositories, packs, refs,
+//! indexes and transports currently support SHA-1 only and reject incompatible identity inputs.
+//!
 //! # Reading a repository
 //!
 //! Open an explicit path with [`Repository::open`], then retain an [`Objects`] reader with chosen
@@ -132,7 +140,7 @@
 //! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
 //! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
-//! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
+//! - [`ObjectId`]: SHA-1/SHA-256 identity, hashing blob bytes, and hexadecimal parsing.
 //! - [`TreeChange`], [`TreeValue`], [`TreeCompareLimits`], and [`TreeCompareError`]: recursive
 //!   structural tree comparison.
 //! - [`content_diff`]: bounded byte-preserving line edits and separate tree-change blob loading.
@@ -187,7 +195,7 @@ pub use commit::{
 pub use config::{Config, ConfigError};
 pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
-pub use object::{ObjectFormat, ObjectId, ParseObjectIdError, encode_blob};
+pub use object::{ObjectFormat, ObjectFormatError, ObjectId, ParseObjectIdError, encode_blob};
 pub use objects::{Object, ObjectReadError, Objects, PackLimits, ReadLimits};
 pub use pack::{
     DeltaOptions, DeltaStats, PackCompression, PackObject, PackWriteError, PackWriteLimits,

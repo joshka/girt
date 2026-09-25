@@ -132,6 +132,12 @@ impl References<'_> {
         if edits.is_empty() {
             return Ok(Vec::new());
         }
+        for (index, edit) in edits.iter().enumerate() {
+            validate_edit(edit).map_err(|source| TransactionError::Prepare {
+                operation: Some(index),
+                source,
+            })?;
+        }
         self.prepare_transaction(edits)?.publish()
     }
 
@@ -153,7 +159,6 @@ impl References<'_> {
                 operation: Some(index),
                 source,
             };
-            validate_edit(edit).map_err(error)?;
             let chain = self.discover_chain(edit, &packed).map_err(error)?;
             for (name, _) in &chain {
                 if !names.insert(name.clone())
@@ -285,6 +290,7 @@ impl References<'_> {
 }
 
 fn validate_edit(edit: &RefEdit) -> Result<(), ReferenceError> {
+    super::store::validate_expected(&edit.expected)?;
     if let Some(target) = &edit.target {
         validate_target(target)?;
         if edit.name.as_bytes() == b"HEAD"
@@ -304,7 +310,7 @@ fn validate_edit(edit: &RefEdit) -> Result<(), ReferenceError> {
 
 fn log_id(target: Option<&Target>) -> Result<ObjectId, ReferenceError> {
     match target {
-        None => Ok(ObjectId::from_bytes([0; 20])),
+        None => Ok(ObjectId::Sha1([0; 20])),
         Some(Target::Direct(id)) => Ok(*id),
         Some(Target::Symbolic(_)) => Err(ReferenceError::Unsupported(
             "stored symbolic edits with reflogs",

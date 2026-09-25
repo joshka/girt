@@ -17,7 +17,7 @@ fn name(s: &str) -> RefName {
     RefName::new(s).unwrap()
 }
 fn id(n: u8) -> ObjectId {
-    ObjectId::from_bytes([n; 20])
+    ObjectId::Sha1([n; 20])
 }
 fn log() -> Reflog {
     Reflog::Append {
@@ -728,4 +728,27 @@ fn detachment_does_not_read_or_append_old_branch_log() {
         b"opaque old branch log"
     );
     clean(&repo);
+}
+
+#[rstest]
+#[case::target(Some(Target::Direct(ObjectId::Sha256([1;32]))), Expected::Absent)]
+#[case::expectation(None, Expected::Value(Target::Direct(ObjectId::Sha256([1;32]))))]
+fn rejects_wrong_format_before_locking(#[case] target: Option<Target>, #[case] expected: Expected) {
+    let (root, repo) = fixture();
+    let lock = root.path().join("packed-refs.lock");
+    fs::write(&lock, b"another owner").unwrap();
+    let mut change = edit("refs/heads/new");
+    change.target = target;
+    change.expected = expected;
+    let result = repo.references().unwrap().transaction(&[change]);
+    assert!(matches!(
+        result,
+        Err(TransactionError::Prepare {
+            source: ReferenceError::ObjectFormat(_),
+            ..
+        })
+    ));
+    assert_eq!(fs::read(lock).unwrap(), b"another owner");
+    assert!(!root.path().join("refs/heads/new").exists());
+    assert!(!root.path().join("logs").exists());
 }

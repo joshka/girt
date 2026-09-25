@@ -26,7 +26,7 @@ pub fn response(chains: usize, depth: usize) -> (Vec<u8>, ObjectId, Vec<u8>) {
             } else {
                 pack.push(0x7b); // REF_DELTA, eleven-byte program
                 let base = ((chain * (depth + 1) + level - 1) as u64).to_be_bytes();
-                pack.extend(ObjectId::for_blob(&base).as_bytes());
+                pack.extend(ObjectId::for_blob(girt::ObjectFormat::Sha1, &base).as_bytes());
                 let mut program = vec![8, 8, 8]; // base size, result size, literal length
                 program.extend(data);
                 program
@@ -37,7 +37,7 @@ pub fn response(chains: usize, depth: usize) -> (Vec<u8>, ObjectId, Vec<u8>) {
         }
     }
     pack.extend(Sha1::digest(&pack));
-    let tip = ObjectId::for_blob(&(depth as u64).to_be_bytes());
+    let tip = ObjectId::for_blob(girt::ObjectFormat::Sha1, &(depth as u64).to_be_bytes());
     let mut wire = Vec::new();
     packet(
         &mut wire,

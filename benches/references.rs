@@ -14,7 +14,7 @@ fn references(c: &mut Criterion) {
     let refs = repo.references().unwrap();
     let main = RefName::new(b"refs/heads/main").unwrap();
     let head = RefName::new(b"HEAD").unwrap();
-    let id = ObjectId::from_bytes([1; 20]);
+    let id = ObjectId::Sha1([1; 20]);
     refs.update_without_reflog(&main, Target::Direct(id), Expected::Absent)
         .unwrap();
     c.bench_function("references/read-loose-warm", |b| {
@@ -90,7 +90,7 @@ fn transactions(c: &mut Criterion) {
             .map(|index| RefEdit {
                 name: RefName::new(format!("refs/tags/batch-{index:03}")).unwrap(),
                 dereference: false,
-                target: Some(Target::Direct(ObjectId::from_bytes([1; 20]))),
+                target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
                 expected: Expected::Any,
                 reflog: Reflog::Append {
                     committer: girt::Signature {
@@ -127,7 +127,7 @@ fn transactions(c: &mut Criterion) {
     let detach = RefEdit {
         name: head.clone(),
         dereference: false,
-        target: Some(Target::Direct(ObjectId::from_bytes([1; 20]))),
+        target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
         expected: Expected::Value(unborn.clone()),
         reflog: Reflog::Append {
             committer: girt::Signature {
@@ -157,8 +157,8 @@ fn transactions(c: &mut Criterion) {
     for count in [10, 10000] {
         let record = format!(
             "{} {} Benchmark <bench@example.com> 1700000000 +0000\tbenchmark publication\n",
-            ObjectId::from_bytes([1; 20]),
-            ObjectId::from_bytes([2; 20])
+            ObjectId::Sha1([1; 20]),
+            ObjectId::Sha1([2; 20])
         );
         let bytes = record.repeat(count).into_bytes();
         c.bench_function(&format!("transactions/parse-log-{count}"), |b| {

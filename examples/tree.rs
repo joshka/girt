@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tree = Tree::new(vec![TreeEntry {
         mode: EntryMode::Blob,
         name: b"hello.txt".to_vec(),
-        id: ObjectId::for_blob(b"hello from girt\n"),
+        id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello from girt\n"),
     }])?;
 
     let payload = tree.encode();

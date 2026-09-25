@@ -190,8 +190,9 @@ impl Objects {
     /// # Errors
     ///
     /// Returns storage errors for corrupt/unsupported objects, I/O failures, missing delta bases,
-    /// cycles, or exhausted resource limits. An invalid loose object or indexed candidate fails
-    /// immediately rather than being treated as absent. No filesystem changes occur.
+    /// cycles, incompatible identity formats, or exhausted resource limits. An invalid loose object
+    /// or indexed candidate fails immediately rather than being treated as absent. No
+    /// filesystem changes occur.
     pub fn read(
         &self,
         id: ObjectId,

@@ -69,6 +69,9 @@ impl Default for Limits {
 /// Index format, unsupported feature or resource-limit failure.
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum Error {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// Header, entry or extension framing is malformed at a byte offset.
     #[error("malformed index at byte {offset}: {reason}")]
     Malformed {
@@ -337,7 +340,7 @@ fn parse_entry(
     Ok(Entry {
         path: bytes[path_start..path_start + name_len].to_vec(),
         mode,
-        id: ObjectId::from_bytes(fixed[40..60].try_into().unwrap()),
+        id: ObjectId::Sha1(fixed[40..60].try_into().unwrap()),
         stage: match (flags >> 12) & 3 {
             0 => Stage::Normal,
             1 => Stage::Base,
@@ -365,6 +368,7 @@ fn parse_entry(
 
 fn validate_entries(entries: &[Entry], limits: Limits) -> Result<(), Error> {
     for (position, entry) in entries.iter().enumerate() {
+        entry.id.require_sha1()?;
         check_count(entry.path.len(), limits.max_path_bytes, "path bytes")?;
         if entry.path.contains(&0)
             || entry
@@ -463,3 +467,17 @@ fn entry_error(entry: usize, reason: &'static str) -> Error {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sha256_index_entry() {
+        let entry = Entry::new(b"a".to_vec(), Mode::Regular, ObjectId::Sha256([1; 32]));
+        assert!(matches!(
+            Index::new(vec![entry], Limits::default()),
+            Err(Error::ObjectFormat(_))
+        ));
+    }
+}

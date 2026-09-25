@@ -72,6 +72,9 @@ pub struct PackWritten {
 /// Failure to validate inputs or finish a caller-owned artifact pair.
 #[derive(Debug, thiserror::Error)]
 pub enum PackWriteError {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// An expected identity does not match the supplied kind and bytes.
     #[error("object identity mismatch: expected {expected}, computed {actual}")]
     Identity {
@@ -117,7 +120,7 @@ pub enum PackWriteError {
 /// ```
 /// use girt::{ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
 /// let input = PackObject {
-///     id: ObjectId::for_blob(b"hello"),
+///     id: ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello"),
 ///     kind: ObjectKind::Blob,
 ///     data: b"hello",
 /// };
@@ -162,7 +165,7 @@ pub fn write_pack(
 /// let inputs: Vec<_> = [&base, &edited]
 ///     .into_iter()
 ///     .map(|data| PackObject {
-///         id: ObjectId::for_blob(data),
+///         id: ObjectId::for_blob(girt::ObjectFormat::Sha1, data),
 ///         kind: ObjectKind::Blob,
 ///         data,
 ///     })
@@ -346,6 +349,7 @@ fn validate<'a>(
     }
     let mut total = 0u64;
     for object in objects {
+        object.id.require_sha1()?;
         check()?;
         let length = object.data.len() as u64;
         if length > limits.max_object_bytes {
@@ -506,7 +510,7 @@ impl<'a, W: Write> Output<'a, W> {
         self.write_all(bytes).map_err(output_error)
     }
     fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
-        let checksum = ObjectId::from_bytes(self.hash.clone().finalize().into());
+        let checksum = ObjectId::Sha1(self.hash.clone().finalize().into());
         self.put(checksum.as_bytes())?;
         self.flush()?;
         Ok(checksum)
@@ -538,7 +542,7 @@ mod tests {
 
     fn blob(data: &[u8]) -> PackObject<'_> {
         PackObject {
-            id: ObjectId::for_blob(data),
+            id: ObjectId::for_blob(crate::ObjectFormat::Sha1, data),
             kind: ObjectKind::Blob,
             data,
         }
@@ -563,7 +567,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::wrong_id(PackObject { id: ObjectId::from_bytes([0;20]), ..blob(b"x") })]
+    #[case::wrong_id(PackObject { id: ObjectId::Sha1([0;20]), ..blob(b"x") })]
     #[case::wrong_kind(PackObject { kind: ObjectKind::Tree, ..blob(b"x") })]
     fn invalid_identity_leaves_outputs_untouched(#[case] input: PackObject<'_>) {
         let (mut pack, mut idx) = (vec![], vec![]);
@@ -747,29 +751,29 @@ mod tests {
     fn synthetic_large_offsets_use_ordered_64_bit_table() {
         let entries = [
             Entry {
-                id: ObjectId::from_bytes([0; 20]),
+                id: ObjectId::Sha1([0; 20]),
                 offset: 12,
                 crc: 0x12345678,
             },
             Entry {
-                id: ObjectId::from_bytes([1; 20]),
+                id: ObjectId::Sha1([1; 20]),
                 offset: 0x7fff_ffff,
                 crc: 1,
             },
             Entry {
-                id: ObjectId::from_bytes([2; 20]),
+                id: ObjectId::Sha1([2; 20]),
                 offset: 0x8000_0000,
                 crc: 2,
             },
             Entry {
-                id: ObjectId::from_bytes([3; 20]),
+                id: ObjectId::Sha1([3; 20]),
                 offset: 0x1_0000_0000,
                 crc: 3,
             },
         ];
         let mut bytes = vec![];
         let mut output = Output::new(&mut bytes, u64::MAX, "index bytes");
-        write_index(&entries, ObjectId::from_bytes([9; 20]), &mut output).unwrap();
+        write_index(&entries, ObjectId::Sha1([9; 20]), &mut output).unwrap();
         output.finish().unwrap();
         assert_eq!(
             &bytes[1128..1144],
@@ -874,7 +878,7 @@ mod compression_tests {
         let inputs: Vec<_> = data
             .iter()
             .map(|data| PackObject {
-                id: ObjectId::for_blob(data),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, data),
                 kind: ObjectKind::Blob,
                 data,
             })
@@ -947,7 +951,9 @@ mod compression_tests {
         for expected in data {
             let restored = reader
                 .read(
-                    reader.find(ObjectId::for_blob(expected)).unwrap(),
+                    reader
+                        .find(ObjectId::for_blob(crate::ObjectFormat::Sha1, expected))
+                        .unwrap(),
                     crate::ReadLimits {
                         max_delta_depth,
                         ..crate::ReadLimits::default()
@@ -999,7 +1005,7 @@ mod compression_tests {
         let data = payloads();
         let inputs = [
             PackObject {
-                id: ObjectId::for_blob(&data[0]),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, &data[0]),
                 kind: ObjectKind::Blob,
                 data: &data[0],
             },
@@ -1027,7 +1033,7 @@ mod compression_tests {
         let inputs: Vec<_> = data
             .iter()
             .map(|data| PackObject {
-                id: ObjectId::for_blob(data),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, data),
                 kind: ObjectKind::Blob,
                 data,
             })
@@ -1090,7 +1096,7 @@ mod compression_tests {
     #[test]
     fn invalid_identity_precedes_delta_output() {
         let input = PackObject {
-            id: ObjectId::from_bytes([0; 20]),
+            id: ObjectId::Sha1([0; 20]),
             kind: ObjectKind::Blob,
             data: &[1; 100],
         };
@@ -1116,12 +1122,12 @@ mod cancellation_tests {
     fn prevalidation_cancellation_leaves_both_outputs_untouched() {
         let objects = [
             PackObject {
-                id: ObjectId::for_blob(b"first"),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"first"),
                 kind: ObjectKind::Blob,
                 data: b"first",
             },
             PackObject {
-                id: ObjectId::from_bytes([255; 20]),
+                id: ObjectId::Sha1([255; 20]),
                 kind: ObjectKind::Blob,
                 data: b"invalid identity",
             },
@@ -1146,6 +1152,26 @@ mod cancellation_tests {
         assert!(
             matches!(result, Err(PackWriteError::Io(error)) if error.to_string() == "cancelled")
         );
+        assert!(pack.is_empty());
+        assert!(index.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod format_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_sha256_before_writing_pack_or_index() {
+        let object = PackObject {
+            id: ObjectId::Sha256([1; 32]),
+            kind: ObjectKind::Blob,
+            data: b"a",
+        };
+        let mut pack = vec![];
+        let mut index = vec![];
+        let result = write_pack(&[object], &mut pack, &mut index, PackWriteLimits::default());
+        assert!(matches!(result, Err(PackWriteError::ObjectFormat(_))));
         assert!(pack.is_empty());
         assert!(index.is_empty());
     }

@@ -602,7 +602,11 @@ fn unsupported_symlink_payload_is_rejected_before_mutation(#[case] bytes: &[u8])
 #[test]
 fn missing_blob_is_rejected_before_mutation() {
     let f = Fixture::new();
-    let tree = f.entry_tree(b"file", EntryMode::Blob, ObjectId::for_blob(b"missing"));
+    let tree = f.entry_tree(
+        b"file",
+        EntryMode::Blob,
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
+    );
     let failure = f.checkout(None, Some(tree)).unwrap_err();
     assert!(matches!(*failure.cause, Error::InvalidBlob(_)));
     assert!(failure.report.applied.is_empty());
@@ -622,7 +626,7 @@ fn wrong_kind_blob_is_rejected_before_mutation() {
 fn corrupted_blob_is_rejected_before_mutation() {
     let f = Fixture::new();
     let tree = f.tree(b"file", EntryMode::Blob, b"hello");
-    let id = ObjectId::for_blob(b"hello").to_string();
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"hello").to_string();
     fs::write(
         f.repo.object_dir().join(&id[..2]).join(&id[2..]),
         b"corrupt",
@@ -1045,7 +1049,7 @@ fn descendant_lookup_respects_component_boundaries(
     let leaves = BTreeMap::from([(
         target.to_vec(),
         TreeValue {
-            id: ObjectId::for_blob(b""),
+            id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b""),
             mode: EntryMode::Blob,
         },
     )]);

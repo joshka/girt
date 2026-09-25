@@ -5,7 +5,7 @@ use super::*;
 fn source(name: &[u8]) -> RefSource {
     RefSource {
         name: RefName::new(name).unwrap(),
-        id: ObjectId::for_blob(b"tip"),
+        id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"tip"),
     }
 }
 fn specs(direction: Direction, values: &[&[u8]]) -> Refspecs {
@@ -243,7 +243,7 @@ fn rejects_ambiguous_inputs_and_zero_ids_even_if_unselected() {
         Err(MappingError::DuplicateSource(input.name.clone()))
     );
     let zero = RefSource {
-        id: ObjectId::from_bytes([0; 20]),
+        id: ObjectId::Sha1([0; 20]),
         ..input
     };
     assert_eq!(
@@ -262,7 +262,7 @@ fn rejects_invalid_substitution() {
 #[test]
 fn advertisement_uses_named_tips_not_peeling_or_symbolic_target_names() {
     use crate::fetch::AdvertisedRef;
-    let tip = ObjectId::for_blob(b"tag");
+    let tip = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"tag");
     let advertisement = Advertisement {
         refs: vec![
             AdvertisedRef {
@@ -277,7 +277,7 @@ fn advertisement_uses_named_tips_not_peeling_or_symbolic_target_names() {
             },
             AdvertisedRef {
                 name: RefName::new(b"refs/tags/v1").unwrap(),
-                id: ObjectId::for_blob(b"peeled"),
+                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"peeled"),
                 peeled: true,
             },
         ],

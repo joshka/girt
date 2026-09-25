@@ -26,7 +26,7 @@ fn clone_plan(c: &mut Criterion) {
         let mut refs: Vec<_> = (0..count)
             .map(|i| AdvertisedRef {
                 name: RefName::new(format!("refs/heads/b{i}")).unwrap(),
-                id: ObjectId::for_blob(i.to_string().as_bytes()),
+                id: ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
                 peeled: false,
             })
             .collect();

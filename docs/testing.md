@@ -117,6 +117,7 @@ compilation on Windows does not expose a Windows SSH adapter.
 
 The Windows integration selection follows implemented operations, not just file portability:
 
+- `object_ids`: Format-aware identity/hash vectors and storage-boundary refusal (both hashes).
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.

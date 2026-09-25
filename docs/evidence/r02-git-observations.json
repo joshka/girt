@@ -1,0 +1,78 @@
+{
+  "git": "git version 2.55.0",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cases": [
+    {
+      "format": "sha1",
+      "kind": "blob",
+      "payload_hex": "",
+      "oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "format": "sha1",
+      "kind": "blob",
+      "payload_hex": "68656c6c6f0a",
+      "oid": "ce013625030ba8dba906f756967f9e9ca394464a"
+    },
+    {
+      "format": "sha1",
+      "kind": "blob",
+      "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "oid": "c86626638e0bc8cf47ca49bb1525b40e9737ee64"
+    },
+    {
+      "format": "sha1",
+      "kind": "tree",
+      "payload_hex": "",
+      "oid": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    },
+    {
+      "format": "sha1",
+      "kind": "commit",
+      "payload_hex": "617262697472617279007061796c6f6164",
+      "oid": "2fdd56d084c43db6ace473a47c56ae5bf1d33f2a"
+    },
+    {
+      "format": "sha1",
+      "kind": "tag",
+      "payload_hex": "617262697472617279ff7061796c6f6164",
+      "oid": "cbe1f6c7e12407841662c51d99bc830f0de080aa"
+    },
+    {
+      "format": "sha256",
+      "kind": "blob",
+      "payload_hex": "",
+      "oid": "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"
+    },
+    {
+      "format": "sha256",
+      "kind": "blob",
+      "payload_hex": "68656c6c6f0a",
+      "oid": "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4"
+    },
+    {
+      "format": "sha256",
+      "kind": "blob",
+      "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "oid": "a48b8cb64916e81947ff26bb9e96eec5228bbca67e70154027bcba7544c0d308"
+    },
+    {
+      "format": "sha256",
+      "kind": "tree",
+      "payload_hex": "",
+      "oid": "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+    },
+    {
+      "format": "sha256",
+      "kind": "commit",
+      "payload_hex": "617262697472617279007061796c6f6164",
+      "oid": "d1ebd4381082265f3c44aa41e72d4af260071310487916ed135624957e0208f9"
+    },
+    {
+      "format": "sha256",
+      "kind": "tag",
+      "payload_hex": "617262697472617279ff7061796c6f6164",
+      "oid": "d5ce7830e6fb27ecfb604d0201ad2ad89a615636c9d1feff687699a537c98e51"
+    }
+  ]
+}

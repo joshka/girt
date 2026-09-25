@@ -13,7 +13,7 @@ fn benchmark(c: &mut Criterion) {
                 Entry::new(
                     format!("directory/file-{n:08}").into_bytes(),
                     Mode::Regular,
-                    ObjectId::for_blob(b"content"),
+                    ObjectId::for_blob(girt::ObjectFormat::Sha1, b"content"),
                 )
             })
             .collect();

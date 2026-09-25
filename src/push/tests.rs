@@ -112,11 +112,8 @@ fn pkt(bytes: &[u8]) -> Vec<u8> {
     result
 }
 fn advertisement(caps: &str) -> Vec<u8> {
-    let mut result = pkt(format!(
-        "{} capabilities^{{}}\0{caps}\n",
-        ObjectId::from_bytes([0; 20])
-    )
-    .as_bytes());
+    let mut result =
+        pkt(format!("{} capabilities^{{}}\0{caps}\n", ObjectId::Sha1([0; 20])).as_bytes());
     result.extend(b"0000");
     result
 }
@@ -143,7 +140,10 @@ fn selects_complete_graph_and_skips_external_gitlinks() {
     let blob = f.blob();
     let subtree = f.tree(blob, EntryMode::Blob);
     let tree = f.tree(subtree, EntryMode::Tree);
-    let external = f.tree(ObjectId::for_blob(b"external"), EntryMode::Gitlink);
+    let external = f.tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
+        EntryMode::Gitlink,
+    );
     let parent = f.commit(external, vec![]);
     let commit = f.commit(tree, vec![parent, parent]);
     let tag = f.tag(commit, ObjectKind::Commit);
@@ -172,7 +172,11 @@ fn rejects_missing_or_mistyped_edges(#[case] kind: ObjectKind) {
         f.prepare(vec![tag_command(id)], PushLimits::default()),
         Err(PushFailure::Kind(_))
     ));
-    let missing = bad_edge(&f, ObjectId::for_blob(b"absent"), kind);
+    let missing = bad_edge(
+        &f,
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"absent"),
+        kind,
+    );
     assert!(matches!(
         f.prepare(vec![tag_command(missing)], PushLimits::default()),
         Err(PushFailure::Missing(_))
@@ -200,7 +204,10 @@ fn branch_requires_commit_even_with_force() {
 fn missing_parent_is_not_assumed_to_exist_remotely() {
     let f = Fixture::new();
     let tree = f.tree(f.blob(), EntryMode::Blob);
-    let id = f.commit(tree, vec![ObjectId::for_blob(b"missing")]);
+    let id = f.commit(
+        tree,
+        vec![ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing")],
+    );
     assert!(matches!(
         f.prepare(vec![tag_command(id)], PushLimits::default()),
         Err(PushFailure::Missing(_))
@@ -226,7 +233,11 @@ fn replacement_requires_explicit_force(#[case] name: &str) {
     let f = Fixture::new();
     let tree = f.tree(f.blob(), EntryMode::Blob);
     let tip = f.commit(tree, vec![]);
-    let mut c = command(name, Some(ObjectId::for_blob(b"unrelated")), tip);
+    let mut c = command(
+        name,
+        Some(ObjectId::for_blob(crate::ObjectFormat::Sha1, b"unrelated")),
+        tip,
+    );
     assert!(matches!(
         f.prepare(vec![c.clone()], PushLimits::default()),
         Err(PushFailure::WouldForce(_))
@@ -317,7 +328,7 @@ fn rejects_duplicate_destinations_and_zero_ids() {
     ));
     assert!(matches!(
         f.prepare(
-            vec![tag_command(ObjectId::from_bytes([0; 20]))],
+            vec![tag_command(ObjectId::Sha1([0; 20]))],
             PushLimits::default()
         ),
         Err(PushFailure::Command(_))
@@ -326,7 +337,7 @@ fn rejects_duplicate_destinations_and_zero_ids() {
         f.prepare(
             vec![command(
                 "refs/tags/test",
-                Some(ObjectId::from_bytes([0; 20])),
+                Some(ObjectId::Sha1([0; 20])),
                 f.blob()
             )],
             PushLimits::default()
@@ -558,7 +569,10 @@ fn preparation_cancellation_changes_no_storage() {
     assert!(matches!(
         PreparedPush::new(
             &objects,
-            vec![tag_command(ObjectId::for_blob(b"absent"))],
+            vec![tag_command(ObjectId::for_blob(
+                crate::ObjectFormat::Sha1,
+                b"absent"
+            ))],
             PushLimits::default(),
             &AtomicBool::new(true)
         ),
@@ -808,7 +822,10 @@ fn incomplete_multi_ref_report_keeps_unknown_distinct_from_rejected() {
 #[test]
 fn excludes_nested_tags_and_skips_external_gitlinks() {
     let f = Fixture::new();
-    let tree = f.tree(ObjectId::for_blob(b"external"), EntryMode::Gitlink);
+    let tree = f.tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"external"),
+        EntryMode::Gitlink,
+    );
     let inner = f.tag(tree, ObjectKind::Tree);
     let outer = f.tag(inner, ObjectKind::Tag);
     let prepared = PreparedPush::new_excluding(
@@ -826,7 +843,10 @@ fn excludes_nested_tags_and_skips_external_gitlinks() {
 #[test]
 fn exclusion_requires_selected_graph_to_be_complete() {
     let f = Fixture::new();
-    let tree = f.tree(ObjectId::for_blob(b"missing"), EntryMode::Blob);
+    let tree = f.tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
+        EntryMode::Blob,
+    );
     let result = PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(tree)],
@@ -913,4 +933,16 @@ fn ref_delta_push_needs_only_report_status() {
     assert!(report.all_succeeded());
     assert!(!p.request.windows(9).any(|w| w == b"ofs-delta"));
     assert_eq!(&sent[p.request.len()..], p.pack);
+}
+
+#[rstest]
+#[case::new_id(None, ObjectId::Sha256([1; 32]))]
+#[case::old_id(Some(ObjectId::Sha256([1; 32])), ObjectId::Sha1([1; 20]))]
+fn refuses_wrong_format_before_graph_reads(#[case] old: Option<ObjectId>, #[case] new: ObjectId) {
+    let fixture = Fixture::new();
+    let result = fixture.prepare(
+        vec![command("refs/tags/test", old, new)],
+        PushLimits::default(),
+    );
+    assert!(matches!(result, Err(PushFailure::ObjectFormat(_))));
 }

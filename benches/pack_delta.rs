@@ -77,7 +77,7 @@ fn pack_delta(c: &mut Criterion) {
         let objects: Vec<_> = data
             .iter()
             .map(|data| PackObject {
-                id: ObjectId::for_blob(data),
+                id: ObjectId::for_blob(girt::ObjectFormat::Sha1, data),
                 kind: ObjectKind::Blob,
                 data,
             })

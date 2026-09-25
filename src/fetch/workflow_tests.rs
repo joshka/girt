@@ -8,7 +8,7 @@ fn name(value: &str) -> RefName {
     RefName::new(value).unwrap()
 }
 fn id(byte: u8) -> ObjectId {
-    ObjectId::from_bytes([byte; 20])
+    ObjectId::Sha1([byte; 20])
 }
 fn request(specs: &[&str]) -> (tempfile::TempDir, FetchRequest) {
     let root = tempfile::tempdir().unwrap();

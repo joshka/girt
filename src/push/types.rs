@@ -151,6 +151,9 @@ pub enum PushError {
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
+    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    #[error(transparent)]
+    ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
     #[error("{0}")]

@@ -78,7 +78,10 @@ fn reads_git_stat_flags_and_roundtrips_exactly() {
     let index = repo.read_index(Limits::default()).unwrap().unwrap();
     let entry = &index.entries()[0];
     assert_eq!(entry.path, b"file");
-    assert_eq!(entry.id, ObjectId::for_blob(b"hello\n"));
+    assert_eq!(
+        entry.id,
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n")
+    );
     assert_eq!(entry.mode, Mode::Regular);
     assert_eq!(entry.stage, Stage::Normal);
     assert!(entry.assume_valid);
@@ -365,7 +368,7 @@ fn git_resolve_undo_information_blocks_destructive_edits() {
     let (_root, repo) = repository();
     seed(&repo);
     let root = repo.worktree().unwrap();
-    let id = ObjectId::for_blob(b"hello\n");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n");
     let records = format!(
         "0 {}\tfile\n100644 {id} 1\tfile\n100644 {id} 2\tfile\n",
         "0".repeat(40)

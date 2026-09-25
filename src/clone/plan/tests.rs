@@ -7,7 +7,7 @@ fn name(n: &str) -> RefName {
     RefName::new(n).unwrap()
 }
 fn id(n: u8) -> ObjectId {
-    ObjectId::from_bytes([n; 20])
+    ObjectId::Sha1([n; 20])
 }
 fn advertisement(refs: &[(&str, u8)], caps: &[&str]) -> Advertisement {
     Advertisement {

@@ -75,8 +75,8 @@ impl Fixture {
         let nested_a = tree(path, &[("100644", a, b"leaf"), ("100644", a, b"same")]);
         let nested_b = tree(path, &[("100644", b, b"leaf"), ("100644", a, b"same")]);
         // Gitlinks intentionally refer to absent foreign commits.
-        let link_a = ObjectId::from_bytes([3; 20]);
-        let link_b = ObjectId::from_bytes([4; 20]);
+        let link_a = ObjectId::Sha1([3; 20]);
+        let link_b = ObjectId::Sha1([4; 20]);
         let old = tree(
             path,
             &[

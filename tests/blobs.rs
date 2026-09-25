@@ -99,7 +99,7 @@ fn reports_missing_object() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let error = objects
-        .read_blob(ObjectId::for_blob(b"missing"), 10)
+        .read_blob(ObjectId::for_blob(girt::ObjectFormat::Sha1, b"missing"), 10)
         .unwrap_err();
     let Error::Io(error) = error else {
         panic!("expected an I/O error")
@@ -123,7 +123,7 @@ fn rejects_oversized_objects(#[case] bytes: Vec<u8>, #[case] limit: usize) {
 fn rejects_unsupported_object_type() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &compressed(b"tree 0\0"));
     assert!(matches!(
         objects.read_blob(id, 10),
@@ -145,7 +145,7 @@ fn rejects_unsupported_object_type() {
 fn rejects_malformed_headers_lengths_and_identities(#[case] encoded: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &compressed(encoded));
     assert!(matches!(
         objects.read_blob(id, 1024),
@@ -165,7 +165,7 @@ const ABC_LOOSE: &[u8] = &[
 fn reads_complete_zlib_fixture() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, ABC_LOOSE);
     assert_eq!(objects.read_blob(id, 3).unwrap(), b"abc");
 }
@@ -193,7 +193,7 @@ fn reads_complete_zlib_fixture() {
 fn rejects_truncated_zlib_data(#[case] length: usize) {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, &ABC_LOOSE[..length]);
     assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
 }
@@ -203,7 +203,7 @@ fn rejects_truncated_zlib_data(#[case] length: usize) {
 fn rejects_invalid_zlib_checksum() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     let mut encoded = ABC_LOOSE.to_vec();
     *encoded.last_mut().unwrap() ^= 1;
     install(root.path(), id, &encoded);
@@ -217,7 +217,7 @@ fn rejects_invalid_zlib_checksum() {
 fn rejects_trailing_zlib_data(#[case] suffix: &[u8]) {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     let encoded = [ABC_LOOSE, suffix].concat();
     install(root.path(), id, &encoded);
     assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
@@ -228,7 +228,7 @@ fn rejects_trailing_zlib_data(#[case] suffix: &[u8]) {
 fn rejects_non_zlib_data() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"abc");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"abc");
     install(root.path(), id, b"not zlib");
     assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
 }
@@ -239,7 +239,7 @@ fn concurrent_writes_publish_one_object() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
     let bytes = b"concurrent original fixture";
-    let id = ObjectId::for_blob(bytes);
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, bytes);
     std::thread::scope(|scope| {
         for _ in 0..8 {
             let objects = &objects;
@@ -269,7 +269,7 @@ fn duplicate_write_preserves_existing_object() {
 fn write_preserves_corrupt_existing_object() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"duplicate");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"duplicate");
     let path = object_path(root.path(), id);
     install(root.path(), id, b"corrupt existing object");
     assert!(matches!(
@@ -286,7 +286,7 @@ fn write_preserves_corrupt_existing_object() {
 fn failed_publication_leaves_no_temporary_file() {
     let root = tempfile::tempdir().unwrap();
     let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
-    let id = ObjectId::for_blob(b"blocked");
+    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"blocked");
     let path = object_path(root.path(), id);
     fs::create_dir_all(&path).unwrap();
     assert!(objects.write_blob(b"blocked").is_err());

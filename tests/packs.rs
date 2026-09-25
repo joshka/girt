@@ -75,7 +75,10 @@ fn combines_loose_and_packed_reads_and_reports_absence() {
     );
     assert_eq!(
         objects
-            .read(ObjectId::for_blob(b"absent"), ReadLimits::default())
+            .read(
+                ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent"),
+                ReadLimits::default()
+            )
             .unwrap(),
         None
     );
@@ -252,7 +255,11 @@ fn git_and_reader_accept_mixed_export_and_repeated_objects() {
 #[case::binary((0..=255).collect())]
 #[case::large((0..4 * 1024 * 1024).map(|n| (n % 251) as u8).collect())]
 fn git_and_reader_accept_binary_and_large_exports(#[case] data: Vec<u8>) {
-    verify_export(&[(ObjectId::for_blob(&data), ObjectKind::Blob, data)]);
+    verify_export(&[(
+        ObjectId::for_blob(girt::ObjectFormat::Sha1, &data),
+        ObjectKind::Blob,
+        data,
+    )]);
 }
 
 #[test]
@@ -279,10 +286,26 @@ fn git_reads_shifted_binary_deltas() {
     let mut edited = base.clone();
     edited.splice(4000..4013, [0, 255, 1]);
     let records = vec![
-        (ObjectId::for_blob(&base), ObjectKind::Blob, base),
-        (ObjectId::for_blob(&edited), ObjectKind::Blob, edited),
-        (ObjectId::for_blob(b""), ObjectKind::Blob, vec![]),
-        (ObjectId::for_blob(b"x"), ObjectKind::Blob, b"x".to_vec()),
+        (
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, &base),
+            ObjectKind::Blob,
+            base,
+        ),
+        (
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, &edited),
+            ObjectKind::Blob,
+            edited,
+        ),
+        (
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, b""),
+            ObjectKind::Blob,
+            vec![],
+        ),
+        (
+            ObjectId::for_blob(girt::ObjectFormat::Sha1, b"x"),
+            ObjectKind::Blob,
+            b"x".to_vec(),
+        ),
     ];
     verify_compressed_export(
         &records,

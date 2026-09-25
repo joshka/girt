@@ -60,6 +60,10 @@ checksums, not just object ID width. Use independent Git IDs and fsck where mean
 conversion requirement has been observed. Measure hashing and pack throughput when those paths
 change.
 
+R02 closes the identity/hash and current-boundary-refusal subset only; see its
+[evidence and ownership audit](evidence/r02.md). Both-format codecs, storage, refs, indexes and
+transport remain open under their owning tasks.
+
 ### A03 — Instrumentation, errors and scheduling
 
 **Task:** R03, extended by each operation. **Consumer:** backend errors/Send+Sync in
