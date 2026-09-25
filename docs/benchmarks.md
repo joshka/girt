@@ -1202,3 +1202,27 @@ that buffer; parsing also retains those bytes in addition to entries. Earlier R0
 different representation and are not controlled before/after comparisons. Criterion's cached
 historical comparisons are not treated as regression evidence. These baselines impose no numerical
 acceptance threshold and do not establish memory bounds.
+
+## Layered Configuration Resolution Baseline
+
+R08 adds warm-cache whole-operation resolution to the repository Criterion harness. Fixtures are
+created outside measurement: 1,000 remotes in one source, and eleven files joined by ten include
+edges. Both measurements include parsing, the hasconfig scan, effective expansion and provenance.
+The source is `b1d3b01ac7107aa62826b7abae2d5d699372a1eb`, identified by the
+[source manifest](evidence/r08-source.sha256); [raw output](evidence/r08-bench.log) is retained.
+
+On macOS arm64, Rust 1.98.1, with 20 samples, one-second warmup and two-second measurement:
+
+| Workload                  | 95% confidence interval |
+| ------------------------- | ----------------------- |
+| Resolve 1,000 remotes     | 1.6371–1.6506 ms        |
+| Resolve ten include edges | 387.78–393.68 µs        |
+
+```sh
+cargo bench --bench repositories -- 'config/resolve' \
+  --sample-size 20 --warm-up-time 1 --measurement-time 2
+```
+
+These local warm-cache observations establish no performance gate or cold-storage claim. Criterion's
+comparison to the exploratory run is not treated as a demonstrated speedup. See
+[R08 acceptance evidence](evidence/r08.md) for bounds, fixtures and remaining platform owners.

@@ -1,0 +1,23 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `bench` profile [optimized] target(s) in 6.83s
+     Running benches/repositories.rs (target/release/deps/repositories-d8e32c66e2921196)
+Benchmarking config/resolve-1000-remotes-warm
+Benchmarking config/resolve-1000-remotes-warm: Warming up for 1.0000 s
+Benchmarking config/resolve-1000-remotes-warm: Collecting 20 samples in estimated 2.0789 s (1260 iterations)
+Benchmarking config/resolve-1000-remotes-warm: Analyzing
+config/resolve-1000-remotes-warm
+                        time:   [1.6371 ms 1.6433 ms 1.6506 ms]
+                        change: [−4.7868% −3.6135% −2.4864%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+Benchmarking config/resolve-depth-10-warm
+Benchmarking config/resolve-depth-10-warm: Warming up for 1.0000 s
+Benchmarking config/resolve-depth-10-warm: Collecting 20 samples in estimated 2.0533 s (4830 iterations)
+Benchmarking config/resolve-depth-10-warm: Analyzing
+config/resolve-depth-10-warm
+                        time:   [387.78 µs 390.54 µs 393.68 µs]
+                        change: [−7.3316% −3.1453% +0.1232%] (p = 0.14 > 0.05)
+                        No change in performance detected.
+Found 2 outliers among 20 measurements (10.00%)
+  2 (10.00%) high mild
+
