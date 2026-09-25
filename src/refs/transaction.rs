@@ -341,11 +341,8 @@ impl References<'_> {
             for name in log_names {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
                 let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
-                if !operations.iter().any(|op| op.delete_log && op.name == name)
-                    && let Some(bytes) = read_optional(&path).map_err(batch_error)?
-                {
-                    reflog::parse(self.repository.object_format(), &bytes, &path)
-                        .map_err(batch_error)?;
+                if !operations.iter().any(|op| op.delete_log && op.name == name) {
+                    reflog::check_append_tail(&path).map_err(batch_error)?;
                 }
                 log_locks.insert(name, lock);
             }

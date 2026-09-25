@@ -8,6 +8,10 @@ on:
       - '.github/workflows/references.yml'
   workflow_dispatch:
     inputs:
+      reflog_only:
+        description: Run focused imported reflog acceptance and resource checks
+        type: boolean
+        default: false
       reftable_only:
         description: Run focused reftable acceptance and resource checks
         type: boolean
@@ -18,7 +22,7 @@ permissions:
 
 jobs:
   references:
-    if: ${{ !inputs.reftable_only }}
+    if: ${{ !inputs.reftable_only && !inputs.reflog_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -95,3 +99,42 @@ jobs:
         with:
           name: reftable-${{ matrix.os }}
           path: reftable-resources.json
+
+  imported-reflogs:
+    if: ${{ inputs.reflog_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Reference parsing, publication and fault cases
+        run: "cargo +stable test --locked --no-default-features --lib refs::"
+      - name: Imported history and composed workflows
+        run: cargo +stable test --locked --no-default-features --test imported_reflogs --test references_portable --test reftable --test colocation
+      - name: Reference operations with tracing
+        run: "cargo +stable test --locked --no-default-features --features tracing --lib refs::"
+      - name: Imported history with tracing
+        run: cargo +stable test --locked --no-default-features --features tracing --test imported_reflogs
+      - name: Scoped Clippy
+        run: cargo +stable clippy --locked --no-default-features --lib --test imported_reflogs --test references_portable --test reftable --test colocation --example reflog_resources -- -D warnings
+      - name: Build resource probe
+        run: cargo +stable build --locked --release --no-default-features --example reflog_resources
+      - name: Resource observations
+        run: cargo +stable run --locked --release --no-default-features --example reflog_resources
+      - name: Git operation observations
+        run: python tests/fixtures/reflogs/observe.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: imported-reflogs-${{ matrix.os }}
+          path: reflog-observations.json

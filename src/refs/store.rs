@@ -13,8 +13,9 @@ use crate::{ObjectId, Repository};
 /// report missing tables during concurrent compaction; callers decide whether to retry.
 /// [`Self::with_reftable_limits`] selects per-stack budgets. Binary logs preserve arbitrary
 /// fields through the codec; [`Self::reflog`] interprets signed timestamps and removes one trailing
-/// message newline. Other uppercase pseudorefs are preserved by the codec and compaction but
-/// remain outside [`RefName`]'s operation namespace.
+/// message newline. [`Self::imported_reflog`] preserves files bytes and binary fields with bounded
+/// retention, recoverable roots and wider numeric interpretation. Other uppercase pseudorefs are
+/// preserved by the codec and compaction but remain outside [`RefName`]'s operation namespace.
 ///
 /// Reftable writes hold common/private `tables.list.lock` files in path order, validate every
 /// edit and result budget, and publish one immutable table per affected stack. Each stack's

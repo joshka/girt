@@ -75,8 +75,10 @@ pub enum Reflog {
     ///
     /// Resolved operations log every name in the symbolic chain, using the terminal old/new IDs.
     /// Deletion appends a zero new ID and retains the file. Environment, hooks and Git config are
-    /// never consulted. Stored symbolic edits log only the edited name, resolving old and new
-    /// terminal IDs under locks.
+    /// never consulted. Existing files bytes are preserved without interpreting older records.
+    /// A nonempty unterminated tail refuses preparation so the new record cannot be hidden inside
+    /// an earlier message; the caller must inspect and repair it explicitly. Stored symbolic edits
+    /// log only the edited name, resolving old and new terminal IDs under locks.
     Append {
         /// Validated like commit construction, additionally requiring nonnegative seconds.
         committer: Signature,
@@ -126,7 +128,8 @@ impl References<'_> {
     /// live-file details below describe the files backend.
     ///
     /// Uses the same worktree routing as references. Reads are live and may see an incomplete
-    /// append by another writer. Memory is proportional to the whole log; expiry and streaming
+    /// append by another writer. Prefer [`Self::imported_reflog`] for bounded recoverable reads.
+    /// Memory is proportional to the whole log; expiry and streaming
     /// reads are deferred.
     ///
     /// # Errors
@@ -151,6 +154,35 @@ impl References<'_> {
         };
         Ok(root.join("logs").join(path.strip_prefix(root).unwrap()))
     }
+}
+
+// Inspect only framing at the append boundary; imported grammar does not constrain construction.
+pub(super) fn check_append_tail(path: &std::path::Path) -> Result<(), ReferenceError> {
+    use std::io::{Read, Seek, SeekFrom};
+    super::store::check_path(path)?;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(super::store::io_error(path, error)),
+    };
+    let size = file
+        .seek(SeekFrom::End(0))
+        .map_err(|error| super::store::io_error(path, error))?;
+    if size == 0 {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(-1))
+        .map_err(|error| super::store::io_error(path, error))?;
+    let mut last = [0];
+    file.read_exact(&mut last)
+        .map_err(|error| super::store::io_error(path, error))?;
+    if last[0] != b'\n' {
+        return Err(malformed(
+            path,
+            "unterminated reflog append tail; inspect and repair before retry",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn validate(committer: &Signature, message: &[u8]) -> Result<(), ReferenceError> {

@@ -115,6 +115,38 @@ pub(crate) fn list(
         .collect())
 }
 
+pub(crate) fn imported_reflog(
+    refs: &References<'_>,
+    name: &RefName,
+    limits: crate::refs::ReflogLimits,
+    cancel: &AtomicBool,
+) -> Result<Option<crate::refs::ImportedReflog>, ReferenceError> {
+    let snapshot = Snapshot::read(
+        &directory(refs, name),
+        refs.repository.object_format(),
+        refs.reftable_limits,
+        cancel,
+    )?;
+    let present = snapshot
+        .table
+        .logs
+        .iter()
+        .any(|record| record.name == *name && record.value.is_some());
+    if !present {
+        return Ok(None);
+    }
+    Ok(Some(crate::refs::ImportedReflog::binary(
+        snapshot
+            .table
+            .logs
+            .into_iter()
+            .rev()
+            .filter(|record| record.name == *name),
+        limits,
+        cancel,
+    )))
+}
+
 pub(crate) fn reflog(
     refs: &References<'_>,
     name: &RefName,

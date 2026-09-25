@@ -4,8 +4,13 @@
 //! object lookup. [`References::transaction`] checks a batch before sequential publication and
 //! exposes partial results. [`Reflog`] selects explicit history policy; the separately named
 //! no-reflog methods remain available for callers that deliberately omit recovery records.
+//!
+//! [`References::imported_reflog`] reads bounded imported history. [`ImportedRecord`] preserves raw
+//! data and separates [`ImportedRecord::fields`] from canonical append validation. Always inspect
+//! [`ImportedReflog::is_complete`] before treating recovered IDs as a complete retention input.
 
 mod enumerate;
+mod imported;
 mod name;
 mod packed;
 mod reflog;
@@ -14,6 +19,10 @@ mod store;
 mod transaction;
 
 pub use enumerate::Reference;
+pub use imported::{
+    ImportedRecord, ImportedReflog, ReflogFields, ReflogInterpretationError, ReflogLimits,
+    ReflogReadEnd,
+};
 pub use name::{InvalidRefName, RefName};
 pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
 pub use store::{Backend, Expected, ReferenceError, References, Resolution, Target};
