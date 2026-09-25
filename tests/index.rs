@@ -858,3 +858,47 @@ fn sparse_colocation_preserves_directories_after_other_edits(#[case] format: gir
     assert!(String::from_utf8_lossy(&observed).contains("outside/x"));
     assert!(!repo.worktree().unwrap().join("outside").exists());
 }
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn overlapping_split_bitmaps_follow_git_deletion_order(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
+    let original = fs::read(repo.git_dir().join("index")).unwrap();
+    let bytes = overlapping_bitmaps(format, &original);
+    fs::write(repo.git_dir().join("index"), &bytes).unwrap();
+    assert!(git(repo.worktree().unwrap(), &["ls-files", "--stage"]).is_empty());
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.index().entries().is_empty());
+    edit.commit().unwrap();
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), bytes);
+}
+
+// An original mutation of a Git-created single-entry fixture: use the replacement bitmap for
+// deletion too, preserving the format checksum. Git's observed deletion wins after replacement.
+fn overlapping_bitmaps(format: girt::ObjectFormat, original: &[u8]) -> Vec<u8> {
+    use sha1::Digest;
+    let at = original
+        .windows(4)
+        .position(|bytes| bytes == b"link")
+        .unwrap();
+    let length = u32::from_be_bytes(original[at + 4..at + 8].try_into().unwrap()) as usize;
+    let payload = &original[at + 8..at + 8 + length];
+    let width = format.digest_len();
+    let words = u32::from_be_bytes(payload[width + 4..width + 8].try_into().unwrap()) as usize;
+    let replacement = &payload[width + 12 + words * 8..];
+    let mut bytes = original[..at + 4].to_vec();
+    bytes.extend_from_slice(&((width + replacement.len() * 2) as u32).to_be_bytes());
+    bytes.extend_from_slice(&payload[..width]);
+    bytes.extend_from_slice(replacement);
+    bytes.extend_from_slice(replacement);
+    bytes.extend_from_slice(&original[at + 8 + length..original.len() - width]);
+    let digest = match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes).to_vec(),
+    };
+    bytes.extend_from_slice(&digest);
+    bytes
+}

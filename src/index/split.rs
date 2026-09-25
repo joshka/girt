@@ -71,9 +71,6 @@ impl Index {
         }
         let mut drafts = self.entries.into_iter();
         for &position in &replaced {
-            if deleted.binary_search(&position).is_ok() {
-                return Err(invalid("deleted replacement"));
-            }
             let mut entry = drafts.next().unwrap();
             if entry.path.is_empty() {
                 entry.path = base.entries[position].path.clone();
