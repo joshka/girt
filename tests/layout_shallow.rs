@@ -722,3 +722,113 @@ fn invalid_shallow_prefix_matches_git(
         matches!(Repository::open(root.path()), Err(OpenError::Shallow(ShallowError::InvalidRoot { line: actual })) if actual == line)
     );
 }
+
+#[rstest]
+#[case::head("HEAD", false)]
+#[case::objects("objects", true)]
+fn ordinary_names_do_not_stop_discovery(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] name: &str,
+    #[case] directory: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    let child = root.path().join("child");
+    std::fs::create_dir(&child).unwrap();
+    create_marker(&child.join(name), directory);
+    let before = std::fs::read_dir(&child).unwrap().count();
+    let expected = canonical(root.path().join(".git"));
+    assert_eq!(
+        git(&child, &["rev-parse", "--absolute-git-dir"], b""),
+        format!("{}\n", expected.display()).as_bytes()
+    );
+    assert_eq!(Repository::discover(&child).unwrap().git_dir(), expected);
+    assert!(matches!(
+        Repository::discover_with_ceiling(&child, &child),
+        Err(OpenError::NotFound(_))
+    ));
+    assert!(Repository::init(format, &child, girt::InitKind::Worktree).is_err());
+    assert_eq!(std::fs::read_dir(&child).unwrap().count(), before);
+    assert!(!child.join(".git").exists());
+}
+
+fn create_marker(path: &Path, directory: bool) {
+    if directory {
+        std::fs::create_dir(path).unwrap();
+    } else {
+        std::fs::write(path, b"ordinary user data\n").unwrap();
+    }
+}
+
+#[rstest]
+#[case::partial(false, ".git")]
+#[case::bare(true, "child")]
+fn bare_discovery_signature(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] complete: bool,
+    #[case] expected: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    let child = root.path().join("child");
+    init_bare_child(root.path(), format, complete);
+    let expected = canonical(root.path().join(expected));
+    assert_eq!(Repository::discover(&child).unwrap().git_dir(), expected);
+    assert_eq!(
+        git(&child, &["rev-parse", "--absolute-git-dir"], b""),
+        format!("{}\n", expected.display()).as_bytes()
+    );
+}
+
+fn init_bare_child(path: &Path, format: ObjectFormat, complete: bool) {
+    git(
+        path,
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={format}"),
+            "child",
+        ],
+        b"",
+    );
+    if !complete {
+        std::fs::remove_dir_all(path.join("child/refs")).unwrap();
+    }
+}
+
+#[rstest]
+fn malformed_bare_candidate_stops_discovery(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    init_bare_child(root.path(), format, true);
+    let child = root.path().join("child");
+    std::fs::write(child.join("HEAD"), b"invalid\n").unwrap();
+    assert!(matches!(
+        Repository::discover(&child),
+        Err(OpenError::Malformed { .. })
+    ));
+    assert_eq!(std::fs::read(child.join("HEAD")).unwrap(), b"invalid\n");
+}
+
+#[cfg(unix)]
+#[rstest]
+fn inaccessible_discovery_candidate_does_not_fall_back(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    let child = root.path().join("child");
+    init(&child, format);
+    let metadata = child.join(".git");
+    let permissions = std::fs::metadata(&metadata).unwrap().permissions();
+    std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o0)).unwrap();
+    let found = Repository::discover(&child);
+    std::fs::set_permissions(&metadata, permissions).unwrap();
+    assert!(
+        matches!(found, Err(OpenError::Io { source, .. }) if source.kind() == std::io::ErrorKind::PermissionDenied)
+    );
+}

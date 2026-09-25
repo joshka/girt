@@ -7,8 +7,10 @@ impl Repository {
     /// Finds the nearest repository at or above an existing directory.
     ///
     /// Searches the canonical start and its parents through the filesystem root, crossing mount
-    /// points. Symlinks therefore follow physical ancestry. A `.git` entry, `HEAD`, or `objects`
-    /// entry marks a candidate; malformed or unsupported candidates stop the search. Ordinary,
+    /// points. Symlinks therefore follow physical ancestry. An explicit `.git` entry, or `HEAD`
+    /// together with both `objects` and `refs` (or linked `commondir`), marks a candidate.
+    /// Lone ordinary names and partial bare layouts allow ancestor search; recognized malformed
+    /// or unsupported candidates stop the search. Ordinary,
     /// bare, separate-Git-directory and linked-worktree layouts use [`Self::open`]'s rules.
     /// No environment variables, ownership checks, or Git discovery configuration are consulted.
     /// Use [`Self::discover_with_ceiling`] to restrict the ancestor search.
@@ -56,7 +58,7 @@ fn discover(start: &Path, ceiling: Option<&Path>) -> Result<Repository, OpenErro
         ));
     }
     for candidate in start.ancestors() {
-        if has_marker(candidate)? {
+        if is_candidate(candidate)? {
             return Repository::open(candidate);
         }
         if ceiling.as_deref() == Some(candidate) {
@@ -77,13 +79,27 @@ fn directory(path: &Path) -> Result<std::path::PathBuf, OpenError> {
     }
 }
 
+fn is_candidate(path: &Path) -> Result<bool, OpenError> {
+    Ok(marker_exists(path, ".git")?
+        || (marker_exists(path, "HEAD")?
+            && ((marker_exists(path, "objects")? && marker_exists(path, "refs")?)
+                || marker_exists(path, "commondir")?)))
+}
+
+fn marker_exists(path: &Path, name: &str) -> Result<bool, OpenError> {
+    let marker = path.join(name);
+    match std::fs::symlink_metadata(&marker) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io_error(&marker, error)),
+    }
+}
+
+// Initialization deliberately refuses even ambiguous markers before writing anything.
 pub(super) fn has_marker(path: &Path) -> Result<bool, OpenError> {
     for name in [".git", "HEAD", "objects"] {
-        let marker = path.join(name);
-        match std::fs::symlink_metadata(&marker) {
-            Ok(_) => return Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(error) => return Err(io_error(&marker, error)),
+        if marker_exists(path, name)? {
+            return Ok(true);
         }
     }
     Ok(false)

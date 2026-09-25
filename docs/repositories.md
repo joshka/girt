@@ -10,6 +10,11 @@ Metadata/object operations remain available; checkout/status report an unknown w
 Opening through the checkout or gitfile supplies the relationship without guessing from the current
 directory.
 
+Discovery recognizes explicit `.git` entries and bare metadata with `HEAD`, `objects` and `refs`, or
+linked metadata with `HEAD` and `commondir`. A lone ordinary `HEAD` or `objects` entry and partial
+bare metadata allow ancestor search. Recognized malformed candidates still return errors.
+Initialization keeps its conservative collision checks before writing.
+
 ## Paths and Configuration
 
 Common metadata owns objects, shared refs, configuration and shallow roots. A linked Git directory
@@ -72,8 +77,8 @@ coordinate externally before acting on a result. Paths and object IDs are absent
 Opening captures a sorted, deduplicated `ShallowRoots` set from the common `shallow` file. The IDs
 carry the repository format. Empty/absent files mean no boundaries. LF, CRLF and an unterminated
 last record are accepted. Each record uses the leading 40 (SHA-1) or 64 (SHA-256) hexadecimal
-digits; remaining bytes are ignored, as observed with Git 2.55.0. The repository format selects
-the width. Blank records and short or non-hexadecimal prefixes fail with a one-based line number.
+digits; remaining bytes are ignored, as observed with Git 2.55.0. The repository format selects the
+width. Blank records and short or non-hexadecimal prefixes fail with a one-based line number.
 Standalone object IDs and commit parent records still require exact widths.
 
 Declarations do not prove object existence or kind. Missing IDs and null declarations are retained,
