@@ -11,10 +11,10 @@ The current API supports SHA-1 loose objects, pack/index v2, complete-history qu
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
 explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
 tracking-layout clone into bare or ordinary no-checkout repositories, recursive tree comparison, and
-byte-preserving content diff. The single-reference no-reflog operations remain available. HTTP and
-SSH downloads share owned validation state. Installation takes explicit destination snapshot limits.
-Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
-implied.
+byte-preserving content diff and SHA-1 working-tree index v2 read/replacement. The single-reference
+no-reflog operations remain available. HTTP and SSH downloads share owned validation state.
+Installation takes explicit destination snapshot limits. Read and operation limits remain per phase;
+no process-wide heap or hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
@@ -1735,3 +1735,64 @@ confirms packed reads. Tests use only portable files and Git-managed fixture ref
 girt's reference backend works on Windows. The suite is included explicitly in the Windows job.
 Local execution uses macOS arm64, Git 2.55.0 and Rust 1.98.1. New native Linux/Windows runtime
 results are uncollected; platform support has not expanded.
+
+## Working-Tree Index
+
+`index::Index` provides pure bounded SHA-1 v2 parsing, construction, entry replacement and encoding.
+`Entry` drafts represent exact byte paths, canonical regular/executable/symlink/gitlink modes,
+object IDs, raw stat words, stages 0–3 and assume-valid. Successful construction sorts unsigned path
+bytes then stages. Parsing requires that order, canonical name-length flags and zero padding; it
+never repairs malformed input. Both reject duplicate stages, normal/conflict mixtures and
+file/directory collisions within a stage. Different conflict stages may represent a directory/file
+conflict. Object existence/type, stat correctness and checkout safety remain caller obligations.
+Paths reject empty components, NUL, `.`, `..` and `.git`; platform aliases and non-UTF-8 bytes are
+retained without filesystem materialization.
+
+Input/output bytes, entry count, per-path bytes and extension count have explicit limits. Parsing
+checks the checksum and feasible entry count before allocation, bounds NUL searches, and checks
+extension lengths before copying. Owned memory is proportional to these limits, excluding caller
+buffers and allocator overhead; storage can retain original, parsed and encoded representations
+simultaneously. Zero/omitted checksums, v3/v4, extended flags (skip-worktree and intent-to-add),
+noncanonical modes, sparse directories and mandatory extensions, including `link` and `sdir`, are
+rejected. Assume-valid is retained as data, without implementing stat-skipping policy.
+
+Optional extension framing is checked but payload semantics are opaque. Unedited parsed indexes
+round-trip byte-for-byte, including extension order. Changed entries invalidate and discard only
+`TREE`, a derived cache; all other extensions block edits, including unknown optional signatures,
+`REUC`, `FSMN`, `UNTR`, `IEOT` and `EOIE`. An unchanged replacement retains them. This intentionally
+restricts editing indexes with information the library cannot update safely; there is no generic
+extension-discard escape hatch in the held-lock editor. Constructing a separate extension-free index
+is a pure operation and does not grant authority to overwrite repository storage.
+
+`Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
+always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
+`GIT_INDEX_FILE` and configuration overrides are ignored. `edit_index` creates `index.lock`
+exclusively before reading and holds it until commit/drop. Callers derive drafts from that locked
+snapshot. Commit validates/encodes before writing, compares original bytes/presence before and after
+the lock write, closes the descriptor and renames the lock over the destination. A cooperating
+writer cannot interleave. Exact-byte comparisons detect observed noncooperating changes, but do not
+prevent a noncooperating race after the final check. Symlinks and non-regular index files are
+rejected; hostile directory/lock replacement is outside the filesystem contract.
+
+The published file timestamp is conservatively set to one second after the Unix epoch, preserving
+entry stat words while preventing a later rewrite timestamp from making modern racy entries look
+clean to Git. The nonzero timestamp matters: the Git CLI same-stat regression checks that modified
+content remains visible with mtime restored and ctime checks disabled. Consumers still own their
+stat policy; no status/refresh operation is implemented. Timestamp-setting support is required.
+Publication uses same-directory rename and its host/filesystem replacement semantics. No fsync,
+crash durability, shared-permission handling or blanket platform guarantee is claimed. Validation,
+write and rename failures preserve original destination bytes except for independent concurrent
+changes. Only the acquired lock is cleaned; cleanup failures may leave that owned lock for manual
+recovery. Existing locks are never stolen. Index ownership is independent of reference storage.
+
+The implementation uses the public
+[index format specification](https://git-scm.com/docs/index-format) and original fixtures generated
+with `add`, `update-index --index-info`, `read-tree`, `write-tree`, `ls-files --debug`,
+`ls-files --resolve-undo`, and worktree/separate-gitdir commands. No Git source or upstream tests
+were used. Git-created stat/flag fields and byte paths are read independently; Git observes
+girt-written modes, stages, flags and stat words and writes compatible tree objects. Malformed
+framing, ordering, flags, extensions, resource boundaries and injected write/publication failures
+have focused unit coverage. The portable integration suite is explicitly selected for Windows;
+native execution on Windows/Linux remains pending for this increment. No new dependency was added.
+Status, staging policy, checkout, filters/attributes, merge resolution and filesystem scanning
+remain outside this slice.

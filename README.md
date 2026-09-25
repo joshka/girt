@@ -56,6 +56,11 @@ edits. `BlobContent::read` loads the blob sides of a tree change separately. Run
 `cargo run --example content_diff` for a tree-to-content comparison; see
 [content diff scope](docs/compatibility.md#content-diff).
 
+SHA-1 working-tree index v2 entries can be parsed, constructed and encoded with `index::Index`.
+`Repository::edit_index` holds `index.lock` from read through replacement, with bounded input, byte
+paths, conflict stages and explicit extension restrictions. No working files are created. Run
+`cargo run --example index`; see [index scope](docs/compatibility.md#working-tree-index).
+
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The default writer streams
 ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection

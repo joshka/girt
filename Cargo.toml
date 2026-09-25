@@ -200,3 +200,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "content_diff"
 harness = false
+
+[[example]]
+name = "index"
+doc-scrape-examples = true
+
+[[bench]]
+name = "index"
+harness = false

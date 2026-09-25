@@ -25,6 +25,15 @@
 //! record; empty and absent payloads compare equal. Gitlinks require a separate submodule policy.
 //! Run `cargo run --example content_diff` for the composed operation.
 //!
+//! # Reading and replacing the index
+//!
+//! [`index::Index`] parses and encodes bounded SHA-1 v2 indexes with byte paths, stat words and
+//! conflict stages. [`Repository::read_index`] distinguishes missing storage from an empty index;
+//! [`Repository::edit_index`] holds `index.lock` while the caller derives and publishes changes.
+//! Optional extensions round-trip, but edits reject extensions other than the invalidatable
+//! `TREE` cache. Index operations never create working files or apply staging policy.
+//! Run `cargo run --example index` for a disposable repository example.
+//!
 //! # Creating and finding a repository
 //!
 //! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
@@ -137,6 +146,7 @@ pub mod content_diff;
 mod edges;
 pub mod fetch;
 mod history;
+pub mod index;
 mod loose;
 mod object;
 mod objects;

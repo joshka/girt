@@ -91,6 +91,8 @@ The Windows integration selection follows implemented operations, not just file 
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.
+- `index`: SHA-1 v2 parsing/encoding, held-lock replacement, Git stat/flag observations, byte paths,
+  and linked/separate-gitdir routing. No checkout or reference-backend operation is required.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
@@ -872,3 +874,41 @@ Rendered module navigation, the diff contract and its example were inspected in 
 benchmark harness ran after the checks without competing task builds/tests and retains source
 fingerprints and confidence intervals. Native Linux/Windows runs for this increment remain pending;
 existing platform evidence applies only to earlier revisions.
+
+### Working-Tree Index Completion
+
+Acceptance is bounded SHA-1 v2 parsing/encoding and a synchronous held-lock replacement lifecycle,
+with byte paths, exact stat words, modes, assume-valid and unresolved stages. The
+[index contract](compatibility.md#working-tree-index) records unsupported features, extension
+policy, resource semantics and filesystem assumptions.
+
+- [x] Eighty-four local cases cover empty indexes, canonical modes, byte/long paths, stat and flag
+      preservation, malformed framing/checksum/order/stages/prefixes, version and extension
+      boundaries, exact/exhausted budgets, and original-state preservation after failed edits.
+- [x] Seventeen original Git integration cases exercise both directions, independent stat/flag
+      observations, byte paths without materialization, conflict stages, tree-object compatibility,
+      `TREE` invalidation, `REUC` preservation, unsupported features and separate/linked-gitdir
+      routing.
+- [x] The held-lock lifecycle distinguishes missing/empty storage, excludes cooperating writers,
+  detects observed noncooperating creation/change/deletion, and retains the original on injected
+  encoding, descriptor-write and rename failures. Existing foreign locks remain untouched.
+- [x] A historical-timestamp regression verifies that publication does not hide equal-size content
+  edits whose mtime is restored when Git's ctime checks are disabled. Published index timestamps
+  are conservatively old and nonzero; cached stat words remain exact.
+- [x] `examples/index.rs` demonstrates explicit object storage, locked entry construction,
+  publication and readback without creating a working file. Public Rustdoc documents pure and
+  storage contracts; rendered navigation, lifecycle text and scraped examples were inspected.
+- [x] The [Criterion baseline](benchmarks.md#working-tree-index-baseline) retains parse/encode
+  measurements for 0 through 100,000 entries with source fingerprints and confidence intervals.
+- [x] Windows portable integration selection includes `index`; no reference backend or Unix-only
+  fixture is needed by that suite. A Unix symlink-rejection unit case is separately gated.
+
+On 2026-09-24, revision `81aa6bdc40cb80c6d2ada95e9d3778c6644fe964` passed `just check`: 1,109 units,
+472 integration cases and 18 doctests, plus all-feature/all-target Clippy and docs.rs. Core-only
+compilation, the runnable example, warning-denying all-feature private Rustdoc, nightly formatting,
+rumdl and Markdown lint passed. After strengthening the historical-timestamp fixture to avoid
+wall-clock timing dependence, that regression and all-target Clippy passed at
+`8d1a2c2481ea4db1aa414d42e57763d81d5c8826`; implementation code was unchanged. Host: macOS arm64,
+Rust/Cargo 1.98.1 and Git 2.55.0. Native Linux/Windows execution for this increment remains pending.
+No crash-durability or broader platform claim is made. The content-diff parent
+`d3b47737320afbd9c2224384cea68c7c2ff5cbd5` is preserved unchanged.

@@ -977,3 +977,34 @@ evidence or a controlled comparison with another implementation. The 200-line un
 succeeds, while the 100,000-line case returns the documented trace-limit error. No arbitrary gate is
 imposed. Input size alone does not predict cost: edit distance and repeated byte comparisons consume
 separate work and trace budgets.
+
+## Working-Tree Index Baseline
+
+`cargo bench --bench index -- --sample-size 20 --warm-up-time 1 --measurement-time 3` measures pure
+SHA-1 v2 parse and encode operations for 0, 100, 10,000 and 100,000 entries. Nonempty fixtures use
+`directory/file-NNNNNNNN` paths, regular modes, one blob ID and zero stat data, with no extensions.
+Construction and input encoding are outside sampling. Parse includes checksum verification, owned
+path allocation, structural/stage/prefix validation and result destruction. Encode includes length
+checks, allocation, canonical framing, checksum generation and result destruction. No storage I/O or
+file locking is measured.
+
+The 2026-09-24 run used Criterion 0.8.2, the default optimized bench profile, Rust/Cargo 1.98.1,
+macOS 26.6.2 (25G83), aarch64-apple-darwin, and an Apple M2 Max with 96 GiB RAM. No builds/tests
+from this task overlapped sampling. Background desktop activity, thermals and CPU placement were
+uncontrolled. Criterion extended the largest workloads beyond the three-second target to collect 20
+samples.
+
+| Entries | Parse median µs | Encode median µs |
+| ------- | --------------- | ---------------- |
+| 0       | 0.0784          | 0.0958           |
+| 100     | 18.792          | 10.377           |
+| 10,000  | 2318.361        | 997.015          |
+| 100,000 | 25141.811       | 10076.505        |
+
+The [CSV estimates](benchmarks/index-baseline.csv) retain median estimates and 95% confidence
+intervals in nanoseconds. The [source manifest](benchmarks/index-baseline.sha256) fingerprints
+library sources, the harness, manifest and lockfile; verify with
+`shasum -a 256 -c docs/benchmarks/index-baseline.sha256`. These are operation baselines without a
+numerical acceptance gate, not tail latencies, peak-memory measurements, storage performance,
+cross-platform evidence or a controlled comparison with another implementation. Path depth and
+conflict shapes also affect validation cost; these fixtures represent shallow ordinary paths.
