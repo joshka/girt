@@ -17,17 +17,70 @@ no-reflog operations remain available. HTTP and SSH downloads share owned valida
 Installation takes explicit destination snapshot limits. Read and operation limits remain per phase;
 no process-wide heap or hard CPU-latency guarantee is implied.
 
-| Platform       | Current evidence boundary                                   |
-| -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Full suite through raw checkout, including HTTP and SSH.    |
-| Linux x86_64   | Full suite through tree comparison, including HTTP and SSH. |
-| Windows x86_64 | Portable integration suites and bounded HTTP runtime.       |
+| Platform       | Current evidence boundary                                |
+| -------------- | -------------------------------------------------------- |
+| macOS arm64    | Full suite through raw checkout, including HTTP and SSH. |
+| Linux x86_64   | Full suite through raw checkout, including HTTP and SSH. |
+| Windows x86_64 | Portable integration suites and bounded HTTP runtime.    |
 
-The [portable integration validation](#portable-integration-validation) records the current native
-results and the Windows exclusions. Run IDs, counts and environments apply only to their stated
-revisions; later code changes require new evidence.
+The [final roadmap validation](#final-roadmap-validation) records the current native results and the
+Windows exclusions. Run IDs, counts and environments apply only to their stated revisions; later
+code changes require new evidence.
 
 ## Platform and Git-Version Validation
+
+### Final Roadmap Validation
+
+[Run 36089083146](https://github.com/joshka/girt/actions/runs/36089083146) passed all four native
+jobs on 2026-09-25 UTC at code/workflow revision `cf8b49b3dcaaa7335ebb6454278e9db5d7638bbb`,
+published on `joshka/roadmap-validation`. It includes content diff, index read/write, raw status,
+raw checkout, and the checkout preparation fix rejecting planned nested-repository markers before
+worktree mutation.
+
+| Native runner       | Units | Integration | Doctests | Total |
+| ------------------- | ----- | ----------- | -------- | ----- |
+| Ubuntu 22.04 x86_64 | 1236  | 517         | 19       | 1772  |
+| Ubuntu 24.04 x86_64 | 1236  | 517         | 19       | 1772  |
+| macOS 14 arm64      | 1236  | 515         | 19       | 1770  |
+| Windows 2022 x86_64 | 941   | 244         | 19       | 1204  |
+
+Unix runtime suites enable all features. Windows units/doctests enable all features; integrations
+comprise 237 core-only cases across the deliberate portable selection plus seven HTTP-only cases.
+The new Windows selection executes 16 content-diff cases, 17 index cases, two status boundary cases
+and two checkout boundary cases. The latter verify cancellation and unsupported-platform refusal,
+not Windows status traversal or checkout materialization. All selected tests passed without ignored
+or filtered cases. The [suite inventory](testing.md#native-platform-coverage) retains the
+operation-specific exclusions.
+
+All runners independently passed core-only, HTTP-only and SSH-only library compilation and
+all-feature/all-target Clippy with warnings rejected. Unix private Rustdoc passed with warnings
+rejected. The content-diff and index examples ran on every host; raw status and checkout examples
+ran on Unix alongside local fetch/push and HTTP/SSH examples. All hosts used Rust 1.98.1; Git was
+2.55.0 on Unix and 2.55.0.windows.5 on Windows/MSVC. Compilation and examples are additional
+evidence, separate from test counts. Local `just check` passed after the final fixes with 1,770
+tests, formatting, Clippy and docs.rs. The four new examples, Windows GNU core-library cross-Clippy
+and workflow `actionlint` also passed locally; the cross-check is compilation evidence only.
+
+[The initial checkpoint](https://github.com/joshka/girt/actions/runs/36088621269), revision
+`db183b8aa1cb9988e356229c4f80d185b161886e`, exposed two validation failures. Ubuntu 22.04 failed an
+assertion expecting a directory mutation to change timestamps during a short scan. The fixture now
+sets an old directory mtime first, making the observed metadata change independent of clock tick
+resolution. Windows Clippy rejected a cancellation helper returning the large checkout error by
+value. The unsupported-platform path now selects its cancellation/refusal cause directly; the helper
+is compiled only for the native checkout implementation. Public errors and cancellation precedence
+are unchanged. Both previously failing stages pass in the final native run.
+
+Raw status/checkout remain macOS/Linux-only and preserve literal bytes and POSIX modes without
+attributes, filters, EOL conversion, ignores or Git configuration normalization. macOS requires
+ASCII names in enumerated directories; Linux preserves supported byte filenames. Checkout retains
+its conservative path, gitlink, repository-marker and index-extension refusals, caller exclusion of
+concurrent writers, partial-operation reporting and lack of rollback/crash durability. This run does
+not expand those contracts. Windows refs/reflogs, composed fetch/clone publication, local/SSH
+process adapters and actual raw status/checkout remain unsupported. Windows HTTP evidence remains
+the bounded plaintext suite; HTTPS/trust and the full Unix transport fault matrix remain untested.
+
+This result record is a later Markdown-only local child, validated with rumdl and markdownlint-cli2;
+it is not the CI-tested revision. Historical results below remain tied to their stated revisions.
 
 ### Portable Integration Validation
 
