@@ -357,8 +357,8 @@ Later records may supersede earlier limitations, with the original evidence reta
 - Snapshot bytes/count, individual payload/program bytes, cumulative decoding, and delta depth have
   explicit limits and failure tests. Cycles and missing/external bases fail without recursive calls.
   Opening and reading are read-only; publication/partial-write tests are inapplicable.
-- [Compatibility evidence](compatibility.md#sha-1-pack-reading) states validation timing, owned
-  snapshot lifetime, no decoded cache, supported versions, fixture provenance, and exclusions.
+- [Compatibility evidence](compatibility.md#pack-reading) states validation timing, owned snapshot
+  lifetime, no decoded cache, supported versions, fixture provenance, and exclusions.
 - The [pack baseline](benchmarks.md#pack-read-baseline) uses Criterion on 16- and 256-blob Git
   workloads, measuring validated opening, indexed absence, ordinary reads, and reconstruction. Reads
   include live loose-path misses and identity verification. Pack bytes are in memory and filesystem

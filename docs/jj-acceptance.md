@@ -103,7 +103,7 @@ refresh in `lib/src/git_backend.rs`; concurrent write tests in `lib/tests/test_g
 
 Characterize accepted pack/index versions, alternates, relative paths, cycles, missing stores and
 symlink storage before deciding required follow-ups. Cover REF/OFS deltas, long chains, bad hashes,
-missing bases and loose duplicate publication. Read repositories beyond the current 512 MiB pack
+missing bases and loose duplicate publication. Read repositories beyond the former 512 MiB pack
 budget without retaining all pack bytes in RAM. Measure cold/warm open, lookup/import, decode work,
 peak memory and file handles. Test refresh after install, stale negative caches, pack/index pair
 races, external repack/GC, concurrent loose writes, missing/corrupt data and interrupted

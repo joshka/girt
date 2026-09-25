@@ -87,6 +87,7 @@ fn large_storage(c: &mut Criterion) {
     let objects = repository.objects(PackLimits::default()).unwrap();
     let mut group = c.benchmark_group("large-storage");
     group
+        .sampling_mode(criterion::SamplingMode::Flat)
         .sample_size(10)
         .measurement_time(Duration::from_secs(20));
     group.bench_function("open-validate-warm", |b| {

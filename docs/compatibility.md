@@ -799,29 +799,30 @@ after independent replacement. These tests validate observable behavior without 
 upstream fixtures. They do not establish arbitrary crash recovery or reader snapshot isolation. The
 `publish_branch` example now enumerates and conditionally deletes the branch it published.
 
-## SHA-1 Pack Reading
+## Pack Reading
 
 `Repository::objects(PackLimits)` returns a synchronous reader with live loose-object access and an
-owned snapshot of pack/index pairs. `Objects::read(id, ReadLimits)` returns a verified kind and
-exact payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary;
-structured parsing remains separate. Existing loose typed reads and writes retain their contracts. A
-corrupt loose copy fails without falling through to a valid packed duplicate.
+pinned set of pack/index files. `Objects::read(id, ReadLimits)` returns a verified kind and exact
+payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary; structured
+parsing remains separate. Existing loose typed reads and writes retain their contracts. A corrupt
+loose copy fails without falling through to a valid packed duplicate.
 
 ### Formats and Validation
 
-Only SHA-1 pack v2 and index v2 are supported, including index large-offset tables, ordinary
-objects, OFS_DELTA, and REF_DELTA. Pack v3, index v1, and unknown versions return explicit version
-errors. Reserved object types fail when read. Index binary search uses strictly ordered full IDs; an
-offset-ordered table identifies entry boundaries and OFS_DELTA bases.
+SHA-1/SHA-256 pack v2/v3 and index v1/v2 are supported, including index large-offset tables,
+ordinary objects, OFS_DELTA and REF_DELTA. Unknown versions return explicit errors. Legacy index v1
+has no CRC table. Reserved object types fail when read. Index binary search uses strictly ordered
+full IDs; an offset-ordered table identifies entry boundaries and OFS_DELTA bases.
 
 Opening reads all pairs within caller-supplied aggregate byte and pack-count limits. It validates
 index lengths, sorted unique IDs, exact fanout counts, large-offset references, unique in-range
-entry offsets, pack headers/counts, both SHA-1 trailers, their agreement, and every entry CRC32. An
-index without its pack is an I/O error. Unindexed packs are ignored: indexes are publication markers
-(see [fetch installation](#upload-pack-fetch)). Entry framing, exact zlib termination, declared
-lengths, delta programs, and object identities are checked on demand, including all traversed bases
-and intermediate results. Opening alone does not certify payload syntax or all object identities.
-The checks detect corruption; SHA-1 collision detection is not provided.
+entry offsets, pack headers/counts, both format-selected trailers, their agreement, and every
+available entry CRC32. An index without its pack is an I/O error. Unindexed packs are ignored:
+indexes are publication markers (see [fetch installation](#upload-pack-fetch)). Entry framing, exact
+zlib termination, declared lengths, delta programs, and object identities are checked on demand,
+including all traversed bases and intermediate results. Opening alone does not certify payload
+syntax or all object identities. The checks detect corruption; SHA-1 collision detection is not
+provided.
 
 REF_DELTA resolves only inside its own pack, including forward references. An external or missing
 base returns `MissingBase`, even if another pack or loose storage contains that identity. Iterative
@@ -830,14 +831,16 @@ of all inflated and reconstructed bytes. Limits are charged before decoding/allo
 exclude allocator overhead, index tables, fixed decompression scratch space, and structured parsing
 performed by callers; they are not a total process-memory quota.
 
-Pack bytes and index tables are retained for the reader's lifetime. Decoded objects are not cached.
-Repacking after opening cannot invalidate the owned bytes, but new packs require reopening. Races
-while opening can return I/O errors; callers may reopen. Loose reads remain live. Trusted paths and
-ancestors are required; this API does not secure hostile concurrent filesystem mutation. Multi-pack
-indexes and bitmap/reverse indexes are ignored. Local alternate stores and complete partial-clone
-stores are supported without network retrieval; [R39 evidence](evidence/r39.md) records their bounds
-and topology contract. Thin packs still require transport import; raw stored-pack reads do not
-resolve external bases.
+Pack/index files remain open for the reader's lifetime; index identities stay on disk and bounded
+offset tables stay in memory. Pack bytes and decoded objects are not cached. Files must remain
+immutable while pinned; in-place mutation is outside the consistency contract. Opening is not an
+atomic topology/pair snapshot. R16 owns refresh and concurrent publication behavior. Loose reads
+remain live. Trusted paths and ancestors are required; this API does not secure hostile concurrent
+filesystem mutation. [R15](#r15-file-backed-storage) records resource and cancellation policy.
+Multi-pack indexes and bitmap/reverse indexes are ignored. Local alternate stores and complete
+partial-clone stores are supported without network retrieval; [R39 evidence](evidence/r39.md)
+records their bounds and topology contract. Thin packs still require transport import; raw
+stored-pack reads do not resolve external bases.
 
 ### Independent Evidence
 
@@ -979,9 +982,10 @@ The received result owns validated pack/index buffers and makes no filesystem ch
 `install` writes and syncs private temporary files in the destination pack directory, then publishes
 the pack first and index last without replacing either path. Identical existing files are reused;
 different bytes fail. Readers discover indexes, so an unindexed pack is invisible and an index must
-have its complete pack. Existing snapshots retain their bytes; new snapshots see the old object set
-or the new pair. Concurrent deletion or repacking by other tools can still require an opening retry.
-Paths must be trusted, and callers must coordinate pruning/GC until references protect the objects.
+have its complete pack. Existing readers retain open pack/index handles; new readers see the old
+object set or the new pair. Concurrent deletion or repacking by other tools can still require an
+opening retry. Paths must be trusted, and callers must coordinate pruning/GC until references
+protect the objects.
 
 Failure never removes or overwrites preexisting objects. Failure between publications may leave a
 complete unindexed pack; retrying the same received result can finish it. Ordinary failures clean
@@ -2135,3 +2139,18 @@ index v2; transport import version support is unchanged. Legacy indexes have no 
 whole-pack/index checksums and read-time object identity verification supply integrity checks. See
 [R14 evidence](evidence/r14.md) for the independent Git/jj matrix and remaining capability owners.
 Historical pack records above describe their original revisions, not current limitations.
+
+## R15 File-Backed Storage
+
+R15 replaces whole-pack retention with pinned pack/index files and bounded index offset tables.
+`PackLimits` now distinguishes aggregate validation work, index input, file handles and directory
+enumeration. Index identities stay on disk; pack validation and decoding stream through bounded
+buffers. `Objects::clone` shares handles/tables. There is no retained decoded-object cache or
+negative cache. The default artifact budget is 64 GiB on 64-bit hosts, while memory and handles have
+independent limits. See [R15 evidence](evidence/r15.md) for exact defaults, original large fixtures,
+measurements and native coverage.
+
+`Repository::objects_controlled` and `Objects::read_controlled` add cooperative cancellation.
+Filesystem calls remain blocking. Pinned files must remain immutable; in-place writes are outside
+the consistency contract. R16 retains refresh, pair/topology publication races and retained-reader
+consistency work. Earlier reports of owned pack bytes describe the historical implementation.

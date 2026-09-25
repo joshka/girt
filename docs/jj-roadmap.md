@@ -65,7 +65,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
-| R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | In progress          | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [contract](evidence/r15.md)                                                                          |
+| R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Ready for acceptance | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Planned              | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics)                                                                                                                    |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Planned              | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
@@ -310,3 +310,12 @@ The user cancelled the computer-restart pause and authorized R15. The serial seq
 R16, R37, R38, R40, then R17. Acceptance uses executable `842330085e2e973fc444c4d7ba9737a98e7c9b97`,
 evidence child `9c539160b06f659ae6cb92afc056e76877dfec87`, and passing native run `36161614154`. The
 evidence report preserves all historical failures and remaining owners.
+
+## R15 Completion
+
+[R15 evidence](evidence/r15.md) records file-backed pack/index reads, shared pinned handles, bounded
+index/descriptor/directory/decode resources, cooperative cancellation, and measured 544 MiB stores.
+The executable `699c1846710696115e5e7ffd1528165d5378a768` passes the scoped native matrix on Ubuntu
+22.04/24.04, macOS 14 and Windows Server 2022. Local `just check` passes. R15 is ready for
+coordinator acceptance; R16 retains refresh, publication races and retained-reader consistency.
+C02's malformed-alternate, platform and tracing owners remain unchanged. No successor is dispatched.
