@@ -350,3 +350,39 @@ servers may use Git. Inventory remaining dependencies and extension programs wit
 no claim of universal edge-case parity: link tested cases, differences, limitations and exact
 revisions. The final gate cannot close with a required Git CLI fallback or unresolved
 supported-behavior regression.
+
+### A20 — Representative Git-parity performance
+
+**Tasks:** R41 after C02 and before R21; subsequent capability owners extend the practice; R34
+performs final representative acceptance. The target is girt throughput divided by Git throughput of
+roughly 0.9–1.1x for normal supported functionality. Faster than 1.1x is welcome, not failure. Do
+not silently average a substantial workload regression into a passing aggregate.
+
+Establish reproducible matched operations and input distributions across ordinary supported object
+reads/writes, traversal, references/reflogs, index and repository/worktree operations. Include both
+hash formats, common object sizes, loose and packed stores, delta depths, repeated and varied
+access, and representative repository sizes. Select workloads from demonstrated consumer needs and
+explain coverage and weighting; pathological probes supplement ordinary workloads. Extend the corpus
+for later transport, maintenance and other normal capabilities as they land. R34 must assess that
+complete corpus rather than reuse the early checkpoint as proof for unmeasured functionality.
+
+Separate eager integrity validation and repository opening from steady-state work; distinguish
+subprocess startup, pipe/protocol costs and library operations. Record warm/cold filesystem and
+application-cache conditions, cache sizes, validation guarantees, batching, concurrency and output
+ownership. Compare equivalent results and scope; when boundaries cannot be matched, report them
+separately rather than manufacture a parity ratio. Preserve correctness, integrity, cancellation and
+resource guarantees during optimization.
+
+Retain original fixture generators and fingerprints, exact revisions and commands, build settings,
+Git/toolchain versions, platforms/filesystems, sample counts and raw observations. Use repeated runs
+and report distributions, variability and uncertainty alongside throughput ratios. Measure memory,
+descriptors/handles, retained caches and other material resource tradeoffs separately. Include
+representative native platforms and explain any missing coverage. Profile substantial gaps before
+attributing causes; verify improvements against the same corpus and relevant correctness tests.
+Document justified exceptions with the affected workload, observed ratio, rationale, resource or
+semantic tradeoff, owner and follow-up decision for coordinator acceptance.
+
+The starting [R15 report](/Users/joshka/.codex/reports/girt-vs-git/README.md) measures only warm
+SHA-1 packed reads on one macOS machine: ordinary reads 0.20–0.25x and selected deep deltas
+0.017–0.026x. Its eager-open, startup and memory observations remain distinct. These results are
+investigation inputs, not an all-function baseline or evidence for later capabilities.

@@ -72,7 +72,8 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
-| R21 | URL, environment and transport configuration                | C02, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
+| R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
+| R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R24 | SSH command/agent/key configuration and cleanup             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -86,7 +87,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
-| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R40                | Planned             | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                                       |
+| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
@@ -364,3 +365,19 @@ materialized, shared files are not collected, and jj retains staging policy. Res
 publication limits, measurements and the unavailable visual Rustdoc check remain explicit. R35
 retains final consumer integration; R31/R32, R40, R19/R20 and C02 retain their established owners.
 Next remains R40, then R17; no successor is dispatched.
+
+## R41 Performance Checkpoint
+
+R41 runs immediately after C02 and before R21, with the durable
+[A20 acceptance contract](jj-acceptance.md#a20--representative-git-parity-performance). Establish a
+representative matched Git/girt corpus and reusable measurement practice, profile material gaps, and
+improve normal supported operations toward roughly 0.9–1.1x Git throughput. Faster results are
+welcome; the upper value is not a regression threshold. Preserve correctness and document justified
+exceptions with evidence and ownership. Later transport and other capabilities extend the corpus;
+R34 assesses the complete representative corpus, so R41 cannot pre-accept later functionality.
+
+The initial R15-only warm SHA-1 macOS
+[packed-read report](/Users/joshka/.codex/reports/girt-vs-git/README.md) reports ordinary packed
+reads at 0.20–0.25x Git throughput and selected deep deltas at 0.017–0.026x. It motivates
+investigation, not an all-function or cross-platform baseline. No performance implementation is
+included in R40.
