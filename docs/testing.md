@@ -112,8 +112,10 @@ implemented. Keep these distinctions visible in the completion report.
 The platform workflow runs the full all-feature suite on Ubuntu 22.04/24.04 and macOS 14. Windows
 runs all-feature library units and doctests, an explicit core-only integration selection, and a
 separate HTTP-only runtime suite. All hosts independently compile core-only, HTTP-only, and SSH-only
-libraries and run all-feature/all-target Clippy. Compilation is not runtime evidence; SSH feature
-compilation on Windows does not expose a Windows SSH adapter.
+libraries and run all-feature/all-target Clippy. Unix also runs core-only units and selected
+both-format interoperability suites, plus isolated HTTP and SSH runtime suites, with tracing
+disabled. Windows runs core-only units and its portable selection without tracing. Compilation is
+not runtime evidence; SSH feature compilation on Windows does not expose a Windows SSH adapter.
 
 The Windows integration selection follows implemented operations, not just file portability:
 
@@ -156,7 +158,11 @@ because another suite requires a Unix backend. Record exact native run revisions
 The portable `tracing` integration suite uses original local data and loopback HTTP fixtures. Run it
 with `tracing` alone and with `tracing,http`; Unix reference/clone completion cases are explicitly
 scoped. Windows CI runs both configurations. The `tracing,ssh` library is checked independently;
-existing SSH process and cancellation tests run under all features on supported native platforms.
+existing SSH process and cancellation tests run under all features and SSH-only on supported native
+platforms. Named SHA-1/SHA-256 cases in `object_ids`, `sha256`, `packs`, `index`, and Unix
+`references` establish format-specific execution; a successful compile or a suite's filename is not
+sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for checkout
+and temporary-fixture storage.
 
 ## Historical Capability Completion Records
 
