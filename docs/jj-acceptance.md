@@ -192,7 +192,7 @@ R13's [implementation evidence](evidence/r13.md) records conditional index/HEAD 
 caller-controlled extended flags and recognized operation metadata cleanup with partial effects.
 After user-authorized public repository visibility, attempt 2 of the existing index/colocation,
 reference and broad platform matrices passes on all four hosts at the unchanged executable revision.
-R13 is ready for coordinator acceptance; R14 retains assessment of any additional raw flagged-entry
+R13 is accepted for these primitives; R14 retains assessment of any additional raw flagged-entry
 consumer needs.
 
 ### A10 — Ignore and exclude semantics

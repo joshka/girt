@@ -63,7 +63,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted             | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted             | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
-| R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Ready for acceptance | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
+| R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                    |
 | R15 | File-backed pack reads and bounded caches                   | R14, R03                        | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
@@ -261,8 +261,8 @@ status/checkout. jj owns placeholder selection and materialization. R14 must ass
 additional consumer requires raw status/checkout treatment of these flags and queue bounded work
 before R34; their existing explicit refusal does not establish parity.
 
-R13 is ready for coordinator acceptance with local both-format Git/fault evidence and passing native
-index/colocation, reference and broad platform matrices on all four hosts. The user authorized
-public repository visibility, and attempt 2 of the existing runs validated the unchanged executable
-revision. [R13 evidence](evidence/r13.md) preserves both the initial billing-blocked attempts and
-successful reruns. R14, R37, R38 and C02 retain their assigned work.
+R13 is accepted for its documented primitives, with local both-format Git/fault evidence and passing
+native index/colocation, reference and broad platform matrices on all four hosts. The user
+authorized public repository visibility, and attempt 2 of the existing runs validated the unchanged
+executable revision. [R13 evidence](evidence/r13.md) preserves both the initial billing-blocked
+attempts and successful reruns. R14, R37, R38 and C02 retain their assigned work.
