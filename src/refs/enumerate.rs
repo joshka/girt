@@ -53,7 +53,6 @@ impl References<'_> {
     /// packed-refs. HEAD is unsupported here; use [`Self::read`] for pseudorefs.
     ///
     /// ```
-    /// # #[cfg(unix)] {
     /// use girt::refs::{Expected, RefName, Target};
     /// use girt::{InitKind, ObjectId, Repository};
     /// let directory = tempfile::tempdir()?;
@@ -71,7 +70,6 @@ impl References<'_> {
     /// assert_eq!(tags[0].name, tag);
     /// refs.delete_without_reflog(&tag, Expected::Value(tags[0].target.clone()))?;
     /// assert!(refs.list()?.is_empty());
-    /// # }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn list_namespace(&self, namespace: &RefName) -> Result<Vec<Reference>, ReferenceError> {

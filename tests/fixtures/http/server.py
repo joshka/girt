@@ -59,7 +59,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_HTTP_EXPORT_ALL": "1",
-            "PATH_TRANSLATED": args.repository + path.path[len("/repo"):],
+            "PATH_TRANSLATED": "." + path.path[len("/repo"):],
             "REQUEST_METHOD": self.command,
             "QUERY_STRING": path.query,
             "CONTENT_TYPE": self.headers.get("Content-Type", ""),
@@ -70,8 +70,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
             if key in os.environ:
                 env[key] = os.environ[key]
+        # Keep Git's CGI path relative to the process cwd; Rust's Windows verbatim path
+        # is valid for process startup but is not a Git CGI path spelling.
         result = subprocess.run(["git", "http-backend"], input=request, capture_output=True,
-                                env=env, check=True, timeout=15)
+                                cwd=args.repository, env=env, check=True, timeout=15)
         headers, body = result.stdout.split(b"\r\n\r\n", 1)
         status = 200
         fields = []

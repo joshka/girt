@@ -166,7 +166,15 @@ fn real_git_full_incremental_and_known_only_fetch() {
         .join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));
     let report = git(
         dest.git_dir(),
-        &["verify-pack", "-v", index.to_str().unwrap()],
+        &[
+            "verify-pack",
+            "-v",
+            index
+                .strip_prefix(dest.git_dir())
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        ],
         b"",
     );
     assert!(

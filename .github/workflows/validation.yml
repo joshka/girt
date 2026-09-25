@@ -52,7 +52,7 @@ jobs:
       - name: SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - name: HTTP-only runtime without tracing
-        run: cargo +stable test --locked --no-default-features --features http --test http --test http_portable
+        run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
       - name: SSH-only runtime without tracing
         run: cargo +stable test --locked --no-default-features --features ssh --test ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
@@ -113,7 +113,7 @@ jobs:
           --test history --test repositories --test layout_shallow --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test status_portable --test checkout_portable --test references --test references_portable
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}
-        run: cargo +stable test --locked --no-default-features --features http --test http --test http_portable
+        run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
       - run: cargo +stable run --locked --example content_diff
       - run: cargo +stable run --locked --example index
       - run: cargo +stable run --locked --example write_pack

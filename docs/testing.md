@@ -177,6 +177,11 @@ do not establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records 
 and the C02/R19/R20 UNC, WSL, ACL and worktree-administration exclusions. Maintenance remains with
 R31–R33. A CI compile or explicit unsupported error does not close those capability gaps.
 
+For Git CLI fixtures, pass repository-relative path arguments under an explicit working directory
+when possible. Rust's Windows canonical paths use verbatim prefixes that some Git commands and CGI
+variables do not accept. Compare discovery results by canonical path identity rather than display
+bytes; keep byte-level comparisons for formats whose bytes are the contract.
+
 When adding an integration suite, decide its Windows applicability here and in the workflow. Keep
 unsupported operations separate from fixture assumptions; do not disable otherwise portable coverage
 because another suite requires a Unix backend. Record exact native run revisions in
