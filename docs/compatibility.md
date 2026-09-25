@@ -67,9 +67,13 @@ only to their stated revisions; later code changes require new evidence.
 [R36 evidence](evidence/r36.md) inventories the current Windows selection and repairs the R08/R10
 home-condition and discovery failures. The existing platform workflow adds reference and HTTP
 integrations; portable fetch planning, clone completion, enumeration and tracing units no longer
-inherit Unix-only fixture gates. Exact native results and remaining exclusions are recorded there.
-R11/R12 retain their focused ref/index evidence. C02 remains the broader storage/layout gate;
-Windows status/checkout refusals and unsupported local/SSH transport do not establish parity.
+inherit Unix-only fixture gates. The final
+[broad native run](https://github.com/joshka/girt/actions/runs/36128800142) passes all four hosts at
+`f0bed7e87022282f72db1cea40da763e318ad23f`. Windows passes 1,397 all-feature units, 743 core
+integrations, 44 HTTP cases and 20 doctests, plus separate core-only and tracing selections. Exact
+commands, environments, focused runs and remaining exclusions are recorded in the evidence. R11/R12
+retain their focused ref/index evidence. C02 remains the broader storage/layout gate; Windows
+status/checkout refusals and unsupported local/SSH transport do not establish parity.
 
 The completed [R12 broad run](https://github.com/joshka/girt/actions/runs/36126493241) at
 `0e42acf744437732604355e719e70a2eae3ead99` passes all three Unix jobs and fails the nine known
