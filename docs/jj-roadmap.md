@@ -91,7 +91,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Planned              | Both-format table/stack reads, conditional publication and compaction, Git interoperability, corruption/race/fault and native evidence; required before R34.                 |
 | R38 | Split and sparse index storage                              | R12, R14                        | Planned              | Resolve split shared-index dependencies and sparse directory trees; Git/jj observations, both-format corruption, race/fault and native evidence; required before R34.        |
-| R39 | Alternate object stores and known storage extensions        | R14                             | Ready for acceptance | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
+| R39 | Alternate object stores and known storage extensions        | R14                             | Accepted             | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
 | R40 | Bounded imported reflog interpretation and roots            | R11, R14                        | Planned              | [R14 contracts](evidence/r14.md#imported-reflogs-and-colocation); required before C02/R31/R34.                                                                               |
 
 The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
@@ -298,14 +298,15 @@ Coordinator acceptance of R14 uses the existing native storage evidence and focu
 verification, as recorded in [R14 evidence](evidence/r14.md). Historical failures and the C02-owned
 missing tracing span remain open records; no replacement broad matrix is claimed.
 
-## R39 Completion and Pause
+## R39 Coordinator Acceptance
 
 [R39 evidence](evidence/r39.md) records bounded canonical alternate traversal, primary/borrowed
 loose and packed reads, known storage extensions, original Git observations and the passing scoped
-native matrix. R39 is ready for coordinator acceptance. R15 retains file-backed resource accounting
-and R16 retains refresh. C02 retains the bounded malformed-record policy review and native
-path/fault extensions described in the evidence, alongside its independent tracing issue.
+native matrix. The coordinator accepted R39. R15 retains file-backed resource accounting and R16
+retains refresh. C02 retains the bounded malformed-record policy review and native path/fault
+extensions described in the evidence, alongside its independent tracing issue.
 
-The user requested a pause for a computer restart. No successor is dispatched. Resume R15 only after
-the user resumes; the serial sequence remains R15, R16, R37, R38, R40, then R17. The evidence report
-contains the exact executable revision, CI results and durable restart handoff.
+The user cancelled the computer-restart pause and authorized R15. The serial sequence remains R15,
+R16, R37, R38, R40, then R17. Acceptance uses executable `842330085e2e973fc444c4d7ba9737a98e7c9b97`,
+evidence child `9c539160b06f659ae6cb92afc056e76877dfec87`, and passing native run `36161614154`. The
+evidence report preserves all historical failures and remaining owners.
