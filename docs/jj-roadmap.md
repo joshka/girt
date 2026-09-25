@@ -68,7 +68,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
-| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | In progress         | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
+| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Blocked             | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
@@ -419,10 +419,14 @@ existing C02 owners remain unchanged. R18 is next.
 
 ## R18 Compatibility Investigation
 
-[R18 draft evidence](evidence/r18.md) records the proposed inference API, caller policies and
-acceptance cases. R18 remains open. Retain the reviewable draft in one change, then independently
-investigate repeated-byte scoring and Git's documented basename preselection in a separate change.
-The current span-equality implementation is not accepted as Git parity. Preserve observed failures
-and assess ordinary-case impact before choosing the smallest remaining compatibility decision. No
-upstream implementation/test source, parallel worker or successor dispatch is authorized by this
-substep. R19, R20, C02 and R41 remain next in their established order.
+[R18 draft and investigation evidence](evidence/r18.md) records the proposed API, caller policies,
+validation, exploratory measurements and the scoring blocker. R18 remains unaccepted. Draft
+`d84f351d12abb9f35b7075e6a3e46cea60f07bf7` is separate from the independent investigation change.
+Both-format executable controls retain 168 cases each: 38 differences include plausible repeated
+separator lines and Git's documented basename preselection. Span equality is not accepted as Git
+parity. The full original inputs and outputs are retained with the evidence.
+
+The scoring/pairing compatibility substep remains explicitly open, pending a user decision about a
+broader independent investigation or a lawful sufficiently precise behavioral specification. Do not
+special-case observed examples, weaken required semantics, inspect prohibited implementation/test
+source or dispatch a successor. R19, R20, C02 and R41 retain their established order and scope.

@@ -241,6 +241,10 @@ Git where semantics match; record any consumer-specific policy explicitly. Probe
 attributes/filter setup actually used rather than infer requirements from enabled gix features.
 Benchmark candidate explosion and cancellation. jj retains merge and copy-history algorithms.
 
+[R18 investigation](evidence/r18.md) retains the draft and both-format original observations. R18
+remains unaccepted: repeated-byte scoring and basename preselection differ from Git. Resolve the
+explicit scoring/pairing substep before accepting inference; passing draft checks do not close A11.
+
 ### A12 — Worktree administration
 
 **Tasks:** R19, R20. **Consumer:** `lib/src/git_subprocess.rs` worktree add/repair/prune and CLI

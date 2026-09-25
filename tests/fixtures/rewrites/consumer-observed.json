@@ -1,0 +1,125 @@
+{
+  "git": "git version 2.55.0",
+  "jj": "jj 0.45.1",
+  "observations": [
+    {
+      "name": "half",
+      "git": "R050\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "b1942c9071b477fae701671f138dcf11badb87aa",
+      "new": "6bae39b4c8205fd97bdd82a9f636c21626783b52"
+    },
+    {
+      "name": "reorder",
+      "git": "R100\told\tnew\n",
+      "jj": "A new\nD old\n",
+      "old": "b1942c9071b477fae701671f138dcf11badb87aa",
+      "new": "15c817e27da4465a9074cdd7feced0203e66213d"
+    },
+    {
+      "name": "unterminated",
+      "git": "R066\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "468b64b306026643151c24bb18e1d91b60fb0660",
+      "new": "e89aa4c6df6d8fe635191434396dd7076adadb8e"
+    },
+    {
+      "name": "long",
+      "git": "R100\told\tnew\n",
+      "jj": "A new\nD old\n",
+      "old": "3391720b93a91b05514e9f479311cb1a4e8c367c",
+      "new": "317de1019f78a388b4c984bab65e58276035b083"
+    },
+    {
+      "name": "binary",
+      "git": "R100\told\tnew\n",
+      "jj": "A new\nD old\n",
+      "old": "b3e55d289431c8b88edf0f4c60c0dd4da96ebb41",
+      "new": "ef6031ea56f2695a49ec4482dab461b304516158"
+    },
+    {
+      "name": "binary_lines",
+      "git": "R075\told\tnew\n",
+      "jj": "A new\nD old\n",
+      "old": "f920cc7570a55bff2fae167f2c0baa6beee0b67c",
+      "new": "293a821b23317fe278480eecc465eb871c03570d"
+    },
+    {
+      "name": "crlf",
+      "git": "R066\told\tnew\n",
+      "jj": "A new\nD old\n",
+      "old": "2c475db3666c44cb8399c88f13bc12428d39a290",
+      "new": "a60bfb6d06087579114b372ebfa6a187c836ea4b"
+    },
+    {
+      "name": "grow_half",
+      "git": "R050\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "e2d47ec2f2e1b8307ceff7572b55cfa88e5c0869",
+      "new": "f70914d15c753df63965368f45934e5941c6b332"
+    },
+    {
+      "name": "grow_below",
+      "git": "A\tnew\nD\told\n",
+      "jj": "A new\nD old\n",
+      "old": "e2d47ec2f2e1b8307ceff7572b55cfa88e5c0869",
+      "new": "d75be8ee889c3e710162d49aa7924b3d096d851b"
+    },
+    {
+      "name": "shrink_half",
+      "git": "R050\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "90b0ea13140b4753b0c69796caa6065e03d0029c",
+      "new": "caea90b25fa770aa1dc4210e73d5489187cb6a25"
+    },
+    {
+      "name": "unequal_lines",
+      "git": "R096\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "32966054bc7320a44e510e8eebd45bf2d0a6b8c2",
+      "new": "1992c8578ffcca216c639c5fd267e4fdd7149dab"
+    },
+    {
+      "name": "empty",
+      "git": "A\tnew\nD\told\n",
+      "jj": "A new\nD old\n",
+      "old": "a11deac9c01983cada8ab113e809bc093d2c1b43",
+      "new": "6df3d26efa9c01a68c71b50a01e103b27f760f4a"
+    },
+    {
+      "name": "modified_copy",
+      "git": "C075\told\tnew\nM\told\n",
+      "jj": "A new\nM old\n",
+      "old": "90b0ea13140b4753b0c69796caa6065e03d0029c",
+      "new": "41d792d96600eb82d7d6160158bef23dcf1ab6d8"
+    },
+    {
+      "name": "unchanged_copy",
+      "git": "A\tnew\n",
+      "jj": "A new\n",
+      "old": "06ea82e18e9a4917c24eb082325b54ce8cc6969e",
+      "new": "18828949f7cc6033703a90fd2787ffa973704bd8"
+    },
+    {
+      "name": "rename_and_copy",
+      "git": "C100\told\tnew\nR100\told\tother\n",
+      "jj": "R {old => new}\nA other\n",
+      "old": "06ea82e18e9a4917c24eb082325b54ce8cc6969e",
+      "new": "d75b6dffc95166e6602adfdf8c92581d874080ea"
+    },
+    {
+      "name": "tie",
+      "git": "D\tb\nR100\ta\tnew\n",
+      "jj": "D b\nR {a => new}\n",
+      "old": "a334f10762ef76eb720298b8f0a5e385fc7751a0",
+      "new": "92880f064b79545f0f55966bdede809d5b26aab4"
+    },
+    {
+      "name": "attributes",
+      "git": "R050\told\tnew\n",
+      "jj": "R {old => new}\n",
+      "old": "c27184775cdeb43565efaedaebfec1ec791d3f9b",
+      "new": "fb4b1b577f76c65506b4d6326417fb6667f92d18"
+    }
+  ]
+}
