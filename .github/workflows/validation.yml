@@ -38,7 +38,7 @@ jobs:
       - name: Core-only runtime without tracing
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
-          --lib --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test references
+          --lib --test layout_shallow --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test references
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
@@ -110,7 +110,7 @@ jobs:
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
           --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test tags --test packs
-          --test history --test repositories --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test status_portable --test checkout_portable
+          --test history --test repositories --test layout_shallow --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test status_portable --test checkout_portable
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}
         run: cargo +stable test --locked --no-default-features --features http --test http_portable

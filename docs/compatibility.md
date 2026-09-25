@@ -576,29 +576,31 @@ was added, and no Git implementation or upstream fixture was copied.
   reinterpret the object format. Without the extension, the file is ignored.
 - Core integer settings support signed decimal/octal/hexadecimal and binary k/m/g suffixes. Boolean
   words ignore ASCII case; implicit values mean true and empty/numeric zero mean false.
-- Shared core.worktree remains rejected in linked layouts. Linked worktrees use the verified
-  absolute `gitdir` backlink; relative backlinks remain unsupported and owned by R10.
+- Linked layouts accept absolute/relative backlinks and preserve inaccessible registrations. Shared
+  core.worktree is ignored without worktreeConfig; with it, direct common/private settings select
+  the checkout. See [repository layouts and shallow history](repositories.md).
 - Relative core.worktree paths resolve against the Git directory. Bare/worktree conflicts and empty
   worktree values fail. Tilde and `%(...)` path interpolation is unsupported. A directly supplied,
-  non-bare metadata directory needs an explicit worktree relationship; no current-directory worktree
-  is guessed. Unix path conversion preserves bytes. A non-UTF-8 filename fixture is Linux-only
-  because the exercised macOS filesystem rejects such filenames; byte conversion itself is tested on
-  macOS. Other platforms require UTF-8 metadata paths and remain untested.
+  non-bare metadata directory can open with an unknown checkout location, distinguished from bare by
+  `Repository::is_bare`; no current-directory worktree is guessed. Unix path conversion preserves
+  bytes. A non-UTF-8 filename fixture is Linux-only because the exercised macOS filesystem rejects
+  such filenames; byte conversion itself is tested on macOS. Other platforms require UTF-8 metadata
+  paths and remain untested.
 
 ### Failure and Compatibility Evidence
 
 Named Git comparisons cover comments, whitespace, escaping, continuation, CRLF/BOM, byte values,
 Git-written quoted subsections, repeated keys, boolean forms, numeric versions and relative
 core.worktree. Repository fixtures cover root, Git-directory and gitfile inputs, shared linked
-objects, SHA-256 rejection, unsupported sources/extensions/storage, malformed metadata, missing
+objects, both object formats, unsupported sources/extensions/storage, malformed metadata, missing
 paths, and no parent discovery. The runnable example is exercised with hostile Git environment and
 global configuration settings in its child process; those settings do not affect opening.
 
 Opening checks HEAD's marker shape without resolving its reference and requires object and refs
-directories. It rejects shallow markers and alternates files, including empty ones, rather than
-pretending that local storage is complete. The repository opener does not inspect packs.
-`Repository::objects` opens bounded pack snapshots; `Repository::loose_objects` continues to search
-only loose storage.
+directories. It reads format-aware shallow snapshots and rejects alternates files, including empty
+ones. History follows declared shallow boundaries without changing raw commit parents. The
+repository opener does not inspect packs. `Repository::objects` opens bounded pack snapshots;
+`Repository::loose_objects` continues to search only loose storage.
 
 File-content snapshots before and after successful and rejected opening establish absence of file
 creation, deletion or content changes. Filesystem access times are not covered by that guarantee.
@@ -810,7 +812,7 @@ Pack bytes and index tables are retained for the reader's lifetime. Decoded obje
 Repacking after opening cannot invalidate the owned bytes, but new packs require reopening. Races
 while opening can return I/O errors; callers may reopen. Loose reads remain live. Trusted paths and
 ancestors are required; this API does not secure hostile concurrent filesystem mutation. Multi-pack
-indexes, bitmap/reverse indexes, alternates, partial/shallow repositories, thin packs, live pack
+indexes, bitmap/reverse indexes, alternates, partial repositories, thin packs, live pack
 installation, transport, and traversal are outside this capability. Auxiliary acceleration files are
 ignored.
 
@@ -851,7 +853,9 @@ Walk ordering is a girt contract, not a reproduction of Git CLI ordering: breadt
 encounter, supplied root order, stored parent order, without duplicates. Commit parsing and identity
 verification reuse the existing APIs. Missing parents are errors, including when an endpoint already
 answers the query. Referenced trees are not resolved. Annotated tags must be peeled by the caller.
-Shallow/partial repositories and replacement-object semantics are not supported.
+Declared shallow boundaries stop parent traversal; raw commit parents remain available. See
+[shallow snapshots](repositories.md#shallow-snapshots). Partial repositories and replacement-object
+semantics remain unsupported.
 
 ## SHA-1 Pack Writing
 

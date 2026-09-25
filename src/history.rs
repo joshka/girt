@@ -6,8 +6,9 @@ use crate::{Commit, CommitError, ObjectId, ObjectKind, ObjectReadError, Objects,
 /// Resource bounds for one complete history operation.
 ///
 /// Bounds cover distinct commits (including queued roots/parents), parent occurrences (including
-/// duplicates), and each object read. Memory is O(commits + parents), plus one decoded commit and
-/// the reader's pack snapshot. These are input bounds, not a total heap or wall-clock limit.
+/// duplicates but excluding edges beyond shallow boundaries), and each object read. Memory is
+/// O(commits + parents), plus one decoded commit and the reader's pack snapshot. These are input
+/// bounds, not a total heap or wall-clock limit.
 #[derive(Clone, Copy, Debug)]
 pub struct HistoryLimits {
     /// Maximum distinct commits; zero permits only an empty walk (default 100,000).
@@ -34,7 +35,9 @@ impl Objects {
     /// Order is breadth-first: roots in supplied order, then parents in stored order. First
     /// discovery wins; duplicate roots and parents never duplicate output. This is **not
     /// topological order**: an ancestor supplied as a root can precede its descendant. Timestamps
-    /// are ignored. An empty root slice returns an empty vector without reading storage.
+    /// are ignored. Declared shallow roots are read and parsed but their parent edges are not
+    /// followed, even when parent objects exist. Raw commit reads retain every parent.
+    /// An empty root slice returns an empty vector without reading storage.
     ///
     /// # Errors
     ///
@@ -211,7 +214,11 @@ impl Graph {
                 }
                 let commit = Commit::parse(object.object_format(), object.data())
                     .map_err(|source| HistoryError::Parse { id, source })?;
-                let parents = commit.parents();
+                let parents = if objects.shallow_roots().contains(id) {
+                    &[]
+                } else {
+                    commit.parents()
+                };
                 remaining = remaining
                     .checked_sub(parents.len())
                     .ok_or(HistoryError::Limit("parent occurrences"))?;

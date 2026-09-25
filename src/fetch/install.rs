@@ -111,6 +111,8 @@ impl ReceivedFetch {
 
     /// Publishes the validated SHA-1 pack and index without replacing any existing artifact.
     ///
+    /// Shallow destinations (including a live shallow file created after opening) are refused.
+    /// Callers must exclude concurrent depth changes for the complete installation.
     /// SHA-256 destinations return [`FetchError::Unsupported`] before filesystem mutation, even
     /// for empty transfers. Object-format negotiation and SHA-256 installation are not supported.
     ///
@@ -167,6 +169,11 @@ impl ReceivedFetch {
                 return Err(FetchError::Unsupported("SHA-256 pack installation"));
             }
             check_cancelled(cancel)?;
+            if !repository.shallow_roots().is_empty()
+                || repository.common_dir().join("shallow").try_exists()?
+            {
+                return Err(FetchError::Unsupported("shallow pack installation"));
+            }
             let result = FetchInstalled {
                 checksum: self.checksum,
                 objects: self.objects,
@@ -263,5 +270,40 @@ fn publish(
             Ok(())
         }
         Err(error) => Err(error.error.into()),
+    }
+}
+
+#[cfg(test)]
+mod shallow_tests {
+    use super::*;
+
+    #[test]
+    fn stale_handle_cannot_install_into_new_shallow_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        std::fs::write(repo.common_dir().join("shallow"), b"invalid\n").unwrap();
+        let received = ReceivedFetch::empty(Advertisement {
+            refs: Vec::new(),
+            capabilities: Vec::new(),
+        });
+        assert!(matches!(
+            received.install(&repo, crate::PackLimits::default(), &AtomicBool::new(false)),
+            Err(FetchError::Unsupported("shallow pack installation"))
+        ));
+        assert_eq!(
+            std::fs::read(repo.common_dir().join("shallow")).unwrap(),
+            b"invalid\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            0
+        );
     }
 }

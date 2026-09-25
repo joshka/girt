@@ -66,6 +66,11 @@ impl FetchRequest {
         authorized_force: BTreeSet<RefName>,
         reflog: Reflog,
     ) -> Result<Self, FetchPlanError> {
+        if !repository.shallow_roots().is_empty()
+            || repository.common_dir().join("shallow").try_exists()?
+        {
+            return Err(FetchPlanError::Shallow);
+        }
         if specs.direction() != Direction::Fetch {
             return Err(FetchPlanError::Mapping(MappingError::Direction));
         }
@@ -451,6 +456,9 @@ pub struct FetchReport {
 /// Planning failed without changing repository contents.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchPlanError {
+    /// Shallow negotiation and destination updates are not implemented.
+    #[error("shallow fetch destination is unsupported")]
+    Shallow,
     /// Invalid or ambiguous advertisement/refspec mapping.
     #[error(transparent)]
     Mapping(#[from] MappingError),

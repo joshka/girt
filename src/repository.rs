@@ -1,18 +1,21 @@
 //! Repository location, opening, and creation.
 mod discover;
 mod init;
-
+mod shallow;
+mod worktrees;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 pub use init::{InitError, InitKind};
 pub(crate) use init::{initial_branch, initial_config};
+pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
+pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 
 use crate::config::{ConfigFile, ConfigInputs, ConfigScope, ResolveError, integer};
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
-/// An opened repository's canonical paths and resolved configuration snapshot.
+/// An opened repository's metadata paths, checkout location and resolved snapshots.
 ///
 /// Opening accepts a worktree root, Git directory, or `gitdir:` file. It never searches parents,
 /// initializes files, runs Git, or reads environment overrides or system/global configuration.
@@ -21,10 +24,10 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 ///
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
 /// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 objects are
-/// supported. Includes and enabled worktree configuration are resolved. Alternates, shallow
-/// repositories and other extensions are rejected explicitly. Object access uses
-/// [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for bounded loose/packed
-/// reads. Opening repository metadata alone does not validate object storage.
+/// supported, including shallow roots and relative linked-worktree paths. Includes and enabled
+/// worktree configuration are resolved. Alternates and other extensions are rejected explicitly.
+/// Object access uses [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for
+/// bounded loose/packed reads. Opening repository metadata alone does not validate object storage.
 ///
 /// Paths preserve OS bytes on Unix. On other platforms metadata paths must be UTF-8. No tilde,
 /// environment-variable or prefix interpolation is performed. Tilde and `%(...)` prefixes in
@@ -46,14 +49,22 @@ pub struct Repository {
     common_dir: PathBuf,
     object_dir: PathBuf,
     worktree: Option<PathBuf>,
+    bare: bool,
     config: Config,
     format_version: u32,
     object_format: ObjectFormat,
+    shallow: ShallowRoots,
 }
 
 /// Repository location, metadata, configuration or supported-format failure.
 #[derive(Debug, Error)]
 pub enum OpenError {
+    /// The opened checkout belongs to a different common repository.
+    #[error("unrelated common repository: {0}")]
+    Unrelated(PathBuf),
+    /// Shallow-root metadata could not be read.
+    #[error(transparent)]
+    Shallow(#[from] ShallowError),
     /// The explicit path does not identify a repository.
     #[error("no repository at {0}")]
     NotFound(PathBuf),
@@ -116,8 +127,11 @@ impl Repository {
     /// Missing config uses version 0, SHA-1, and layout-based worktree inference. `core.bare` and
     /// `core.worktree` override ordinary layout inference; relative core.worktree is relative to
     /// the Git directory. A linked worktree uses its `gitdir` backlink, verified against its
-    /// `.git` file. Shared core.worktree remains rejected in linked layouts. Direct worktree
-    /// settings participate in layout bootstrap when enabled. Includes participate only in the
+    /// `.git` file when opening through a checkout. Opening private metadata does not require an
+    /// accessible checkout; use [`Self::worktrees`] to inspect backlink availability. Backlinks
+    /// may be absolute or relative to the private Git directory. Without worktreeConfig, linked
+    /// layouts ignore shared core.bare/worktree. With it, direct common settings followed by
+    /// direct private settings determine the checkout. Includes participate only in the
     /// effective snapshot. Unknown extension keys are rejected even in version 0.
     ///
     /// # Errors
@@ -125,7 +139,8 @@ impl Repository {
     /// Distinguishes missing locations, malformed metadata, I/O failures, configuration failures,
     /// and unsupported configuration or storage features. No files are written
     /// on success or failure. Filesystem reads and allocation are synchronous and unbounded by a
-    /// caller-supplied resource limit.
+    /// caller-supplied resource limit except configuration and shallow metadata. The default
+    /// shallow snapshot is limited to 16 MiB.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         Self::open_with_config(path, &ConfigInputs::default())
     }
@@ -161,13 +176,20 @@ impl Repository {
         let logical_git_dir = if metadata.is_dir() && logical_input.join(".git").is_dir() {
             Some(logical_input.join(".git"))
         } else if metadata.is_dir() && !logical_input.join(".git").exists() {
-            Some(logical_input)
+            Some(logical_input.clone())
+        } else if metadata.is_file() {
+            Some(gitfile_target(&logical_input)?)
+        } else if metadata.is_dir() && logical_input.join(".git").is_file() {
+            Some(gitfile_target(&logical_input.join(".git"))?)
         } else {
             None
         };
         let input = canonical(input)?;
         let (git_dir, inferred_worktree) = if metadata.is_file() {
-            (read_gitfile(&input)?, input.parent().map(Path::to_path_buf))
+            (
+                read_gitfile(&logical_input)?,
+                logical_input.parent().map(canonical).transpose()?,
+            )
         } else if entry_exists(&input.join(".git"))? {
             let dotgit = input.join(".git");
             let git_dir = if dotgit.is_dir() {
@@ -177,8 +199,13 @@ impl Repository {
             };
             (git_dir, Some(input.clone()))
         } else {
-            let inferred = (input.file_name().is_some_and(|name| name == ".git"))
-                .then(|| input.parent().unwrap().to_path_buf());
+            let parent = logical_input.parent();
+            let dotgit_identity =
+                parent.and_then(|parent| fs::canonicalize(parent.join(".git")).ok());
+            let inferred = parent
+                .filter(|_| dotgit_identity.as_deref() == Some(input.as_path()))
+                .map(canonical)
+                .transpose()?;
             (input.clone(), inferred)
         };
         if !exists(&git_dir.join("HEAD"))? {
@@ -196,9 +223,8 @@ impl Repository {
             git_dir.clone()
         };
         let object_dir = common_dir.join("objects");
-        if !object_dir.is_dir() || !common_dir.join("refs").is_dir() {
-            return Err(malformed(&common_dir, "missing objects or refs directory"));
-        }
+        require_directory(&object_dir)?;
+        require_directory(&common_dir.join("refs"))?;
         let config_path = common_dir.join("config");
         let bytes = if exists(&config_path)? {
             read_config(&config_path, inputs.limits.bytes)?
@@ -210,7 +236,7 @@ impl Repository {
             source,
         })?;
         let (format_version, object_format) = validate_config(&config, &config_path)?;
-        reject_storage_features(&common_dir, &object_dir)?;
+        reject_storage_features(&object_dir)?;
         let mut inputs = inputs.clone();
         inputs.context.git_dirs.push(git_dir.clone());
         if let Some(logical_git_dir) = logical_git_dir {
@@ -225,21 +251,26 @@ impl Repository {
             scope: ConfigScope::Local,
             optional: true,
         });
-        let mut layout_config = config.clone();
-        if extension_boolean(&config, &config_path, "worktreeconfig")? {
+        let worktree_config_enabled = extension_boolean(&config, &config_path, "worktreeconfig")?;
+        let mut layout_config = if git_dir != common_dir && !worktree_config_enabled {
+            Config::parse(b"").expect("empty configuration")
+        } else {
+            config.clone()
+        };
+        if worktree_config_enabled {
             let worktree_path = git_dir.join("config.worktree");
             if exists(&worktree_path)? {
                 let worktree_config =
                     Config::parse(&read_config(&worktree_path, inputs.limits.bytes)?).map_err(
                         |source| OpenError::Config {
-                            path: worktree_path,
+                            path: worktree_path.clone(),
                             source,
                         },
                     )?;
                 layout_config.append(&worktree_config);
             }
             inputs.files.push(ConfigFile {
-                path: git_dir.join("config.worktree"),
+                path: worktree_path,
                 scope: ConfigScope::Worktree,
                 optional: true,
             });
@@ -251,16 +282,53 @@ impl Repository {
             &layout_config,
             &config_path,
         )?;
+        let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
         let config = Config::resolve(&inputs)?;
+        let shallow = ShallowRoots::read(
+            common_dir.join("shallow"),
+            object_format,
+            16 * 1024 * 1024,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
         Ok(Self {
             git_dir,
             common_dir,
             object_dir,
             worktree,
+            bare,
             config,
             format_version,
             object_format,
+            shallow,
         })
+    }
+
+    /// Immutable shallow boundaries captured when this handle was opened or refreshed.
+    pub fn shallow_roots(&self) -> &ShallowRoots {
+        &self.shallow
+    }
+
+    /// Atomically replaces this handle's shallow snapshot after a successful bounded read.
+    ///
+    /// Existing object readers retain their old boundaries. Reopen object readers after Git
+    /// deepening to refresh both packs and boundaries. On failure this handle remains unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ShallowError`] for malformed metadata, I/O, cancellation or the byte limit.
+    pub fn refresh_shallow(
+        &mut self,
+        max_bytes: usize,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), ShallowError> {
+        let roots = ShallowRoots::read(
+            self.common_dir.join("shallow"),
+            self.object_format,
+            max_bytes,
+            cancel,
+        )?;
+        self.shallow = roots;
+        Ok(())
     }
 
     /// Per-worktree Git directory, containing HEAD; canonical absolute path.
@@ -275,10 +343,22 @@ impl Repository {
     pub fn object_dir(&self) -> &Path {
         &self.object_dir
     }
-    /// Canonical worktree root, or `None` for a bare repository.
+    /// Known worktree root. `None` means bare or an unknown checkout location; [`Self::is_bare`]
+    /// distinguishes them. Opening separate metadata alone cannot infer a checkout elsewhere.
+    /// Existing accessible paths are canonical; missing/inaccessible paths retain an absolute OS
+    /// spelling, possibly containing `..`.
     pub fn worktree(&self) -> Option<&Path> {
         self.worktree.as_deref()
     }
+    /// Whether layout bootstrap declares a bare repository, independently of checkout availability.
+    ///
+    /// A nonbare separate Git directory can have an unknown [`Self::worktree`] when opened without
+    /// its gitfile. Metadata and object operations remain available; checkout operations require a
+    /// known root. Open through the checkout or gitfile to establish that relationship.
+    pub fn is_bare(&self) -> bool {
+        self.bare
+    }
+
     /// Resolved configuration snapshot, including provenance and explicit inherited sources.
     pub fn config(&self) -> &Config {
         &self.config
@@ -306,7 +386,9 @@ impl Repository {
         &self,
         limits: crate::PackLimits,
     ) -> Result<crate::Objects, crate::ObjectReadError> {
-        crate::Objects::open(self.object_format, &self.object_dir, limits)
+        let mut objects = crate::Objects::open(self.object_format, &self.object_dir, limits)?;
+        objects.shallow = self.shallow.clone();
+        Ok(objects)
     }
 
     /// Connects to the existing loose-object API without creating directories or files.
@@ -344,7 +426,8 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
         if entry.section.eq_ignore_ascii_case(b"extensions")
             && (entry.subsection.is_some()
                 || !entry.name.eq_ignore_ascii_case(b"objectformat")
-                    && !entry.name.eq_ignore_ascii_case(b"worktreeconfig"))
+                    && !entry.name.eq_ignore_ascii_case(b"worktreeconfig")
+                    && !entry.name.eq_ignore_ascii_case(b"relativeworktrees"))
         {
             return Err(unsupported(
                 path,
@@ -367,6 +450,7 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
             &format!("repository format version {version}"),
         ));
     }
+    extension_boolean(config, path, "relativeworktrees")?;
     let mut object_format = ObjectFormat::Sha1;
     if let Some(value) = config.value("extensions", None, "objectformat") {
         if version == 0 {
@@ -431,30 +515,21 @@ fn resolve_worktree(
 ) -> Result<Option<PathBuf>, OpenError> {
     let bare = boolean(config, source, "bare")?;
     let configured = config.value("core", None, "worktree");
-    if git_dir != common_dir {
-        if configured.is_some() {
-            return Err(unsupported(source, "core.worktree in linked layout"));
-        }
+    if git_dir != common_dir && configured.is_none() && bare != Some(true) {
         let backlink = git_dir.join("gitdir");
-        let target = metadata_path(&backlink, &read(&backlink)?)?;
-        if !target.is_absolute() {
-            return Err(unsupported(&backlink, "relative linked-worktree backlink"));
-        }
-        let target = canonical(&target)?;
-        if read_gitfile(&target)? != git_dir {
-            return Err(malformed(
-                &backlink,
-                "backlink does not point back to Git directory",
-            ));
-        }
+        let target = git_dir.join(metadata_path(&backlink, &read(&backlink)?)?);
         let root = target
             .parent()
-            .ok_or_else(|| malformed(&backlink, "backlink has no parent"))?
-            .to_path_buf();
-        if inferred.is_some_and(|inferred| inferred != root) {
-            return Err(malformed(&backlink, "worktree and backlink disagree"));
+            .ok_or_else(|| malformed(&backlink, "backlink has no parent"))?;
+        // Metadata remains useful when a registered checkout has disappeared. Validate a live
+        // backlink separately; enumeration retains its failure without losing this Git directory.
+        if let Some(inferred) = inferred {
+            if canonical(root)? != inferred || read_gitfile(&target)? != git_dir {
+                return Err(malformed(&backlink, "worktree and backlink disagree"));
+            }
+            return Ok(Some(inferred));
         }
-        return Ok(Some(root));
+        return Ok(Some(available_path(root)?));
     }
     if let Some(value) = configured {
         if bare == Some(true) {
@@ -466,7 +541,9 @@ fn resolve_worktree(
         if value.starts_with(b"~") || value.starts_with(b"%(") {
             return Err(unsupported(source, "core.worktree path interpolation"));
         }
-        return Ok(Some(canonical(&git_dir.join(path_bytes(source, value)?))?));
+        return Ok(Some(available_path(
+            &git_dir.join(path_bytes(source, value)?),
+        )?));
     }
     if bare == Some(true) {
         return Ok(None);
@@ -474,18 +551,11 @@ fn resolve_worktree(
     if let Some(root) = inferred {
         return Ok(Some(root));
     }
-    if bare == Some(false) {
-        return Err(unsupported(
-            source,
-            "non-bare Git directory without an explicit worktree relationship",
-        ));
-    }
     Ok(None)
 }
 
-fn reject_storage_features(common: &Path, objects: &Path) -> Result<(), OpenError> {
+fn reject_storage_features(objects: &Path) -> Result<(), OpenError> {
     for (path, feature) in [
-        (common.join("shallow"), "shallow repository"),
         (objects.join("info/alternates"), "object alternates"),
         (
             objects.join("info/http-alternates"),
@@ -517,12 +587,15 @@ fn validate_head(path: &Path) -> Result<(), OpenError> {
 }
 
 fn read_gitfile(path: &Path) -> Result<PathBuf, OpenError> {
+    canonical(&gitfile_target(path)?)
+}
+fn gitfile_target(path: &Path) -> Result<PathBuf, OpenError> {
     let bytes = read(path)?;
     let value = bytes
         .strip_prefix(b"gitdir: ")
         .ok_or_else(|| malformed(path, "expected gitdir: indirection"))?;
     let target = metadata_path(path, value)?;
-    canonical(&path.parent().unwrap_or(Path::new(".")).join(target))
+    Ok(path.parent().unwrap_or(Path::new(".")).join(target))
 }
 fn metadata_path(source: &Path, bytes: &[u8]) -> Result<PathBuf, OpenError> {
     let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
@@ -596,6 +669,34 @@ fn unsupported(path: &Path, feature: &str) -> OpenError {
     OpenError::Unsupported {
         path: path.into(),
         feature: feature.into(),
+    }
+}
+
+// Preserve an absolute OS path for missing/inaccessible checkouts; metadata opening is independent
+// of checkout availability. Canonicalize live paths to compare aliases without lexical guesses.
+fn available_path(path: &Path) -> Result<PathBuf, OpenError> {
+    match fs::canonicalize(path) {
+        Ok(path) => Ok(path),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            std::path::absolute(path).map_err(|error| io_error(path, error))
+        }
+        Err(error) => Err(io_error(path, error)),
+    }
+}
+
+fn require_directory(path: &Path) -> Result<(), OpenError> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(malformed(path, "expected directory")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(malformed(path, "missing required directory"))
+        }
+        Err(error) => Err(io_error(path, error)),
     }
 }
 

@@ -42,7 +42,8 @@ impl PreparedPush {
     /// # Errors
     ///
     /// Rejects duplicate destinations, zero IDs, unsupported namespaces, missing or mistyped edges,
-    /// invalid payloads, implicit force, exhausted bounds, cancellation and storage/pack errors.
+    /// invalid payloads, implicit force, shallow snapshots, exhausted bounds, cancellation and
+    /// storage/pack errors. Shallow push negotiation is not implemented.
     /// No remote commands or local filesystem writes occur on either success or failure.
     pub fn new(
         objects: &Objects,
@@ -94,6 +95,9 @@ impl PreparedPush {
 
         let operation = || {
             check_cancelled(cancel)?;
+            if !objects.shallow_roots().is_empty() {
+                return Err(Error::Unsupported("shallow push preparation"));
+            }
             for id in receiver_roots {
                 id.require_sha1()?;
             }

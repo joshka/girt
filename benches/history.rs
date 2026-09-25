@@ -33,6 +33,15 @@ fn history(c: &mut Criterion) {
                     .unwrap()
             })
         });
+        std::fs::write(h.root.path().join("shallow"), format!("{}\n", h.ids[128])).unwrap();
+        let shallow = h.objects();
+        c.bench_function(&format!("history/{shape}/walk-shallow-packed-256"), |b| {
+            b.iter(|| {
+                shallow
+                    .walk(black_box(&[h.ids[255]]), HistoryLimits::default())
+                    .unwrap()
+            })
+        });
         c.bench_function(&format!("history/{shape}/merge-bases-packed-256"), |b| {
             b.iter(|| {
                 objects

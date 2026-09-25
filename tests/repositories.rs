@@ -296,7 +296,6 @@ fn rejects_malformed_settings(#[case] bytes: &[u8]) {
 
 #[rstest]
 #[case::alternates("objects/info/alternates")]
-#[case::shallow("shallow")]
 fn rejects_unsupported_storage(#[case] path: &str) {
     let root = tempfile::tempdir().unwrap();
     init(root.path(), true);
@@ -479,12 +478,7 @@ fn rejects_broken_linked_worktree_backlink() {
     .unwrap();
     let before = snapshot(root.path());
     let error = Repository::open(root.path().join("linked")).unwrap_err();
-    assert!(matches!(&error, OpenError::Unsupported { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("relative linked-worktree backlink")
-    );
+    assert!(matches!(&error, OpenError::Malformed { .. }));
     assert_eq!(snapshot(root.path()), before);
 }
 

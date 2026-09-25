@@ -206,6 +206,7 @@ mod tests {
         let repo =
             Repository::init(crate::ObjectFormat::Sha1, root.path().join("repo"), kind).unwrap();
         assert_eq!(repo.worktree().is_none(), bare);
+        assert_eq!(repo.is_bare(), bare);
         assert_eq!(repo.format_version(), 0);
         assert_eq!(
             fs::read(repo.git_dir().join("HEAD")).unwrap(),

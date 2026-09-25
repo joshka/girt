@@ -141,6 +141,9 @@ The Windows integration selection follows implemented operations, not just file 
 - `checkout_portable`: Cancellation before locking and explicit unsupported-platform checkout
   rejection. Actual checkout and native symlink tests run only on macOS/Linux.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
+- `layout_shallow`: Both-format relative/moved layouts, worktree inventory and shallow-depth
+  observations. Filesystem symlink/permission cases are Unix-only; raw byte paths are Linux-only.
+  Case-alias cases require a case-insensitive native volume and report absence when unavailable.
 - `config_resolution`: Portable layered configuration, conditions, provenance, environment and Git
   observations in both formats; arbitrary-byte filenames are Linux-only.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.

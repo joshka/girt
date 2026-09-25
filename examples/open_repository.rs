@@ -1,4 +1,4 @@
-//! Read a loose blob by explicit repository path and full SHA-1 ID.
+//! Read a loose blob by explicit repository path and full format-bearing ID.
 //! Run `cargo run --example open_repository -- /path/to/repo <blob-id>`.
 use girt::{ObjectId, Repository};
 

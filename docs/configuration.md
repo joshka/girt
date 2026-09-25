@@ -59,8 +59,9 @@ relative to that common source.
 Repository format is determined from the direct common config before effective resolution. Includes,
 global settings, runtime overrides and worktree format entries cannot reinterpret the opened store.
 The direct common `extensions.worktreeConfig` enables the private file. Direct common and enabled
-worktree core settings determine layout; broader linked-layout changes remain R10. This separation
-matches independent `git rev-parse` observations for included/worktree format and bare settings.
+worktree core settings determine layout; [repository layouts](repositories.md) explains shared core
+settings and inaccessible linked checkouts. This separation matches independent `git rev-parse`
+observations for included/worktree format and bare settings.
 
 Resolution is synchronous and read-only. Defaults allow ten include edges, 16 MiB of loaded source
 bytes, independently 16 MiB of expanded key/value bytes per pass, 100,000 visited entries per pass,
@@ -88,8 +89,8 @@ macOS results and unexecuted native platforms are distinguished in [R08 evidence
 
 The specification input is the [Git configuration manual](https://git-scm.com/docs/git-config). No
 upstream implementation or test source is used. This finite corpus does not establish every
-configuration edge case. Repository discovery/layout expansion belongs to R10, URL rewriting to R21,
-and jj integration to R35.
+configuration edge case. Repository layouts and shallow snapshots are described in
+[their contract](repositories.md), URL rewriting belongs to R21, and jj integration to R35.
 
 ## Lossless File Editing
 

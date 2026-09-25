@@ -31,7 +31,8 @@ impl KnownHistory {
     ///
     /// Fails on missing/corrupt objects, malformed payloads, mistyped edges, cancellation or
     /// bounds. SHA-256 stores are refused because fetch negotiation is currently SHA-1-only.
-    /// To request a full transfer instead, explicitly use [`KnownHistory::default`].
+    /// Shallow snapshots are refused until boundary negotiation is implemented. To request a
+    /// full transfer into a complete destination, explicitly use [`KnownHistory::default`].
     pub fn new(
         store: &Objects,
         roots: &[ObjectId],
@@ -41,6 +42,9 @@ impl KnownHistory {
         check_cancelled(cancel)?;
         if store.object_format() != crate::ObjectFormat::Sha1 {
             return Err(Error::Unsupported("SHA-256 fetch negotiation"));
+        }
+        if !store.shallow_roots().is_empty() {
+            return Err(Error::Unsupported("shallow fetch negotiation"));
         }
         if roots.len() > limits.max_wants {
             return Err(Error::Limit("known roots"));

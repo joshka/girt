@@ -625,3 +625,59 @@ fn filtered_config_edit_does_not_record_on_parent() {
         "parent_owned"
     );
 }
+
+#[test]
+fn repository_metadata_traces_classify_without_paths_or_roots() {
+    let (root, repo) = repository();
+    let path = root.path().join("R03_SECRET_shallow");
+    std::fs::write(&path, SECRET).unwrap();
+    let capture = Capture::default();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        assert!(
+            girt::ShallowRoots::read(&path, ObjectFormat::Sha1, 1024, &AtomicBool::new(false))
+                .is_err()
+        );
+        assert!(repo.worktrees(1, &AtomicBool::new(true)).is_err());
+    });
+    let shallow = capture.named("repository.shallow");
+    let worktrees = capture.named("repository.worktrees");
+    assert_eq!(shallow.fields["failure_class"], "corrupt");
+    assert_eq!(worktrees.fields["failure_class"], "cancelled");
+    assert!(shallow.closed && worktrees.closed);
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.events().is_empty());
+}
+
+#[test]
+fn filtered_repository_metadata_spans_preserve_parent_fields() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let (_root, repo) = repository();
+    let capture = Capture::default();
+    let dispatch =
+        tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()).with(
+            tracing_subscriber::filter::filter_fn(|metadata| {
+                !metadata.name().starts_with("repository.")
+            }),
+        ));
+    tracing::dispatcher::with_default(&dispatch, || {
+        tracing::info_span!("layout.parent", outcome = "owner", failure_class = "owner").in_scope(
+            || {
+                assert!(repo.worktrees(1, &AtomicBool::new(true)).is_err());
+                assert!(
+                    girt::ShallowRoots::read(
+                        repo.common_dir().join("shallow"),
+                        ObjectFormat::Sha1,
+                        0,
+                        &AtomicBool::new(true)
+                    )
+                    .is_err()
+                );
+            },
+        );
+    });
+    assert_eq!(capture.named("layout.parent").fields["outcome"], "owner");
+    assert_eq!(
+        capture.named("layout.parent").fields["failure_class"],
+        "owner"
+    );
+}

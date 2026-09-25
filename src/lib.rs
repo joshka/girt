@@ -18,8 +18,8 @@
 //! [`PackLimits`]. Loose objects are read live; packs form an immutable snapshot that survives
 //! repacking. Reopen to discover new packs. [`Objects::read`] checks framing and identity under
 //! per-read [`ReadLimits`]; parse its exact bytes with [`Commit`], [`Tree`], or [`Tag`] when
-//! structured fields are needed. Repository history queries follow complete commit ancestry under
-//! [`HistoryLimits`] without relying on timestamps.
+//! structured fields are needed. Repository history queries follow commit ancestry up to declared
+//! shallow boundaries under [`HistoryLimits`] without relying on timestamps.
 //!
 //! # Comparing snapshots
 //!
@@ -222,7 +222,10 @@ pub use pack::{
     PackWritten, write_pack, write_pack_with_compression,
 };
 pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
-pub use repository::{InitError, InitKind, OpenError, Repository};
+pub use repository::{
+    InitError, InitKind, OpenError, Repository, ShallowError, ShallowRoots, Worktree,
+    WorktreeError, WorktreeState,
+};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
 pub use tree_compare::{TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};

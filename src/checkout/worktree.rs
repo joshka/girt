@@ -32,9 +32,16 @@ pub(super) fn run(
     let mut lock = None;
     let result: Result<(), Error> = (|| {
         check(cancel)?;
-        let root = repo
-            .worktree()
-            .ok_or_else(|| refused(b"", "bare repository"))?;
+        let root = repo.worktree().ok_or_else(|| {
+            refused(
+                b"",
+                if repo.is_bare() {
+                    "bare repository"
+                } else {
+                    "worktree location is unknown"
+                },
+            )
+        })?;
         let edit = repo.edit_index(limits.index)?;
         lock = Some(edit);
         let edit = lock.as_mut().unwrap();

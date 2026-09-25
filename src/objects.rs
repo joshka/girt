@@ -116,9 +116,13 @@ impl Default for ReadLimits {
 /// detects cycles, and enforces [`ReadLimits`]. Multi-pack indexes and bitmap/reverse indexes are
 /// ignored; ordinary pack indexes remain required. Indexes are publication markers: unindexed packs
 /// are ignored, while an index without its pack is an opening error. A publisher must finish the
-/// pack before publishing its index. Alternates and partial/shallow repositories are outside the
-/// repository opener's supported scope. Loose writes use [`LooseObjects`]; validated received-pack
-/// installation uses [`crate::fetch::ReceivedFetch::install`].
+/// pack before publishing its index. History queries use the repository handle's immutable shallow
+/// boundaries; raw reads preserve commit parents. Reopen the repository or refresh its shallow
+/// snapshot, then create a new reader after Git deepening. Loose objects, packs and boundaries are
+/// not captured in one filesystem transaction; exclude concurrent depth changes while opening.
+/// Alternates and partial repositories remain outside the opener's supported scope. Loose writes
+/// use [`LooseObjects`]; validated received-pack installation uses
+/// [`crate::fetch::ReceivedFetch::install`].
 ///
 /// The repository selects SHA-1 or SHA-256 for both artifacts. Their headers and filenames do
 /// not select the format. Every `.idx` filename is a publication marker, including noncanonical
@@ -140,9 +144,15 @@ impl Default for ReadLimits {
 pub struct Objects {
     loose: LooseObjects,
     packs: Vec<Pack>,
+    pub(crate) shallow: crate::ShallowRoots,
 }
 
 impl Objects {
+    /// Fixed history boundaries inherited from the repository handle, unaffected by later refresh.
+    pub fn shallow_roots(&self) -> &crate::ShallowRoots {
+        &self.shallow
+    }
+
     /// Format shared by all objects in this store.
     pub fn object_format(&self) -> ObjectFormat {
         self.loose.object_format()
@@ -172,6 +182,7 @@ impl Objects {
                     return Ok(Self {
                         loose,
                         packs: vec![],
+                        shallow: crate::ShallowRoots::empty(format),
                     });
                 }
                 Err(source) => {
@@ -210,7 +221,11 @@ impl Objects {
                     }
                 })?);
             }
-            Ok(Self { loose, packs })
+            Ok(Self {
+                loose,
+                packs,
+                shallow: crate::ShallowRoots::empty(format),
+            })
         };
         #[cfg(feature = "tracing")]
         let result = span.in_scope(operation);

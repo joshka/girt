@@ -39,6 +39,16 @@ fn measure(c: &mut Criterion) {
         parents = vec![loose.write_commit(&commit).unwrap()];
     }
     let objects = repo.objects(PackLimits::default()).unwrap();
+    let shallow_path = repo.common_dir().join("shallow");
+    let shallow_bytes: String = (0u32..128)
+        .map(|index| {
+            format!(
+                "{}\n",
+                girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, &index.to_le_bytes())
+            )
+        })
+        .collect();
+    std::fs::write(&shallow_path, shallow_bytes).unwrap();
     let mut run = |mode: &str| {
         let mut group = c.benchmark_group(mode);
         group.sample_size(30);
@@ -54,6 +64,23 @@ fn measure(c: &mut Criterion) {
                         .walk(black_box(&parents), HistoryLimits::default())
                         .unwrap(),
                 )
+            })
+        });
+        group.bench_function("shallow_metadata_128", |b| {
+            b.iter(|| {
+                girt::ShallowRoots::read(
+                    black_box(&shallow_path),
+                    girt::ObjectFormat::Sha1,
+                    16384,
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .unwrap()
+            })
+        });
+        group.bench_function("worktrees_empty", |b| {
+            b.iter(|| {
+                repo.worktrees(black_box(100), &std::sync::atomic::AtomicBool::new(false))
+                    .unwrap()
             })
         });
         group.finish();

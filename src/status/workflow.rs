@@ -111,7 +111,11 @@ mod supported {
     ) -> Result<Report, Error> {
         let root = repo.worktree().ok_or_else(|| Error::Unsupported {
             path: vec![],
-            reason: "bare repository has no working tree",
+            reason: if repo.is_bare() {
+                "bare repository has no working tree"
+            } else {
+                "worktree location is unknown"
+            },
         })?;
         let index = repo.read_index(limits.index)?;
         check(cancel)?;
