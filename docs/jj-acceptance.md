@@ -154,7 +154,7 @@ R26/R27.
 
 ### A08 — References and reflogs
 
-**Task:** R11. **Consumer:** no-GC refs in `lib/src/git_backend.rs`, export/import/reset in
+**Tasks:** R11, R37. **Consumer:** no-GC refs in `lib/src/git_backend.rs`, export/import/reset in
 `lib/src/git.rs`, `cli/src/cleanup_guard.rs` tempfile cleanup.
 
 Cover direct/symbolic/unborn/detached HEAD, packed/loose iteration and precedence, invalid names,
@@ -164,7 +164,9 @@ writers and partial batch publication. Preserve conflicts and per-ref outcomes w
 compare-and-set guarantees. Execute portable locks, rename/publication and termination cleanup on
 Windows as well as Unix; signal cleanup belongs to caller integration where process policy is
 needed. Characterize reference backends accepted by the target rather than silently excluding
-reftable.
+reftable. R37's [staged acceptance plan](evidence/r37.md) requires record and stack reads,
+conditional publication, compaction, coherent backend selection and native interoperability in both
+directions. R14's opening-only jj observation does not close committed-tip import parity.
 
 C01 D1 adds both-format imported reflog fixtures with identities `b"A <a@b> 1 +0060"`,
 `b" <a@b> 1 +0000"` (empty name), and `b"A  <a@b> 1 +0000"` (padded name), alongside the canonical
