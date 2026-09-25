@@ -36,6 +36,7 @@ for fmt in ("sha1", "sha256"):
         tree = git("mktree", data=b"").stdout.strip().decode()
         tip = git("commit-tree", tree, data=b"original\n").stdout.strip()
         assert git("update-ref", "HEAD", tip.decode()).returncode == 0
+        next_tip = git("commit-tree", tree, data=b"distinct append target\n").stdout.strip()
         head = Path(directory) / ".git/HEAD"
         log = Path(directory) / ".git/logs/HEAD"
         for case, tail in CASES.items():
@@ -50,9 +51,10 @@ for fmt in ("sha1", "sha256"):
                         input_hex=raw.hex(), operation=list(args), status=result.returncode,
                         stdout_hex=result.stdout.hex(), stderr_hex=result.stderr.hex()))
             before = log.read_bytes()
-            result = git("update-ref", "--no-deref", "-m", "append", "HEAD", tip.decode())
+            result = git("update-ref", "--no-deref", "-m", "append", "HEAD", next_tip.decode())
             after = log.read_bytes()
-            observations.append(dict(format=fmt, case=case, operation=["update-ref", "--no-deref", "-m", "append", "HEAD", tip.decode()],
+            assert after[len(before):].startswith(tip + b" " + next_tip + b" ")
+            observations.append(dict(format=fmt, case=case, operation=["update-ref", "--no-deref", "-m", "append", "HEAD", next_tip.decode()],
                 status=result.returncode, preserved_prefix=after.startswith(before),
                 appended_hex=after[len(before):].hex(), input_sha256=hashlib.sha256(before).hexdigest()))
 Path("reflog-observations.json").write_text(json.dumps(observations, indent=2) + "\n")

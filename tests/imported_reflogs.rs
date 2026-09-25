@@ -184,20 +184,23 @@ fn unterminated_tail_refuses_before_publication(
     assert_eq!(fs::read(&path).unwrap(), raw);
     assert_eq!(fs::read(repo.git_dir().join("HEAD")).unwrap(), before);
     assert!(!repo.git_dir().join("logs/HEAD.lock").exists());
-    // Git update-ref appends directly; observation establishes the deliberate safer boundary.
+    // Force a changed object ID: an unchanged detached update can skip writing the reflog.
+    let tree = git::git(root.path(), &["mktree"], b"");
+    let next = git::git(
+        root.path(),
+        &["commit-tree", std::str::from_utf8(&tree).unwrap().trim()],
+        b"distinct append target\n",
+    );
+    let next = std::str::from_utf8(&next).unwrap().trim();
+    // Git appends directly; observation establishes the deliberate safer boundary.
     git::git(
         root.path(),
-        &[
-            "update-ref",
-            "--no-deref",
-            "-m",
-            "git append",
-            "HEAD",
-            &tip.to_string(),
-        ],
+        &["update-ref", "--no-deref", "-m", "git append", "HEAD", next],
         b"",
     );
-    assert!(fs::read(path).unwrap().starts_with(&raw));
+    let after = fs::read(path).unwrap();
+    assert!(after.starts_with(&raw));
+    assert!(after[raw.len()..].starts_with(format!("{tip} {next} ").as_bytes()));
 }
 
 #[rstest]
