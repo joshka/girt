@@ -62,6 +62,19 @@ fn references(c: &mut Criterion) {
             )
         });
     }
+    let keep: Vec<_> = (0..100)
+        .map(|index| RefEdit {
+            name: RefName::new(format!("refs/jj/keep-{index:03}")).unwrap(),
+            dereference: false,
+            target: Some(Target::Direct(id)),
+            expected: Expected::AbsentOr(Target::Direct(id)),
+            reflog: Reflog::Preserve,
+        })
+        .collect();
+    refs.transaction(&keep).unwrap();
+    c.bench_function("references/keep-same-batch-100-packed-10000", |b| {
+        b.iter(|| refs.transaction(black_box(&keep)).unwrap())
+    });
     std::fs::remove_file(root.path().join("packed-refs")).unwrap();
     std::fs::create_dir_all(root.path().join("refs/tags")).unwrap();
     for index in 0..1000 {

@@ -148,7 +148,10 @@ The Windows integration selection follows implemented operations, not just file 
   observations in both formats; arbitrary-byte filenames are Linux-only.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
-- `references`, `fetch_workflow`, `clone`: Excluded: require girt's unsupported Windows ref backend.
+- `references_portable`: R11 conditional refs, imported reflogs and packed/shadowed deletion execute
+  in both formats on Windows. Reference unit/fault tests also run natively.
+- `references`, `fetch_workflow`, `clone`: Broader suite organization remains R36; these suites are
+  not added to the Windows selection by R11.
 - `fetch`, `push`: Excluded: mixed suites use unsupported owned local-process adapters and refs.
 - `ssh`: Excluded: the adapter and its process-lifetime implementation are macOS/Linux-only.
 - `http`: Excluded: broader suite uses girt refs, Unix hooks, and orchestration/clone publication.

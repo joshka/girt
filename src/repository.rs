@@ -115,7 +115,7 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// Non-Unix reference storage is explicitly unsupported. Repository
+    /// Reference storage supports Unix and Windows local filesystems. Repository
     /// backends such as reftable are rejected by [`Self::open`] before a handle can be constructed.
     pub fn references(&self) -> Result<crate::refs::References<'_>, crate::refs::ReferenceError> {
         crate::refs::References::new(self)

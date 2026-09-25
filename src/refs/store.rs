@@ -7,12 +7,12 @@ use crate::{ObjectId, Repository};
 
 /// A files-backend reference store borrowed from an opened [`Repository`].
 ///
-/// Supports SHA-1 and SHA-256 references on Unix filesystems. Repository configuration selects
-/// the format; mixed-format targets and expectations fail before locks are acquired. `HEAD`,
-/// `refs/bisect/`, `refs/rewritten/`, and `refs/worktree/` use the current worktree's Git
-/// directory; other `refs/` names and packed refs use the common directory. Cross-worktree aliases
-/// and other pseudorefs are not supported. Filesystem symlinks within these paths are rejected,
-/// including legacy symlink HEADs.
+/// Supports SHA-1 and SHA-256 references on Unix and Windows local filesystems. Repository
+/// configuration selects the format; mixed-format targets and expectations fail before locks are
+/// acquired. `HEAD`, `refs/bisect/`, `refs/rewritten/`, and `refs/worktree/` use the current
+/// worktree's Git directory; other `refs/` names and packed refs use the common directory.
+/// Cross-worktree aliases and other pseudorefs are not supported. Filesystem symlinks within these
+/// paths are rejected, including legacy symlink HEADs.
 ///
 /// Operations are synchronous. Reads are live, not a snapshot across multiple refs or symbolic
 /// hops. Loose files take precedence, including malformed loose files (no fallback on errors).
@@ -22,7 +22,14 @@ use crate::{ObjectId, Repository};
 /// Writes require a trusted repository on a local filesystem with exclusive file creation and
 /// atomic rename semantics. Cooperating writers must honor Git's `.lock` protocol; adversarial
 /// path replacement, network filesystems, and changing repository configuration/layout while a
-/// handle is in use are outside this contract.
+/// handle is in use are outside this contract. Windows uses UTF-8 names and rejects Win32 device
+/// names, invalid filename characters, and trailing-dot components. Unix retains byte names.
+/// Case and Unicode aliases inherit the volume's behavior; no portable alias mapping is promised.
+/// On Windows lock handles exclude delete sharing until cleanup; publication uses a separate
+/// same-directory temporary file. Cleanup closes the owned handle before removing its path.
+/// Unix cleanup checks device/inode identity and leaves replacement locks untouched.
+/// Permissions follow ordinary file creation and the process umask on Unix; Windows inherits
+/// directory ACLs. Existing destination ACLs and crash durability are not preserved guarantees.
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
     pub(super) repository: &'a Repository,
@@ -46,6 +53,10 @@ pub enum Expected {
     Absent,
     /// Require this exact direct ID or symbolic name (without dereferencing it).
     Value(Target),
+    /// Require a stored value, either direct or symbolic.
+    Exists,
+    /// Permit absence or this exact stored value; never overwrite a different value.
+    AbsentOr(Target),
 }
 
 /// The terminal name and optional object identity reached by symbolic resolution.
@@ -121,9 +132,9 @@ pub enum ReferenceError {
 
 impl<'a> References<'a> {
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
-        if !cfg!(unix) {
+        if !cfg!(any(unix, windows)) {
             return Err(ReferenceError::Unsupported(
-                "reference storage on non-Unix platforms",
+                "reference storage on this platform",
             ));
         }
         Ok(Self { repository })
@@ -199,12 +210,13 @@ impl<'a> References<'a> {
     /// behavior. See [`Self::transaction`] for conditional batches with explicit reflog policy.
     ///
     /// Locks `packed-refs.lock`, then `<name>.lock`, using exclusive creation. Checks the
-    /// precondition and packed namespace while locked, writes the owned lock, and atomically
-    /// renames it over the destination. Existing locks are never overwritten or removed. A failure
-    /// before rename preserves existing reference bytes; newly created empty parent directories
-    /// may remain. Owned lock cleanup is best effort on errors/unwind; process termination or
-    /// cleanup I/O failure may leave stale locks. No file/directory fsync is performed: successful
-    /// visibility does not promise survival of a crash or power loss, or durability of objects.
+    /// precondition and packed namespace while locked, writes an owned temporary file, and
+    /// atomically replaces the destination while retaining the lock. Existing locks are never
+    /// overwritten or removed. A failure before rename preserves existing reference bytes;
+    /// newly created empty parent directories may remain. Owned lock cleanup is best effort on
+    /// errors/unwind; process termination or cleanup I/O failure may leave stale locks. No
+    /// file/directory fsync is performed: successful visibility does not promise survival of a
+    /// crash or power loss, or durability of objects.
     ///
     /// # Errors
     ///
@@ -416,6 +428,23 @@ impl<'a> References<'a> {
             std::str::from_utf8(name.as_bytes())
                 .map_err(|_| ReferenceError::Unsupported("non-UTF-8 filesystem name"))?,
         );
+        #[cfg(windows)]
+        for part in name.as_bytes().split(|b| *b == b'/') {
+            let stem = part
+                .split(|b| *b == b'.')
+                .next()
+                .unwrap()
+                .to_ascii_uppercase();
+            if part.ends_with(b".")
+                || part.iter().any(|b| b"<>\"|".contains(b))
+                || matches!(stem.as_slice(), b"CON" | b"PRN" | b"AUX" | b"NUL")
+                || (stem.len() == 4
+                    && (stem.starts_with(b"COM") || stem.starts_with(b"LPT"))
+                    && matches!(stem[3], b'1'..=b'9'))
+            {
+                return Err(ReferenceError::Unsupported("Windows reference filename"));
+            }
+        }
         Ok(base.join(relative))
     }
 
@@ -491,7 +520,7 @@ pub(super) fn validate_expected(
     format: crate::ObjectFormat,
     expected: &Expected,
 ) -> Result<(), ReferenceError> {
-    if let Expected::Value(Target::Direct(id)) = expected {
+    if let Expected::Value(Target::Direct(id)) | Expected::AbsentOr(Target::Direct(id)) = expected {
         id.require_format(format)?;
     }
     Ok(())
@@ -504,6 +533,8 @@ pub(super) fn check_expected(
         Expected::Any => true,
         Expected::Absent => actual.is_none(),
         Expected::Value(value) => actual.as_ref() == Some(&value),
+        Expected::Exists => actual.is_some(),
+        Expected::AbsentOr(value) => actual.is_none() || actual.as_ref() == Some(&value),
     };
     if !matches {
         return Err(ReferenceError::Mismatch { actual });
@@ -570,8 +601,8 @@ pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
 pub(super) struct Lock {
     pub(super) destination: PathBuf,
     path: PathBuf,
-    file: File,
-    published: bool,
+    file: Option<File>,
+    identity: fs::Metadata,
 }
 impl Lock {
     pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
@@ -581,36 +612,54 @@ impl Lock {
         let mut path = destination.as_os_str().to_os_string();
         path.push(".lock");
         let path = PathBuf::from(path);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|source| {
-                if source.kind() == io::ErrorKind::AlreadyExists {
-                    ReferenceError::Locked(path.clone())
-                } else {
-                    io_error(&path, source)
-                }
-            })?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        // Keep the owned Windows lock unreplaceable while its handle is open. Publication
+        // uses a separate temporary file, so no delete sharing is needed on this handle.
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(3); // FILE_SHARE_READ | FILE_SHARE_WRITE, excluding DELETE.
+        }
+        let file = options.open(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::AlreadyExists {
+                ReferenceError::Locked(path.clone())
+            } else {
+                io_error(&path, source)
+            }
+        })?;
         Ok(Self {
             destination,
-            path,
-            file,
-            published: false,
+            path: path.clone(),
+            identity: file.metadata().map_err(|source| io_error(&path, source))?,
+            file: Some(file),
         })
     }
+    pub(super) fn check_owned(&self) -> Result<(), ReferenceError> {
+        let current =
+            fs::symlink_metadata(&self.path).map_err(|source| io_error(&self.path, source))?;
+        if !current.is_file() || current.file_type().is_symlink() {
+            return Err(ReferenceError::Locked(self.path.clone()));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if current.dev() != self.identity.dev() || current.ino() != self.identity.ino() {
+                return Err(ReferenceError::Locked(self.path.clone()));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+        self.check_owned()?;
         let parent = self.destination.parent().unwrap();
         let mut temporary = tempfile::Builder::new()
             .prefix(".girt-packed-")
             .tempfile_in(parent)
             .map_err(|source| io_error(parent, source))?;
         // Match ordinary lock creation permissions, including the process umask.
-        let permissions = self
-            .file
-            .metadata()
-            .map_err(|source| io_error(&self.path, source))?
-            .permissions();
+        let permissions = self.identity.permissions();
         temporary
             .as_file()
             .set_permissions(permissions)
@@ -618,6 +667,7 @@ impl Lock {
         temporary
             .write_all(bytes)
             .map_err(|source| io_error(temporary.path(), source))?;
+        self.check_owned()?;
         temporary
             .persist(&self.destination)
             .map_err(|error| io_error(&self.destination, error.error))?;
@@ -635,17 +685,17 @@ impl Lock {
         };
         bytes.push(b'\n');
         self.file
+            .as_mut()
+            .unwrap()
             .write_all(&bytes)
             .map_err(|source| io_error(&self.path, source))?;
-        fs::rename(&self.path, &self.destination)
-            .map_err(|source| io_error(&self.destination, source))?;
-        self.published = true;
-        Ok(())
+        self.publish_retaining_lock(&bytes)
     }
 }
 impl Drop for Lock {
     fn drop(&mut self) {
-        if !self.published {
+        if self.check_owned().is_ok() {
+            drop(self.file.take());
             let _ = fs::remove_file(&self.path);
         }
     }
@@ -663,7 +713,7 @@ pub(super) fn malformed(path: &Path, reason: &'static str) -> ReferenceError {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use rstest::rstest;
 
@@ -791,7 +841,7 @@ mod tests {
         let path = repo.git_dir().join("HEAD");
         let mut lock = Lock::acquire(path.clone()).unwrap();
         // A read-only handle injects a deterministic write failure without chmod/root assumptions.
-        lock.file = File::open(&lock.path).unwrap();
+        lock.file = Some(File::open(&lock.path).unwrap());
         assert!(lock.publish(&Target::Direct(id())).is_err());
         drop(lock);
         assert_eq!(fs::read(path).unwrap(), b"ref: refs/heads/main\n");
@@ -852,7 +902,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod chain_tests {
     use super::*;
 
@@ -942,6 +992,48 @@ mod chain_tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 #[path = "delete_tests.rs"]
 mod delete_tests;
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_lock_is_neither_published_nor_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().canonicalize().unwrap().join("ref");
+        fs::write(&path, b"old").unwrap();
+        let lock = Lock::acquire(path.clone()).unwrap();
+        fs::remove_file(&lock.path).unwrap();
+        fs::write(&lock.path, b"replacement owner").unwrap();
+        assert!(matches!(
+            lock.publish_retaining_lock(b"new"),
+            Err(ReferenceError::Locked(_))
+        ));
+        let lock_path = lock.path.clone();
+        drop(lock);
+        assert_eq!(fs::read(path).unwrap(), b"old");
+        assert_eq!(fs::read(lock_path).unwrap(), b"replacement owner");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_lock_disallows_replacement_until_release() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().canonicalize().unwrap().join("ref");
+        let lock = Lock::acquire(path.clone()).unwrap();
+        assert!(fs::remove_file(&lock.path).is_err());
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"foreign").unwrap();
+        assert!(fs::rename(&replacement, &lock.path).is_err());
+        lock.publish_retaining_lock(b"new").unwrap();
+        let lock_path = lock.path.clone();
+        drop(lock);
+        assert!(!lock_path.exists());
+        assert_eq!(fs::read(path).unwrap(), b"new");
+        assert_eq!(fs::read(replacement).unwrap(), b"foreign");
+    }
+}

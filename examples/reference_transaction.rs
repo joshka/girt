@@ -76,5 +76,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(refs.reflog(&head)?.unwrap().len(), 1);
     assert_eq!(refs.reflog(&tag)?.unwrap().len(), 2);
     assert_eq!(refs.read(&tag)?, None);
+    // A retention ref may already exist at this value, but must never overwrite another value.
+    let keep = girt::refs::RefName::new("refs/jj/keep-example")?;
+    refs.transaction(&[RefEdit {
+        name: keep.clone(),
+        dereference: false,
+        target: Some(girt::refs::Target::Direct(id)),
+        expected: Expected::AbsentOr(girt::refs::Target::Direct(id)),
+        reflog: Reflog::Preserve,
+    }])?;
+    refs.transaction(&[RefEdit {
+        name: keep,
+        dereference: false,
+        target: None,
+        expected: Expected::Exists,
+        reflog: Reflog::Delete,
+    }])?;
     Ok(())
 }

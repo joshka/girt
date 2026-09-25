@@ -61,7 +61,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R09 | Lossless config and remote mutation                         | R08                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Accepted              | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
 | C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted              | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
-| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Planned               | [A08](jj-acceptance.md#a08--references-and-reflogs)                                                                                                                          |
+| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | In progress           | [A08](jj-acceptance.md#a08--references-and-reflogs)                                                                                                                          |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Planned               | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                    |
@@ -86,9 +86,10 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20              | Planned               | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned               | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned               | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
-| R34 | Full girt acceptance corpus and native readiness            | All earlier items               | Planned               | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                                       |
+| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36, R37               | Planned               | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                                       |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned               | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Planned; close by C02 | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage)                                                                                                                 |
+| R37 | Reftable reference and reflog backend                       | R11, R14                        | Planned               | Both-format table/stack reads, conditional publication and compaction, Git interoperability, corruption/race/fault and native evidence; required before R34.                 |
 
 The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
 separates parsed identity bytes from construction policy, and exposes exact signature payload
@@ -224,3 +225,12 @@ its C02 gate unchanged.
   semantics using an interpreting Git operation before changing their rejection policy. Git CLI
   display truncation alone does not define the internal value. This is distinct from F3's repaired
   inert comments and must be resolved before R34 if required by consumer configuration.
+
+## Reference Backend Follow-through
+
+R11 observed installed jj 0.45.1 accepting `git init --ref-format=reftable` followed by
+`jj git init --colocate` and `jj status`, in SHA-1 and SHA-256 disposable repositories. This
+establishes a required backend beyond files refs; it does not establish all jj operations. R14
+broadens backend acceptance characterization. R37 implements reftable records and stack reads,
+conditional refs/reflogs and stack publication/compaction with both-format Git and native evidence.
+R34 must not declare full readiness before R37. Files-backend completion does not close that gap.

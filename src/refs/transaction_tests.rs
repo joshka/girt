@@ -366,19 +366,15 @@ fn deletion_keeps_history_and_records_zero(#[case] format: crate::ObjectFormat) 
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
-fn stored_symbolic_edit_requires_preserve(#[case] format: crate::ObjectFormat) {
+fn stored_symbolic_edit_logs_unborn_target(#[case] format: crate::ObjectFormat) {
     let (_temp, repo) = fixture(format);
     let mut symbolic = edit(format, "refs/heads/alias");
     symbolic.target = Some(Target::Symbolic(name("refs/heads/missing")));
-    assert!(matches!(
-        repo.references().unwrap().transaction(&[symbolic.clone()]),
-        Err(TransactionError::Prepare {
-            source: ReferenceError::Unsupported(_),
-            ..
-        })
-    ));
-    symbolic.reflog = Reflog::Preserve;
-    repo.references().unwrap().transaction(&[symbolic]).unwrap();
+    let refs = repo.references().unwrap();
+    refs.transaction(&[symbolic]).unwrap();
+    let entries = refs.reflog(&name("refs/heads/alias")).unwrap().unwrap();
+    assert_eq!(entries[0].old, ObjectId::null(format));
+    assert_eq!(entries[0].new, ObjectId::null(format));
     assert_eq!(
         repo.references()
             .unwrap()
@@ -848,4 +844,130 @@ fn rejects_wrong_format_before_locking(
     assert_eq!(fs::read(lock).unwrap(), b"another owner");
     assert!(!repo.git_dir().join("refs/heads/new").exists());
     assert!(!repo.git_dir().join("logs").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn absent_or_same_never_overwrites_another_value(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut keep = edit(format, "refs/jj/keep");
+    keep.expected = Expected::AbsentOr(keep.target.clone().unwrap());
+    refs.transaction(&[keep.clone()]).unwrap();
+    refs.transaction(&[keep.clone()]).unwrap();
+    refs.update_without_reflog(&keep.name, Target::Direct(id(format, 2)), Expected::Exists)
+        .unwrap();
+    assert!(matches!(
+        refs.transaction(&[keep]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Mismatch { .. },
+            ..
+        })
+    ));
+    assert_eq!(
+        refs.read(&name("refs/jj/keep")).unwrap(),
+        Some(Target::Direct(id(format, 2)))
+    );
+    assert_eq!(
+        refs.reflog(&name("refs/jj/keep")).unwrap().unwrap().len(),
+        2
+    );
+    clean(&repo);
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn must_exist_rejects_absence_before_any_publication(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut required = edit(format, "refs/heads/required");
+    required.expected = Expected::Exists;
+    assert!(matches!(
+        refs.transaction(&[edit(format, "refs/heads/first"), required]),
+        Err(TransactionError::Prepare {
+            operation: Some(1),
+            source: ReferenceError::Mismatch { actual: None }
+        })
+    ));
+    assert_eq!(refs.read(&name("refs/heads/first")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn explicit_deletion_removes_ref_and_log(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.transaction(&[edit(format, "refs/heads/topic")])
+        .unwrap();
+    let mut delete = deletion("refs/heads/topic");
+    delete.reflog = Reflog::Delete;
+    let outcome = refs.transaction(&[delete]).unwrap();
+    assert_eq!(
+        outcome[0].logs,
+        vec![(name("refs/heads/topic"), LogOutcome::Deleted)]
+    );
+    assert_eq!(refs.read(&name("refs/heads/topic")).unwrap(), None);
+    assert_eq!(refs.reflog(&name("refs/heads/topic")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn symbolic_head_logs_old_and_new_terminal_ids(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    old_branch(&repo, Some(id(format, 1)));
+    refs.update_without_reflog(
+        &name("refs/heads/next"),
+        Target::Direct(id(format, 2)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let mut head = edit(format, "HEAD");
+    head.target = Some(Target::Symbolic(name("refs/heads/next")));
+    head.expected = Expected::Exists;
+    refs.transaction(&[head]).unwrap();
+    let logs = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(logs[0].old, id(format, 1));
+    assert_eq!(logs[0].new, id(format, 2));
+    assert_eq!(
+        refs.resolve(&name("HEAD"), 32).unwrap().id,
+        Some(id(format, 2))
+    );
+    assert_eq!(refs.reflog(&name("refs/heads/next")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn failed_log_deletion_reports_published_reference(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.transaction(&[edit(format, "refs/heads/topic")])
+        .unwrap();
+    let mut delete = deletion("refs/heads/topic");
+    delete.reflog = Reflog::Delete;
+    let prepared = refs.prepare_transaction(&[delete]).unwrap();
+    let log_path = repo.git_dir().join("logs/refs/heads/topic");
+    fs::remove_file(&log_path).unwrap();
+    fs::create_dir(&log_path).unwrap();
+    let error = prepared.publish().unwrap_err();
+    let TransactionError::Publish { outcomes, source } = error else {
+        panic!("publication expected")
+    };
+    assert_eq!(outcomes[0].reference, RefOutcome::Published);
+    assert_eq!(
+        outcomes[0].logs[0].1,
+        LogOutcome::Failed { bytes_written: 0 }
+    );
+    assert!(std::error::Error::source(&source).is_some());
+    assert_eq!(refs.read(&name("refs/heads/topic")).unwrap(), None);
+    assert!(log_path.is_dir());
+    clean(&repo);
 }

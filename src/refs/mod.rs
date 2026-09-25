@@ -14,6 +14,6 @@ mod transaction;
 
 pub use enumerate::Reference;
 pub use name::{InvalidRefName, RefName};
-pub use reflog::{Reflog, ReflogEntry};
+pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
 pub use store::{Expected, ReferenceError, References, Resolution, Target};
 pub use transaction::{LogOutcome, RefEdit, RefEditOutcome, RefOutcome, TransactionError};

@@ -22,16 +22,59 @@ pub struct ReflogEntry {
     pub message: Vec<u8>,
 }
 
+/// A parsed imported record with its exact original bytes, including the final newline.
+///
+/// Interpretation may normalize name padding and numeric dates. Retain this value when copying
+/// history: constructing a new entry applies stricter canonical identity and date rules.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReflogRecord {
+    bytes: Vec<u8>,
+    entry: ReflogEntry,
+}
+
+impl ReflogRecord {
+    /// Parses a complete log and retains every record byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns the framing and numeric limits documented by [`ReflogEntry::parse`].
+    pub fn parse(format: crate::ObjectFormat, bytes: &[u8]) -> Result<Vec<Self>, ReferenceError> {
+        let entries = ReflogEntry::parse(format, bytes)?;
+        Ok(bytes
+            .split_inclusive(|b| *b == b'\n')
+            .zip(entries)
+            .map(|(bytes, entry)| Self {
+                bytes: bytes.to_vec(),
+                entry,
+            })
+            .collect())
+    }
+
+    /// Returns the exact imported record, including delimiters and newline.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns interpreted fields without applying construction validation.
+    pub fn entry(&self) -> &ReflogEntry {
+        &self.entry
+    }
+}
+
 /// Explicit policy for every name affected by an operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reflog {
     /// Leave existing logs unchanged and create none, including on deletion.
     Preserve,
+    /// Remove the edited name's log after deleting its reference. Valid only for deletion.
+    /// Resolved deletion removes only the terminal log, preserving symbolic aliases' logs.
+    Delete,
     /// Create a missing log or append to an existing log, even for an unchanged ID.
     ///
     /// Resolved operations log every name in the symbolic chain, using the terminal old/new IDs.
     /// Deletion appends a zero new ID and retains the file. Environment, hooks and Git config are
-    /// never consulted. Stored symbolic replacement/deletion with logging is unsupported.
+    /// never consulted. Stored symbolic edits log only the edited name, resolving old and new
+    /// terminal IDs under locks.
     Append {
         /// Validated like commit construction, additionally requiring nonnegative seconds.
         committer: Signature,
@@ -44,8 +87,11 @@ impl ReflogEntry {
     /// Parses a complete newline-terminated reflog, returning records in file order.
     ///
     /// The caller selects the repository format, including for empty input; every ID must match.
-    /// Names/emails must be nonempty, timestamps nonnegative, timezone
-    /// hours at most 23 and minutes at most 59. UTF-8 is not required. Messages may contain tabs.
+    /// Imported names may be empty or padded; trailing name whitespace is trimmed in the
+    /// interpreted value. Signed `i64` seconds and four-digit signed zones are accepted, including
+    /// noncanonical minutes such as `+0060`. UTF-8 is not required. Messages may contain tabs.
+    /// Use [`ReflogRecord`] for exact lexical retention. Short zones, suffix text, and seconds
+    /// outside `i64` are explicit reader limits; they are not claims of Git invalidity.
     ///
     /// # Errors
     ///
@@ -164,23 +210,24 @@ fn parse_line(
         || zone.len() != 5
         || !matches!(zone[0], b'+' | b'-')
         || !zone[1..].iter().all(u8::is_ascii_digit)
-        || &zone[1..3] > b"23".as_slice()
-        || &zone[3..5] > b"59".as_slice()
     {
         return Err(malformed(path, "invalid reflog date framing"));
     }
-    let mut committer = Signature::parse(identity)
-        .map_err(|_| malformed(path, "invalid reflog identity or date"))?;
-    // Reflogs preserve and validate the raw name, including padding that commit interpretation
-    // treats as delimiter whitespace. Keep that existing policy at the reflog boundary.
-    let name_end = identity
-        .windows(2)
-        .position(|pair| pair == b" <")
-        .ok_or_else(|| malformed(path, "missing space before reflog email"))?;
-    committer.name = identity[..name_end].to_vec();
+    let committer = crate::IdentityRef::parse(identity)
+        .and_then(crate::IdentityRef::signature)
+        .map_err(|_| {
+            malformed(
+                path,
+                "reflog identity or numeric date exceeds reader limits",
+            )
+        })?;
     let message = rest.get(tab + 1..).unwrap_or_default().to_vec();
-    validate(&committer, &message)
-        .map_err(|_| malformed(path, "invalid reflog identity, date or message"))?;
+    if identity.contains(&0)
+        || identity.contains(&b'\r')
+        || message.iter().any(|b| matches!(b, 0 | b'\r'))
+    {
+        return Err(malformed(path, "NUL or CR in reflog record"));
+    }
     Ok(ReflogEntry {
         old,
         new,
@@ -204,12 +251,7 @@ mod tests {
 
     #[rstest]
     #[case::truncated(b"A <a@b> 1 +0000\tmessage")]
-    #[case::invalid_zone(b"A <a@b> 1 +2460\tmessage\n")]
-    #[case::padded_name(b"A  <a@b> 1 +0000\tmessage\n")]
     #[case::cr_name(b"A\r <a@b> 1 +0000\tmessage\n")]
-    #[case::no_space(b"A<a@b> 1 +0000\tmessage\n")]
-    #[case::negative_time(b"A <a@b> -1 +0000\tmessage\n")]
-    #[case::empty_name(b" <a@b> 1 +0000\tmessage\n")]
     #[case::nul(b"A <a@b> 1 +0000\tx\0y\n")]
     #[case::cr(b"A <a@b> 1 +0000\tx\ry\n")]
     #[case::missing_separator(b"A <a@b> 1 +0000 message\n")]
