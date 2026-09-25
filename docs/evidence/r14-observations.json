@@ -1,0 +1,2598 @@
+{
+  "git": "git version 2.55.0",
+  "jj": "jj 0.45.1",
+  "cases": [
+    {
+      "format": "sha1",
+      "case": "control",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : vquoqswt 6be4709b (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "objects_symlink",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : klurlrkm 823d0d98 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_absolute",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ppnnwszx 159f1262 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_relative",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lxuqmxon 1012e813 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_cycle",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error: Failed to access the repository\nCaused by:\n1: Failed to open git repository\n2: Alternates form a cycle: '/private<fixture>/sha1-alternate_cycle/repo/.git/objects' -> '/private<fixture>/sha1-alternate_cycle/donor' -> /private<fixture>/sha1-alternate_cycle/repo/.git/objects\n"
+      },
+      "jj_log": null,
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": null
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_missing",
+      "git": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: object directory /private<fixture>/sha1-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: Not a valid object name 426c21c78d37dfed75ffecc1fb4f3c07f1315aac\n"
+      },
+      "jj_init": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error: Failed to export refs to underlying Git repo\nCaused by: Object 426c21c78d37dfed75ffecc1fb4f3c07f1315aac as referred to by \"refs/heads/main\" could not be found\n"
+      },
+      "jj_log": null,
+      "git_reflog": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: object directory /private<fixture>/sha1-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: bad object HEAD\n",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": null
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_missing_then_valid",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": "error: object directory /private<fixture>/sha1-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n"
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "error: object directory /private<fixture>/sha1-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kwzrmyls fde36ed5 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "alternate_symlink",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qvytuxws 4aff7b95 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "pack2_index1",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : rmsxpzns b499c6bd (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "pack2_index2",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ypytltyu 127e687e (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "pack3_index1",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltntulyo 8cdc45ec (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "pack3_index2",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lksmnpoy eda017fc (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "split",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kostzzqo 1fda2737 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "sparse",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n040000 a06fbdf1fb39d67b4f0ba9297affab93622b0361 0\tout/\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n040000 a06fbdf1fb39d67b4f0ba9297affab93622b0361 0\tout/\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : ykssxzvr bba0cd8f (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reftable",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Initialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : xzrttuso fc244abf (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "intent",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tnew\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tnew\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : uvlzwvrz ec4566b8 (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "skip",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qyxltvql 94e9dbf2 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "unknown_extension",
+      "git": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "index_after": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : plsxlsry 75c31381 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "noop_extension",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : mtvrmmvm 03897f19 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "partial_clone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ylutvstz ba5d6e80 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "precious",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : vutklzkq 0cc7e2f6 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "worktree_config",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : msqswvqw 45979d46 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "http_alternates",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : knrqtxno ddd021df (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "commit_graph",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : snmrslms 55bd58c0 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "auxiliary_indexes",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lxwvtrwu 6abc93af (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_short_zone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : sxqwvpsr 3ff8dc11 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_suffix_zone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A suffix\tfixture\n",
+        "stderr": "",
+        "stdout_bytes": 58
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lytrpnkv 22e6b065 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_overflow",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A fixture\n",
+        "stderr": "",
+        "stdout_bytes": 51
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xowvuxww 580713da (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_cr",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A a\rb\n",
+        "stderr": "",
+        "stdout_bytes": 47
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kkxykqus b6f8e2e6 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_nul",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A \n",
+        "stderr": "",
+        "stdout_bytes": 44
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kyoktyty 3036aeaa (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_large",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac A xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx<truncated>",
+        "stderr": "",
+        "stdout_bytes": 1048620
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : sqqwxsky 4d68fe90 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "case": "reflog_unterminated",
+      "git": {
+        "exit": 0,
+        "stdout": "tree 4b0efe6085cf4fa8ff39dcf71561367aa832c7b8\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "426c21c78d37dfed75ffecc1fb4f3c07f1315aac Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 84
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 f50863d563274a9b9a38a40b5b48b5bb4b8dbbb2 0\tin/file\n100644 63946993fa9957bce310ceee144d35317b073b8d 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : txryzyqx fca80711 (empty) (no description set)\nParent commit (@-): wuuprnrk 426c21c7 main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "control",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : lqknzovw 0da169f6 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "objects_symlink",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xkupozvu 29dd86e5 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_absolute",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ouxppzzv 97058e26 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_relative",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : pwpllkwx b85c1f79 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_cycle",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error: Failed to access the repository\nCaused by:\n1: Failed to open git repository\n2: Alternates form a cycle: '/private<fixture>/sha256-alternate_cycle/repo/.git/objects' -> '/private<fixture>/sha256-alternate_cycle/donor' -> /private<fixture>/sha256-alternate_cycle/repo/.git/objects\n"
+      },
+      "jj_log": null,
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": null
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_missing",
+      "git": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: object directory /private<fixture>/sha256-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: Not a valid object name d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7\n"
+      },
+      "jj_init": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "Error: Failed to export refs to underlying Git repo\nCaused by: Object d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 as referred to by \"refs/heads/main\" could not be found\n"
+      },
+      "jj_log": null,
+      "git_reflog": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "error: object directory /private<fixture>/sha256-alternate_missing/absent does not exist; check .git/objects/info/alternates\nfatal: bad object HEAD\n",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": null
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_missing_then_valid",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": "error: object directory /private<fixture>/sha256-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n"
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "error: object directory /private<fixture>/sha256-alternate_missing_then_valid/absent does not exist; check .git/objects/info/alternates\n",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kkywmkyu 26486c4f (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "alternate_symlink",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : wlkvsyok 1b3f0962 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "pack2_index1",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ymxkqvvp eaacca5a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "pack2_index2",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qlmqwvpx 7578e8ca (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "pack3_index1",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : mokylwmt 331f239a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "pack3_index2",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : oylswrvu c9371c0f (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "split",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : townywry 76c0f9ea (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "sparse",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n040000 0204c863e50859be2e4aed1e25331fd29853eca0427c5d4169eb7bae6532da5c 0\tout/\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n040000 0204c863e50859be2e4aed1e25331fd29853eca0427c5d4169eb7bae6532da5c 0\tout/\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nD out/file\nWorking copy  (@) : xlmltzws b4c97b08 (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reftable",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Initialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": false,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nA in/file\nA out/file\nWorking copy  (@) : znxnmlkx bd0b750c (no description set)\nParent commit (@-): zzzzzzzz 00000000 (empty) (no description set)\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "intent",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813 0\tnew\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813 0\tnew\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "Working copy changes:\nA new\nWorking copy  (@) : loztkoyz 03f77829 (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "skip",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xrwptxzy f28ae072 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "unknown_extension",
+      "git": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n",
+        "stdout_bytes": 0
+      },
+      "index_before": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "index_after": {
+        "exit": 128,
+        "stdout": "",
+        "stderr": "fatal: unknown repository extension found:\n\tgirtunknown\n"
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : rkmuqtsk 258cb5a9 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "noop_extension",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : plyowtxo 28d307e8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "partial_clone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : znqkuokr f0b0b477 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "precious",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : qynunrwx c8da2d7a (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "worktree_config",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : zoprroyv 79a6fc46 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "http_alternates",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : xzyszzlp 9d9b0200 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "commit_graph",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : yqpwqory 874fe2a8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "auxiliary_indexes",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : kxwpzpnn 490c982b (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_short_zone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltxqkwyx 25fc44bb (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_suffix_zone",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A suffix\tfixture\n",
+        "stderr": "",
+        "stdout_bytes": 82
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : yutqqxvz c5be7d45 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_overflow",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A fixture\n",
+        "stderr": "",
+        "stdout_bytes": 75
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : unxuxonp ef13372d (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_cr",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A a\rb\n",
+        "stderr": "",
+        "stdout_bytes": 71
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ltnqopxu 54afedd8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_nul",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A \n",
+        "stderr": "",
+        "stdout_bytes": 68
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : nvvxpxqp b5374bc8 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_large",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 A xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx<truncated>",
+        "stderr": "",
+        "stdout_bytes": 1048644
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : nooqooup 5b8f4d96 (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "case": "reflog_unterminated",
+      "git": {
+        "exit": 0,
+        "stdout": "tree c7b138e37ad6eb18707efebfe67c89191f8e8f9a23767d5c96ec3d2f02c8d2bd\nauthor Fixture <fixture@example.com> 1700000000 +0000\ncommitter Fixture <fixture@example.com> 1700000000 +0000\n\nexternal fixture\n",
+        "stderr": ""
+      },
+      "jj_init": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+      },
+      "jj_log": {
+        "exit": 0,
+        "stdout": "external fixture\n",
+        "stderr": ""
+      },
+      "git_reflog": {
+        "exit": 0,
+        "stdout": "d6a88d5f37cf85acf1c2cc03639893be514c980189058f8c25072b39f223afe7 Fixture commit (initial): external fixture\n",
+        "stderr": "",
+        "stdout_bytes": 108
+      },
+      "index_before": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "index_after": {
+        "exit": 0,
+        "stdout": "100644 0de7bb46f17cc2fe2ceaffc1887d1799974c2386abd04be776b79323a38424a6 0\tin/file\n100644 04870fa238962eff838de9f11abb91cc976c28eb8828936ebc98403142a17fca 0\tout/file\n",
+        "stderr": ""
+      },
+      "imported": true,
+      "jj_status": {
+        "exit": 0,
+        "stdout": "The working copy has no changes.\nWorking copy  (@) : ysswslwl cf119d1e (empty) (no description set)\nParent commit (@-): lskunvvk d6a88d5f main | external fixture\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

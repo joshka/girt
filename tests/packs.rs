@@ -374,3 +374,92 @@ fn corrupt_snapshot_identifies_both_artifacts_and_preserves_cause(
     assert_eq!(pack, expected_index.with_extension("pack"));
     assert!(matches!(*source, ObjectReadError::Corrupt(_)));
 }
+
+// Change only the documented header version and trailer; Git independently rebuilds the index.
+fn rewrite_pack_version(fixture: &Fixture, version: u32, index: u32) {
+    use sha2::Digest;
+
+    let path = fixture.index_path.with_extension("pack");
+    let mut bytes = fs::read(&path).unwrap();
+    let format = fixture.repo.object_format();
+    bytes.truncate(bytes.len() - format.digest_len());
+    bytes[4..8].copy_from_slice(&version.to_be_bytes());
+    let checksum = match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes).to_vec(),
+    };
+    bytes.extend_from_slice(&checksum);
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, bytes).unwrap();
+    fs::remove_file(&fixture.index_path).unwrap();
+    let relative = path.strip_prefix(fixture.root.path()).unwrap();
+    git(
+        fixture.root.path(),
+        &[
+            "index-pack",
+            &format!("--index-version={index}"),
+            relative.to_str().unwrap(),
+        ],
+        b"",
+    );
+}
+
+#[rstest]
+#[case::sha1_v2_v1_ref(girt::ObjectFormat::Sha1, 2, 1, false)]
+#[case::sha256_v2_v1_ref(girt::ObjectFormat::Sha256, 2, 1, false)]
+#[case::sha1_v3_v1_ofs(girt::ObjectFormat::Sha1, 3, 1, true)]
+#[case::sha256_v3_v1_ofs(girt::ObjectFormat::Sha256, 3, 1, true)]
+#[case::sha1_v3_v2_ref(girt::ObjectFormat::Sha1, 3, 2, false)]
+#[case::sha256_v3_v2_ref(girt::ObjectFormat::Sha256, 3, 2, false)]
+fn reads_legacy_indexes_and_version_three_packs(
+    #[case] format: girt::ObjectFormat,
+    #[case] version: u32,
+    #[case] index: u32,
+    #[case] ofs: bool,
+) {
+    let fixture = Fixture::new(format, ofs, 16);
+    rewrite_pack_version(&fixture, version, index);
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let actual: Vec<_> = fixture
+        .records
+        .iter()
+        .map(|(id, _, _)| {
+            let object = objects.read(*id, ReadLimits::default()).unwrap().unwrap();
+            (object.id(), object.kind(), object.into_data())
+        })
+        .collect();
+    assert_eq!(actual, fixture.records);
+    assert_eq!(
+        git(
+            fixture.root.path(),
+            &["cat-file", "blob", &fixture.delta.to_string()],
+            b""
+        ),
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+    );
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn reads_symlinked_object_directory(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let destination = fixture.root.path().join("external-objects");
+    fs::rename(fixture.repo.object_dir(), &destination).unwrap();
+    std::os::unix::fs::symlink(&destination, fixture.repo.object_dir()).unwrap();
+    let repo = girt::Repository::open(fixture.root.path()).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        fixture.delta
+    );
+}

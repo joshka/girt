@@ -100,8 +100,8 @@ impl Default for ReadLimits {
 ///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening loads
 /// all `.idx`/`.pack` pairs in the repository's object format in filename order and verifies index
-/// v2 structure, checksums, pack v2 headers/counts, offset ranges, and entry CRCs. Pack v3 and
-/// index v1 are explicitly unsupported. Entry framing, zlib streams, delta programs, and object
+/// v1/v2 structure, checksums, pack v2/v3 headers/counts, offset ranges, and v2 entry CRCs.
+/// Legacy v1 indexes have no entry CRCs. Entry framing, zlib streams, delta programs, and object
 /// identities are checked on reads, including every base and intermediate delta; opening is not a
 /// full pack fsck.
 ///

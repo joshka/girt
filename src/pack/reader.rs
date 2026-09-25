@@ -22,7 +22,7 @@ impl Pack {
             return Err(Error::Corrupt("pack header"));
         }
         let version = word(&data, 4)?;
-        if version != 2 {
+        if !matches!(version, 2 | 3) {
             return Err(Error::PackVersion(version));
         }
         let end = data.len() - format.digest_len();
@@ -35,7 +35,10 @@ impl Pack {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
         for entry in &index.entries {
-            if crc32fast::hash(&data[entry.offset..entry.end]) != entry.crc {
+            if entry
+                .crc
+                .is_some_and(|crc| crc32fast::hash(&data[entry.offset..entry.end]) != crc)
+            {
                 return Err(Error::Corrupt("entry CRC"));
             }
         }

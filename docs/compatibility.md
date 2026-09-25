@@ -40,13 +40,13 @@ captures.
 
 ## Current Capabilities and Evidence
 
-The current API supports both-format loose objects and complete-history queries, SHA-1/SHA-256
-pack/index v2, object-only fetch, conditional branch/tag push, reference enumeration, and
-conditional transactions with explicit reflog policy, named remote/refspec mapping, explicit fetch
-orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories, recursive
-tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index v2/v3/v4
-read/replacement, and raw read-only working-tree status and conservative raw tree checkout on
-macOS/Linux. The single-reference no-reflog operations remain available. HTTP and SSH downloads
+The current API supports both-format loose objects and complete-history queries, SHA-1/SHA-256 pack
+v2/v3 and index v1/v2 reads, object-only fetch, conditional branch/tag push, reference enumeration,
+and conditional transactions with explicit reflog policy, named remote/refspec mapping, explicit
+fetch orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories,
+recursive tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index
+v2/v3/v4 read/replacement, and raw read-only working-tree status and conservative raw tree checkout
+on macOS/Linux. The single-reference no-reflog operations remain available. HTTP and SSH downloads
 share owned validation state. Installation takes explicit destination snapshot limits. Read and
 operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
@@ -2126,3 +2126,11 @@ trusted and stable. Rechecking detects observed changes but cannot exclude later
 replacement. Cleanup discards metadata only and does not abort/reset working files. No crash
 recovery or durability guarantee is added. Independent fixtures and limitations are recorded in
 [R13 evidence](evidence/r13.md).
+
+## R14 External Storage Discovery
+
+R14 extends SHA-1/SHA-256 local pack reads to pack v3 and index v1. Writers still emit pack v2 and
+index v2; transport import version support is unchanged. Legacy indexes have no CRC table, so
+whole-pack/index checksums and read-time object identity verification supply integrity checks. See
+[R14 evidence](evidence/r14.md) for the independent Git/jj matrix and remaining capability owners.
+Historical pack records above describe their original revisions, not current limitations.

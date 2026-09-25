@@ -1,4 +1,4 @@
-//! SHA-1/SHA-256 pack v2 and index v2 reading and caller-owned artifact writing.
+//! SHA-1/SHA-256 pack v2/v3 and index v1/v2 reading and caller-owned artifact writing.
 
 mod compression;
 pub(crate) mod delta;

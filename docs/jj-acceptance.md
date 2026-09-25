@@ -98,8 +98,8 @@ directions.
 
 ### A05 — Object stores, resource bounds and refresh
 
-**Tasks:** R05, R14–R16. **Consumer:** persistent reads, external repository opening and GC refresh
-in `lib/src/git_backend.rs`; concurrent write tests in `lib/tests/test_git.rs`.
+**Tasks:** R05, R14–R16, R39. **Consumer:** persistent reads, external repository opening and GC
+refresh in `lib/src/git_backend.rs`; concurrent write tests in `lib/tests/test_git.rs`.
 
 Characterize accepted pack/index versions, alternates, relative paths, cycles, missing stores and
 symlink storage before deciding required follow-ups. Cover REF/OFS deltas, long chains, bad hashes,
@@ -108,6 +108,11 @@ budget without retaining all pack bytes in RAM. Measure cold/warm open, lookup/i
 peak memory and file handles. Test refresh after install, stale negative caches, pack/index pair
 races, external repack/GC, concurrent loose writes, missing/corrupt data and interrupted
 publication. Retained readers and retries must have explicit lifetime and consistency contracts.
+
+R14's [acceptance matrix](evidence/r14.md) distinguishes successful import from opening. Pack
+v3/index v1 reads are delivered in R14; R39 owns alternates and known storage extensions, R15
+file-backed resources and R16 refresh. R40 supplies bounded imported reflog roots before R31.
+R37/R38 remain required backend/index capabilities before C02/R34.
 
 ### A06 — Config layers and remote editing
 

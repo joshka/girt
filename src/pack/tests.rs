@@ -321,8 +321,8 @@ fn rejects_unsupported_index_versions(#[case] format: ObjectFormat, #[case] vers
 #[rstest]
 #[case::legacy_sha1(ObjectFormat::Sha1, 1)]
 #[case::legacy_sha256(ObjectFormat::Sha256, 1)]
-#[case::recognized_but_unsupported_sha1(ObjectFormat::Sha1, 3)]
-#[case::recognized_but_unsupported_sha256(ObjectFormat::Sha256, 3)]
+#[case::future_sha1(ObjectFormat::Sha1, 4)]
+#[case::future_sha256(ObjectFormat::Sha256, 4)]
 fn rejects_unsupported_pack_versions(#[case] format: ObjectFormat, #[case] version: u32) {
     let (index, mut data) = ordinary(format);
     data[4..8].copy_from_slice(&version.to_be_bytes());
@@ -334,11 +334,11 @@ fn rejects_unsupported_pack_versions(#[case] format: ObjectFormat, #[case] versi
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn rejects_headerless_index_v1(#[case] format: ObjectFormat) {
+fn rejects_malformed_headerless_index(#[case] format: ObjectFormat) {
     let (_, data) = ordinary(format);
     assert!(matches!(
         Pack::open(format, &[0; 1088], data),
-        Err(Error::IndexVersion(1))
+        Err(Error::Corrupt(_))
     ));
 }
 
@@ -788,5 +788,74 @@ fn overflowing_word_offset_returns_corruption() {
     assert!(matches!(
         super::index::word(&[], usize::MAX),
         Err(Error::Corrupt(_))
+    ));
+}
+
+fn legacy_index(format: ObjectFormat) -> (Vec<u8>, Vec<u8>) {
+    let (v2, data) = ordinary(format);
+    let width = format.digest_len();
+    let mut index = v2[8..1032].to_vec();
+    index.extend_from_slice(&12u32.to_be_bytes());
+    index.extend_from_slice(&v2[1032..1032 + width]);
+    index.extend_from_slice(&data[data.len() - width..]);
+    seal(format, &mut index);
+    (index, data)
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn reads_headerless_index(#[case] format: ObjectFormat) {
+    let (index, data) = legacy_index(format);
+    let pack = Pack::open(format, &index, data).unwrap();
+    assert_eq!(
+        pack.read(0, ReadLimits::default()).unwrap().data(),
+        b"hello"
+    );
+}
+
+#[rstest]
+#[case::fanout_sha1(ObjectFormat::Sha1, 0, 1, "index fanout")]
+#[case::fanout_sha256(ObjectFormat::Sha256, 0, 1, "index fanout")]
+#[case::offset_sha1(ObjectFormat::Sha1, 1024, 0, "offset outside pack entries")]
+#[case::offset_sha256(ObjectFormat::Sha256, 1024, 0, "offset outside pack entries")]
+#[case::count_sha1(ObjectFormat::Sha1, 1020, u32::MAX, "index table length")]
+#[case::count_sha256(ObjectFormat::Sha256, 1020, u32::MAX, "index table length")]
+fn rejects_invalid_legacy_index(
+    #[case] format: ObjectFormat,
+    #[case] offset: usize,
+    #[case] value: u32,
+    #[case] reason: &str,
+) {
+    let (mut index, data) = legacy_index(format);
+    index[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    reseal(format, &mut index);
+    assert!(
+        matches!(Pack::open(format, &index, data), Err(Error::Corrupt(found)) if found == reason)
+    );
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn rejects_legacy_index_checksum_damage(#[case] format: ObjectFormat) {
+    let (mut index, data) = legacy_index(format);
+    let last = index.len() - 1;
+    index[last] ^= 1;
+    assert!(matches!(
+        Pack::open(format, &index, data),
+        Err(Error::Corrupt("index checksum"))
+    ));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn rejects_truncated_legacy_index(#[case] format: ObjectFormat) {
+    let (mut index, data) = legacy_index(format);
+    index.pop();
+    assert!(matches!(
+        Pack::open(format, &index, data),
+        Err(Error::Corrupt("index table length"))
     ));
 }
