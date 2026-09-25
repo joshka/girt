@@ -64,7 +64,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted             | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted             | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
-| R14 | External object-store acceptance and required formats       | R07, R10                        | Ready for acceptance | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
+| R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted             | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Planned              | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                                                                                                       |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Planned              | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics)                                                                                                                    |
@@ -293,3 +293,7 @@ HTTP and seven portable cases plus Clippy. Controlled discovery delays return `N
 without POST; repaired fault tests synchronize with POST and retain specific uncertain causes. R14
 is ready for coordinator acceptance using the existing storage evidence and focused repair result.
 C02 retains the independent tracing-span issue; the earlier failed matrix remains recorded.
+
+Coordinator acceptance of R14 uses the existing native storage evidence and focused Windows HTTP
+verification, as recorded in [R14 evidence](evidence/r14.md). Historical failures and the C02-owned
+missing tracing span remain open records; no replacement broad matrix is claimed.
