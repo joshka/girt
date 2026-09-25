@@ -10,6 +10,8 @@
 //! planning. [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
 
 mod config;
+mod edit;
+pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
 mod refspec;
 
 pub use config::{Remote, RemoteError};

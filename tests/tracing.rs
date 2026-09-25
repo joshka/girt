@@ -569,3 +569,59 @@ fn filtered_config_resolution_keeps_parent_completion_fields() {
         "parent_owned"
     );
 }
+
+#[test]
+fn config_edit_failure_cleanup_is_nested_and_redacted() {
+    let root = tempfile::Builder::new()
+        .prefix("R03_SECRET_path")
+        .tempdir()
+        .unwrap();
+    let path = root.path().join("R03_SECRET_config");
+    let capture = Capture::default();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        let parent = tracing::info_span!("config.edit_owner");
+        parent.in_scope(|| {
+            let mut edit = girt::config::ConfigEdit::open(&path, 4096).unwrap();
+            edit.document_mut()
+                .append("remote", Some(SECRET), "url", SECRET)
+                .unwrap();
+            std::fs::write(&path, b"# competing writer").unwrap();
+            assert!(edit.commit().is_err());
+        });
+    });
+    let commit = capture.named("config.commit");
+    assert_eq!(commit.fields["failure_class"], "precondition");
+    assert_eq!(capture.parent_name(&commit), "config.edit_owner");
+    assert_eq!(
+        capture.parent_name(&capture.named("config.abort")),
+        "config.commit"
+    );
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.spans().iter().all(|s| s.closed));
+    assert!(capture.events().is_empty());
+}
+
+#[test]
+fn filtered_config_edit_does_not_record_on_parent() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let root = tempfile::tempdir().unwrap();
+    let capture = Capture::default();
+    let dispatch =
+        tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()).with(
+            tracing_subscriber::filter::filter_fn(|metadata| {
+                !metadata.name().starts_with("config.")
+            }),
+        ));
+    tracing::dispatcher::with_default(&dispatch, || {
+        tracing::info_span!("edit.parent", outcome = "parent_owned").in_scope(|| {
+            girt::config::ConfigEdit::open(root.path().join("config"), 1024)
+                .unwrap()
+                .commit()
+                .unwrap();
+        });
+    });
+    assert_eq!(
+        capture.named("edit.parent").fields["outcome"],
+        "parent_owned"
+    );
+}

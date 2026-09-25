@@ -73,7 +73,7 @@ existing trusted-filesystem contract.
 Re-resolve or reopen to refresh. Old snapshots remain unchanged; no automatic watches or global
 cache exist. Concurrent external writers may produce a mixed snapshot across sources, so callers
 requiring a coherent multi-file generation must coordinate writers. This operation performs no
-locking, persistence or mutation. R09 owns lossless editing and concurrent write protocols.
+locking, persistence or mutation. The separate editing lifecycle below owns writes.
 
 Optional tracing emits `config.resolve` completion and categorical failure only, never paths,
 values, URLs or environment contents. Returned provenance is caller-owned diagnostic data.
@@ -90,3 +90,67 @@ The specification input is the [Git configuration manual](https://git-scm.com/do
 upstream implementation or test source is used. This finite corpus does not establish every
 configuration edge case. Repository discovery/layout expansion belongs to R10, URL rewriting to R21,
 and jj integration to R35.
+
+## Lossless File Editing
+
+`Document::parse` retains exact source bytes and parser-derived syntax ranges. `set_value` and
+`remove` select a direct-file occurrence by index; obtain fresh indices after structural edits.
+`append` writes a quoted assignment under a repeated section at EOF. Section rename/remove operates
+on all matching headers, including empty headers and deprecated dotted syntax. Untargeted bytes,
+comments, line endings, unknown keys and occurrence order survive. Removed syntax leaves surrounding
+whitespace and comments; an edited header or value uses canonical quoting. NUL and subsection
+newlines are rejected. No include expansion or typed URL interpretation happens in this layer.
+
+`Repository::edit_config(max_bytes)` locks the common local file independently of the repository's
+cached effective snapshot. `ConfigEdit::open(path, max_bytes)` explicitly selects another OS-native
+path, including a worktree file. Neither follows destination symlinks. Acquire the guard before
+computing edits; `require_source` can additionally reject a stale earlier byte/presence snapshot.
+Missing and empty files are distinct preconditions, but both provide an empty document.
+
+`commit` checks the byte budget, compares source bytes/presence, writes the owned exclusive
+`<path>.lock`, compares again, verifies lock ownership and renames within the same directory. Git
+and girt writers honoring the lock are excluded throughout. A noncooperating writer observed before
+rename causes rejection; the last check cannot exclude an arbitrary later write. Unix checks lock
+inode identity; other platforms require callers to exclude lock replacement. Hostile directory
+replacement is outside the contract. Atomic replacement depends on the filesystem; no fsync,
+crash-durability, multi-file atomicity or shared-repository permission policy is provided. Unix
+replacement preserves source permission bits; new files use the process umask. Ownership, ACLs and
+extended attributes are not copied.
+
+Preparation and unsuccessful rename leave the destination intact apart from independent writes.
+`EditError` distinguishes syntax, byte limits, contention, source changes, nonregular files and I/O
+operations, including publication failures. A `Cleanup` error retains both primary and cleanup
+causes. Inspect any residual lock before manual recovery and acquire a fresh lifecycle before
+retrying. `abort` reports cleanup failure; drop is best effort. Never delete an existing lock merely
+because a new acquisition failed.
+
+## Local Remote Operations
+
+`RemoteConfig::new(&mut Document)` prepares each operation before replacing the draft. `add` takes
+an explicit URL and ordered fetch refspecs; it does not guess mappings from the name. `append`,
+`set` and `remove_value` operate on `RemoteKey` URL/pushURL/fetch/push occurrences. URL bytes remain
+opaque; refspec changes use the existing direction-specific parser. Explicit occurrence selection
+avoids regular-expression and consumer naming policy. Empty URL resets and push fallback remain
+owned by `Remote::find`.
+
+Rename updates every local remote header, local branch `remote`/`pushRemote`, local
+`remote.pushDefault`, and fetch destinations under `refs/remotes/<old>/`. Custom fetch destinations
+and push mappings remain exact. Remove deletes local remote syntax, matching selectors, and merge
+entries for branches whose local remote selector matched. Other branch settings remain intact.
+Repeated scalar selectors referencing the target return `AmbiguousSelector` without partial edits;
+Git's CLI can instead warn and retain stale values. Use explicit occurrence editing to resolve that
+ambiguity before retrying.
+
+These operations edit one file. Inherited-only remotes return `NotLocal`; removing a local section
+can leave an included/global remote effective. Included/global branch references also remain
+unchanged. The library never implicitly rewrites those sources or claims effective removal.
+Re-resolve using the original inputs, or reopen with `open_with_config`, before constructing a new
+`Remote`. Old repository and remote snapshots remain unchanged. Remote-tracking ref rename/deletion
+is a separate reference operation, not a side effect of configuration editing; R11 owns the
+conditional reference foundation and R28 owns composed remote/prune outcomes.
+
+Run `cargo run --example edit_config` for a disposable lock/edit/commit/refresh example. The
+portable `config_edit` suite observes Git add/remove/rename/set-url, byte quoting, inherited
+settings, list order and refresh. Local tests inject storage faults and stale-source/lock races. No
+performance claim is made: edits target small configuration documents and intentionally reparse
+prepared drafts for validation. Larger bulk editing is not optimized or benchmarked.

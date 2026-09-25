@@ -248,3 +248,7 @@ harness = false
 [[example]]
 name = "config"
 doc-scrape-examples = true
+
+[[example]]
+name = "edit_config"
+doc-scrape-examples = true

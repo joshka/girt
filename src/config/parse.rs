@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use thiserror::Error;
 
 use super::Origin;
@@ -62,6 +64,17 @@ impl Config {
     ///
     /// Returns the physical line and reason for invalid or unsupported syntax.
     pub fn parse(bytes: &[u8]) -> Result<Self, ConfigError> {
+        Self::parse_internal::<false>(bytes).map(|(config, _)| config)
+    }
+
+    pub(super) fn parse_layout(bytes: &[u8]) -> Result<(Self, Layout), ConfigError> {
+        Self::parse_internal::<true>(bytes)
+    }
+
+    fn parse_internal<const RETAIN_LAYOUT: bool>(
+        bytes: &[u8],
+    ) -> Result<(Self, Layout), ConfigError> {
+        let offset = usize::from(bytes.starts_with(b"\xef\xbb\xbf")) * 3;
         let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
         if let Some(position) = bytes.iter().position(|byte| *byte == 0) {
             return Err(ConfigError {
@@ -76,8 +89,10 @@ impl Config {
             bytes,
             pos: 0,
             line: 1,
+            value_end: 0,
         };
         let mut entries = Vec::new();
+        let mut layout = Layout::default();
         let mut section = Vec::new();
         let mut subsection = None;
         while parser.pos < bytes.len() {
@@ -89,6 +104,7 @@ impl Config {
                 }
                 Some(b'#' | b';') => parser.comment(),
                 Some(b'[') => {
+                    let start = parser.pos;
                     parser.take();
                     section = parser.name(false)?;
                     subsection = None;
@@ -132,22 +148,45 @@ impl Config {
                     if parser.take() != Some(b']') {
                         return Err(parser.error("expected ]"));
                     }
+                    if RETAIN_LAYOUT {
+                        layout.sections.push(SectionSpan {
+                            range: start + offset..parser.pos + offset,
+                            section: section.clone(),
+                            subsection: subsection.clone(),
+                        });
+                    }
                 }
                 Some(_) => {
                     if section.is_empty() {
                         return Err(parser.error("variable outside section"));
                     }
+                    let start = parser.pos;
                     let line = parser.line;
                     let name = parser.name(true)?;
+                    let name_end = parser.pos;
                     parser.space();
+                    let mut value_start = name_end;
                     let value = match parser.peek() {
                         Some(b'=') => {
                             parser.take();
+                            parser.space();
+                            value_start = parser.pos;
                             Some(parser.value()?)
                         }
                         None | Some(b'\n' | b'#' | b';') => None,
                         _ => return Err(parser.error("expected = or end of variable")),
                     };
+                    let end = if value.is_some() {
+                        parser.value_end
+                    } else {
+                        name_end
+                    };
+                    if RETAIN_LAYOUT {
+                        layout.entries.push(EntrySpan {
+                            range: start + offset..end + offset,
+                            value: value_start + offset..end + offset,
+                        });
+                    }
                     entries.push(Entry {
                         line,
                         origin: None,
@@ -159,7 +198,7 @@ impl Config {
                 }
             }
         }
-        Ok(Self { entries })
+        Ok((Self { entries }, layout))
     }
 
     /// Returns all occurrences, preserving order and distinguishing implicit from empty values.
@@ -208,10 +247,30 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct Layout {
+    pub entries: Vec<EntrySpan>,
+    pub sections: Vec<SectionSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EntrySpan {
+    pub range: Range<usize>,
+    pub value: Range<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SectionSpan {
+    pub range: Range<usize>,
+    pub section: Vec<u8>,
+    pub subsection: Option<Vec<u8>>,
+}
+
 struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
     line: usize,
+    value_end: usize,
 }
 impl Parser<'_> {
     fn peek(&self) -> Option<u8> {
@@ -268,6 +327,7 @@ impl Parser<'_> {
         let mut value = Vec::new();
         let mut quoted = false;
         let mut keep = 0;
+        self.value_end = self.pos;
         while let Some(byte) = self.take() {
             match byte {
                 0 => return Err(self.error("NUL in value")),
@@ -280,6 +340,7 @@ impl Parser<'_> {
                 b'"' => {
                     quoted = !quoted;
                     keep = value.len();
+                    self.value_end = self.pos;
                 }
                 b'#' | b';' if !quoted => {
                     self.comment();
@@ -287,7 +348,10 @@ impl Parser<'_> {
                 }
                 b'\\' => {
                     let escaped = match self.take() {
-                        Some(b'\n') => continue,
+                        Some(b'\n') => {
+                            self.value_end = self.pos;
+                            continue;
+                        }
                         Some(b'n') => b'\n',
                         Some(b't') => b'\t',
                         Some(b'b') => 8,
@@ -297,12 +361,14 @@ impl Parser<'_> {
                     };
                     value.push(escaped);
                     keep = value.len();
+                    self.value_end = self.pos;
                 }
                 b' ' | b'\t' if !quoted && value.is_empty() => {}
                 byte => {
                     value.push(byte);
                     if quoted || !matches!(byte, b' ' | b'\t') {
                         keep = value.len();
+                        self.value_end = self.pos;
                     }
                 }
             }

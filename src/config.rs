@@ -5,8 +5,13 @@
 //! interpretation and reset semantics. Re-resolve to refresh an immutable snapshot.
 //!
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
-//! separate. No operation reads or mutates process-global environment or writes configuration.
+//! separate. [`Document`] edits direct-file syntax; [`ConfigEdit`] holds an exclusive file lock
+//! through publication. No operation reads or mutates process-global environment.
+mod document;
+mod edit;
+pub use edit::{ConfigEdit, EditError};
 mod parse;
+pub use document::Document;
 mod resolution;
 mod sources;
 mod values;

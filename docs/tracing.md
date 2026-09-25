@@ -36,10 +36,14 @@ SSH network spans exist only on supported macOS/Linux targets.
 
 DEBUG avoids object-by-object output. TRACE deliberately makes individual storage calls visible,
 including storage calls within traversal. There are no byte, packet or tree/index-entry events. Pure
-codecs and hashing, config/discovery, standalone reference reads/writes outside transactions, pack
-writing outside push, tree comparison, content diff, status and checkout have no dedicated spans
-yet; calls they make to covered operations can still appear. Future roadmap operations extend this
-coverage at their owning boundaries rather than claiming crate-wide instrumentation.
+codecs and hashing, discovery, standalone reference reads/writes outside transactions, pack writing
+outside push, tree comparison, content diff, status and checkout have no dedicated spans yet; calls
+they make to covered operations can still appear. Future roadmap operations extend this coverage at
+their owning boundaries rather than claiming crate-wide instrumentation.
+
+Configuration resolution emits `config.resolve`; mutation emits `config.edit_config`,
+`config.commit` and `config.abort`. These spans record categorical outcomes and cleanup failure
+without paths, names, values or URLs. Failed commit cleanup is nested under the commit span.
 
 ## Outcomes, Effects and Counts
 

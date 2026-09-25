@@ -176,3 +176,14 @@ baseline. Storage accelerators are performance choices, subject to measured need
 when inventory or executable evidence changes; record a required follow-up rather than claiming
 unverified parity. Native Windows/macOS/Linux runs, resource budgets, fault/race corpora and their
 limitations determine readiness, not an assertion that all edge cases have been proven.
+
+## Configuration Mutation Follow-through
+
+R09's remote operations edit one direct file. R11 supplies conditional reference transactions; R28
+must compose remote-tracking ref rename/removal with configuration changes and report partial
+outcomes. R28 must also define orchestration for inherited branch selectors and remotes requiring
+explicit edits across multiple files; R09 does not silently rewrite those sources or promise
+whole-operation atomicity. R35 retains consumer naming/selection and view updates. R36 executes the
+portable `config_edit` suite natively on Windows; C02 retains Linux/Windows lifecycle evidence.
+Repeated scalar selector ambiguity is an explicit R09 refusal with occurrence editing available; no
+Git CLI regex-selection or warning-producing partial-edit emulation is promised.

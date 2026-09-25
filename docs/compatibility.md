@@ -1517,14 +1517,16 @@ expected old values, object kinds, namespace restrictions, destination prefix co
 authorization remain separate. Mapping can describe push deletion even though current `push`
 transports cannot send it. Push preparation may reject namespaces accepted by this general mapper.
 
-No network, object lookup, config editing or reference mutation occurs in these APIs. Resolved
-configuration supplies inherited and included values. URL rewriting, credential discovery,
-`push.default`, branch selection, matching push, shorthand names, arbitrary revision expressions,
-raw object-ID sources, empty/default fetch forms and `tag <name>` shorthand are outside the
-supported slice. Other configuration options are uninterpreted, including mirror, pruning, tag
-following, partial clone, custom service commands and transport options. Their presence does not
-change the four-key interpretation. Consumers must choose their own orchestration policy rather than
-treat the result as all of Git's remote behavior.
+The snapshot and mapping APIs perform no network, object lookup, config editing or reference
+mutation. Separate `config::Document`, `config::ConfigEdit` and `remote::RemoteConfig` APIs provide
+[lossless direct-file editing](configuration.md#lossless-file-editing), with explicit file scope,
+held locks, byte preconditions and recovery. Resolved configuration supplies inherited and included
+values. URL rewriting, credential discovery, `push.default`, branch selection, matching push,
+shorthand names, arbitrary revision expressions, raw object-ID sources, empty/default fetch forms
+and `tag <name>` shorthand are outside the supported slice. Other configuration options are
+uninterpreted, including mirror, pruning, tag following, partial clone, custom service commands and
+transport options. Their presence does not change the four-key interpretation. Consumers must choose
+their own orchestration policy rather than treat the result as all of Git's remote behavior.
 
 `examples/remote_plan.rs` reads disposable repository config, selects IDs from a supplied
 advertisement, retains destination mappings, and prepares a conditional creation push with an
