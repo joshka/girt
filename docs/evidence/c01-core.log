@@ -1,0 +1,148 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.53s
+     Running tests/config_edit.rs (target/debug/deps/config_edit-d13ad598165f89ed)
+
+running 18 tests
+test competing_threads_cannot_overwrite_from_stale_snapshot ... ok
+test explicit_unicode_file_path_is_preserved ... ok
+test git_reads_lossless_unusual_syntax::case_1_deprecated ... ok
+test git_reads_lossless_unusual_syntax::case_2_bytes ... ok
+test branch_and_refspec_changes_agree_with_git::case_2_remove ... ok
+test branch_and_refspec_changes_agree_with_git::case_1_rename ... ok
+test includes_globals_and_inherited_only_remotes_are_never_rewritten ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_1_trailing::format_1_ObjectFormat__Sha1 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_1_trailing::format_2_ObjectFormat__Sha256 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_2_standalone::format_2_ObjectFormat__Sha256 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_2_standalone::format_1_ObjectFormat__Sha1 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_3_header::format_1_ObjectFormat__Sha1 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_3_header::format_2_ObjectFormat__Sha256 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_4_crlf::format_1_ObjectFormat__Sha1 ... ok
+test inert_nul_comments_survive_resolution_and_edit::case_4_crlf::format_2_ObjectFormat__Sha256 ... ok
+test add_set_append_remove_url_agree_with_git::case_2_sha256 ... ok
+test add_set_append_remove_url_agree_with_git::case_1_sha1 ... ok
+test repeated_fetch_push_and_reset_values_remain_ordered ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/config_resolution.rs (target/debug/deps/config_resolution-7f9e5a4143315441)
+
+running 40 tests
+test bootstrap_config_reads_obey_byte_budget ... ok
+test conditions_match_git::case_09_home ... ok
+test conditions_match_git::case_07_case_sensitive ... ok
+test conditions_match_git::case_06_casefold ... ok
+test conditions_match_git::case_08_relative ... ok
+test conditions_match_git::case_10_unknown ... ok
+test conditions_match_git::case_03_branch_miss ... ok
+test conditions_match_git::case_05_gitdir_suffix ... ok
+test conditions_match_git::case_04_gitdir ... ok
+test conditions_match_git::case_01_branch ... ok
+test environment_values_and_name_bytes_are_literal ... ok
+test conditions_match_git::case_11_hasconfig ... ok
+test conditions_match_git::case_12_hasconfig_miss ... ok
+test conditions_match_git::case_02_branch_star ... ok
+test contextual_failures::case_2_malformed ... ok
+test empty_include_path_is_inert ... ok
+test contextual_failures::case_3_implicit ... ok
+test missing_root_policy::case_1_missing ... ok
+test missing_root_policy::case_2_optional ... ok
+test contextual_failures::case_1_cycle ... ok
+test environment_count_spellings_match_git::case_2_leading_space ... ok
+test environment_count_spellings_match_git::case_3_leading_zero ... ok
+test environment_count_spellings_match_git::case_1_plus ... ok
+test resolution_budgets::case_1_bytes ... ok
+test explicit_environment_file_selection_replaces_defaults ... ok
+test hasconfig_sees_environment_url_without_applying_included_urls ... ok
+test hasconfig_rejects_remote_urls_even_in_unmatched_descendants::case_2_matching ... ok
+test hasconfig_rejects_remote_urls_even_in_unmatched_descendants::case_1_not_matching ... ok
+test resolution_budgets::case_2_depth ... ok
+test resolution_budgets::case_4_matching ... ok
+test resolution_budgets::case_3_entries ... ok
+test nested_relative_includes_preserve_order_provenance_and_snapshot ... ok
+test raw_spelling_and_subsection_case_match_git::case_2_deprecated ... ok
+test raw_spelling_and_subsection_case_match_git::case_1_quoted ... ok
+test repository_gitdir_conditions_match_logical_symlink_alias ... ok
+test xdg_precedes_home_and_absent_includes_are_optional ... ok
+test layers_environment_command_remote_reset_and_format_bootstrap ... ok
+test worktree_layout_settings_do_not_reinterpret_object_format ... ok
+test linked_worktree_uses_private_gitdir_branch_and_config::case_1_sha1 ... ok
+test linked_worktree_uses_private_gitdir_branch_and_config::case_2_sha256 ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/layout_shallow.rs (target/debug/deps/layout_shallow-8a9286a52691cc54)
+
+running 70 tests
+test git_directory_case_alias_uses_filesystem_identity::case_1_sha1 ... ok
+test declarations_do_not_hide_missing_or_wrong_kind_boundary_objects::case_1_sha1 ... ok
+test git_directory_case_alias_uses_filesystem_identity::case_2_sha256 ... ok
+test declarations_do_not_hide_missing_or_wrong_kind_boundary_objects::case_2_sha256 ... ok
+test dotgit_directory_symlink_retains_worktree_and_alias_identity::case_1_sha1 ... ok
+test dotgit_directory_symlink_retains_worktree_and_alias_identity::case_2_sha256 ... ok
+test bare_discovery_signature::case_2_bare::format_1_ObjectFormat__Sha1 ... ok
+test bare_discovery_signature::case_1_partial::format_2_ObjectFormat__Sha256 ... ok
+test bare_discovery_signature::case_1_partial::format_1_ObjectFormat__Sha1 ... ok
+test bare_discovery_signature::case_2_bare::format_2_ObjectFormat__Sha256 ... ok
+test inaccessible_discovery_candidate_does_not_fall_back::format_2_ObjectFormat__Sha256 ... ok
+test inaccessible_discovery_candidate_does_not_fall_back::format_1_ObjectFormat__Sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_1_short::format_1_ObjectFormat__Sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_1_short::format_2_ObjectFormat__Sha256 ... ok
+test inaccessible_checkout_retains_openable_metadata::case_1_sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_2_nonhex::format_2_ObjectFormat__Sha256 ... ok
+test inaccessible_checkout_retains_openable_metadata::case_2_sha256 ... ok
+test invalid_shallow_prefix_matches_git::case_2_nonhex::format_1_ObjectFormat__Sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_3_blank::format_2_ObjectFormat__Sha256 ... ok
+test invalid_shallow_prefix_matches_git::case_3_blank::format_1_ObjectFormat__Sha1 ... ok
+test malformed_bare_candidate_stops_discovery::format_1_ObjectFormat__Sha1 ... ok
+test linked_inventory_preserves_missing_identity_and_private_state::case_2_sha256 ... ok
+test linked_inventory_preserves_missing_identity_and_private_state::case_1_sha1 ... ok
+test malformed_bare_candidate_stops_discovery::format_2_ObjectFormat__Sha256 ... ok
+test normalization_aliases_share_common_directory_identity::case_1_sha1 ... ok
+test normalization_aliases_share_common_directory_identity::case_2_sha256 ... ok
+test missing_nondeclared_parent_is_error_and_failed_refresh_preserves_snapshot::case_1_sha1 ... ok
+test malformed_registration_does_not_hide_other_metadata::case_2_sha256 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_1_sha1 ... ok
+test malformed_registration_does_not_hide_other_metadata::case_1_sha1 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_2_sha256 ... ok
+test missing_nondeclared_parent_is_error_and_failed_refresh_preserves_snapshot::case_2_sha256 ... ok
+test ordinary_names_do_not_stop_discovery::case_1_head::format_1_ObjectFormat__Sha1 ... ok
+test ordinary_names_do_not_stop_discovery::case_1_head::format_2_ObjectFormat__Sha256 ... ok
+test ordinary_names_do_not_stop_discovery::case_2_objects::format_1_ObjectFormat__Sha1 ... ok
+test ordinary_names_do_not_stop_discovery::case_2_objects::format_2_ObjectFormat__Sha256 ... ok
+test moved_checkout_is_visible_then_git_repair_restores_links::case_1_sha1 ... ok
+test moved_checkout_is_visible_then_git_repair_restores_links::case_2_sha256 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_1_sha1 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_2_sha256 ... ok
+test separate_metadata_opens_without_inventing_a_checkout::case_1_sha1 ... ok
+test separate_metadata_opens_without_inventing_a_checkout::case_2_sha256 ... ok
+test relative_layout_survives_whole_repository_move::case_1_sha1 ... ok
+test relative_layout_survives_whole_repository_move::case_2_sha256 ... ok
+test replaced_checkout_directory_is_invalid_without_losing_registration::case_1_sha1 ... ok
+test replaced_checkout_directory_is_invalid_without_losing_registration::case_2_sha256 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_1_sha1 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_2_sha256 ... ok
+test shallow_prefix_matches_git_history::case_1_lf::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_1_lf::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_2_crlf::format_1_ObjectFormat__Sha1 ... ok
+test depth_clone_freezes_boundaries_and_refreshes_after_git_deepening::case_1_sha1 ... ok
+test depth_clone_freezes_boundaries_and_refreshes_after_git_deepening::case_2_sha256 ... ok
+test shallow_prefix_matches_git_history::case_2_crlf::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_3_unterminated::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_3_unterminated::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_4_hex_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_4_hex_suffix::format_1_ObjectFormat__Sha1 ... ok
+test symlink_gitfile_resolves_relative_target_at_caller_location::case_1_sha1 ... ok
+test shallow_prefix_matches_git_history::case_5_text_suffix::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_5_text_suffix::format_2_ObjectFormat__Sha256 ... ok
+test symlink_gitfile_resolves_relative_target_at_caller_location::case_2_sha256 ... ok
+test shallow_prefix_matches_git_history::case_6_nul_suffix::format_1_ObjectFormat__Sha1 ... ok
+test unrelated_checkout_is_structured_error::case_1_sha1 ... ok
+test shallow_prefix_matches_git_history::case_6_nul_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_7_binary_suffix::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_7_binary_suffix::format_2_ObjectFormat__Sha256 ... ok
+test unrelated_checkout_is_structured_error::case_2_sha256 ... ok
+test shared_settings_and_direct_private_bootstrap_match_git::case_1_sha1 ... ok
+test shared_settings_and_direct_private_bootstrap_match_git::case_2_sha256 ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+

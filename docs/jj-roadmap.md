@@ -60,7 +60,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R08 | Layered config resolution and provenance                    | R03                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r08.md)                                                                                   |
 | R09 | Lossless config and remote mutation                         | R08                             | Complete              | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Ready for acceptance  | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
-| C01 | First architecture and abstraction-debt review              | R01–R10                         | Planned               | [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                                                                                        |
+| C01 | First architecture and abstraction-debt review              | R01–R10                         | Ready for acceptance  | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Planned               | [A08](jj-acceptance.md#a08--references-and-reflogs)                                                                                                                          |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Planned               | [A09](jj-acceptance.md#a09--index-and-colocation-primitives)                                                                                                                 |
@@ -113,7 +113,8 @@ read/display/write/fsck behavior, exact signature bytes, tested revisions and na
 completes layered resolution with provenance; its [evidence](evidence/r08.md) records exact source,
 Git observations, limits, benchmarks and platform boundaries. R09 completion is recorded in
 [its evidence](evidence/r09.md); R10 is ready for acceptance with
-[retained evidence](evidence/r10.md). C01 follows coordinator acceptance; final jj integration
+[retained evidence](evidence/r10.md). C01 review is delivered and its bounded
+[remediation](evidence/c01.md) is ready for coordinator acceptance before R11; final jj integration
 remains R35.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
@@ -193,10 +194,34 @@ Git CLI regex-selection or warning-producing partial-edit emulation is promised.
 ## Repository Layout Follow-through
 
 R10 implementation and native macOS evidence are [retained here](evidence/r10.md), ready for
-coordinator acceptance. C01 remains the next checkpoint before R11. R36/C02 own native Linux and
-Windows execution of `layout_shallow`, Windows drive/verbatim/UNC paths and denied-access
+coordinator acceptance together with [C01 remediation](evidence/c01.md). R36/C02 own native Linux
+and Windows execution of `layout_shallow`, Windows drive/verbatim/UNC paths and denied-access
 registrations, Linux byte paths, and WSL relative-backlink interoperability. Cross-builds do not
 close these native requirements. R19/R20 retain registration, repair, locks and pruning; R26/R27
 retain shallow negotiation/depth changes, and R29 retains shallow push policy. Current transport
 guards prevent unsupported use without claiming those future requirements complete. R14 retains
 external storage/backends; R35 re-inventories consumer environment and caching needs.
+
+## C01 Follow-through
+
+C01 review is delivered. F1 shallow prefix interpretation, F2 discovery candidate recognition, F3
+inert NUL comments and D2 configuration tracing are remediated with retained
+[evidence](evidence/c01.md); coordinator verification and acceptance remain pending. These fixes do
+not accept R10/C01 automatically or close native R07–R10 gaps. R36 remains deferred as agreed, with
+its C02 gate unchanged.
+
+- **D1 — R11:** Imported reflogs must accept the exact Git-observed `+0060`, empty-name and
+  padded-name cases in [A08](jj-acceptance.md#a08--references-and-reflogs), in both object formats.
+  Keep imported interpretation distinct from append construction policy.
+- **D3 — R21:** When extending configuration file/environment selection, consolidate boolean
+  decoding in the configuration owner and exercise repository bootstrap, file selection and typed
+  lookup together. Preserve implicit values and source-specific diagnostics. Existing duplication is
+  nonblocking; no scalar semantics changed during C01 remediation.
+- **D4 — R19, with R20 repair follow-through:** Measure large linked-worktree inventory against the
+  R10 baseline and characterize repeated common config/shallow reads. If needed, share only coherent
+  layout inspection while preserving per-registration errors and explicit snapshot boundaries. No
+  shared mutable cache or general repository context is authorized by this debt item.
+- **Configuration characterization — R21:** Independently establish NUL-containing value and path
+  semantics using an interpreting Git operation before changing their rejection policy. Git CLI
+  display truncation alone does not define the internal value. This is distinct from F3's repaired
+  inert comments and must be resolved before R34 if required by consumer configuration.

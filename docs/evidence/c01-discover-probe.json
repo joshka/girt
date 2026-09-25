@@ -1,0 +1,66 @@
+[
+  {
+    "format": "sha1",
+    "marker": "HEAD",
+    "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar",
+    "child": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/child-HEAD",
+    "git": {
+      "rc": 0,
+      "out": "/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/.git\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "Ok(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/.git\")\n",
+      "err": ""
+    }
+  },
+  {
+    "format": "sha1",
+    "marker": "objects",
+    "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar",
+    "child": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/child-objects",
+    "git": {
+      "rc": 0,
+      "out": "/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/.git\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "Ok(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-jo_rqbar/.git\")\n",
+      "err": ""
+    }
+  },
+  {
+    "format": "sha256",
+    "marker": "HEAD",
+    "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj",
+    "child": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/child-HEAD",
+    "git": {
+      "rc": 0,
+      "out": "/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/.git\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "Ok(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/.git\")\n",
+      "err": ""
+    }
+  },
+  {
+    "format": "sha256",
+    "marker": "objects",
+    "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj",
+    "child": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/child-objects",
+    "git": {
+      "rc": 0,
+      "out": "/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/.git\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "Ok(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-discover-gz2hudoj/.git\")\n",
+      "err": ""
+    }
+  }
+]

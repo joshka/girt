@@ -1,0 +1,308 @@
+{
+  "git": {
+    "rc": 0,
+    "out": "git version 2.55.0\n",
+    "err": ""
+  },
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cases": [
+    {
+      "format": "sha1",
+      "name": "exact",
+      "bytes_hex": "323764643730386636323061383565613938323939306663323839343836396661623033643238650a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 0,
+        "out": "27dd708f620a85ea982990fc2894869fab03d28e\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])]\nwalk: Ok([Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "hex_suffix",
+      "bytes_hex": "323764643730386636323061383565613938323939306663323839343836396661623033643238656161616161616161616161616161616161616161616161610a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 0,
+        "out": "27dd708f620a85ea982990fc2894869fab03d28e\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])]\nwalk: Ok([Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "junk_suffix",
+      "bytes_hex": "3237646437303866363230613835656139383239393066633238393438363966616230336432386520747261696c696e672d6a756e6b0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 0,
+        "out": "27dd708f620a85ea982990fc2894869fab03d28e\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])]\nwalk: Ok([Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "nul_suffix",
+      "bytes_hex": "32376464373038663632306138356561393832393930666332383934383639666162303364323865006a756e6b0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 0,
+        "out": "27dd708f620a85ea982990fc2894869fab03d28e\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])]\nwalk: Ok([Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "short",
+      "bytes_hex": "3237646437303866363230613835656139383239393066633238393438363966616230336432380a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "fatal: bad shallow line: 27dd708f620a85ea982990fc2894869fab03d28\n\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-error: Shallow(InvalidRoot { line: 1 })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "blank",
+      "bytes_hex": "0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "fatal: bad shallow line: \n\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-error: Shallow(InvalidRoot { line: 1 })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "empty",
+      "bytes_hex": "",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha1-klvl1s2n",
+      "tip": "27dd708f620a85ea982990fc2894869fab03d28e",
+      "git": {
+        "rc": 0,
+        "out": "27dd708f620a85ea982990fc2894869fab03d28e a818c75f3459365ccf78d4b5aee7435a74a5b854\na818c75f3459365ccf78d4b5aee7435a74a5b854\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[]\nwalk: Ok([Sha1([39, 221, 112, 143, 98, 10, 133, 234, 152, 41, 144, 252, 40, 148, 134, 159, 171, 3, 210, 142]), Sha1([168, 24, 199, 95, 52, 89, 54, 92, 207, 120, 212, 181, 174, 231, 67, 90, 116, 165, 184, 84])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "boundary_invalid_parent",
+      "payload_hex": "7472656520346238323564633634326362366562396130363065353462663864363932383866626565343930340a706172656e74207a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0a0a6d6573736167650a",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "error: bad parents in commit 07e311639635c6a9ba1dd047dc05b1da96478bdc\nfatal: bad object 07e311639635c6a9ba1dd047dc05b1da96478bdc\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([7, 227, 17, 99, 150, 53, 198, 169, 186, 29, 208, 71, 220, 5, 177, 218, 150, 71, 139, 220])]\nwalk: Err(Parse { id: Sha1([7, 227, 17, 99, 150, 53, 198, 169, 186, 29, 208, 71, 220, 5, 177, 218, 150, 71, 139, 220]), source: InvalidObjectId })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha1",
+      "name": "boundary_overlong_parent",
+      "payload_hex": "7472656520346238323564633634326362366562396130363065353462663864363932383866626565343930340a706172656e7420613831386337356633343539333635636366373864346235616565373433356137346135623835346a756e6b0a0a6d6573736167650a",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "error: bad parents in commit 5054b7d559e0d33beaceebeb23ed86167694fc03\nfatal: bad object 5054b7d559e0d33beaceebeb23ed86167694fc03\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha1 bare=false roots=[Sha1([80, 84, 183, 213, 89, 224, 211, 59, 234, 206, 235, 235, 35, 237, 134, 22, 118, 148, 252, 3])]\nwalk: Err(Parse { id: Sha1([80, 84, 183, 213, 89, 224, 211, 59, 234, 206, 235, 235, 35, 237, 134, 22, 118, 148, 252, 3]), source: InvalidObjectId })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "exact",
+      "bytes_hex": "616661313833323130353964653630626638333132633762336566656134326562306636633661623335396638623034626565336263613734313764396663340a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 0,
+        "out": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])]\nwalk: Ok([Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "hex_suffix",
+      "bytes_hex": "616661313833323130353964653630626638333132633762336566656134326562306636633661623335396638623034626565336263613734313764396663346161616161616161616161616161616161616161616161610a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 0,
+        "out": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])]\nwalk: Ok([Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "junk_suffix",
+      "bytes_hex": "6166613138333231303539646536306266383331326337623365666561343265623066366336616233353966386230346265653362636137343137643966633420747261696c696e672d6a756e6b0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 0,
+        "out": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])]\nwalk: Ok([Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "nul_suffix",
+      "bytes_hex": "61666131383332313035396465363062663833313263376233656665613432656230663663366162333539663862303462656533626361373431376439666334006a756e6b0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 0,
+        "out": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])]\nwalk: Ok([Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "short",
+      "bytes_hex": "6166613138333231303539646536306266383331326337623365666561343265623066366336616233353966386230346265653362636137343137643966630a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "fatal: bad shallow line: afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc\n\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-error: Shallow(InvalidRoot { line: 1 })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "blank",
+      "bytes_hex": "0a",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "fatal: bad shallow line: \n\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-error: Shallow(InvalidRoot { line: 1 })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "empty",
+      "bytes_hex": "",
+      "repo": "/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/c01-sha256-5huwjk23",
+      "tip": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4",
+      "git": {
+        "rc": 0,
+        "out": "afa18321059de60bf8312c7b3efea42eb0f6c6ab359f8b04bee3bca7417d9fc4 6abeba2c1f97914c3c2a12532e02367595080b77013985ba7466dbf8053de38b\n6abeba2c1f97914c3c2a12532e02367595080b77013985ba7466dbf8053de38b\n",
+        "err": ""
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[]\nwalk: Ok([Sha256([175, 161, 131, 33, 5, 157, 230, 11, 248, 49, 44, 123, 62, 254, 164, 46, 176, 246, 198, 171, 53, 159, 139, 4, 190, 227, 188, 167, 65, 125, 159, 196]), Sha256([106, 190, 186, 44, 31, 151, 145, 76, 60, 42, 18, 83, 46, 2, 54, 117, 149, 8, 11, 119, 1, 57, 133, 186, 116, 102, 219, 248, 5, 61, 227, 139])])\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "boundary_invalid_parent",
+      "payload_hex": "7472656520366566313962343132323563353336396631633130346434356438643835656661396230353762353362313462346239623933396464373464656363353332310a706172656e74207a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a0a0a6d6573736167650a",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "error: bad parents in commit 2bae00f118c3593f31f2701cfc0f7b8073e6979c7ba6f316015de67b08363e60\nfatal: bad object 2bae00f118c3593f31f2701cfc0f7b8073e6979c7ba6f316015de67b08363e60\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([43, 174, 0, 241, 24, 195, 89, 63, 49, 242, 112, 28, 252, 15, 123, 128, 115, 230, 151, 156, 123, 166, 243, 22, 1, 93, 230, 123, 8, 54, 62, 96])]\nwalk: Err(Parse { id: Sha256([43, 174, 0, 241, 24, 195, 89, 63, 49, 242, 112, 28, 252, 15, 123, 128, 115, 230, 151, 156, 123, 166, 243, 22, 1, 93, 230, 123, 8, 54, 62, 96]), source: InvalidObjectId })\n",
+        "err": ""
+      }
+    },
+    {
+      "format": "sha256",
+      "name": "boundary_overlong_parent",
+      "payload_hex": "7472656520366566313962343132323563353336396631633130346434356438643835656661396230353762353362313462346239623933396464373464656363353332310a706172656e7420366162656261326331663937393134633363326131323533326530323336373539353038306237373031333938356261373436366462663830353364653338626a756e6b0a0a6d6573736167650a",
+      "git": {
+        "rc": 128,
+        "out": "",
+        "err": "error: bad parents in commit 1ec0f66b19e30a013358f7713e81fe1e6367d12a9a8bff5caa5b5aa3bc525f2c\nfatal: bad object 1ec0f66b19e30a013358f7713e81fe1e6367d12a9a8bff5caa5b5aa3bc525f2c\n"
+      },
+      "girt": {
+        "rc": 0,
+        "out": "open-ok: format=Sha256 bare=false roots=[Sha256([30, 192, 246, 107, 25, 227, 10, 1, 51, 88, 247, 113, 62, 129, 254, 30, 99, 103, 209, 42, 154, 139, 255, 92, 170, 91, 90, 163, 188, 82, 95, 44])]\nwalk: Err(Parse { id: Sha256([30, 192, 246, 107, 25, 227, 10, 1, 51, 88, 247, 113, 62, 129, 254, 30, 99, 103, 209, 42, 154, 139, 255, 92, 170, 91, 90, 163, 188, 82, 95, 44]), source: InvalidObjectId })\n",
+        "err": ""
+      }
+    }
+  ]
+}

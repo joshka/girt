@@ -1,0 +1,67 @@
+[
+  {
+    "name": "multiline",
+    "git": {
+      "rc": 128,
+      "out": "",
+      "err": "fatal: bad config line 2 in file /tmp/girt-c01-review/multiline.cfg\n"
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Err(ConfigError { line: 3, reason: \"unterminated quote\" })\nresolve=Err(ResolveError { location: SourceLocation { path: Some(\"/tmp/girt-c01-review/multiline.cfg\"), line: 3 }, included_from: [], source: Parse(ConfigError { line: 3, reason: \"unterminated quote\" }) })\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "cr",
+    "git": {
+      "rc": 0,
+      "out": "x.k=a\rb\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [120], subsection: None, name: [107], value: Some([97, 13, 98]) }] })\nresolve=Ok(Config { entries: [Entry { line: 2, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/cr.cfg\"), line: 2 }, included_from: [] }), section: [120], subsection: None, name: [107], value: Some([97, 13, 98]) }] })\nedit=Ok(())\nbytes=[91, 120, 93, 10, 107, 61, 32, 34, 99, 104, 97, 110, 103, 101, 100, 34, 10]\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "space",
+    "git": {
+      "rc": 0,
+      "out": "x.k=a\u000bb\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [120], subsection: None, name: [107], value: Some([97, 11, 98]) }] })\nresolve=Ok(Config { entries: [Entry { line: 2, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/space.cfg\"), line: 2 }, included_from: [] }), section: [120], subsection: None, name: [107], value: Some([97, 11, 98]) }] })\nedit=Ok(())\nbytes=[91, 120, 93, 10, 107, 61, 32, 34, 99, 104, 97, 110, 103, 101, 100, 34, 10]\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "nul_comment",
+    "git": {
+      "rc": 0,
+      "out": "x.k=a\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [120], subsection: None, name: [107], value: Some([97]) }] })\nresolve=Ok(Config { entries: [Entry { line: 2, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/nul_comment.cfg\"), line: 2 }, included_from: [] }), section: [120], subsection: None, name: [107], value: Some([97]) }] })\nedit=Ok(())\nbytes=[91, 120, 93, 10, 107, 61, 34, 99, 104, 97, 110, 103, 101, 100, 34, 32, 35, 32, 0, 32, 104, 105, 10]\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "hasconfig_unmatched",
+    "git": {
+      "rc": 128,
+      "out": "includeif.hasconfig:remote.*.url:never.path=bad.cfg\n",
+      "err": "fatal: bad config line 1 in file /tmp/girt-c01-review/bad.cfg\n"
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [105, 110, 99, 108, 117, 100, 101, 73, 102], subsection: Some([104, 97, 115, 99, 111, 110, 102, 105, 103, 58, 114, 101, 109, 111, 116, 101, 46, 42, 46, 117, 114, 108, 58, 110, 101, 118, 101, 114]), name: [112, 97, 116, 104], value: Some([98, 97, 100, 46, 99, 102, 103]) }, Entry { line: 4, origin: None, section: [120], subsection: None, name: [107], value: Some([111, 107]) }] })\nresolve=Err(ResolveError { location: SourceLocation { path: Some(\"/tmp/girt-c01-review/bad.cfg\"), line: 1 }, included_from: [SourceLocation { path: Some(\"/tmp/girt-c01-review/hasconfig_unmatched.cfg\"), line: 2 }], source: Parse(ConfigError { line: 1, reason: \"variable outside section\" }) })\nedit=Ok(())\nbytes=[91, 105, 110, 99, 108, 117, 100, 101, 73, 102, 32, 34, 104, 97, 115, 99, 111, 110, 102, 105, 103, 58, 114, 101, 109, 111, 116, 101, 46, 42, 46, 117, 114, 108, 58, 110, 101, 118, 101, 114, 34, 93, 10, 112, 97, 116, 104, 61, 34, 99, 104, 97, 110, 103, 101, 100, 34, 10, 91, 120, 93, 10, 107, 61, 111, 107, 10]\n",
+      "err": ""
+    }
+  }
+]

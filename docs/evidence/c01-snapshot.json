@@ -1,0 +1,18 @@
+[
+  {
+    "format": "sha1",
+    "result": {
+      "rc": 0,
+      "out": "old=2 refreshed=1\nfailed_refresh=Err(InvalidRoot { line: 1 })\nunshallow=2 retained=1\n",
+      "err": ""
+    }
+  },
+  {
+    "format": "sha256",
+    "result": {
+      "rc": 0,
+      "out": "old=2 refreshed=1\nfailed_refresh=Err(InvalidRoot { line: 1 })\nunshallow=2 retained=1\n",
+      "err": ""
+    }
+  }
+]

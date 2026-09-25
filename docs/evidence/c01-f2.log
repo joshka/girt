@@ -1,0 +1,33 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests src/lib.rs (target/debug/deps/girt-471ac4938702d969)
+
+running 9 tests
+test history::tests::discovery_enforces_limit_before_queue_growth ... ok
+test repository::discover::tests::empty_search_is_read_only ... ok
+test repository::discover::tests::start_must_be_an_existing_directory ... ok
+test repository::discover::tests::rejects_non_ancestor_ceiling ... ok
+test repository::discover::tests::ceiling_is_inclusive_and_stops_parent_search ... ok
+test repository::discover::tests::dangling_gitfile_symlink_stops_search ... ok
+test repository::discover::tests::symlink_start_uses_physical_ancestry ... ok
+test repository::discover::tests::malformed_inner_marker_prevents_outer_fallback ... ok
+test repository::discover::tests::nearest_repository_wins ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1502 filtered out; finished in 0.03s
+
+     Running tests/layout_shallow.rs (target/debug/deps/layout_shallow-8a9286a52691cc54)
+
+running 10 tests
+test ordinary_names_do_not_stop_discovery::case_1_head::format_1_ObjectFormat__Sha1 ... ok
+test ordinary_names_do_not_stop_discovery::case_1_head::format_2_ObjectFormat__Sha256 ... ok
+test ordinary_names_do_not_stop_discovery::case_2_objects::format_2_ObjectFormat__Sha256 ... ok
+test ordinary_names_do_not_stop_discovery::case_2_objects::format_1_ObjectFormat__Sha1 ... ok
+test malformed_bare_candidate_stops_discovery::format_1_ObjectFormat__Sha1 ... ok
+test bare_discovery_signature::case_1_partial::format_1_ObjectFormat__Sha1 ... ok
+test bare_discovery_signature::case_2_bare::format_1_ObjectFormat__Sha1 ... ok
+test malformed_bare_candidate_stops_discovery::format_2_ObjectFormat__Sha256 ... ok
+test bare_discovery_signature::case_1_partial::format_2_ObjectFormat__Sha256 ... ok
+test bare_discovery_signature::case_2_bare::format_2_ObjectFormat__Sha256 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.06s
+

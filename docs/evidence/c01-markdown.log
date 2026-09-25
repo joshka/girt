@@ -1,0 +1,7 @@
+rumdl check .
+
+Success: No issues found in 29 files (15ms)
+markdownlint-cli2 v0.23.2 (markdownlint v0.41.1)
+Finding: docs/evidence/c01.md docs/evidence/r10.md docs/jj-roadmap.md docs/jj-acceptance.md docs/configuration.md docs/repositories.md docs/tracing.md
+Linting: 7 files
+Summary: 0 issues in 0 files

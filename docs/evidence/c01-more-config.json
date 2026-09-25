@@ -1,0 +1,72 @@
+[
+  {
+    "name": "vt_leading",
+    "data_hex": "5b785d0a6b3d0b6162630b0a",
+    "git": {
+      "rc": 0,
+      "out": "x.k=\u000babc\u000b\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [120], subsection: None, name: [107], value: Some([11, 97, 98, 99, 11]) }] })\nresolve=Ok(Config { entries: [Entry { line: 2, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/vt_leading.cfg\"), line: 2 }, included_from: [] }), section: [120], subsection: None, name: [107], value: Some([11, 97, 98, 99, 11]) }] })\nedit=Ok(())\nbytes=[91, 120, 93, 10, 107, 61, 34, 99, 104, 97, 110, 103, 101, 100, 34, 10]\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "ff_leading",
+    "data_hex": "5b785d0a0c6b3d610a",
+    "git": {
+      "rc": 128,
+      "out": "",
+      "err": "fatal: bad config line 2 in file /tmp/girt-c01-review/ff_leading.cfg\n"
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Err(ConfigError { line: 2, reason: \"invalid variable name\" })\nresolve=Err(ResolveError { location: SourceLocation { path: Some(\"/tmp/girt-c01-review/ff_leading.cfg\"), line: 2 }, included_from: [], source: Parse(ConfigError { line: 2, reason: \"invalid variable name\" }) })\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "nul_value",
+    "data_hex": "5b785d0a6b3d61620063640a",
+    "git": {
+      "rc": 0,
+      "out": "x.k=ab\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Err(ConfigError { line: 2, reason: \"NUL in value\" })\nresolve=Err(ResolveError { location: SourceLocation { path: Some(\"/tmp/girt-c01-review/nul_value.cfg\"), line: 2 }, included_from: [], source: Parse(ConfigError { line: 2, reason: \"NUL in value\" }) })\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "nul_quoted",
+    "data_hex": "5b785d0a6b3d226162006364220a",
+    "git": {
+      "rc": 0,
+      "out": "x.k=ab\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Err(ConfigError { line: 2, reason: \"NUL in value\" })\nresolve=Err(ResolveError { location: SourceLocation { path: Some(\"/tmp/girt-c01-review/nul_quoted.cfg\"), line: 2 }, included_from: [], source: Parse(ConfigError { line: 2, reason: \"NUL in value\" }) })\n",
+      "err": ""
+    }
+  },
+  {
+    "name": "nul_trailing",
+    "data_hex": "5b785d0a6b3d6f6b0a23000a5b785d0a6c3d6e6578740a",
+    "git": {
+      "rc": 0,
+      "out": "x.k=ok\nx.l=next\n",
+      "err": ""
+    },
+    "girt": {
+      "rc": 0,
+      "out": "parse=Ok(Config { entries: [Entry { line: 2, origin: None, section: [120], subsection: None, name: [107], value: Some([111, 107]) }, Entry { line: 5, origin: None, section: [120], subsection: None, name: [108], value: Some([110, 101, 120, 116]) }] })\nresolve=Ok(Config { entries: [Entry { line: 2, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/nul_trailing.cfg\"), line: 2 }, included_from: [] }), section: [120], subsection: None, name: [107], value: Some([111, 107]) }, Entry { line: 5, origin: Some(Origin { scope: Local, location: SourceLocation { path: Some(\"/tmp/girt-c01-review/nul_trailing.cfg\"), line: 5 }, included_from: [] }), section: [120], subsection: None, name: [108], value: Some([110, 101, 120, 116]) }] })\nedit=Ok(())\nbytes=[91, 120, 93, 10, 107, 61, 34, 99, 104, 97, 110, 103, 101, 100, 34, 10, 35, 0, 10, 91, 120, 93, 10, 108, 61, 110, 101, 120, 116, 10]\n",
+      "err": ""
+    }
+  }
+]

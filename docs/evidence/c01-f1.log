@@ -1,0 +1,47 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.36s
+     Running unittests src/lib.rs (target/debug/deps/girt-471ac4938702d969)
+
+running 7 tests
+test repository::shallow::tests::invalid_root_has_line::case_1_blank ... ok
+test repository::shallow::tests::invalid_root_has_line::case_2_invalid ... ok
+test fetch::tests::rejects_advertisements::case_2_shallow ... ok
+test repository::shallow::tests::read_bounds_and_cancellation_precede_results ... ok
+test repository::shallow::tests::duplicate_roots_are_coalesced::case_1_sha1 ... ok
+test repository::shallow::tests::duplicate_roots_are_coalesced::case_2_sha256 ... ok
+test fetch::install::shallow_tests::stale_handle_cannot_install_into_new_shallow_metadata ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1504 filtered out; finished in 0.01s
+
+     Running tests/layout_shallow.rs (target/debug/deps/layout_shallow-8a9286a52691cc54)
+
+running 26 tests
+test invalid_shallow_prefix_matches_git::case_2_nonhex::format_1_ObjectFormat__Sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_1_short::format_1_ObjectFormat__Sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_2_nonhex::format_2_ObjectFormat__Sha256 ... ok
+test invalid_shallow_prefix_matches_git::case_1_short::format_2_ObjectFormat__Sha256 ... ok
+test invalid_shallow_prefix_matches_git::case_3_blank::format_2_ObjectFormat__Sha256 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_1_sha1 ... ok
+test invalid_shallow_prefix_matches_git::case_3_blank::format_1_ObjectFormat__Sha1 ... ok
+test null_shallow_declaration_is_retained_without_inventing_an_object::case_2_sha256 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_2_sha256 ... ok
+test shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes::case_1_sha1 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_1_sha1 ... ok
+test linked_shallow_metadata_is_shared_and_relative_extension_is_recognized::case_2_sha256 ... ok
+test shallow_prefix_matches_git_history::case_3_unterminated::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_2_crlf::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_3_unterminated::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_1_lf::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_1_lf::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_2_crlf::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_4_hex_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_4_hex_suffix::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_5_text_suffix::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_5_text_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_6_nul_suffix::format_1_ObjectFormat__Sha1 ... ok
+test shallow_prefix_matches_git_history::case_6_nul_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_7_binary_suffix::format_2_ObjectFormat__Sha256 ... ok
+test shallow_prefix_matches_git_history::case_7_binary_suffix::format_1_ObjectFormat__Sha1 ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.29s
+

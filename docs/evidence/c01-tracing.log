@@ -1,0 +1,11 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.26s
+     Running tests/tracing.rs (target/debug/deps/tracing-a6a5af51034430f3)
+
+running 3 tests
+test filtered_config_resolution_keeps_parent_completion_fields ... ok
+test config_resolution_obeys_exact_target_filter_and_initial_outcome ... ok
+test config_resolution_span_is_categorical_and_redacted ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+

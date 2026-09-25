@@ -160,6 +160,16 @@ Windows as well as Unix; signal cleanup belongs to caller integration where proc
 needed. Characterize reference backends accepted by the target rather than silently excluding
 reftable.
 
+C01 D1 adds both-format imported reflog fixtures with identities `b"A <a@b> 1 +0060"`,
+`b" <a@b> 1 +0000"` (empty name), and `b"A  <a@b> 1 +0000"` (padded name), alongside the canonical
+`b"A <a@b> 1 +0000"` control. The `b"..."` notation specifies exact bytes including leading and
+repeated spaces. Each record uses real Git-created commit IDs and a tab-separated `fixture` message.
+Compare `git reflog show '--format=%H %gn %gs' HEAD` interpretation, preserving raw bytes where
+rewriting needs them. Keep append construction validation separate, and retain format,
+record-boundary and partial-publication guarantees. The original and rerun observations are
+identified in
+[C01 evidence](evidence/c01.md).
+
 ### A09 — Index and colocation primitives
 
 **Tasks:** R12, R13. **Consumer:** index export/reset in `lib/src/git.rs`,
