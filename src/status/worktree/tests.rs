@@ -193,6 +193,11 @@ fn reports_change_observed_after_content_read() {
 fn reports_directory_mutation_during_scan() {
     let (_temp, repo, entries) = fixture(b"file", b"old");
     let root = repo.worktree().unwrap();
+    // Ensure the injected write changes metadata even within one filesystem clock tick.
+    fs::File::open(root)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH)
+        .unwrap();
     let result = scan_with_hook(
         &repo,
         root,

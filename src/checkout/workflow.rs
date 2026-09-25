@@ -30,9 +30,11 @@ impl Repository {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (baseline, target, limits);
-            let cause = super::types::check(cancel)
-                .err()
-                .unwrap_or_else(|| super::types::refused(b"", "checkout requires Linux/macOS"));
+            let cause = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                super::Error::Cancelled
+            } else {
+                super::types::refused(b"", "checkout requires Linux/macOS")
+            };
             Err(Failure {
                 cause: Box::new(cause),
                 report: Report::default(),

@@ -157,6 +157,7 @@ pub enum Error {
     },
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn check(cancel: &std::sync::atomic::AtomicBool) -> Result<(), Error> {
     if cancel.load(std::sync::atomic::Ordering::Relaxed) {
         Err(Error::Cancelled)
