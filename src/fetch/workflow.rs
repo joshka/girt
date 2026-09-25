@@ -312,7 +312,7 @@ impl FetchReady {
                 Ok(()) => Ok(report),
                 Err(source) => Err(FetchFinishError {
                     report: Box::new(report),
-                    source: Box::new(source),
+                    source,
                 }),
             }
         };
@@ -333,14 +333,14 @@ impl FetchReady {
         limits: FetchUpdateLimits,
         cancel: &AtomicBool,
         report: &mut FetchReport,
-    ) -> Result<(), FetchFinishFailure> {
+    ) -> Result<(), Box<FetchFinishFailure>> {
         report.installed = Some(
             self.received
                 .install(&self.request.repository, limits.snapshot, cancel)
                 .map_err(FetchFinishFailure::Installation)?,
         );
         super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
-        super::worktree::check(&self.request.repository)?;
+        super::worktree::check(&self.request.repository).map_err(FetchFinishFailure::Safety)?;
         if !self.received.wants().is_empty() {
             let objects = self
                 .request
@@ -359,7 +359,8 @@ impl FetchReady {
                 &self.request.authorized_force,
                 limits,
                 cancel,
-            )?;
+            )
+            .map_err(FetchFinishFailure::Update)?;
         }
         super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
         let edits: Vec<_> = report
@@ -387,8 +388,11 @@ impl FetchReady {
             .request
             .repository
             .references()
-            .map_err(FetchPlanError::from)?;
-        report.references = refs.transaction(&edits)?;
+            .map_err(FetchPlanError::from)
+            .map_err(FetchFinishFailure::Safety)?;
+        report.references = refs
+            .transaction(&edits)
+            .map_err(FetchFinishFailure::Publication)?;
         Ok(())
     }
 }

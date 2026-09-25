@@ -3,7 +3,7 @@ name: Reference validation
 on:
   push:
     paths:
-      - 'src/refs/**'
+      - 'src/**'
       - 'tests/references_portable.rs'
       - '.github/workflows/references.yml'
   workflow_dispatch:
