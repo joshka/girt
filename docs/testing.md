@@ -149,6 +149,11 @@ unsupported operations separate from fixture assumptions; do not disable otherwi
 because another suite requires a Unix backend. Record exact native run revisions in
 [compatibility evidence](compatibility.md#platform-and-git-version-validation).
 
+The portable `tracing` integration suite uses original local data and loopback HTTP fixtures. Run it
+with `tracing` alone and with `tracing,http`; Unix reference/clone completion cases are explicitly
+scoped. Windows CI runs both configurations. The `tracing,ssh` library is checked independently;
+existing SSH process and cancellation tests run under all features on supported native platforms.
+
 ## Historical Capability Completion Records
 
 The following sections record evidence collected when each capability landed. Counts, commands, API

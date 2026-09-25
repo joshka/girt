@@ -122,6 +122,17 @@
 //! transports use the caller's runtime. Resource limits apply to the documented phase or read, not
 //! total process memory or an operation-wide deadline.
 //!
+//! # Optional operation tracing
+//!
+//! Enable the `tracing` feature for categorical operation spans on the `girt` target. DEBUG
+//! spans describe workflows and phases; TRACE includes individual object reads and writes.
+//! Spans record outcomes and bounded-work counts without formatting arguments or returned errors.
+//! The caller owns subscribers, sinks, filtering, runtimes and scheduling; errors remain structured
+//! return values. Run `cargo run --features tracing --example tracing` for a scoped subscriber.
+//! HTTP/SSH downloads retain the initiating subscriber and span through synchronous worker
+//! validation or drop. Their span lifetime therefore includes queue time. See `docs/tracing.md` for
+//! coverage, overhead, async context propagation and guidance for extending instrumentation.
+//!
 //! # Library contents
 //!
 //! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
@@ -205,3 +216,6 @@ pub use repository::{InitError, InitKind, OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
 pub use tree_compare::{TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};
+
+#[cfg(feature = "tracing")]
+mod trace;

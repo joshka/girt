@@ -133,53 +133,72 @@ pub struct Objects {
 
 impl Objects {
     pub(crate) fn open(directory: &Path, limits: PackLimits) -> Result<Self, ObjectReadError> {
-        let loose = LooseObjects::new(directory, ObjectFormat::Sha1)?;
-        let pack_directory = directory.join("pack");
-        let entries = match fs::read_dir(&pack_directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    loose,
-                    packs: vec![],
-                });
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "objects.open",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let loose = LooseObjects::new(directory, ObjectFormat::Sha1)?;
+            let pack_directory = directory.join("pack");
+            let entries = match fs::read_dir(&pack_directory) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(Self {
+                        loose,
+                        packs: vec![],
+                    });
+                }
+                Err(source) => {
+                    return Err(ObjectReadError::Path {
+                        path: pack_directory,
+                        source,
+                    });
+                }
+            };
+            let mut paths = Vec::new();
+            for entry in entries {
+                let path = entry
+                    .map_err(|source| ObjectReadError::Path {
+                        path: pack_directory.clone(),
+                        source,
+                    })?
+                    .path();
+                if path.extension().is_some_and(|extension| extension == "idx") {
+                    if paths.len() == limits.max_packs {
+                        return Err(ObjectReadError::Limit("pack count"));
+                    }
+                    paths.push(path);
+                }
             }
-            Err(source) => {
-                return Err(ObjectReadError::Path {
-                    path: pack_directory,
-                    source,
-                });
+            paths.sort();
+            let mut remaining = limits.max_bytes;
+            let mut packs = Vec::new();
+            for path in paths {
+                let index = read_bounded(&path, &mut remaining)?;
+                let data = read_bounded(&path.with_extension("pack"), &mut remaining)?;
+                packs.push(Pack::open(&index, data).map_err(|source| {
+                    ObjectReadError::PackArtifacts {
+                        pack: path.with_extension("pack"),
+                        index: path,
+                        source: Box::new(source),
+                    }
+                })?);
             }
+            Ok(Self { loose, packs })
         };
-        let mut paths = Vec::new();
-        for entry in entries {
-            let path = entry
-                .map_err(|source| ObjectReadError::Path {
-                    path: pack_directory.clone(),
-                    source,
-                })?
-                .path();
-            if path.extension().is_some_and(|extension| extension == "idx") {
-                if paths.len() == limits.max_packs {
-                    return Err(ObjectReadError::Limit("pack count"));
-                }
-                paths.push(path);
-            }
-        }
-        paths.sort();
-        let mut remaining = limits.max_bytes;
-        let mut packs = Vec::new();
-        for path in paths {
-            let index = read_bounded(&path, &mut remaining)?;
-            let data = read_bounded(&path.with_extension("pack"), &mut remaining)?;
-            packs.push(Pack::open(&index, data).map_err(|source| {
-                ObjectReadError::PackArtifacts {
-                    pack: path.with_extension("pack"),
-                    index: path,
-                    source: Box::new(source),
-                }
-            })?);
-        }
-        Ok(Self { loose, packs })
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::object);
+
+        result
     }
 
     /// Reads an exact object by full SHA-1 identity; returns `None` only when absent.
@@ -198,18 +217,37 @@ impl Objects {
         id: ObjectId,
         limits: ReadLimits,
     ) -> Result<Option<Object>, ObjectReadError> {
-        let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
-        match self.loose.read_raw(id, loose_limit) {
-            Ok(object) => return Ok(Some(object)),
-            Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        for pack in &self.packs {
-            if let Some(position) = pack.find(id) {
-                return pack.read(position, limits).map(Some);
+        #[cfg(feature = "tracing")]
+        let span = tracing::trace_span!(
+            target: "girt",
+            "objects.read",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
+            match self.loose.read_raw(id, loose_limit) {
+                Ok(object) => return Ok(Some(object)),
+                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
-        }
-        Ok(None)
+            for pack in &self.packs {
+                if let Some(position) = pack.find(id) {
+                    return pack.read(position, limits).map(Some);
+                }
+            }
+            Ok(None)
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::object);
+
+        result
     }
 }
 

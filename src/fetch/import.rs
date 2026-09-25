@@ -21,73 +21,98 @@ pub(crate) struct Imported {
 
 impl Imported {
     pub fn read(data: &[u8], limits: FetchLimits, cancel: &AtomicBool) -> Result<Self, FetchError> {
-        check_cancelled(cancel)?;
-        if data.len() > limits.max_pack_bytes {
-            return Err(FetchError::Limit("pack bytes"));
-        }
-        if data.len() < 32 || &data[..4] != b"PACK" {
-            return Err(Error::Corrupt("pack header").into());
-        }
-        let version = word(data, 4)?;
-        if version != 2 {
-            return Err(Error::PackVersion(version).into());
-        }
-        let count = word(data, 8)? as usize;
-        if count > limits.max_objects {
-            return Err(FetchError::Limit("pack objects"));
-        }
-        verify_hash(data, "received pack checksum")?;
-        let end = data.len() - 20;
-        let checksum = ObjectId::Sha1(data[end..].try_into().unwrap());
-        let mut input = &data[12..end];
-        let mut entries = Vec::new();
-        let mut remaining = limits.max_decode_bytes;
-        for _ in 0..count {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "fetch.import",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            pack_bytes = data.len(),
+            decoded_bytes = tracing::field::Empty,
+            objects = tracing::field::Empty,
+        );
+
+        let operation = || {
             check_cancelled(cancel)?;
-            let offset = end - input.len();
-            let header = byte(&mut input)?;
-            let kind = (header >> 4) & 7;
-            let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
-            let base = base(&mut input, kind, offset)?;
-            let maximum = if matches!(base, Base::Kind(_)) {
-                limits.max_object_bytes
-            } else {
-                limits.max_delta_bytes
-            };
-            if length > maximum {
-                return Err(FetchError::Limit("inflated entry bytes"));
+            if data.len() > limits.max_pack_bytes {
+                return Err(FetchError::Limit("pack bytes"));
             }
-            charge(&mut remaining, length)?;
-            let (payload, consumed) = inflate_prefix(input, length)?;
-            input = &input[consumed..];
-            let entry_end = end - input.len();
-            entries.push(ReceivedEntry {
-                base,
-                payload,
-                offset,
-                crc: crc32fast::hash(&data[offset..entry_end]),
-                resolved: None,
-            });
-        }
-        if !input.is_empty() {
-            return Err(Error::Corrupt("trailing pack entries").into());
-        }
-        let objects = resolve(&mut entries, limits, &mut remaining, cancel)?;
-        let mut index_entries: Vec<_> = entries
-            .iter()
-            .map(|entry| Entry {
-                id: entry.resolved.unwrap().0,
-                offset: entry.offset as u64,
-                crc: entry.crc,
+            if data.len() < 32 || &data[..4] != b"PACK" {
+                return Err(Error::Corrupt("pack header").into());
+            }
+            let version = word(data, 4)?;
+            if version != 2 {
+                return Err(Error::PackVersion(version).into());
+            }
+            let count = word(data, 8)? as usize;
+            if count > limits.max_objects {
+                return Err(FetchError::Limit("pack objects"));
+            }
+            verify_hash(data, "received pack checksum")?;
+            let end = data.len() - 20;
+            let checksum = ObjectId::Sha1(data[end..].try_into().unwrap());
+            let mut input = &data[12..end];
+            let mut entries = Vec::new();
+            let mut remaining = limits.max_decode_bytes;
+            for _ in 0..count {
+                check_cancelled(cancel)?;
+                let offset = end - input.len();
+                let header = byte(&mut input)?;
+                let kind = (header >> 4) & 7;
+                let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
+                let base = base(&mut input, kind, offset)?;
+                let maximum = if matches!(base, Base::Kind(_)) {
+                    limits.max_object_bytes
+                } else {
+                    limits.max_delta_bytes
+                };
+                if length > maximum {
+                    return Err(FetchError::Limit("inflated entry bytes"));
+                }
+                charge(&mut remaining, length)?;
+                let (payload, consumed) = inflate_prefix(input, length)?;
+                input = &input[consumed..];
+                let entry_end = end - input.len();
+                entries.push(ReceivedEntry {
+                    base,
+                    payload,
+                    offset,
+                    crc: crc32fast::hash(&data[offset..entry_end]),
+                    resolved: None,
+                });
+            }
+            if !input.is_empty() {
+                return Err(Error::Corrupt("trailing pack entries").into());
+            }
+            let objects = resolve(&mut entries, limits, &mut remaining, cancel)?;
+            #[cfg(feature = "tracing")]
+            span.record("decoded_bytes", limits.max_decode_bytes - remaining)
+                .record("objects", objects.len());
+            let mut index_entries: Vec<_> = entries
+                .iter()
+                .map(|entry| Entry {
+                    id: entry.resolved.unwrap().0,
+                    offset: entry.offset as u64,
+                    crc: entry.crc,
+                })
+                .collect();
+            index_entries.sort_unstable_by_key(|entry| entry.id);
+            let index = encode_index(&index_entries, checksum)?;
+            Ok(Self {
+                objects,
+                index,
+                checksum,
             })
-            .collect();
-        index_entries.sort_unstable_by_key(|entry| entry.id);
-        let index = encode_index(&index_entries, checksum)?;
-        Ok(Self {
-            objects,
-            index,
-            checksum,
-        })
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::fetch);
+
+        result
     }
 }
 

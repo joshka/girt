@@ -69,7 +69,9 @@ instrumentation may expose operations, elapsed work, counts, cancellation, resou
 classes. The caller owns subscribers, filtering, runtime, and global policy. Avoid duplicate error
 logging and event/schema frameworks without a demonstrated need. Do not record credentials, raw URLs
 with secrets, environment values, paths, identities, object contents, or signature payloads by
-default. Test redaction and disabled-instrumentation behavior at the owning boundary.
+default. Test redaction and disabled-instrumentation behavior at the owning boundary. Follow the
+[tracing contract](tracing.md#cost-and-future-instrumentation) when adding operation spans,
+including explicit span handles and suspension/worker ownership tests.
 
 ## Unit Tests
 

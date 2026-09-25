@@ -46,7 +46,24 @@ impl Objects {
         roots: &[ObjectId],
         limits: HistoryLimits,
     ) -> Result<Vec<ObjectId>, HistoryError> {
-        Ok(Graph::read(self, roots, limits)?.ids)
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "history.walk",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || Ok(Graph::read(self, roots, limits)?.ids);
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::history);
+
+        result
     }
 
     /// Tests whether `ancestor` is reachable from `descendant`, including equality.
@@ -61,9 +78,28 @@ impl Objects {
         descendant: ObjectId,
         limits: HistoryLimits,
     ) -> Result<bool, HistoryError> {
-        let graph = Graph::read(self, &[descendant, ancestor], limits)?;
-        let marks = graph.reachable(0);
-        Ok(marks[graph.positions[&ancestor]])
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "history.is_ancestor",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let graph = Graph::read(self, &[descendant, ancestor], limits)?;
+            let marks = graph.reachable(0);
+            Ok(marks[graph.positions[&ancestor]])
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::history);
+
+        result
     }
 
     /// Returns all best common ancestors of two commits, sorted by raw object ID.
@@ -82,32 +118,51 @@ impl Objects {
         right: ObjectId,
         limits: HistoryLimits,
     ) -> Result<Vec<ObjectId>, HistoryError> {
-        let graph = Graph::read(self, &[left, right], limits)?;
-        let left_marks = graph.reachable(0);
-        let right_marks = graph.reachable(graph.positions[&right]);
-        let common: Vec<_> = left_marks
-            .iter()
-            .zip(&right_marks)
-            .map(|(a, b)| *a && *b)
-            .collect();
-        let mut dominated = vec![false; graph.ids.len()];
-        // Common ancestry is closed under following parents. Every non-best common ancestor
-        // is therefore a direct parent of another common ancestor somewhere in that ancestry.
-        for (index, parents) in graph.parents.iter().enumerate() {
-            if common[index] {
-                for &parent in parents {
-                    dominated[parent] = true;
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "history.merge_bases",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let graph = Graph::read(self, &[left, right], limits)?;
+            let left_marks = graph.reachable(0);
+            let right_marks = graph.reachable(graph.positions[&right]);
+            let common: Vec<_> = left_marks
+                .iter()
+                .zip(&right_marks)
+                .map(|(a, b)| *a && *b)
+                .collect();
+            let mut dominated = vec![false; graph.ids.len()];
+            // Common ancestry is closed under following parents. Every non-best common ancestor
+            // is therefore a direct parent of another common ancestor somewhere in that ancestry.
+            for (index, parents) in graph.parents.iter().enumerate() {
+                if common[index] {
+                    for &parent in parents {
+                        dominated[parent] = true;
+                    }
                 }
             }
-        }
-        let mut bases: Vec<_> = graph
-            .ids
-            .iter()
-            .enumerate()
-            .filter_map(|(i, id)| (common[i] && !dominated[i]).then_some(*id))
-            .collect();
-        bases.sort();
-        Ok(bases)
+            let mut bases: Vec<_> = graph
+                .ids
+                .iter()
+                .enumerate()
+                .filter_map(|(i, id)| (common[i] && !dominated[i]).then_some(*id))
+                .collect();
+            bases.sort();
+            Ok(bases)
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::history);
+
+        result
     }
 }
 
@@ -123,40 +178,64 @@ impl Graph {
         roots: &[ObjectId],
         limits: HistoryLimits,
     ) -> Result<Self, HistoryError> {
-        let mut graph = Self {
-            ids: vec![],
-            positions: HashMap::new(),
-            parents: vec![],
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "history.graph",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            roots = roots.len(),
+            commits = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let mut graph = Self {
+                ids: vec![],
+                positions: HashMap::new(),
+                parents: vec![],
+            };
+            for &root in roots {
+                graph.discover(root, limits.max_commits)?;
+            }
+            let mut remaining = limits.max_parents;
+            let mut index = 0;
+            while index < graph.ids.len() {
+                let id = graph.ids[index];
+                let object = objects
+                    .read(id, limits.read)
+                    .map_err(|source| HistoryError::Read { id, source })?
+                    .ok_or(HistoryError::Missing(id))?;
+                if object.kind() != ObjectKind::Commit {
+                    return Err(HistoryError::NotCommit(id));
+                }
+                let commit = Commit::parse(object.data())
+                    .map_err(|source| HistoryError::Parse { id, source })?;
+                let parents = &commit.fields().parents;
+                remaining = remaining
+                    .checked_sub(parents.len())
+                    .ok_or(HistoryError::Limit("parent occurrences"))?;
+                let mut edges = Vec::with_capacity(parents.len());
+                for &parent in parents {
+                    edges.push(graph.discover(parent, limits.max_commits)?);
+                }
+                graph.parents.push(edges);
+                index += 1;
+            }
+            graph.check_acyclic()?;
+            Ok(graph)
         };
-        for &root in roots {
-            graph.discover(root, limits.max_commits)?;
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::history);
+        #[cfg(feature = "tracing")]
+        if let Ok(graph) = &result {
+            span.record("commits", graph.ids.len());
         }
-        let mut remaining = limits.max_parents;
-        let mut index = 0;
-        while index < graph.ids.len() {
-            let id = graph.ids[index];
-            let object = objects
-                .read(id, limits.read)
-                .map_err(|source| HistoryError::Read { id, source })?
-                .ok_or(HistoryError::Missing(id))?;
-            if object.kind() != ObjectKind::Commit {
-                return Err(HistoryError::NotCommit(id));
-            }
-            let commit = Commit::parse(object.data())
-                .map_err(|source| HistoryError::Parse { id, source })?;
-            let parents = &commit.fields().parents;
-            remaining = remaining
-                .checked_sub(parents.len())
-                .ok_or(HistoryError::Limit("parent occurrences"))?;
-            let mut edges = Vec::with_capacity(parents.len());
-            for &parent in parents {
-                edges.push(graph.discover(parent, limits.max_commits)?);
-            }
-            graph.parents.push(edges);
-            index += 1;
-        }
-        graph.check_acyclic()?;
-        Ok(graph)
+        result
     }
 
     fn discover(&mut self, id: ObjectId, limit: usize) -> Result<usize, HistoryError> {

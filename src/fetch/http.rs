@@ -37,63 +37,91 @@ pub async fn receive_http(
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<DownloadedFetch, FetchError> {
-    control.check()?;
-    let empty = KnownHistory::default();
-    let history = known.as_deref().unwrap_or(&empty);
-    protocol::validate_known(history, limits, control.cancel)?;
-    let (bytes, advertisement_bytes) = remote
-        .discover(
-            "git-upload-pack",
-            limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-            control,
-        )
-        .await?;
-    let mut reader = bytes.as_slice();
-    let mut wire = Wire {
-        reader: &mut reader,
-        remaining: limits.max_wire_bytes,
-        cancel: control.cancel,
-    };
-    let advertisement = protocol::advertise(&mut wire, limits)?;
-    wire.end()?;
-    // Include the service prelude in the aggregate HTTP payload budget.
-    let remaining = limits.max_wire_bytes - advertisement_bytes;
-    control.check()?;
-    let mut request = Vec::new();
-    let negotiation = protocol::request(
-        &mut request,
-        &advertisement,
-        select(&advertisement),
-        history,
-        limits,
-        control.cancel,
-    )?;
-    control.check()?;
-    if !negotiation.needs_pack {
-        return Ok(DownloadedFetch {
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.http",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        wire_bytes = tracing::field::Empty,
+    );
+
+    let operation = async {
+        control.check()?;
+        let empty = KnownHistory::default();
+        let history = known.as_deref().unwrap_or(&empty);
+        protocol::validate_known(history, limits, control.cancel)?;
+        let (bytes, advertisement_bytes) = remote
+            .discover(
+                "git-upload-pack",
+                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
+                control,
+            )
+            .await?;
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: limits.max_wire_bytes,
+            cancel: control.cancel,
+        };
+        let advertisement = protocol::advertise(&mut wire, limits)?;
+        wire.end()?;
+        // Include the service prelude in the aggregate HTTP payload budget.
+        let remaining = limits.max_wire_bytes - advertisement_bytes;
+        control.check()?;
+        let mut request = Vec::new();
+        let negotiation = protocol::request(
+            &mut request,
+            &advertisement,
+            select(&advertisement),
+            history,
+            limits,
+            control.cancel,
+        )?;
+        control.check()?;
+        if !negotiation.needs_pack {
+            return Ok(DownloadedFetch {
+                #[cfg(feature = "tracing")]
+                trace: crate::trace::DownloadContext::capture(),
+                advertisement,
+                negotiation,
+                known,
+                limits,
+                remaining,
+                body: Vec::new(),
+            });
+        }
+        let response = remote
+            .exchange(
+                "git-upload-pack",
+                Some(RequestBody::new(request, Vec::new())),
+                remaining,
+                control,
+            )
+            .await;
+        response.result?;
+        Ok(DownloadedFetch {
+            #[cfg(feature = "tracing")]
+            trace: crate::trace::DownloadContext::capture(),
             advertisement,
             negotiation,
             known,
             limits,
             remaining,
-            body: Vec::new(),
-        });
+            body: response.body,
+        })
+    };
+    #[cfg(feature = "tracing")]
+    let result = tracing::Instrument::instrument(operation, span.clone()).await;
+    #[cfg(not(feature = "tracing"))]
+    let result = operation.await;
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+    #[cfg(feature = "tracing")]
+    if let Ok(value) = &result {
+        span.record("wire_bytes", value.body.len());
     }
-    let response = remote
-        .exchange(
-            "git-upload-pack",
-            Some(RequestBody::new(request, Vec::new())),
-            remaining,
-            control,
-        )
-        .await;
-    response.result?;
-    Ok(DownloadedFetch {
-        advertisement,
-        negotiation,
-        known,
-        limits,
-        remaining,
-        body: response.body,
-    })
+
+    result
 }

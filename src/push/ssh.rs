@@ -32,65 +32,92 @@ pub async fn send_ssh(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
-    let mut session = remote
-        .connect("git-receive-pack", control)
-        .map_err(|e| PushError::NotSent(e.into()))?;
-    let preflight = async {
-        let bytes = session
-            .advertise(prepared.limits.max_advertisement_bytes, control)
-            .await?;
-        let mut reader = bytes.as_slice();
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.ssh",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+
+    let operation = async {
+        let mut session = remote
+            .connect("git-receive-pack", control)
+            .map_err(|e| PushError::NotSent(e.into()))?;
+        let preflight = async {
+            let bytes = session
+                .advertise(prepared.limits.max_advertisement_bytes, control)
+                .await?;
+            let mut reader = bytes.as_slice();
+            let mut wire = Wire {
+                reader: &mut reader,
+                remaining: prepared.limits.max_advertisement_bytes,
+                cancel: control.cancel,
+            };
+            protocol::advertise(&mut wire, prepared)?;
+            wire.end()?;
+            control.check()?;
+            Ok::<_, PushFailure>(())
+        };
+        preflight.await.map_err(PushError::NotSent)?;
+        let mut report = PushReport::pending(&prepared.commands);
+        let request = if prepared.commands.is_empty() {
+            b"0000"
+        } else {
+            prepared.request.as_slice()
+        };
+        let (body, result, attempted) = session
+            .exchange(
+                request,
+                &prepared.pack,
+                prepared.limits.max_status_bytes,
+                control,
+            )
+            .await;
+        if prepared.commands.is_empty() {
+            result.map_err(|e| PushError::NotSent(e.into()))?;
+            if !body.is_empty() {
+                return Err(PushError::NotSent(PushFailure::Protocol(
+                    "trailing response bytes",
+                )));
+            }
+            return Ok(report);
+        }
+        if !attempted && let Err(cause) = result {
+            return Err(PushError::NotSent(cause.into()));
+        }
+        let retain = AtomicBool::new(false);
+        let mut reader = body.as_slice();
         let mut wire = Wire {
             reader: &mut reader,
-            remaining: prepared.limits.max_advertisement_bytes,
-            cancel: control.cancel,
+            remaining: prepared.limits.max_status_bytes,
+            cancel: &retain,
         };
-        protocol::advertise(&mut wire, prepared)?;
-        wire.end()?;
-        control.check()?;
-        Ok::<_, PushFailure>(())
-    };
-    preflight.await.map_err(PushError::NotSent)?;
-    let mut report = PushReport::pending(&prepared.commands);
-    let request = if prepared.commands.is_empty() {
-        b"0000"
-    } else {
-        prepared.request.as_slice()
-    };
-    let (body, result, attempted) = session
-        .exchange(
-            request,
-            &prepared.pack,
-            prepared.limits.max_status_bytes,
-            control,
-        )
-        .await;
-    if prepared.commands.is_empty() {
-        result.map_err(|e| PushError::NotSent(e.into()))?;
-        if !body.is_empty() {
-            return Err(PushError::NotSent(PushFailure::Protocol(
-                "trailing response bytes",
-            )));
+        let parsed = protocol::read_status(&mut wire, &mut report)
+            .and_then(|()| wire.end().map_err(PushFailure::from));
+        match result.map_err(PushFailure::from).and(parsed) {
+            Ok(()) => Ok(report),
+            Err(cause) => Err(PushError::Uncertain {
+                cause,
+                report: Box::new(report),
+            }),
         }
-        return Ok(report);
-    }
-    if !attempted && let Err(cause) = result {
-        return Err(PushError::NotSent(cause.into()));
-    }
-    let retain = AtomicBool::new(false);
-    let mut reader = body.as_slice();
-    let mut wire = Wire {
-        reader: &mut reader,
-        remaining: prepared.limits.max_status_bytes,
-        cancel: &retain,
     };
-    let parsed = protocol::read_status(&mut wire, &mut report)
-        .and_then(|()| wire.end().map_err(PushFailure::from));
-    match result.map_err(PushFailure::from).and(parsed) {
-        Ok(()) => Ok(report),
-        Err(cause) => Err(PushError::Uncertain {
-            cause,
-            report: Box::new(report),
-        }),
+    #[cfg(feature = "tracing")]
+    let result = tracing::Instrument::instrument(operation, span.clone()).await;
+    #[cfg(not(feature = "tracing"))]
+    let result = operation.await;
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
     }
+
+    result
 }

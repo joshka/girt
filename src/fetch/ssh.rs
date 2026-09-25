@@ -36,48 +36,74 @@ pub async fn receive_ssh(
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<DownloadedFetch, FetchError> {
-    control.check()?;
-    let empty = KnownHistory::default();
-    let history = known.as_deref().unwrap_or(&empty);
-    protocol::validate_known(history, limits, control.cancel)?;
-    let mut session = remote.connect("git-upload-pack", control)?;
-    let bytes = session
-        .advertise(
-            limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-            control,
-        )
-        .await?;
-    let mut reader = bytes.as_slice();
-    let mut wire = Wire {
-        reader: &mut reader,
-        remaining: limits.max_wire_bytes,
-        cancel: control.cancel,
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.ssh",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        wire_bytes = tracing::field::Empty,
+    );
+
+    let operation = async {
+        control.check()?;
+        let empty = KnownHistory::default();
+        let history = known.as_deref().unwrap_or(&empty);
+        protocol::validate_known(history, limits, control.cancel)?;
+        let mut session = remote.connect("git-upload-pack", control)?;
+        let bytes = session
+            .advertise(
+                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
+                control,
+            )
+            .await?;
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: limits.max_wire_bytes,
+            cancel: control.cancel,
+        };
+        let advertisement = protocol::advertise(&mut wire, limits)?;
+        wire.end()?;
+        let remaining = limits.max_wire_bytes - bytes.len();
+        control.check()?;
+        let mut request = Vec::new();
+        let negotiation = protocol::request(
+            &mut request,
+            &advertisement,
+            select(&advertisement),
+            history,
+            limits,
+            control.cancel,
+        )?;
+        control.check()?;
+        let (body, result, _) = session.exchange(&request, &[], remaining, control).await;
+        result?;
+        if !negotiation.needs_pack && !body.is_empty() {
+            return Err(FetchError::Protocol("trailing response bytes"));
+        }
+        Ok(DownloadedFetch {
+            #[cfg(feature = "tracing")]
+            trace: crate::trace::DownloadContext::capture(),
+            advertisement,
+            negotiation,
+            known,
+            limits,
+            remaining,
+            body,
+        })
     };
-    let advertisement = protocol::advertise(&mut wire, limits)?;
-    wire.end()?;
-    let remaining = limits.max_wire_bytes - bytes.len();
-    control.check()?;
-    let mut request = Vec::new();
-    let negotiation = protocol::request(
-        &mut request,
-        &advertisement,
-        select(&advertisement),
-        history,
-        limits,
-        control.cancel,
-    )?;
-    control.check()?;
-    let (body, result, _) = session.exchange(&request, &[], remaining, control).await;
-    result?;
-    if !negotiation.needs_pack && !body.is_empty() {
-        return Err(FetchError::Protocol("trailing response bytes"));
+    #[cfg(feature = "tracing")]
+    let result = tracing::Instrument::instrument(operation, span.clone()).await;
+    #[cfg(not(feature = "tracing"))]
+    let result = operation.await;
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+    #[cfg(feature = "tracing")]
+    if let Ok(value) = &result {
+        span.record("wire_bytes", value.body.len());
     }
-    Ok(DownloadedFetch {
-        advertisement,
-        negotiation,
-        known,
-        limits,
-        remaining,
-        body,
-    })
+
+    result
 }

@@ -165,3 +165,10 @@ formatting commands, compatibility testing expectations, and contribution guidan
 
 Licensed under either the [MIT License](LICENSE-MIT) or the
 [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+## Optional Tracing
+
+Enable `tracing` for operation and phase spans with categorical outcomes and work counts. The caller
+owns the subscriber and logging policy. Run `cargo run --features tracing --example tracing`; see
+[tracing contracts](docs/tracing.md) for coverage, safe fields, worker context and measured
+overhead.

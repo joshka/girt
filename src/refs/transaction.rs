@@ -129,135 +129,179 @@ impl References<'_> {
     /// precondition mismatch, namespace conflicts, or lock failure. [`TransactionError::Publish`]
     /// reports effects at meaningful publication boundaries. An empty batch is a successful no-op.
     pub fn transaction(&self, edits: &[RefEdit]) -> Result<Vec<RefEditOutcome>, TransactionError> {
-        if edits.is_empty() {
-            return Ok(Vec::new());
-        }
-        for (index, edit) in edits.iter().enumerate() {
-            validate_edit(edit).map_err(|source| TransactionError::Prepare {
-                operation: Some(index),
-                source,
-            })?;
-        }
-        self.prepare_transaction(edits)?.publish()
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "refs.transaction",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            edits = edits.len(),
+        );
+
+        let operation = || {
+            if edits.is_empty() {
+                return Ok(Vec::new());
+            }
+            for (index, edit) in edits.iter().enumerate() {
+                validate_edit(edit).map_err(|source| TransactionError::Prepare {
+                    operation: Some(index),
+                    source,
+                })?;
+            }
+            self.prepare_transaction(edits)?.publish()
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::transaction(error, &span)
+        });
+
+        result
     }
 
     fn prepare_transaction(&self, edits: &[RefEdit]) -> Result<Prepared, TransactionError> {
-        let batch_error = |source| TransactionError::Prepare {
-            operation: None,
-            source,
-        };
-        let packed_lock =
-            Lock::acquire(self.repository.common_dir().join("packed-refs")).map_err(batch_error)?;
-        let bytes = read_optional(&packed_lock.destination)
-            .map_err(batch_error)?
-            .unwrap_or_default();
-        let packed = packed::parse(&bytes, &packed_lock.destination).map_err(batch_error)?;
-        let mut plans = Vec::new();
-        let mut names = BTreeSet::new();
-        for (index, edit) in edits.iter().enumerate() {
-            let error = |source| TransactionError::Prepare {
-                operation: Some(index),
-                source,
-            };
-            let chain = self.discover_chain(edit, &packed).map_err(error)?;
-            for (name, _) in &chain {
-                if !names.insert(name.clone())
-                    || names
-                        .iter()
-                        .any(|other: &RefName| conflicts(name.as_bytes(), other.as_bytes()))
-                {
-                    return Err(error(ReferenceError::Conflict(
-                        self.path(name).map_err(error)?,
-                    )));
-                }
-            }
-            plans.push(chain);
-        }
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "refs.prepare_transaction",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
 
-        let mut locks = BTreeMap::new();
-        for name in names {
-            self.check_packed_namespace(&name, &packed)
-                .map_err(batch_error)?;
-            locks.insert(
-                name.clone(),
-                Lock::acquire(self.path(&name).map_err(batch_error)?).map_err(batch_error)?,
-            );
-        }
-        let mut operations = Vec::new();
-        let mut log_names = BTreeSet::new();
-        for (index, (edit, chain)) in edits.iter().zip(plans).enumerate() {
-            let error = |source| TransactionError::Prepare {
-                operation: Some(index),
+        let operation = || {
+            let batch_error = |source| TransactionError::Prepare {
+                operation: None,
                 source,
             };
-            for (name, observed) in &chain {
-                check_expected(
-                    self.read_locked(name, &packed).map_err(error)?,
-                    match observed {
-                        Some(target) => Expected::Value(target.clone()),
-                        None => Expected::Absent,
-                    },
-                )
-                .map_err(error)?;
+            let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))
+                .map_err(batch_error)?;
+            let bytes = read_optional(&packed_lock.destination)
+                .map_err(batch_error)?
+                .unwrap_or_default();
+            let packed = packed::parse(&bytes, &packed_lock.destination).map_err(batch_error)?;
+            let mut plans = Vec::new();
+            let mut names = BTreeSet::new();
+            for (index, edit) in edits.iter().enumerate() {
+                let error = |source| TransactionError::Prepare {
+                    operation: Some(index),
+                    source,
+                };
+                let chain = self.discover_chain(edit, &packed).map_err(error)?;
+                for (name, _) in &chain {
+                    if !names.insert(name.clone())
+                        || names
+                            .iter()
+                            .any(|other: &RefName| conflicts(name.as_bytes(), other.as_bytes()))
+                    {
+                        return Err(error(ReferenceError::Conflict(
+                            self.path(name).map_err(error)?,
+                        )));
+                    }
+                }
+                plans.push(chain);
             }
-            let (name, actual) = if edit.dereference {
-                chain.last().unwrap()
-            } else {
-                chain.first().unwrap()
-            };
-            check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
-            let mut logs = Vec::new();
-            if let Reflog::Append { committer, message } = &edit.reflog {
-                // Discovery includes the old chain for a stored direct replacement. All its
-                // values have now been rechecked under locks; only the edited name is published.
-                let old = log_id(chain.last().unwrap().1.as_ref()).map_err(error)?;
-                let new = log_id(edit.target.as_ref()).map_err(error)?;
-                let record = ReflogEntry {
-                    old,
-                    new,
-                    committer: committer.clone(),
-                    message: message.clone(),
+
+            let mut locks = BTreeMap::new();
+            for name in names {
+                self.check_packed_namespace(&name, &packed)
+                    .map_err(batch_error)?;
+                locks.insert(
+                    name.clone(),
+                    Lock::acquire(self.path(&name).map_err(batch_error)?).map_err(batch_error)?,
+                );
+            }
+            let mut operations = Vec::new();
+            let mut log_names = BTreeSet::new();
+            for (index, (edit, chain)) in edits.iter().zip(plans).enumerate() {
+                let error = |source| TransactionError::Prepare {
+                    operation: Some(index),
+                    source,
                 };
-                let record = record.encode().map_err(error)?;
-                let logged_chain = if edit.dereference {
-                    &chain[..]
+                for (name, observed) in &chain {
+                    check_expected(
+                        self.read_locked(name, &packed).map_err(error)?,
+                        match observed {
+                            Some(target) => Expected::Value(target.clone()),
+                            None => Expected::Absent,
+                        },
+                    )
+                    .map_err(error)?;
+                }
+                let (name, actual) = if edit.dereference {
+                    chain.last().unwrap()
                 } else {
-                    &chain[..1]
+                    chain.first().unwrap()
                 };
-                for (log_name, _) in logged_chain {
-                    log_names.insert(log_name.clone());
-                    logs.push((log_name.clone(), record.clone()));
+                check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
+                let mut logs = Vec::new();
+                if let Reflog::Append { committer, message } = &edit.reflog {
+                    // Discovery includes the old chain for a stored direct replacement. All its
+                    // values have now been rechecked under locks; only the edited name is
+                    // published.
+                    let old = log_id(chain.last().unwrap().1.as_ref()).map_err(error)?;
+                    let new = log_id(edit.target.as_ref()).map_err(error)?;
+                    let record = ReflogEntry {
+                        old,
+                        new,
+                        committer: committer.clone(),
+                        message: message.clone(),
+                    };
+                    let record = record.encode().map_err(error)?;
+                    let logged_chain = if edit.dereference {
+                        &chain[..]
+                    } else {
+                        &chain[..1]
+                    };
+                    for (log_name, _) in logged_chain {
+                        log_names.insert(log_name.clone());
+                        logs.push((log_name.clone(), record.clone()));
+                    }
+                }
+                operations.push(Operation {
+                    name: name.clone(),
+                    target: edit.target.clone(),
+                    packed_removed: edit.target.is_none() && packed.contains_key(name),
+                    logs,
+                });
+            }
+            let mut log_locks = BTreeMap::new();
+            for name in log_names {
+                let path = self.reflog_path(&name).map_err(batch_error)?;
+                let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
+                if let Some(bytes) = read_optional(&path).map_err(batch_error)? {
+                    reflog::parse(&bytes, &path).map_err(batch_error)?;
+                }
+                log_locks.insert(name, lock);
+            }
+            let mut replacement = bytes;
+            for operation in &operations {
+                if operation.packed_removed {
+                    replacement = packed::without_ref(&replacement, &operation.name);
                 }
             }
-            operations.push(Operation {
-                name: name.clone(),
-                target: edit.target.clone(),
-                packed_removed: edit.target.is_none() && packed.contains_key(name),
-                logs,
-            });
-        }
-        let mut log_locks = BTreeMap::new();
-        for name in log_names {
-            let path = self.reflog_path(&name).map_err(batch_error)?;
-            let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
-            if let Some(bytes) = read_optional(&path).map_err(batch_error)? {
-                reflog::parse(&bytes, &path).map_err(batch_error)?;
-            }
-            log_locks.insert(name, lock);
-        }
-        let mut replacement = bytes;
-        for operation in &operations {
-            if operation.packed_removed {
-                replacement = packed::without_ref(&replacement, &operation.name);
-            }
-        }
-        Ok(Prepared {
-            packed_lock,
-            replacement,
-            locks,
-            log_locks,
-            operations,
-        })
+            Ok(Prepared {
+                packed_lock,
+                replacement,
+                locks,
+                log_locks,
+                operations,
+            })
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::transaction(error, &span)
+        });
+
+        result
     }
 
     fn discover_chain(
@@ -335,66 +379,88 @@ struct Prepared {
 
 impl Prepared {
     fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
-        let mut outcomes: Vec<_> = self
-            .operations
-            .iter()
-            .map(|op| RefEditOutcome {
-                name: op.name.clone(),
-                reference: RefOutcome::Unchanged,
-                logs: op
-                    .logs
-                    .iter()
-                    .map(|(name, _)| (name.clone(), LogOutcome::NotAttempted))
-                    .collect(),
-            })
-            .collect();
-        if self.operations.iter().any(|op| op.packed_removed) {
-            self.packed_lock
-                .publish_retaining_lock(&self.replacement)
-                .map_err(|source| TransactionError::Publish {
-                    outcomes: outcomes.clone(),
-                    source,
-                })?;
-            for (operation, outcome) in self.operations.iter().zip(&mut outcomes) {
-                if operation.packed_removed {
-                    outcome.reference = RefOutcome::PackedRemoved;
-                }
-            }
-        }
-        for (index, operation) in self.operations.iter().enumerate() {
-            let lock = &self.locks[&operation.name];
-            let result = match &operation.target {
-                Some(target) => {
-                    let bytes = match target {
-                        Target::Direct(id) => format!("{id}\n").into_bytes(),
-                        Target::Symbolic(name) => {
-                            let mut bytes = b"ref: ".to_vec();
-                            bytes.extend_from_slice(name.as_bytes());
-                            bytes.push(b'\n');
-                            bytes
-                        }
-                    };
-                    lock.publish_retaining_lock(&bytes)
-                }
-                None => remove_loose(&lock.destination, operation.packed_removed),
-            };
-            if let Err(source) = result {
-                return Err(TransactionError::Publish { outcomes, source });
-            }
-            outcomes[index].reference = RefOutcome::Published;
-            for (log_index, (name, record)) in operation.logs.iter().enumerate() {
-                let path = &self.log_locks[name].destination;
-                let result = append(path, record);
-                match result {
-                    Ok(()) => outcomes[index].logs[log_index].1 = LogOutcome::Appended,
-                    Err((bytes_written, source)) => {
-                        outcomes[index].logs[log_index].1 = LogOutcome::Failed { bytes_written };
-                        return Err(TransactionError::Publish { outcomes, source });
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "refs.publish",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let mut outcomes: Vec<_> = self
+                .operations
+                .iter()
+                .map(|op| RefEditOutcome {
+                    name: op.name.clone(),
+                    reference: RefOutcome::Unchanged,
+                    logs: op
+                        .logs
+                        .iter()
+                        .map(|(name, _)| (name.clone(), LogOutcome::NotAttempted))
+                        .collect(),
+                })
+                .collect();
+            if self.operations.iter().any(|op| op.packed_removed) {
+                self.packed_lock
+                    .publish_retaining_lock(&self.replacement)
+                    .map_err(|source| TransactionError::Publish {
+                        outcomes: outcomes.clone(),
+                        source,
+                    })?;
+                for (operation, outcome) in self.operations.iter().zip(&mut outcomes) {
+                    if operation.packed_removed {
+                        outcome.reference = RefOutcome::PackedRemoved;
                     }
                 }
             }
-        }
-        Ok(outcomes)
+            for (index, operation) in self.operations.iter().enumerate() {
+                let lock = &self.locks[&operation.name];
+                let result = match &operation.target {
+                    Some(target) => {
+                        let bytes = match target {
+                            Target::Direct(id) => format!("{id}\n").into_bytes(),
+                            Target::Symbolic(name) => {
+                                let mut bytes = b"ref: ".to_vec();
+                                bytes.extend_from_slice(name.as_bytes());
+                                bytes.push(b'\n');
+                                bytes
+                            }
+                        };
+                        lock.publish_retaining_lock(&bytes)
+                    }
+                    None => remove_loose(&lock.destination, operation.packed_removed),
+                };
+                if let Err(source) = result {
+                    return Err(TransactionError::Publish { outcomes, source });
+                }
+                outcomes[index].reference = RefOutcome::Published;
+                for (log_index, (name, record)) in operation.logs.iter().enumerate() {
+                    let path = &self.log_locks[name].destination;
+                    let result = append(path, record);
+                    match result {
+                        Ok(()) => outcomes[index].logs[log_index].1 = LogOutcome::Appended,
+                        Err((bytes_written, source)) => {
+                            outcomes[index].logs[log_index].1 =
+                                LogOutcome::Failed { bytes_written };
+                            return Err(TransactionError::Publish { outcomes, source });
+                        }
+                    }
+                }
+            }
+            Ok(outcomes)
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::transaction(error, &span)
+        });
+
+        result
     }
 }
 

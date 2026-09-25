@@ -37,25 +37,52 @@ pub fn send(
     prepared: &PreparedPush,
     cancel: &AtomicBool,
 ) -> Result<PushReport, PushError> {
-    let mut wire = Wire {
-        reader,
-        remaining: prepared.limits.max_advertisement_bytes,
-        cancel,
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.send",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+
+    let operation = || {
+        let mut wire = Wire {
+            reader,
+            remaining: prepared.limits.max_advertisement_bytes,
+            cancel,
+        };
+        let preflight = advertise(&mut wire, prepared)
+            .and_then(|()| check_cancelled(cancel).map_err(Error::from));
+        preflight.map_err(PushError::NotSent)?;
+        let mut report = PushReport::pending(&prepared.commands);
+        wire.remaining = prepared.limits.max_status_bytes;
+        let result = transmit(&mut wire, writer, prepared, &mut report, cancel);
+        match result {
+            Ok(()) => Ok(report),
+            Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
+            Err(cause) => Err(PushError::Uncertain {
+                cause,
+                report: Box::new(report),
+            }),
+        }
     };
-    let preflight =
-        advertise(&mut wire, prepared).and_then(|()| check_cancelled(cancel).map_err(Error::from));
-    preflight.map_err(PushError::NotSent)?;
-    let mut report = PushReport::pending(&prepared.commands);
-    wire.remaining = prepared.limits.max_status_bytes;
-    let result = transmit(&mut wire, writer, prepared, &mut report, cancel);
-    match result {
-        Ok(()) => Ok(report),
-        Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
-        Err(cause) => Err(PushError::Uncertain {
-            cause,
-            report: Box::new(report),
-        }),
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
     }
+
+    result
 }
 
 fn transmit(

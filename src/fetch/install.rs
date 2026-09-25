@@ -148,46 +148,71 @@ impl ReceivedFetch {
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchInstalled, FetchError> {
-        check_cancelled(cancel)?;
-        let result = FetchInstalled {
-            checksum: self.checksum,
-            objects: self.objects,
-        };
-        if !self.dependencies.is_empty() {
-            let objects = repository
-                .objects(snapshot_limits)
-                .map_err(FetchError::Destination)?;
-            let mut bytes = self.limits.max_known_bytes;
-            for &id in &self.dependencies {
-                check_cancelled(cancel)?;
-                let mut read = self.limits.known_read;
-                read.max_object_bytes = read.max_object_bytes.min(bytes);
-                let object = objects
-                    .read(id, read)
-                    .map_err(|source| FetchError::LocalRead { id, source })?
-                    .ok_or(FetchError::Missing(id))?;
-                bytes = bytes
-                    .checked_sub(object.data().len())
-                    .ok_or(FetchError::Limit("known bytes"))?;
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "fetch.install",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            objects = self.objects,
+            pack_bytes = self.pack.len(),
+        );
+
+        let operation = || {
+            check_cancelled(cancel)?;
+            let result = FetchInstalled {
+                checksum: self.checksum,
+                objects: self.objects,
+            };
+            if !self.dependencies.is_empty() {
+                let objects = repository
+                    .objects(snapshot_limits)
+                    .map_err(FetchError::Destination)?;
+                let mut bytes = self.limits.max_known_bytes;
+                for &id in &self.dependencies {
+                    check_cancelled(cancel)?;
+                    let mut read = self.limits.known_read;
+                    read.max_object_bytes = read.max_object_bytes.min(bytes);
+                    let object = objects
+                        .read(id, read)
+                        .map_err(|source| FetchError::LocalRead { id, source })?
+                        .ok_or(FetchError::Missing(id))?;
+                    bytes = bytes
+                        .checked_sub(object.data().len())
+                        .ok_or(FetchError::Limit("known bytes"))?;
+                }
             }
-        }
-        let Some(checksum) = self.checksum else {
-            return Ok(result);
+            let Some(checksum) = self.checksum else {
+                return Ok(result);
+            };
+            let directory = repository.object_dir().join("pack");
+            fs::create_dir_all(&directory)?;
+            let mut pack = tempfile::NamedTempFile::new_in(&directory)?;
+            let mut index = tempfile::NamedTempFile::new_in(&directory)?;
+            pack.write_all(&self.pack)?;
+            pack.as_file().sync_all()?;
+            index.write_all(&self.index)?;
+            index.as_file().sync_all()?;
+            let basename = directory.join(format!("pack-{checksum}"));
+            check_cancelled(cancel)?;
+            publish(pack, &basename.with_extension("pack"), &self.pack, cancel)?;
+            #[cfg(feature = "tracing")]
+            span.record("effects", "pack_visible");
+            check_cancelled(cancel)?;
+            publish(index, &basename.with_extension("idx"), &self.index, cancel)?;
+            #[cfg(feature = "tracing")]
+            span.record("effects", "pack_and_index_visible");
+            Ok(result)
         };
-        let directory = repository.object_dir().join("pack");
-        fs::create_dir_all(&directory)?;
-        let mut pack = tempfile::NamedTempFile::new_in(&directory)?;
-        let mut index = tempfile::NamedTempFile::new_in(&directory)?;
-        pack.write_all(&self.pack)?;
-        pack.as_file().sync_all()?;
-        index.write_all(&self.index)?;
-        index.as_file().sync_all()?;
-        let basename = directory.join(format!("pack-{checksum}"));
-        check_cancelled(cancel)?;
-        publish(pack, &basename.with_extension("pack"), &self.pack, cancel)?;
-        check_cancelled(cancel)?;
-        publish(index, &basename.with_extension("idx"), &self.index, cancel)?;
-        Ok(result)
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::fetch);
+
+        result
     }
 }
 

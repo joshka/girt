@@ -50,23 +50,50 @@ pub fn send_local_with_control(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
-    control.check().map_err(|e| PushError::NotSent(e.into()))?;
-    let destination =
-        std::fs::canonicalize(destination).map_err(|e| PushError::NotSent(e.into()))?;
-    let mut command = Command::new("git");
-    command.env_clear();
-    if let Some(path) = std::env::var_os("PATH") {
-        command.env("PATH", path);
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.local",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+
+    let operation = || {
+        control.check().map_err(|e| PushError::NotSent(e.into()))?;
+        let destination =
+            std::fs::canonicalize(destination).map_err(|e| PushError::NotSent(e.into()))?;
+        let mut command = Command::new("git");
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .args(["-c", "protocol.version=0", "receive-pack"])
+            .arg(destination);
+        send_server(&mut command, prepared, control)
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
     }
-    command
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
-        .args(["-c", "protocol.version=0", "receive-pack"])
-        .arg(destination);
-    send_server(&mut command, prepared, control)
+
+    result
 }
 
 fn send_server(
@@ -74,68 +101,96 @@ fn send_server(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
-    let mut child = Server::spawn(command, control).map_err(|e| PushError::NotSent(e.into()))?;
-    let (body, exchange, attempted) = {
-        let (mut reader, writer) = child.streams();
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.local_server",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+
+    let operation = || {
+        let mut child =
+            Server::spawn(command, control).map_err(|e| PushError::NotSent(e.into()))?;
+        let (body, exchange, attempted) = {
+            let (mut reader, writer) = child.streams();
+            let mut wire = Wire {
+                reader: &mut reader,
+                remaining: prepared.limits.max_advertisement_bytes,
+                cancel: control.cancel,
+            };
+            protocol::advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
+            control.check().map_err(|e| PushError::NotSent(e.into()))?;
+            Server::exchange(
+                reader,
+                writer,
+                &prepared.request,
+                &prepared.pack,
+                prepared.limits.max_status_bytes,
+            )
+        };
+        if !attempted && let Err(cause) = exchange {
+            return Err(PushError::NotSent(cause.into()));
+        }
+        let mut report = PushReport::pending(&prepared.commands);
+        // Parse retained bytes even after cancellation; no further I/O or mutation occurs here.
+        let retain = AtomicBool::new(false);
+        let mut reader = body.as_slice();
         let mut wire = Wire {
             reader: &mut reader,
-            remaining: prepared.limits.max_advertisement_bytes,
-            cancel: control.cancel,
+            remaining: prepared.limits.max_status_bytes,
+            cancel: &retain,
         };
-        protocol::advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
-        control.check().map_err(|e| PushError::NotSent(e.into()))?;
-        Server::exchange(
-            reader,
-            writer,
-            &prepared.request,
-            &prepared.pack,
-            prepared.limits.max_status_bytes,
-        )
-    };
-    if !attempted && let Err(cause) = exchange {
-        return Err(PushError::NotSent(cause.into()));
-    }
-    let mut report = PushReport::pending(&prepared.commands);
-    // Parse retained bytes even after cancellation; no further I/O or mutation occurs here.
-    let retain = AtomicBool::new(false);
-    let mut reader = body.as_slice();
-    let mut wire = Wire {
-        reader: &mut reader,
-        remaining: prepared.limits.max_status_bytes,
-        cancel: &retain,
-    };
-    let parsed = if prepared.commands.is_empty() {
-        wire.end().map_err(PushFailure::from)
-    } else {
-        protocol::read_status(&mut wire, &mut report)
-            .and_then(|()| wire.end().map_err(PushFailure::from))
-    };
-    let transfer = exchange.map_err(PushFailure::from).and(parsed);
-    if let Err(cause) = transfer {
-        return if prepared.commands.is_empty() {
-            Err(PushError::NotSent(cause))
+        let parsed = if prepared.commands.is_empty() {
+            wire.end().map_err(PushFailure::from)
         } else {
-            Err(PushError::Uncertain {
+            protocol::read_status(&mut wire, &mut report)
+                .and_then(|()| wire.end().map_err(PushFailure::from))
+        };
+        let transfer = exchange.map_err(PushFailure::from).and(parsed);
+        if let Err(cause) = transfer {
+            return if prepared.commands.is_empty() {
+                Err(PushError::NotSent(cause))
+            } else {
+                Err(PushError::Uncertain {
+                    cause,
+                    report: Box::new(report),
+                })
+            };
+        }
+        let result = child.wait().map_err(PushFailure::from).and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(PushFailure::Process(status))
+            }
+        });
+        match result {
+            Ok(()) => Ok(report),
+            Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
+            Err(cause) => Err(PushError::Uncertain {
                 cause,
                 report: Box::new(report),
-            })
-        };
-    }
-    let result = child.wait().map_err(PushFailure::from).and_then(|status| {
-        if status.success() {
-            Ok(())
-        } else {
-            Err(PushFailure::Process(status))
+            }),
         }
-    });
-    match result {
-        Ok(()) => Ok(report),
-        Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
-        Err(cause) => Err(PushError::Uncertain {
-            cause,
-            report: Box::new(report),
-        }),
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
     }
+
+    result
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

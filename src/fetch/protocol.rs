@@ -95,41 +95,60 @@ pub fn receive_with_known(
     cancel: &AtomicBool,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
-    validate_known(known, limits, cancel)?;
-    let mut wire = Wire {
-        reader,
-        remaining: limits.max_wire_bytes,
-        cancel,
-    };
-    let advertisement = advertise(&mut wire, limits)?;
-    check_cancelled(cancel)?;
-    let negotiation = request(
-        writer,
-        &advertisement,
-        select(&advertisement),
-        known,
-        limits,
-        cancel,
-    )?;
-    if !negotiation.needs_pack {
-        wire.end()?;
-        return ReceivedFetch::without_pack(
-            advertisement,
-            negotiation.wants,
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.receive",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+    );
+
+    let operation = || {
+        validate_known(known, limits, cancel)?;
+        let mut wire = Wire {
+            reader,
+            remaining: limits.max_wire_bytes,
+            cancel,
+        };
+        let advertisement = advertise(&mut wire, limits)?;
+        check_cancelled(cancel)?;
+        let negotiation = request(
+            writer,
+            &advertisement,
+            select(&advertisement),
             known,
             limits,
             cancel,
-        );
-    }
-    response(
-        &mut wire,
-        advertisement,
-        negotiation,
-        known,
-        limits,
-        cancel,
-        progress,
-    )
+        )?;
+        if !negotiation.needs_pack {
+            wire.end()?;
+            return ReceivedFetch::without_pack(
+                advertisement,
+                negotiation.wants,
+                known,
+                limits,
+                cancel,
+            );
+        }
+        response(
+            &mut wire,
+            advertisement,
+            negotiation,
+            known,
+            limits,
+            cancel,
+            progress,
+        )
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+
+    result
 }
 
 pub(super) struct Negotiation {

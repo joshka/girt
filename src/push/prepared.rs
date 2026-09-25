@@ -80,60 +80,87 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        check_cancelled(cancel)?;
-        for id in receiver_roots {
-            id.require_sha1()?;
-        }
-        let request = encode_commands(&commands, limits, cancel)?;
-        if commands.is_empty() {
-            return Ok(Self {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "push.prepare",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            commands = commands.len(),
+            objects = tracing::field::Empty,
+            pack_bytes = tracing::field::Empty,
+        );
+
+        let operation = || {
+            check_cancelled(cancel)?;
+            for id in receiver_roots {
+                id.require_sha1()?;
+            }
+            let request = encode_commands(&commands, limits, cancel)?;
+            if commands.is_empty() {
+                return Ok(Self {
+                    commands,
+                    request,
+                    pack: vec![],
+                    limits,
+                    objects: 0,
+                    receiver_roots: vec![],
+                });
+            }
+            let mut graph = Graph::select(objects, &commands, limits, cancel)?;
+            let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
+            let inputs: Vec<_> = graph
+                .objects
+                .iter()
+                .map(|(&id, object)| PackObject {
+                    id,
+                    kind: object.kind(),
+                    data: object.data(),
+                })
+                .collect();
+            let mut pack = CancelBuffer {
+                bytes: vec![],
+                cancel,
+            };
+            let result = crate::pack::write_controlled(
+                &inputs,
+                &mut pack,
+                &mut io::sink(),
+                limits.pack,
+                limits.compression,
+                &mut || {
+                    if cancel.load(Ordering::Relaxed) {
+                        Err(io::Error::other("push cancelled").into())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            check_cancelled(cancel)?;
+            let written = result?;
+            Ok(Self {
                 commands,
                 request,
-                pack: vec![],
+                pack: pack.bytes,
                 limits,
-                objects: 0,
-                receiver_roots: vec![],
-            });
-        }
-        let mut graph = Graph::select(objects, &commands, limits, cancel)?;
-        let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
-        let inputs: Vec<_> = graph
-            .objects
-            .iter()
-            .map(|(&id, object)| PackObject {
-                id,
-                kind: object.kind(),
-                data: object.data(),
+                objects: written.objects,
+                receiver_roots,
             })
-            .collect();
-        let mut pack = CancelBuffer {
-            bytes: vec![],
-            cancel,
         };
-        let result = crate::pack::write_controlled(
-            &inputs,
-            &mut pack,
-            &mut io::sink(),
-            limits.pack,
-            limits.compression,
-            &mut || {
-                if cancel.load(Ordering::Relaxed) {
-                    Err(io::Error::other("push cancelled").into())
-                } else {
-                    Ok(())
-                }
-            },
-        );
-        check_cancelled(cancel)?;
-        let written = result?;
-        Ok(Self {
-            commands,
-            request,
-            pack: pack.bytes,
-            limits,
-            objects: written.objects,
-            receiver_roots,
-        })
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::push_failure);
+        #[cfg(feature = "tracing")]
+        if let Ok(value) = &result {
+            span.record("objects", value.object_count())
+                .record("pack_bytes", value.pack_bytes());
+        }
+
+        result
     }
 
     /// Number of objects in the buffered pack after any receiver-history exclusion.

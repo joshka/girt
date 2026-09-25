@@ -84,22 +84,41 @@ pub fn receive_local_with_known(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
-    control.check()?;
-    let source = std::fs::canonicalize(source)?;
-    let mut command = Command::new("git");
-    command.env_clear();
-    if let Some(path) = std::env::var_os("PATH") {
-        command.env("PATH", path);
-    }
-    command
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
-        .args(["-c", "protocol.version=0", "upload-pack", "--strict"])
-        .arg(source);
-    receive_server_with_known(&mut command, select, known, limits, control, progress)
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.local",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+    );
+
+    let operation = || {
+        control.check()?;
+        let source = std::fs::canonicalize(source)?;
+        let mut command = Command::new("git");
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .args(["-c", "protocol.version=0", "upload-pack", "--strict"])
+            .arg(source);
+        receive_server_with_known(&mut command, select, known, limits, control, progress)
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+
+    result
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -128,24 +147,43 @@ fn receive_server_with_known(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
-    let mut child = Server::spawn(command, control)?;
-    let received = {
-        let (mut reader, mut writer) = child.streams();
-        receive_with_known(
-            &mut reader,
-            &mut writer,
-            select,
-            known,
-            limits,
-            control.cancel,
-            progress,
-        )?
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.local_server",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+    );
+
+    let operation = || {
+        let mut child = Server::spawn(command, control)?;
+        let received = {
+            let (mut reader, mut writer) = child.streams();
+            receive_with_known(
+                &mut reader,
+                &mut writer,
+                select,
+                known,
+                limits,
+                control.cancel,
+                progress,
+            )?
+        };
+        let status = child.wait()?;
+        if !status.success() {
+            return Err(FetchError::Process(status));
+        }
+        Ok(received)
     };
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(FetchError::Process(status));
-    }
-    Ok(received)
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+
+    result
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

@@ -225,24 +225,45 @@ impl CloneReady {
         limits: FetchUpdateLimits,
         cancel: &AtomicBool,
     ) -> Result<CloneReport, CloneError> {
-        let mut report = CloneReport {
-            destination: self.request.destination.clone(),
-            reserved: false,
-            initialized: false,
-            fetch: None,
-            configured: false,
-            references: Vec::new(),
-            repository: None,
-            head: self.head.clone(),
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "clone.finish",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let mut report = CloneReport {
+                destination: self.request.destination.clone(),
+                reserved: false,
+                initialized: false,
+                fetch: None,
+                configured: false,
+                references: Vec::new(),
+                repository: None,
+                head: self.head.clone(),
+            };
+            let result = self.create_finish(limits, cancel, &mut report);
+            match result {
+                Ok(()) => Ok(report),
+                Err(source) => Err(CloneError {
+                    report: Box::new(report),
+                    source,
+                }),
+            }
         };
-        let result = self.create_finish(limits, cancel, &mut report);
-        match result {
-            Ok(()) => Ok(report),
-            Err(source) => Err(CloneError {
-                report: Box::new(report),
-                source,
-            }),
-        }
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::clone_finish(error, &span)
+        });
+
+        result
     }
 
     fn create_finish(

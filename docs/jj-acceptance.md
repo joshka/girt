@@ -75,7 +75,9 @@ cancellation and failure classes. Verify enabled/disabled builds, no global subs
 installation, no duplicate user-visible errors, and no credentials, content or sensitive path/URL
 leakage. Preserve source errors, missing/corrupt/wrong-kind/unsupported/limit distinctions, partial
 publication and uncertain mutations. Test caller-owned bounded CPU scheduling and child cleanup.
-Existing jj callbacks ignoring errors are not evidence of stronger cancellation guarantees.
+Existing jj callbacks ignoring errors are not evidence of stronger cancellation guarantees. R03
+evidence and coverage limits are recorded in the [completion report](evidence/r03.md); every
+subsequent operation extends the same contract.
 
 ### A04 — Object representations and Git interpretation
 

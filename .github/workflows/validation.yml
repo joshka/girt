@@ -31,6 +31,12 @@ jobs:
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
         run: cargo +stable check --locked --lib --no-default-features --features http
+      - name: Tracing without network dependencies
+        run: cargo +stable test --locked --no-default-features --features tracing --test tracing
+      - name: Tracing HTTP lifecycle
+        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
+      - name: Tracing SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
@@ -64,6 +70,12 @@ jobs:
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
         run: cargo +stable check --locked --lib --no-default-features --features http
+      - name: Tracing without network dependencies
+        run: cargo +stable test --locked --no-default-features --features tracing --test tracing
+      - name: Tracing HTTP lifecycle
+        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
+      - name: Tracing SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings

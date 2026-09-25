@@ -77,7 +77,8 @@ impl LooseObjects {
     ///
     /// Returns [`Error::Io`] for filesystem failures (including missing objects),
     /// [`Error::TooLarge`] for oversized content, [`Error::UnsupportedObjectType`] for other
-    /// types, or [`Error::Corrupt`] for malformed headers, incomplete or trailing compressed
+    /// recognized types, [`Error::UnknownObjectType`] for unknown kinds, or [`Error::Corrupt`]
+    /// for malformed headers, incomplete or trailing compressed
     /// data, or identity mismatches.
     /// SHA-256 IDs return [`Error::ObjectFormat`] before any filesystem access.
     pub fn read_blob(&self, id: ObjectId, max_size: usize) -> Result<Vec<u8>, Error> {
@@ -153,45 +154,65 @@ impl LooseObjects {
         max_size: usize,
         expected_kind: Option<&str>,
     ) -> Result<crate::Object, Error> {
-        id.require_sha1()?;
-        let file = File::open(self.object_path(id))?;
-        let mut encoded = decompress(file, max_size.saturating_add(32))?;
-        let separator = encoded
-            .iter()
-            .position(|&byte| byte == 0)
-            .ok_or(Error::Corrupt("missing header terminator"))?;
-        let header = &encoded[..separator];
-        let space = header
-            .iter()
-            .position(|&byte| byte == b' ')
-            .ok_or(Error::Corrupt("invalid header"))?;
-        let kind = &header[..space];
-        let length = &header[space + 1..];
-        if expected_kind.is_some_and(|expected| kind != expected.as_bytes()) {
-            return Err(Error::UnsupportedObjectType);
-        }
-        let kind = match kind {
-            b"blob" => crate::ObjectKind::Blob,
-            b"tree" => crate::ObjectKind::Tree,
-            b"commit" => crate::ObjectKind::Commit,
-            b"tag" => crate::ObjectKind::Tag,
-            _ => return Err(Error::UnsupportedObjectType),
+        #[cfg(feature = "tracing")]
+        let span = tracing::trace_span!(
+            target: "girt",
+            "loose.read",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            max_bytes = max_size,
+        );
+
+        let operation = || {
+            id.require_sha1()?;
+            let file = File::open(self.object_path(id))?;
+            let mut encoded = decompress(file, max_size.saturating_add(32))?;
+            let separator = encoded
+                .iter()
+                .position(|&byte| byte == 0)
+                .ok_or(Error::Corrupt("missing header terminator"))?;
+            let header = &encoded[..separator];
+            let space = header
+                .iter()
+                .position(|&byte| byte == b' ')
+                .ok_or(Error::Corrupt("invalid header"))?;
+            let kind = &header[..space];
+            let length = &header[space + 1..];
+            let kind = match kind {
+                b"blob" => crate::ObjectKind::Blob,
+                b"tree" => crate::ObjectKind::Tree,
+                b"commit" => crate::ObjectKind::Commit,
+                b"tag" => crate::ObjectKind::Tag,
+                _ => return Err(Error::UnknownObjectType),
+            };
+            if expected_kind.is_some_and(|expected| kind.as_str() != expected) {
+                return Err(Error::UnsupportedObjectType);
+            }
+            let content = &encoded[separator + 1..];
+            if length != content.len().to_string().as_bytes() {
+                return Err(Error::Corrupt("noncanonical or mismatched length"));
+            }
+            if content.len() > max_size {
+                return Err(Error::TooLarge);
+            }
+            if ObjectId::for_object(kind.as_str(), content) != id {
+                return Err(Error::Corrupt("object identity mismatch"));
+            }
+            encoded.drain(..separator + 1);
+            Ok(crate::Object {
+                kind,
+                data: encoded,
+            })
         };
-        let content = &encoded[separator + 1..];
-        if length != content.len().to_string().as_bytes() {
-            return Err(Error::Corrupt("noncanonical or mismatched length"));
-        }
-        if content.len() > max_size {
-            return Err(Error::TooLarge);
-        }
-        if ObjectId::for_object(kind.as_str(), content) != id {
-            return Err(Error::Corrupt("object identity mismatch"));
-        }
-        encoded.drain(..separator + 1);
-        Ok(crate::Object {
-            kind,
-            data: encoded,
-        })
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::loose);
+
+        result
     }
 
     /// Writes exact blob bytes and returns their SHA-1 identity.
@@ -258,25 +279,45 @@ impl LooseObjects {
     }
 
     fn write_object(&self, kind: &str, bytes: &[u8]) -> Result<ObjectId, Error> {
-        let id = ObjectId::for_object(kind, bytes);
-        let path = self.object_path(id);
-        let parent = path.parent().expect("object path always has a parent");
-        fs::create_dir_all(parent)?;
-        let mut temporary = NamedTempFile::new_in(parent)?;
-        let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), Compression::default());
-        encoder.write_all(object_header(kind, bytes.len()).as_bytes())?;
-        encoder.write_all(bytes)?;
-        encoder.finish()?;
-        match fs::hard_link(temporary.path(), &path) {
-            Ok(()) => Ok(id),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if self.read_object(id, bytes.len(), kind)? != bytes {
-                    return Err(Error::ConflictingObject);
+        #[cfg(feature = "tracing")]
+        let span = tracing::trace_span!(
+            target: "girt",
+            "loose.write",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            bytes = bytes.len(),
+        );
+
+        let operation = || {
+            let id = ObjectId::for_object(kind, bytes);
+            let path = self.object_path(id);
+            let parent = path.parent().expect("object path always has a parent");
+            fs::create_dir_all(parent)?;
+            let mut temporary = NamedTempFile::new_in(parent)?;
+            let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), Compression::default());
+            encoder.write_all(object_header(kind, bytes.len()).as_bytes())?;
+            encoder.write_all(bytes)?;
+            encoder.finish()?;
+            match fs::hard_link(temporary.path(), &path) {
+                Ok(()) => Ok(id),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if self.read_object(id, bytes.len(), kind)? != bytes {
+                        return Err(Error::ConflictingObject);
+                    }
+                    Ok(id)
                 }
-                Ok(id)
+                Err(error) => Err(error.into()),
             }
-            Err(error) => Err(error.into()),
-        }
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::loose);
+
+        result
     }
 
     fn object_path(&self, id: ObjectId) -> PathBuf {
@@ -301,6 +342,9 @@ pub enum Error {
     /// A loose object has a different type from the requested operation.
     #[error("object type does not match the requested operation")]
     UnsupportedObjectType,
+    /// The stored header names an unrecognized Git object kind.
+    #[error("unrecognized loose object type")]
+    UnknownObjectType,
     /// The zlib stream, header, length, or requested identity is invalid.
     #[error("corrupt loose object: {0}")]
     Corrupt(&'static str),
@@ -357,6 +401,22 @@ fn decompress(file: File, limit: usize) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinguishes_unknown_header_kind_from_wrong_requested_kind() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1).unwrap();
+        let id = ObjectId::for_blob(ObjectFormat::Sha1, b"");
+        install(&objects, id, b"future 0\0");
+        assert!(matches!(
+            objects.read_blob(id, 100),
+            Err(Error::UnknownObjectType)
+        ));
+        assert!(matches!(
+            objects.read_raw(id, 100),
+            Err(Error::UnknownObjectType)
+        ));
+    }
 
     /// Construction selects a path lazily: reading a missing object fails without creating storage.
     #[test]

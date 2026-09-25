@@ -1089,3 +1089,11 @@ The blob harness now takes explicit formats and includes `hash_sha256` beside th
 workloads. Both measure identical framing and payload sizes. The [R02 record](evidence/r02.md) links
 retained Criterion results, revision and environment. Historic Criterion comparisons against prior
 local runs do not establish regressions without matching source and workload conditions.
+
+## R03 Optional Tracing
+
+The [R03 evidence](evidence/r03.md#overhead-measurements) records cached loose reads and 128-commit
+history walks with instrumentation disabled, enabled without a subscriber, and enabled with TRACE
+formatting to a sink. Run `cargo bench --bench tracing` and
+`cargo bench --features tracing --bench tracing`. These whole-operation observations include
+filesystem variance and subscriber costs; they establish no numerical regression gate.

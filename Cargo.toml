@@ -9,6 +9,7 @@ keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
 
 [features]
+tracing = ["dep:tracing"]
 ssh = ["dep:tokio", "tokio/net"]
 http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
 
@@ -16,6 +17,7 @@ http = ["dep:reqwest", "dep:tokio", "dep:futures-util"]
 all-features = true
 
 [dependencies]
+tracing = { version = "0.1.40", optional = true, default-features = false, features = ["std"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
 tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] }
@@ -30,6 +32,7 @@ thiserror = "2"
 rustix = { version = "1", features = ["fs", "event", "process"] }
 
 [dev-dependencies]
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 serde_json = "1"
 tokio = { version = "1.4", features = ["sync"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
@@ -224,4 +227,12 @@ doc-scrape-examples = true
 
 [[bench]]
 name = "checkout"
+harness = false
+
+[[example]]
+name = "tracing"
+required-features = ["tracing"]
+
+[[bench]]
+name = "tracing"
 harness = false

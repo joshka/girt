@@ -22,44 +22,71 @@ pub(super) fn validate_with_known(
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Vec<ObjectId>, FetchError> {
-    let mut dependencies = Vec::new();
-    let mut pending = VecDeque::new();
-    let mut seen = HashSet::new();
-    for &id in wants {
-        if !(objects.contains_key(&id) || known.contains_key(&id)) {
-            return Err(FetchError::Missing(id));
-        }
-        if seen.insert(id) {
-            pending.push_back(id);
-        }
-    }
-    let mut remaining = limits.max_connectivity_edges;
-    while let Some(id) = pending.pop_front() {
-        check_cancelled(cancel)?;
-        let object = objects.get(&id).or_else(|| known.get(&id)).unwrap();
-        if !objects.contains_key(&id) {
-            dependencies.push(id);
-        }
-        let edge = |id, kind| {
-            check_cancelled(cancel)?;
-            remaining = remaining
-                .checked_sub(1)
-                .ok_or(FetchError::Limit("connectivity edges"))?;
-            let object = objects
-                .get(&id)
-                .or_else(|| known.get(&id))
-                .ok_or(FetchError::Missing(id))?;
-            if object.kind() != kind {
-                return Err(FetchError::Kind(id));
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "fetch.connectivity",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        received_objects = objects.len(),
+        known_objects = known.len(),
+        wants = wants.len(),
+        visited = tracing::field::Empty,
+        edges = tracing::field::Empty,
+    );
+
+    let operation = || {
+        let mut dependencies = Vec::new();
+        let mut pending = VecDeque::new();
+        let mut seen = HashSet::new();
+        for &id in wants {
+            if !(objects.contains_key(&id) || known.contains_key(&id)) {
+                return Err(FetchError::Missing(id));
             }
             if seen.insert(id) {
                 pending.push_back(id);
             }
-            Ok(())
-        };
-        crate::edges::visit(id, object, edge)?;
-    }
-    Ok(dependencies)
+        }
+        let mut remaining = limits.max_connectivity_edges;
+        while let Some(id) = pending.pop_front() {
+            check_cancelled(cancel)?;
+            let object = objects.get(&id).or_else(|| known.get(&id)).unwrap();
+            if !objects.contains_key(&id) {
+                dependencies.push(id);
+            }
+            let edge = |id, kind| {
+                check_cancelled(cancel)?;
+                remaining = remaining
+                    .checked_sub(1)
+                    .ok_or(FetchError::Limit("connectivity edges"))?;
+                let object = objects
+                    .get(&id)
+                    .or_else(|| known.get(&id))
+                    .ok_or(FetchError::Missing(id))?;
+                if object.kind() != kind {
+                    return Err(FetchError::Kind(id));
+                }
+                if seen.insert(id) {
+                    pending.push_back(id);
+                }
+                Ok(())
+            };
+            crate::edges::visit(id, object, edge)?;
+        }
+        #[cfg(feature = "tracing")]
+        span.record("visited", seen.len())
+            .record("edges", limits.max_connectivity_edges - remaining);
+        Ok(dependencies)
+    };
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = { operation }();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::fetch);
+
+    result
 }
 
 #[cfg(test)]

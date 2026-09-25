@@ -31,58 +31,86 @@ pub async fn send_http(
     prepared: PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
-    let preflight = async {
-        control.check()?;
-        let (bytes, _) = remote
-            .discover(
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(
+        target: "girt",
+        "push.http",
+        outcome = "incomplete",
+        failure_class = tracing::field::Empty,
+        effects = tracing::field::Empty,
+        accepted = tracing::field::Empty,
+        rejected = tracing::field::Empty,
+        pending = tracing::field::Empty,
+        unpack = tracing::field::Empty,
+    );
+
+    let operation = async {
+        let preflight = async {
+            control.check()?;
+            let (bytes, _) = remote
+                .discover(
+                    "git-receive-pack",
+                    prepared.limits.max_advertisement_bytes,
+                    control,
+                )
+                .await?;
+            let mut reader = bytes.as_slice();
+            let mut wire = Wire {
+                reader: &mut reader,
+                remaining: prepared.limits.max_advertisement_bytes,
+                cancel: control.cancel,
+            };
+            protocol::advertise(&mut wire, &prepared)?;
+            wire.end()?;
+            control.check()?;
+            Ok::<_, PushFailure>(())
+        };
+        preflight.await.map_err(PushError::NotSent)?;
+        let mut report = PushReport::pending(&prepared.commands);
+        if prepared.commands.is_empty() {
+            return Ok(report);
+        }
+        let body = RequestBody::new(prepared.request, prepared.pack);
+        control.check().map_err(|e| PushError::NotSent(e.into()))?;
+        let response = remote
+            .exchange(
                 "git-receive-pack",
-                prepared.limits.max_advertisement_bytes,
+                Some(body),
+                prepared.limits.max_status_bytes,
                 control,
             )
-            .await?;
-        let mut reader = bytes.as_slice();
+            .await;
+        // Parse already received evidence even when cancellation is set. This work is bounded by
+        // the status byte budget; the network failure still determines the uncertain
+        // outcome.
+        let retain = AtomicBool::new(false);
+        let mut reader = response.body.as_slice();
         let mut wire = Wire {
             reader: &mut reader,
-            remaining: prepared.limits.max_advertisement_bytes,
-            cancel: control.cancel,
+            remaining: prepared.limits.max_status_bytes,
+            cancel: &retain,
         };
-        protocol::advertise(&mut wire, &prepared)?;
-        wire.end()?;
-        control.check()?;
-        Ok::<_, PushFailure>(())
+        let parsed = protocol::read_status(&mut wire, &mut report)
+            .and_then(|()| wire.end().map_err(PushFailure::from));
+        let result = response.result.map_err(PushFailure::from).and(parsed);
+        match result {
+            Ok(()) => Ok(report),
+            Err(cause) => Err(PushError::Uncertain {
+                cause,
+                report: Box::new(report),
+            }),
+        }
     };
-    preflight.await.map_err(PushError::NotSent)?;
-    let mut report = PushReport::pending(&prepared.commands);
-    if prepared.commands.is_empty() {
-        return Ok(report);
+    #[cfg(feature = "tracing")]
+    let result = tracing::Instrument::instrument(operation, span.clone()).await;
+    #[cfg(not(feature = "tracing"))]
+    let result = operation.await;
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
+    #[cfg(feature = "tracing")]
+    if let Ok(report) = &result {
+        crate::trace::push_report(&span, report);
     }
-    let body = RequestBody::new(prepared.request, prepared.pack);
-    control.check().map_err(|e| PushError::NotSent(e.into()))?;
-    let response = remote
-        .exchange(
-            "git-receive-pack",
-            Some(body),
-            prepared.limits.max_status_bytes,
-            control,
-        )
-        .await;
-    // Parse already received evidence even when cancellation is set. This work is bounded by the
-    // status byte budget; the network failure still determines the uncertain outcome.
-    let retain = AtomicBool::new(false);
-    let mut reader = response.body.as_slice();
-    let mut wire = Wire {
-        reader: &mut reader,
-        remaining: prepared.limits.max_status_bytes,
-        cancel: &retain,
-    };
-    let parsed = protocol::read_status(&mut wire, &mut report)
-        .and_then(|()| wire.end().map_err(PushFailure::from));
-    let result = response.result.map_err(PushFailure::from).and(parsed);
-    match result {
-        Ok(()) => Ok(report),
-        Err(cause) => Err(PushError::Uncertain {
-            cause,
-            report: Box::new(report),
-        }),
-    }
+
+    result
 }

@@ -52,7 +52,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | This document; [matrix](jj-acceptance.md); [process](testing.md#roadmap-completion-and-coordination)                                                         |
 | R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Complete            | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads); [evidence](evidence/r01.md)                                                |
 | R02 | Format-bearing identity and hashing foundation              | R01                             | Complete            | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations); [evidence](evidence/r02.md)                                                             |
-| R03 | Optional tracing and operation failure visibility           | R02                             | Planned             | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling)                                                                                           |
+| R03 | Optional tracing and operation failure visibility           | R02                             | Complete            | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling); [evidence](evidence/r03.md)                                                              |
 | R04 | SHA-256 object codecs and loose repository storage          | R02                             | Planned             | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation)              |
 | R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Planned             | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh)                  |
 | R06 | Native CI foundation for both formats                       | R05                             | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage)                                                                                                 |
@@ -130,6 +130,10 @@ can be validated before the next depends on it.
 
 R02's [format audit](evidence/r02.md#remaining-format-propagation) assigns codec/storage propagation
 to R04, pack/ref/index propagation to R05, and negotiation to R26/R29. R35 retains integration.
+
+R03's [follow-ups](evidence/r03.md#follow-ups-and-limits) assign direct fetch-install failure
+reports to R26 and retain per-operation instrumentation and native-platform gates. No tracing field
+replaces structured recovery evidence.
 
 ## Decisions Still Requiring Evidence
 

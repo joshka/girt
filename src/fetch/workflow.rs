@@ -285,21 +285,42 @@ impl FetchReady {
         limits: FetchUpdateLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchReport, FetchFinishError> {
-        let mut report = FetchReport {
-            updates: std::mem::take(&mut self.updates),
-            pack_bytes: self.received.pack_bytes(),
-            objects: self.received.object_count(),
-            installed: None,
-            references: Vec::new(),
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "fetch.finish",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let mut report = FetchReport {
+                updates: std::mem::take(&mut self.updates),
+                pack_bytes: self.received.pack_bytes(),
+                objects: self.received.object_count(),
+                installed: None,
+                references: Vec::new(),
+            };
+            let result = self.install_publish(limits, cancel, &mut report);
+            match result {
+                Ok(()) => Ok(report),
+                Err(source) => Err(FetchFinishError {
+                    report: Box::new(report),
+                    source,
+                }),
+            }
         };
-        let result = self.install_publish(limits, cancel, &mut report);
-        match result {
-            Ok(()) => Ok(report),
-            Err(source) => Err(FetchFinishError {
-                report: Box::new(report),
-                source,
-            }),
-        }
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::fetch_finish(error, &span)
+        });
+
+        result
     }
 
     fn install_publish(

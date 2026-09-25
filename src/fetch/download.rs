@@ -14,10 +14,15 @@ use crate::packet::Wire;
 /// while discarding the bytes. Other Arc owners can keep history alive independently.
 ///
 /// Downloading has no local filesystem side effects. A successful download is not evidence of a
-/// valid pack. Callers bound queued downloads, retained bytes and active workers, and observe
-/// worker completion even after requesting cancellation; dropping a worker handle does not stop its
-/// work.
+/// valid pack. With `tracing`, this value also retains the initiating span and subscriber until
+/// validation or drop. Validation restores them on the worker, then restores its previous context;
+/// the retained network span's lifetime includes queue/validation time. Subscriber state must not
+/// assume release on the initiating thread. Callers bound queued downloads, retained bytes and
+/// active workers, and observe worker completion even after requesting cancellation; dropping a
+/// worker handle does not stop its work.
 pub struct DownloadedFetch {
+    #[cfg(feature = "tracing")]
+    pub(super) trace: crate::trace::DownloadContext,
     pub(super) advertisement: Advertisement,
     pub(super) negotiation: protocol::Negotiation,
     pub(super) known: Option<Arc<KnownHistory>>,
@@ -51,31 +56,65 @@ impl DownloadedFetch {
         cancel: &std::sync::atomic::AtomicBool,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<ReceivedFetch, FetchError> {
-        let empty = KnownHistory::default();
-        let history = self.known.as_deref().unwrap_or(&empty);
-        if !self.negotiation.needs_pack {
-            return ReceivedFetch::without_pack(
+        #[cfg(feature = "tracing")]
+        {
+            let context = self.trace.clone();
+            context.enter(|| self.validate_inner(cancel, progress))
+        }
+        #[cfg(not(feature = "tracing"))]
+        self.validate_inner(cancel, progress)
+    }
+
+    fn validate_inner(
+        self,
+        cancel: &std::sync::atomic::AtomicBool,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    ) -> Result<ReceivedFetch, FetchError> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "fetch.validate",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+            wire_bytes = self.body.len(),
+        );
+
+        let operation = || {
+            let empty = KnownHistory::default();
+            let history = self.known.as_deref().unwrap_or(&empty);
+            if !self.negotiation.needs_pack {
+                return ReceivedFetch::without_pack(
+                    self.advertisement,
+                    self.negotiation.wants,
+                    history,
+                    self.limits,
+                    cancel,
+                );
+            }
+            let mut reader = self.body.as_slice();
+            let mut wire = Wire {
+                reader: &mut reader,
+                remaining: self.remaining,
+                cancel,
+            };
+            protocol::response(
+                &mut wire,
                 self.advertisement,
-                self.negotiation.wants,
+                self.negotiation,
                 history,
                 self.limits,
                 cancel,
-            );
-        }
-        let mut reader = self.body.as_slice();
-        let mut wire = Wire {
-            reader: &mut reader,
-            remaining: self.remaining,
-            cancel,
+                progress,
+            )
         };
-        protocol::response(
-            &mut wire,
-            self.advertisement,
-            self.negotiation,
-            history,
-            self.limits,
-            cancel,
-            progress,
-        )
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::fetch);
+
+        result
     }
 }

@@ -94,10 +94,29 @@ impl Repository {
     /// synchronous; nothing is written. Concurrent cooperating writers publish whole files by
     /// rename. In-place writes by noncooperating processes may instead produce a parse error.
     pub fn read_index(&self, limits: Limits) -> Result<Option<Index>, StorageError> {
-        let path = self.git_dir().join("index");
-        read_bytes(&path, limits)?
-            .map(|bytes| parse(&path, &bytes, limits))
-            .transpose()
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "index.read_index",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let path = self.git_dir().join("index");
+            read_bytes(&path, limits)?
+                .map(|bytes| parse(&path, &bytes, limits))
+                .transpose()
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| crate::trace::index(error, &span));
+
+        result
     }
 
     /// Exclusively locks the per-worktree index, then reads and validates its current bytes.
@@ -111,48 +130,67 @@ impl Repository {
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
-        let destination = self.git_dir().join("index");
-        let lock_path = self.git_dir().join("index.lock");
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-            .map_err(|source| {
-                if source.kind() == io::ErrorKind::AlreadyExists {
-                    StorageError::Locked(lock_path.clone())
-                } else {
-                    io_error("create lock", &lock_path, source)
-                }
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "index.edit_index",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            let destination = self.git_dir().join("index");
+            let lock_path = self.git_dir().join("index.lock");
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+                .map_err(|source| {
+                    if source.kind() == io::ErrorKind::AlreadyExists {
+                        StorageError::Locked(lock_path.clone())
+                    } else {
+                        io_error("create lock", &lock_path, source)
+                    }
+                })?;
+            let lock_identity = file.metadata().map_err(|source| StorageError::Cleanup {
+                operation: Box::new(io_error("inspect acquired lock", &lock_path, source)),
+                cleanup: Box::new(io_error(
+                    "identify lock for cleanup",
+                    &lock_path,
+                    io::Error::other("cannot safely remove lock without its file identity"),
+                )),
             })?;
-        let lock_identity = file.metadata().map_err(|source| StorageError::Cleanup {
-            operation: Box::new(io_error("inspect acquired lock", &lock_path, source)),
-            cleanup: Box::new(io_error(
-                "identify lock for cleanup",
-                &lock_path,
-                io::Error::other("cannot safely remove lock without its file identity"),
-            )),
-        })?;
-        let mut edit = IndexEdit {
-            destination,
-            lock_path,
-            lock_identity,
-            file: Some(file),
-            original: None,
-            index: Index::default(),
-            limits,
-            published: false,
-        };
-        let result = (|| {
-            edit.original = read_bytes(&edit.destination, limits)?;
-            if let Some(bytes) = &edit.original {
-                edit.index = parse(&edit.destination, bytes, limits)?;
+            let mut edit = IndexEdit {
+                destination,
+                lock_path,
+                lock_identity,
+                file: Some(file),
+                original: None,
+                index: Index::default(),
+                limits,
+                published: false,
+            };
+            let result = (|| {
+                edit.original = read_bytes(&edit.destination, limits)?;
+                if let Some(bytes) = &edit.original {
+                    edit.index = parse(&edit.destination, bytes, limits)?;
+                }
+                Ok(())
+            })();
+            if let Err(operation) = result {
+                return Err(with_cleanup(operation, edit.abort()));
             }
-            Ok(())
-        })();
-        if let Err(operation) = result {
-            return Err(with_cleanup(operation, edit.abort()));
-        }
-        Ok(edit)
+            Ok(edit)
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| crate::trace::index(error, &span));
+
+        result
     }
 }
 
@@ -191,10 +229,29 @@ impl IndexEdit {
     /// bytes, apart from independent concurrent changes. The acquired lock is cleaned on failure
     /// where possible. Successful return reports publication, not crash durability.
     pub fn commit(mut self) -> Result<(), StorageError> {
-        if let Err(operation) = self.publish() {
-            return Err(with_cleanup(operation, self.abort()));
-        }
-        Ok(())
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "index.commit",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            if let Err(operation) = self.publish() {
+                return Err(with_cleanup(operation, self.abort()));
+            }
+            Ok(())
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| crate::trace::index(error, &span));
+
+        result
     }
 
     /// Releases the owned lock without publishing and reports cleanup failure.
@@ -204,11 +261,30 @@ impl IndexEdit {
     /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
     /// recovery; no index or working-tree content is changed.
     pub fn abort(mut self) -> Result<(), StorageError> {
-        self.published = true; // Do not silently retry an explicitly reported cleanup failure.
-        self.check_lock_identity()?;
-        drop(self.file.take());
-        fs::remove_file(&self.lock_path)
-            .map_err(|source| io_error("remove owned index lock", &self.lock_path, source))
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt",
+            "index.abort",
+            outcome = "incomplete",
+            failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty,
+        );
+
+        let operation = || {
+            self.published = true; // Do not silently retry an explicitly reported cleanup failure.
+            self.check_lock_identity()?;
+            drop(self.file.take());
+            fs::remove_file(&self.lock_path)
+                .map_err(|source| io_error("remove owned index lock", &self.lock_path, source))
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = { operation }();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| crate::trace::index(error, &span));
+
+        result
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
