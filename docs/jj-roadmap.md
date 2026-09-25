@@ -255,13 +255,14 @@ those cases and the expanded portable selection. C02 retains the wider native ga
 reference matrix passes on Windows, Linux and macOS. See
 [R11 evidence](evidence/r11.md#native-and-local-validation); R11 does not close these earlier gaps.
 
-R12 establishes full-index v2/v3/v4 framing and extended flags. Git-created split indexes and sparse
-indexes remain explicit refusals; expanded sparse-checkout indexes retain skip-worktree flags. R38
-owns shared-index resolution/publication and sparse-directory expansion/preservation before R34. R13
-provides colocation drafts that preserve or explicitly replace these flags without invoking raw
-status/checkout. jj owns placeholder selection and materialization. R14 must assess whether any
-additional consumer requires raw status/checkout treatment of these flags and queue bounded work
-before R34; their existing explicit refusal does not establish parity.
+R12 establishes full-index v2/v3/v4 framing and extended flags. R38 adds shared-index resolution,
+unchanged split preservation, deliberate full-index publication after edits and explicit sparse
+directory preservation/expansion. Its [evidence](evidence/r38.md) tracks remaining acceptance before
+R34. Expanded sparse entries retain skip-worktree flags. R13 provides colocation drafts that
+preserve or explicitly replace these flags without invoking raw status/checkout. jj owns placeholder
+selection and materialization. R14 must assess whether any additional consumer requires raw
+status/checkout treatment of these flags and queue bounded work before R34; their existing explicit
+refusal does not establish parity.
 
 R13 is accepted for its documented primitives, with local both-format Git/fault evidence and passing
 native index/colocation, reference and broad platform matrices on all four hosts. The user

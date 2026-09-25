@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use girt::index::{Entry, Error, Index, Limits, Mode, Stage, StorageError};
+use girt::index::{Entry, Index, Limits, Mode, Stage, StorageError};
 use girt::{InitKind, ObjectId, Repository, Tree};
 use rstest::rstest;
 
@@ -535,7 +535,9 @@ fn git_observes_girt_extended_flag_edits(
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
-fn sparse_index_is_observed_and_refused_without_writing(#[case] format: girt::ObjectFormat) {
+fn sparse_index_is_preserved_then_expanded_without_materializing(
+    #[case] format: girt::ObjectFormat,
+) {
     let (_root, repo) = repository(format);
     let root = repo.worktree().unwrap();
     fs::create_dir(root.join("inside")).unwrap();
@@ -557,16 +559,22 @@ fn sparse_index_is_observed_and_refused_without_writing(#[case] format: girt::Ob
     let observed = git(root, &["ls-files", "--sparse", "--stage"]);
     assert!(String::from_utf8_lossy(&observed).contains("040000"));
     let before = fs::read(repo.git_dir().join("index")).unwrap();
-    assert!(matches!(
-        repo.edit_index(Limits::default()),
-        Err(StorageError::Format {
-            source: Error::Entry { .. },
-            ..
-        })
-    ));
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert_eq!(edit.index().entries()[1].mode, Mode::SparseDirectory);
+    edit.commit().unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
-    assert!(!repo.git_dir().join("index.lock").exists());
-    git(root, &["sparse-checkout", "reapply", "--no-sparse-index"]);
+    let objects = repo.objects(girt::PackLimits::default()).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.expand_sparse(
+        &objects,
+        girt::index::SparseLimits::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    edit.commit().unwrap();
+    assert!(!root.join("outside").exists());
+    let observed = git(root, &["ls-files", "--stage"]);
+    assert!(String::from_utf8_lossy(&observed).contains("outside/b"));
     let expanded = repo.read_index(Limits::default()).unwrap().unwrap();
     assert!(
         expanded
@@ -711,4 +719,142 @@ fn split_publication_detects_changed_dependency(#[case] format: girt::ObjectForm
     assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared));
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn split_colocation_preserves_head_preconditions_and_git_lock(#[case] format: girt::ObjectFormat) {
+    use girt::refs::{Expected, RefName, Reflog};
+    let (_root, repo) = split_fixture(format);
+    let refs = repo.references().unwrap();
+    let head = refs.read(&RefName::new(b"HEAD").unwrap()).unwrap().unwrap();
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    let mut edit = repo.edit_colocation(Limits::default()).unwrap();
+    assert!(
+        !command(
+            repo.worktree().unwrap(),
+            &["update-index", "--no-split-index"]
+        )
+        .output()
+        .unwrap()
+        .status
+        .success()
+    );
+    edit.index_mut().replace_entries(vec![]).unwrap();
+    assert!(
+        edit.commit(head.clone(), Expected::Absent, Reflog::Preserve)
+            .is_err()
+    );
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    let edit = repo.edit_colocation(Limits::default()).unwrap();
+    edit.commit(head.clone(), Expected::Value(head), Reflog::Preserve)
+        .unwrap();
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn split_aggregate_byte_limit_includes_shared_file(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    let main = fs::read(repo.git_dir().join("index")).unwrap();
+    let shared = fs::read(
+        repo.git_dir()
+            .join(format!("sharedindex.{}", index.shared_index_id().unwrap())),
+    )
+    .unwrap();
+    let short = Limits {
+        max_bytes: main.len() + shared.len() - 1,
+        ..Limits::default()
+    };
+    assert!(repo.edit_index(short).is_err());
+    let exact = Limits {
+        max_bytes: main.len() + shared.len(),
+        ..Limits::default()
+    };
+    assert!(repo.read_index(exact).unwrap().is_some());
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::v2_sha1(girt::ObjectFormat::Sha1, "2")]
+#[case::v3_sha1(girt::ObjectFormat::Sha1, "3")]
+#[case::v4_sha1(girt::ObjectFormat::Sha1, "4")]
+#[case::v2_sha256(girt::ObjectFormat::Sha256, "2")]
+#[case::v3_sha256(girt::ObjectFormat::Sha256, "3")]
+#[case::v4_sha256(girt::ObjectFormat::Sha256, "4")]
+fn split_versions_flags_and_entry_edit(#[case] format: girt::ObjectFormat, #[case] version: &str) {
+    let (_root, repo) = split_fixture(format);
+    let root = repo.worktree().unwrap();
+    git(
+        root,
+        &["update-index", &format!("--index-version={version}")],
+    );
+    git(root, &["update-index", "--skip-worktree", "c"]);
+    let before = git(root, &["ls-files", "--stage"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let mut entries = edit.index().entries().to_vec();
+    assert!(entries[1].skip_worktree);
+    entries[1].assume_valid = false;
+    edit.replace_entries(entries).unwrap();
+    assert!(edit.index().shared_index_id().is_none());
+    edit.commit().unwrap();
+    assert_eq!(git(root, &["ls-files", "--stage"]), before);
+    assert!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()[1]
+            .skip_worktree
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn sparse_colocation_preserves_directories_after_other_edits(#[case] format: girt::ObjectFormat) {
+    use girt::refs::{Expected, RefName, Reflog};
+    let (_root, repo) = repository(format);
+    let leaf = repo.loose_objects().write_blob(b"x").unwrap();
+    let tree = Tree::new(
+        format,
+        vec![girt::TreeEntry {
+            name: b"x".to_vec(),
+            mode: girt::EntryMode::Blob,
+            id: leaf,
+        }],
+    )
+    .unwrap();
+    let id = repo.loose_objects().write_tree(&tree).unwrap();
+    let mut directory = Entry::new(b"outside/".to_vec(), Mode::SparseDirectory, id);
+    directory.skip_worktree = true;
+    let refs = repo.references().unwrap();
+    let head = refs.read(&RefName::new(b"HEAD").unwrap()).unwrap().unwrap();
+    let mut edit = repo.edit_colocation(Limits::default()).unwrap();
+    edit.index_mut()
+        .replace_entries(vec![directory.clone()])
+        .unwrap();
+    edit.commit(
+        head.clone(),
+        Expected::Value(head.clone()),
+        Reflog::Preserve,
+    )
+    .unwrap();
+    let mut edit = repo.edit_colocation(Limits::default()).unwrap();
+    edit.index_mut()
+        .replace_entries(vec![
+            directory,
+            Entry::new(b"file".to_vec(), Mode::Regular, leaf),
+        ])
+        .unwrap();
+    edit.index_mut()
+        .set_version(girt::index::Version::V4)
+        .unwrap();
+    edit.commit(head.clone(), Expected::Value(head), Reflog::Preserve)
+        .unwrap();
+    let observed = git(repo.worktree().unwrap(), &["ls-files", "--stage"]);
+    assert!(String::from_utf8_lossy(&observed).contains("outside/x"));
+    assert!(!repo.worktree().unwrap().join("outside").exists());
 }

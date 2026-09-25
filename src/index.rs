@@ -7,7 +7,8 @@
 //! Intent-to-add, skip-worktree and assume-valid are retained as data; no staging, sparse-checkout
 //! or stat-skipping policy is implemented. Split indexes resolve their immutable shared file on
 //! repository reads; unchanged publication preserves that dependency and edits publish a full
-//! index. Sparse directory entries remain unsupported. Unknown mandatory extensions are refused.
+//! index. Sparse directories retain tree identities; explicit expansion reads their trees without
+//! materializing files. Unknown mandatory extensions are refused.
 //! Optional extensions are opaque and round-trip unchanged. Editing discards derived caches,
 //! retains resolve-undo records and refuses unknown optional extensions. See
 //! [`Index::replace_entries`].
@@ -35,9 +36,11 @@
 //! ```
 mod codec;
 mod entries;
+mod sparse;
 mod split;
 mod store;
 
 pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
+pub use sparse::{SparseError, SparseLimits};
 pub use store::{IndexEdit, StorageError};

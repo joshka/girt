@@ -178,7 +178,7 @@ impl Index {
         check_count(entries.len(), limits.max_entries, "entries")?;
         entries.sort_unstable_by(|a, b| (&a.path, a.stage).cmp(&(&b.path, b.stage)));
         validate_entries(format, &entries, limits)?;
-        let index = Self {
+        let mut index = Self {
             format,
             version: if entries.iter().any(extended) {
                 Version::V3
@@ -189,6 +189,7 @@ impl Index {
             entries,
             extensions: Vec::new(),
         };
+        index.mark_sparse();
         index.encoded_len(limits)?;
         Ok(index)
     }
@@ -226,14 +227,24 @@ impl Index {
         if let Some(extension) = self.extensions.iter().find(|e| {
             !matches!(
                 &e.signature,
-                b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC" | b"link"
+                b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC" | b"link" | b"sdir"
             )
         }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
         }
         self.extensions.retain(|e| e.signature == *b"REUC");
+        self.mark_sparse();
         self.original = None;
         Ok(())
+    }
+
+    fn mark_sparse(&mut self) {
+        if self.entries.iter().any(|e| e.mode == Mode::SparseDirectory) {
+            self.extensions.push(Extension {
+                signature: *b"sdir",
+                data: Vec::new(),
+            });
+        }
     }
 
     /// Borrows entries in validated byte-path/stage order.
@@ -374,7 +385,7 @@ impl Index {
                 return Err(malformed(cursor, "truncated extension header"));
             }
             let signature: [u8; 4] = bytes[cursor..cursor + 4].try_into().unwrap();
-            if !signature[0].is_ascii_uppercase() && signature != *b"link" {
+            if !signature[0].is_ascii_uppercase() && !matches!(&signature, b"link" | b"sdir") {
                 return Err(Error::MandatoryExtension(signature));
             }
             let length = word(bytes, cursor + 4) as usize;
@@ -387,6 +398,16 @@ impl Index {
                 data: bytes[cursor..cursor + length].to_vec(),
             });
             cursor += length;
+        }
+        let sparse: Vec<_> = extensions
+            .iter()
+            .filter(|e| e.signature == *b"sdir")
+            .collect();
+        if sparse.len() > 1 || sparse.first().is_some_and(|e| !e.data.is_empty()) {
+            return Err(malformed(cursor, "invalid sparse extension"));
+        }
+        if entries.iter().any(|e| e.mode == Mode::SparseDirectory) && sparse.is_empty() {
+            return Err(malformed(cursor, "sparse directory without sdir extension"));
         }
         if !extensions.iter().any(|e| e.signature == *b"link") {
             validate_entries(format, &entries, limits)?;
@@ -482,11 +503,9 @@ fn parse_entry(
         0o100755 => Mode::Executable,
         0o120000 => Mode::Symlink,
         0o160000 => Mode::Gitlink,
+        0o040000 => Mode::SparseDirectory,
         _ => {
-            return Err(entry_error(
-                position,
-                "unsupported mode (including sparse directories)",
-            ));
+            return Err(entry_error(position, "unsupported mode"));
         }
     };
     let flags = u16::from_be_bytes(fixed[40 + width..fixed_len].try_into().unwrap());
@@ -591,9 +610,22 @@ pub(super) fn validate_entries(
     for (position, entry) in entries.iter().enumerate() {
         entry.id.require_format(format)?;
         check_count(entry.path.len(), limits.max_path_bytes, "path bytes")?;
-        if entry.path.contains(&0)
-            || entry
-                .path
+        let path = if entry.mode == Mode::SparseDirectory {
+            if !entry.skip_worktree || entry.intent_to_add || entry.stage != Stage::Normal {
+                return Err(entry_error(
+                    position,
+                    "invalid sparse directory flags or stage",
+                ));
+            }
+            entry.path.strip_suffix(b"/").ok_or(entry_error(
+                position,
+                "sparse directory requires trailing slash",
+            ))?
+        } else {
+            &entry.path
+        };
+        if path.contains(&0)
+            || path
                 .split(|b| *b == b'/')
                 .any(|part| matches!(part, b"" | b"." | b".." | b".git"))
         {
@@ -613,6 +645,13 @@ pub(super) fn validate_entries(
         }
     }
     for (position, entry) in entries.iter().enumerate() {
+        if entry.mode == Mode::SparseDirectory
+            && entries
+                .get(position + 1)
+                .is_some_and(|next| next.path.starts_with(&entry.path))
+        {
+            return Err(entry_error(position, "sparse directory overlaps entries"));
+        }
         // Search each proper path prefix in the sorted entry set. Only up to four records share
         // a name, so conflicts remain bounded without building a second path tree.
         for (slash, _) in entry.path.iter().enumerate().filter(|(_, b)| **b == b'/') {

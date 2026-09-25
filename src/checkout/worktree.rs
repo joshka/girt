@@ -742,6 +742,7 @@ fn value(entry: &index::Entry) -> TreeValue {
             index::Mode::Regular => EntryMode::Blob,
             index::Mode::Executable => EntryMode::Executable,
             index::Mode::Symlink => EntryMode::Symlink,
+            index::Mode::SparseDirectory => crate::EntryMode::Tree,
             index::Mode::Gitlink => EntryMode::Gitlink,
         },
     }

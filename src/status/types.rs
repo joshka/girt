@@ -216,6 +216,7 @@ pub(super) fn value(entry: &index::Entry) -> TreeValue {
             index::Mode::Regular => crate::EntryMode::Blob,
             index::Mode::Executable => crate::EntryMode::Executable,
             index::Mode::Symlink => crate::EntryMode::Symlink,
+            index::Mode::SparseDirectory => crate::EntryMode::Tree,
             index::Mode::Gitlink => crate::EntryMode::Gitlink,
         },
     }

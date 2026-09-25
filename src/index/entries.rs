@@ -9,9 +9,9 @@ use crate::ObjectId;
 /// IDs are preserved even when zero; object existence and type remain caller obligations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
-    /// Full repository-relative path bytes, without a trailing slash.
+    /// Repository-relative path bytes; sparse directory paths have one trailing slash.
     pub path: Vec<u8>,
-    /// Canonical leaf mode (directories are unsupported).
+    /// Canonical leaf or sparse directory mode.
     pub mode: Mode,
     /// Identity in the index's selected object format; not resolved by index operations.
     pub id: ObjectId,
@@ -45,10 +45,12 @@ impl Entry {
     }
 }
 
-/// Canonical index leaf modes. A gitlink names a submodule commit; other modes name blobs.
+/// Canonical index modes. Sparse directories name trees; gitlinks name submodule commits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Mode {
+    /// Collapsed sparse directory tree, `040000`, with a trailing slash and skip-worktree.
+    SparseDirectory = 0o040000,
     /// Non-executable regular file, `100644`.
     Regular = 0o100644,
     /// Executable regular file, `100755`.

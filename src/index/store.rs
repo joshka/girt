@@ -222,6 +222,21 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Expands sparse directories in the held draft, leaving publication to `commit`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Index::expand_sparse`]. Failure preserves both draft and storage; the lock stays held.
+    pub fn expand_sparse(
+        &mut self,
+        objects: &crate::Objects,
+        limits: super::SparseLimits,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), super::SparseError> {
+        self.index
+            .expand_sparse(objects, self.limits, limits, cancelled)
+    }
+
     /// Reuses locked cached stat words for unchanged draft entries, then validates replacement.
     ///
     /// Matches path, stage, mode, object ID and all flags. Changed/new entries retain the caller's

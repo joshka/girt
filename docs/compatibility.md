@@ -1879,9 +1879,22 @@ the checksum before allocating entries and bounds decompressed path bytes and ex
 retains original encoded bytes alongside decoded information to preserve alternate valid v4
 compression and extended-flag framing. Storage may retain additional original/output buffers. These
 are proportional bounds, not a precise heap budget. Zero/omitted checksums, unknown flag bits,
-noncanonical modes, sparse directories and mandatory extensions (including `link` and `sdir`) are
-refused. R38 owns split shared-index storage and sparse-directory handling; no full split/sparse
-parity is claimed.
+noncanonical modes and unknown mandatory extensions are refused. Split `link` dependencies resolve
+against checksum-validated immutable shared files beside the per-worktree index. Main plus shared
+encoded bytes share the input ceiling. Unchanged publication preserves the original main file; entry
+or version edits deliberately publish a standalone full index without deleting shared files. Both
+main and shared bytes are rechecked before publication. Missing/corrupt shared storage fails without
+writing; no hidden retries or shared-file expiry are performed.
+
+Sparse directory entries retain mode `040000`, trailing slash, stage zero and skip-worktree plus the
+`sdir` marker. Entry edits preserve remaining sparse directories. `Index::expand_sparse` and
+`IndexEdit::expand_sparse` explicitly replace all collapsed directories with skip-worktree leaves,
+reading validated trees with aggregate tree/count/path/depth limits and cooperative cancellation.
+Ordinary entries retain metadata; expanded leaves use zero stat words and inherited assume-valid.
+Missing/wrong-kind/corrupt trees and failed validation leave the draft unchanged. Leaf targets are
+not read. Empty directories disappear. Expansion neither matches sparse-checkout patterns nor
+materializes files. These operations compose through `ColocationEdit::index_mut`; the caller still
+owns staging, placeholder and materialization policy. See [R38 evidence](evidence/r38.md).
 
 Optional payloads remain opaque. Unchanged indexes round-trip exactly. Changed entries or version
 conversion discard derived `TREE`, `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. `REUC` bytes remain
