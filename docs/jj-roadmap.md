@@ -56,7 +56,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R04 | SHA-256 object codecs and loose repository storage          | R02                             | Complete              | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation); [evidence](evidence/r04.md) |
 | R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Complete              | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r05.md)     |
 | R06 | Native CI foundation for both formats                       | R05                             | Complete              | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r06.md)                                                                                    |
-| R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | In progress           | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation)                 |
+| R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Complete              | [A01/A04 evidence](evidence/r07.md)                                                                                                                                          |
 | R08 | Layered config resolution and provenance                    | R03                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
 | R09 | Lossless config and remote mutation                         | R08                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Planned               | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                                                                                            |
@@ -107,8 +107,10 @@ changes and Windows fixture correction. Transport negotiation remains with R26/R
 broader refs and index semantics. Concrete format/refresh follow-ups are assigned in
 [R05 remaining owners](evidence/r05.md#remaining-owners).
 
-R07 owns the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-ups); byte retention
-alone does not close those interpretation requirements.
+R07 resolves the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-ups) through decoded
+graph/identity access and bounded tag peeling. Its [evidence](evidence/r07.md) distinguishes Git
+read/display/write/fsck behavior, exact signature bytes, tested revisions and native limits. R08 is
+the next serial item; final jj integration remains R35.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
 required format, helper, platform, or policy feature, append bounded dependent tasks before marking

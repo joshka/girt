@@ -1165,3 +1165,40 @@ peak-RSS/file-handle claims are made.
 | `encode_index_10000`  |         1038.04 |           3069.74 |
 | `parse_reflog_1000`   |          349.23 |            444.54 |
 | `list_refs_128_warm`  |         3405.19 |           3406.62 |
+
+## R07 Imported Parsing and Peeling
+
+Implementation `68ed48ac89afa323eb735c3f664c7649871f6fd0` was measured on macOS 26.6.2 arm64 with
+Rust 1.98.1. The [source manifest](/Users/joshka/.codex/reports/girt-r07/source.json) records file
+fingerprints; the [final log](/Users/joshka/.codex/reports/girt-r07/benchmarks-final.log) retains
+the command output. Reproduce the selected changed paths with:
+
+```sh
+cargo bench --bench object_formats --bench peeling -- '^(object_formats/(parse|encode_tree)|peeling/)'
+```
+
+Criterion used 20 samples, 500-ms warmup and one-second measurement for object codecs, and
+one-second warmup and two-second measurement for peeling. The values below are reported central
+estimates with 95% confidence intervals, in microseconds. Fixture construction is outside
+measurement. Tree inputs contain 256 entries. Commit/tag inputs include identity metadata; the
+commit has a negative date and a folded opaque signature. Peeling reads one or sixteen nested tags
+and a terminal blob through a warm loose store, including hashing/decompression and kind checks. No
+cold-disk claim is made.
+
+| Operation                           | SHA-1 µs (95% CI)         | SHA-256 µs (95% CI)       |
+| ----------------------------------- | ------------------------- | ------------------------- |
+| Parse 256-entry tree                | 9.201 (9.127–9.295)       | 9.370 (9.293–9.434)       |
+| Copy retained tree payload          | 0.171 (0.167–0.174)       | 0.206 (0.201–0.212)       |
+| Parse commit graph                  | 0.121 (0.120–0.122)       | 0.166 (0.164–0.167)       |
+| Parse commit and editable fields    | 0.736 (0.728–0.743)       | 0.837 (0.827–0.847)       |
+| Parse tag target                    | 0.117 (0.116–0.118)       | 0.173 (0.169–0.176)       |
+| Parse tag and editable fields       | 0.364 (0.362–0.367)       | 0.455 (0.452–0.458)       |
+| Peel one tag, warm loose store      | 43.571 (43.036–44.028)    | 47.364 (46.429–48.255)    |
+| Peel sixteen tags, warm loose store | 387.120 (383.420–390.930) | 416.190 (410.350–423.610) |
+
+Graph/target parsing now deliberately avoids identity/date conversion. The separate editable-field
+measurements expose that additional work. Trees retain their original payload, so encoding copies
+that buffer; parsing also retains those bytes in addition to entries. Earlier R04 numbers measure a
+different representation and are not controlled before/after comparisons. Criterion's cached
+historical comparisons are not treated as regression evidence. These baselines impose no numerical
+acceptance threshold and do not establish memory bounds.

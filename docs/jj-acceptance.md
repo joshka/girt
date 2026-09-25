@@ -43,10 +43,10 @@ payload by removing only the selected signature header spans; cover repeated sig
 `gpgsig`/`gpgsig-sha256` deterministically. Opaque signatures and unchanged bytes go to the caller;
 jj owns placeholder identities, lossy display, collision policy and signing/verification providers.
 
-R01 supplies signed construction and structural byte access independently of interpretation. R07
-must resolve the retained [decoding follow-ups](evidence/r01.md#r07-follow-ups), including dates
-that Git reads but the decoded `Commit` API still rejects; structural retention does not close those
-requirements.
+R01 supplies signed construction and structural byte access independently of interpretation.
+[R07 evidence](evidence/r07.md) closes its retained decoding follow-ups with usable graph access,
+explicit identity/date interpretation, both-format signature captures and bounded tag peeling. Its
+native runtime evidence is macOS; R34/R36 retain the broader native refresh gates.
 
 ### A02 — Object format and identity foundations
 
