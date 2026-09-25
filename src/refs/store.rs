@@ -71,6 +71,12 @@ pub struct Resolution {
 /// Reference validation, storage, resolution, or update failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceError {
+    /// Reftable codec or resource failure.
+    #[error(transparent)]
+    Reftable(#[from] super::reftable::Error),
+    /// Cooperative cancellation before the next publication boundary.
+    #[error("reference operation cancelled")]
+    Cancelled,
     /// A supplied identity differs from the repository format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),

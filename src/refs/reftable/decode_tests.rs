@@ -9,7 +9,7 @@ use crate::ObjectFormat;
 use crate::refs::{RefName, Target};
 
 // These fixtures are original Git CLI observations, never upstream test data.
-fn git(path: &Path, args: &[&str]) -> Vec<u8> {
+pub(super) fn git(path: &Path, args: &[&str]) -> Vec<u8> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
@@ -33,7 +33,7 @@ fn git(path: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
-fn fixture(format: &str) -> tempfile::TempDir {
+pub(super) fn fixture(format: &str) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),

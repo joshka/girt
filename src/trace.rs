@@ -179,6 +179,12 @@ fn reference(error: &crate::refs::ReferenceError) -> &'static str {
         Locked(_) | Conflict(_) => "conflict",
         Mismatch { .. } => "precondition",
         Depth(_) => "limit",
+        Cancelled => "cancelled",
+        Reftable(error) => match error {
+            crate::refs::reftable::Error::Malformed(_) => "corrupt",
+            crate::refs::reftable::Error::Unsupported(_) => "unsupported",
+            crate::refs::reftable::Error::Limit(_) => "limit",
+        },
         InvalidHeadTarget | ZeroId => "invalid_input",
     }
 }

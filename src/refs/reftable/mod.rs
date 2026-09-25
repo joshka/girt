@@ -7,10 +7,14 @@
 mod decode;
 mod encode;
 mod records;
-
+mod stack;
 pub use records::{Error, Limits, LogRecord, LogValue, RefRecord, Table};
+pub use stack::{Compaction, Snapshot, StackLimits, compact};
 
 #[cfg(test)]
 mod codec_tests;
 #[cfg(test)]
 mod decode_tests;
+
+#[cfg(test)]
+mod stack_tests;

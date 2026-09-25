@@ -14,6 +14,13 @@ impl Table {
     /// limits. A failure returns no partial table. Work is synchronous and bounded by the input,
     /// inflated block and record limits.
     pub fn decode(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
+        Self::decode_usage(bytes, limits).map(|(table, _, _)| table)
+    }
+
+    pub(super) fn decode_usage(
+        bytes: &[u8],
+        limits: Limits,
+    ) -> Result<(Self, usize, usize), Error> {
         if bytes.len() > limits.bytes {
             return Err(Error::Limit("table bytes"));
         }
@@ -226,7 +233,7 @@ impl Table {
                 return Err(bad("section block boundary"));
             }
         }
-        Ok(table)
+        Ok((table, records, decoded_bytes))
     }
 }
 
