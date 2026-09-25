@@ -86,8 +86,8 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustc +stable -Vv
           git --version
-          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
-          Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json -Compress
+          Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
           Write-Output "Temporary directory: $env:TEMP"
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
