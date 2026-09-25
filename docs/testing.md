@@ -766,3 +766,40 @@ includes unborn detachment with append logging;
 [retained measurements](benchmarks.md#symbolic-head-detachment-with-reflog) record that path and
 direct-ref publication. Native Linux/Windows evidence is still outstanding; no platform support or
 fetch safeguards were changed.
+
+### Tree Comparison Completion
+
+Acceptance for this slice is recursive leaf comparison with exact byte paths, old/new IDs and modes,
+deterministic full-path ordering, explicit identity skips, bounded resources and contextual
+failures. The [compatibility contract](compatibility.md#tree-comparison) states supported behavior
+and exclusions.
+
+- [x] Focused parameterized tests cover unchanged, added, removed and content-changed entries,
+      executable and symlink transitions, gitlinks, empty sides, nested byte paths, empty
+      directories and file/directory replacement across Git ordering positions.
+- [x] Missing, wrong-kind, corrupt, malformed, duplicate, invalid-name and unsorted trees fail with
+  context. Equal missing/malformed/wrong-kind roots and equal missing subtrees explicitly skip
+  validation; leaf targets are not type-checked.
+- [x] Exact and exhausted input/output bounds, cumulative bytes across both sides, cancellation
+  before identity skips/reads and between reads, and a 2,000-directory traversal are tested.
+- [x] Public integration tests compare structural results with Git in both directions and against
+  empty trees, in loose and packed storage. The runnable `compare_trees` example shows old/new
+  modes and hexadecimal IDs and escapes byte paths without losing non-UTF-8 names.
+- [x] The Criterion [baseline](benchmarks.md#tree-comparison-baseline) measures sparse changes in a
+      10,000-leaf tree, broad 10,000-leaf changes and a 512-directory changed chain. Setup is
+      outside timing, filesystem caches are warm, and there is no arbitrary performance gate.
+
+Storage and comparison are synchronous. Pure in-memory name alignment is separate from verified
+object reads. Output is eager and bounded; identical IDs omit validation work. These contracts are
+public Rustdoc and are intended to let later content diff consume leaf identities without adding
+content diff now. Partial writes and cleanup testing are inapplicable because comparison is
+read-only. No dependency or CI changes are part of this slice.
+
+On 2026-09-24, the full all-feature runtime suite passed 960 unit tests, 428 integration cases and
+16 doctests on macOS arm64 with Rust 1.98.1 and Git 2.55.0. After updating the Git-output test
+parser to satisfy Clippy's fixed-size chunk guidance, both interoperability cases passed again;
+all-feature/all-target Clippy and docs.rs passed with warnings denied. Nightly formatting, rumdl,
+Markdown lint using the global 100-column config, core-only compilation, warning-denying private
+Rustdoc and the runnable example passed. The rendered comparison contract and navigation were
+inspected in a temporary loopback preview. Native Linux/Windows execution remains pending in the
+separate platform refresh; no cross-platform runtime claim is made here.

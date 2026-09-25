@@ -10,19 +10,19 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
 explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
-tracking-layout clone into bare or ordinary no-checkout repositories. The single-reference no-reflog
-operations remain available. HTTP and SSH downloads share owned validation state. Installation takes
-explicit destination snapshot limits. Read and operation limits remain per phase; no process-wide
-heap or hard CPU-latency guarantee is implied.
+tracking-layout clone into bare or ordinary no-checkout repositories, and recursive tree comparison.
+The single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
+validation state. Installation takes explicit destination snapshot limits. Read and operation limits
+remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
-| Platform       | Current evidence boundary                                             |
-| -------------- | --------------------------------------------------------------------- |
-| macOS arm64    | Clone remediation: full runtime suite; see completion evidence below. |
-| Linux x86_64   | Architecture revision: full runtime suite and examples.               |
-| Windows x86_64 | Architecture revision: portable units and doctests only.              |
+| Platform       | Current evidence boundary                                |
+| -------------- | -------------------------------------------------------- |
+| macOS arm64    | Tree comparison: local runtime evidence recorded below.  |
+| Linux x86_64   | Architecture revision: full runtime suite and examples.  |
+| Windows x86_64 | Architecture revision: portable units and doctests only. |
 
-The latest [clone remediation evidence](testing.md#clone-reflog-composition-remediation) is
-macOS-only; Linux/Windows runtime results below predate recent reference/fetch/clone increments.
+The latest [tree comparison evidence](testing.md#tree-comparison-completion) is macOS-only;
+Linux/Windows runtime results below predate recent reference/fetch/clone increments.
 
 The architecture validation below records native runtime results and independent core-only,
 HTTP-only, and SSH-only library compilation. Run IDs, counts and environments apply only to their
@@ -1565,3 +1565,45 @@ backend; local process and SSH transport contracts retain their macOS/Linux rest
 filesystem interoperability tests are Unix-gated. No dependencies or platform support were added,
 and no upstream implementation/test source or copyright-audit comparisons were used as
 implementation input.
+
+## Tree Comparison
+
+`Objects::compare_trees` compares explicit SHA-1 tree IDs recursively, with `None` representing an
+empty side. It returns owned leaf records with byte paths and optional old/new modes and IDs.
+Additions, deletions, content identity changes, executable-bit changes and type changes are distinct
+through those values. Files, symlinks and gitlinks are leaves; file/directory replacements become a
+leaf deletion/addition plus changes below the directory. Empty directories produce no records.
+Results sort lexicographically by raw full-path bytes, with shorter prefixes first. Trees read from
+storage must satisfy Git ordering, even though matching uses literal names to align replacements
+whose positions differ under Git's file/tree ordering rule.
+
+Equal tree IDs, including equal roots, skip all object reads. Success does not establish existence,
+syntax or validity of skipped trees or their descendants. Other traversed trees require verified
+storage identity, supported tree syntax and valid names, uniqueness and order. Leaf targets are
+never read or type-checked; gitlinks can refer to absent commits in another repository. Missing,
+wrong-kind, malformed and corrupt traversed trees produce errors with their identity and byte path.
+This is structural comparison, not object connectivity validation or fsck.
+
+Traversal is iterative and read-only. Caller limits bound tree-read occurrences, cumulative tree
+payload bytes and entries, directory depth, generated path bytes and output records. Per-read
+storage decoding limits also apply. Parsing one bounded payload can allocate its entries before the
+cumulative entry-count check; limits bound inputs rather than exact heap usage. Cancellation is
+checked between reads and entry operations and around final sorting. A single read, parse,
+validation or sort remains synchronous and noninterruptible. Failure returns no partial result and
+changes no files. No object cache, store trait, async runtime or general diff framework is added.
+Text diff, rename/copy detection, pathspecs, index/worktree comparison, merge and checkout remain
+outside scope.
+
+`tests/tree_compare.rs` generates original fixtures with isolated Git `hash-object` and
+`mktree -z --missing` invocations. It compares IDs, modes and paths with
+`diff-tree --raw -r -z --no-renames --no-commit-id --no-abbrev --no-ext-diff --ignore-submodules=none`,
+normalizing only record order to the API's documented full-path ordering. Cases exercise both
+directions and empty sides in loose and packed storage, including nested changes, prefix ordering,
+file/directory replacements, executable status, symlinks, foreign gitlinks and
+non-UTF-8/control-byte names. Git `pack-objects --revs` and `prune-packed` create the packed
+variant. No upstream implementation or test source is used. Fixtures never create those byte names
+on the host filesystem.
+
+The local evidence uses Git 2.55.0 on macOS arm64; native Linux and Windows refresh is separate
+work. The comparison adds no platform-specific filesystem or process behavior; it inherits the
+existing reader's storage boundary. No additional platform support is established by this slice.

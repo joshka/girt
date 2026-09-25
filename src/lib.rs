@@ -9,6 +9,15 @@
 //! structured fields are needed. Repository history queries follow complete commit ancestry under
 //! [`HistoryLimits`] without relying on timestamps.
 //!
+//! # Comparing snapshots
+//!
+//! Pass explicit tree IDs to [`Objects::compare_trees`], using `None` for an empty side. Returned
+//! [`TreeChange`] records preserve path bytes and old/new IDs and modes in raw full-path order.
+//! Equal subtree IDs skip reads, so comparison does not establish their validity or existence.
+//! Changed directories are traversed; gitlinks stay leaves and leaf targets are not read.
+//! [`TreeCompareLimits`] bounds traversal and eager output; cancellation is cooperative between
+//! synchronous processing steps. Run `cargo run --example compare_trees` for a disposable example.
+//!
 //! # Creating and finding a repository
 //!
 //! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
@@ -91,6 +100,8 @@
 //! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
 //! - [`ObjectFormat`]: recognized Git object hash formats.
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
+//! - [`TreeChange`], [`TreeValue`], [`TreeCompareLimits`], and [`TreeCompareError`]: recursive
+//!   structural tree comparison.
 //! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
 //! - [`Commit`], [`CommitFields`], [`Signature`], and [`CommitHeader`]: commit payloads and
 //!   identity.
@@ -129,6 +140,7 @@ mod repository;
 mod tag;
 pub mod transport;
 mod tree;
+mod tree_compare;
 
 pub use commit::{Commit, CommitError, CommitFields, CommitHeader, Signature};
 pub use config::{Config, ConfigError};
@@ -143,3 +155,4 @@ pub use pack::{
 pub use repository::{InitError, InitKind, OpenError, Repository};
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
+pub use tree_compare::{TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};

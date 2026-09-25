@@ -47,6 +47,10 @@ Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, an
 `Objects::merge_bases`; see the [history example](examples/history.rs) and
 [completion evidence](docs/testing.md#commit-history-completion).
 
+`Objects::compare_trees` reports recursive leaf additions, removals and changes with byte paths, IDs
+and modes. Run `cargo run --example compare_trees` for a disposable comparison or pass a repository
+and two tree IDs. See [tree comparison scope](docs/compatibility.md#tree-comparison).
+
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The default writer streams
 ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection

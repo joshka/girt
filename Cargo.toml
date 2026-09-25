@@ -184,3 +184,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "clone"
 harness = false
+
+[[example]]
+name = "compare_trees"
+doc-scrape-examples = true
+
+[[bench]]
+name = "tree_compare"
+harness = false

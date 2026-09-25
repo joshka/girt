@@ -900,3 +900,44 @@ sources, the harness and Cargo files; verify with
 operation baselines, not tail latency, peak-memory evidence or a numerical regression gate. The
 historical transaction measurements were not collected as a controlled before/after comparison. No
 Linux/Windows performance or end-to-end clone speed claim is made.
+
+## Tree Comparison Baseline
+
+`cargo bench --bench tree_compare` measures complete `Objects::compare_trees` calls, including warm
+loose reads, identity verification, tree parsing and validation, name alignment, path construction,
+output sorting and result destruction. Repository creation, fixture writes and reader opening are
+outside timing. Each workload is checked once before sampling. The 10,000-leaf fixtures have 100
+subdirectories of 100 files; repeated subtree IDs model shared content, but changed occurrences are
+read per path without a decoded-object cache.
+
+- Sparse: one subdirectory differs, yielding 100 changes and skipping 99 equal subtree pairs.
+- Broad: all 100 subdirectories differ, yielding 10,000 changes.
+- Deep: 512 nested directories end in one changed leaf; traversal reads both 513-tree chains.
+
+The 2026-09-24 run used Criterion 0.8.2, 20 samples, one-second warmup and three-second target
+measurement duration with the default optimized bench profile and checked-in lockfile. Host: Apple
+M2 Max, 96 GiB RAM, macOS 26.6.2 (25G83), Rust/Cargo 1.98.1, aarch64-apple-darwin. Temporary files
+used the local APFS volume; no cache eviction or synchronization was performed. No builds or tests
+from this task overlapped sampling; desktop background load, CPU placement and thermals were
+uncontrolled.
+
+| Workload             | Median ms | 95% CI, ms      |
+| -------------------- | --------- | --------------- |
+| Sparse 100 of 10,000 | 0.1709    | 0.1676–0.1733   |
+| Broad 10,000 changes | 8.6053    | 8.4597–8.8872   |
+| Deep 512 directories | 23.3843   | 23.0378–23.7292 |
+
+The [CSV estimates](benchmarks/tree-compare-baseline.csv) retain median estimates and 95% confidence
+intervals in nanoseconds. The [source manifest](benchmarks/tree-compare-baseline.sha256) records
+library, harness and Cargo source fingerprints; verify with
+`shasum -a 256 -c docs/benchmarks/tree-compare-baseline.sha256`. These are warm-storage baselines,
+not latency percentiles, peak RSS measurements or evidence for a numerical regression gate. The
+sparse and broad cases exercise different amounts of traversal, not a controlled comparison with
+another implementation. Deep results show the cost of many small verified reads, without claiming
+cold-storage, packed-storage or cross-platform performance.
+
+The retained run followed the final Rustdoc edits so its source manifest matches the checkout.
+Criterion extended deep sampling to about 5.2 seconds to collect 20 samples. An earlier run of the
+same executable comparison logic had medians of 0.198, 10.192 and 33.052 ms respectively; the
+variation is not evidence of an implementation speedup. No controlled performance comparison was
+attempted.
