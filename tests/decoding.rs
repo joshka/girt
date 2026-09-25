@@ -571,8 +571,10 @@ fn peeling_leaves_terminal_tree_records_for_the_tree_reader(
 fn replace_with_corrupt(path: &Path) {
     #[cfg(windows)]
     {
-        let mut permissions = std::fs::metadata(path).unwrap().permissions();
-        permissions.set_readonly(false);
+        // Git can create read-only objects. Use a fresh writable file's Windows permissions
+        // for this deliberately corrupt fixture without broadening Unix mode bits.
+        let writable = tempfile::tempfile().unwrap();
+        let permissions = writable.metadata().unwrap().permissions();
         std::fs::set_permissions(path, permissions).unwrap();
     }
     std::fs::remove_file(path).unwrap();
