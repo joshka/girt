@@ -37,9 +37,6 @@ pub struct IndexEdit {
 /// Synchronous index storage failure, retaining path and underlying causes.
 #[derive(Debug, Error)]
 pub enum StorageError {
-    /// Index storage for this repository format is not implemented.
-    #[error("unsupported index storage format: {0}")]
-    UnsupportedFormat(crate::ObjectFormat),
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
     #[error("{operation}; additionally, lock cleanup failed: {cleanup}")]
@@ -93,7 +90,6 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// SHA-256 repositories return [`StorageError::UnsupportedFormat`] before filesystem access.
     /// Returns contextual I/O, non-regular-file, format and limit errors. Reads are bounded and
     /// synchronous; nothing is written. Concurrent cooperating writers publish whole files by
     /// rename. In-place writes by noncooperating processes may instead produce a parse error.
@@ -108,12 +104,9 @@ impl Repository {
         );
 
         let operation = || {
-            if self.object_format() != crate::ObjectFormat::Sha1 {
-                return Err(StorageError::UnsupportedFormat(self.object_format()));
-            }
             let path = self.git_dir().join("index");
             read_bytes(&path, limits)?
-                .map(|bytes| parse(&path, &bytes, limits))
+                .map(|bytes| parse(self.object_format(), &path, &bytes, limits))
                 .transpose()
         };
         #[cfg(feature = "tracing")]
@@ -128,13 +121,13 @@ impl Repository {
 
     /// Exclusively locks the per-worktree index, then reads and validates its current bytes.
     ///
+    /// The repository selects SHA-1 or SHA-256; existing bytes never override its format.
     /// Derive drafts from the returned guard rather than a previously read snapshot. Absence
     /// becomes an empty editable index, but does not create `index` until commit. Existing locks
     /// are preserved. Parse/read failure releases the newly acquired lock.
     ///
     /// # Errors
     ///
-    /// SHA-256 repositories return [`StorageError::UnsupportedFormat`] before locking.
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
@@ -148,9 +141,6 @@ impl Repository {
         );
 
         let operation = || {
-            if self.object_format() != crate::ObjectFormat::Sha1 {
-                return Err(StorageError::UnsupportedFormat(self.object_format()));
-            }
             let destination = self.git_dir().join("index");
             let lock_path = self.git_dir().join("index.lock");
             let file = OpenOptions::new()
@@ -178,14 +168,14 @@ impl Repository {
                 lock_identity,
                 file: Some(file),
                 original: None,
-                index: Index::default(),
+                index: Index::empty(self.object_format()),
                 limits,
                 published: false,
             };
             let result = (|| {
                 edit.original = read_bytes(&edit.destination, limits)?;
                 if let Some(bytes) = &edit.original {
-                    edit.index = parse(&edit.destination, bytes, limits)?;
+                    edit.index = parse(self.object_format(), &edit.destination, bytes, limits)?;
                 }
                 Ok(())
             })();
@@ -397,8 +387,13 @@ fn read_bytes(path: &Path, limits: Limits) -> Result<Option<Vec<u8>>, StorageErr
     }
     Ok(Some(bytes))
 }
-fn parse(path: &Path, bytes: &[u8], limits: Limits) -> Result<Index, StorageError> {
-    Index::parse(bytes, limits).map_err(|source| StorageError::Format {
+fn parse(
+    format: crate::ObjectFormat,
+    path: &Path,
+    bytes: &[u8],
+    limits: Limits,
+) -> Result<Index, StorageError> {
+    Index::parse(format, bytes, limits).map_err(|source| StorageError::Format {
         path: path.into(),
         source,
     })

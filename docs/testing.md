@@ -119,12 +119,14 @@ The Windows integration selection follows implemented operations, not just file 
 
 - `object_ids`: Format-aware identity/hash vectors and storage-boundary refusal (both hashes).
 - `sha256`: Both-format codecs, loose storage, Git interoperability, layouts, traversal and SHA-256
-  pack/ref/index refusals. Git creates fixture refs/worktrees; girt uses portable loose I/O.
+  storage. Portable cases use Git-created refs/worktrees; packed checkout/status cases are
+  explicitly scoped to macOS/Linux; files-reference rejection cases require Unix.
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.
-- `index`: SHA-1 v2 parsing/encoding, held-lock replacement, Git stat/flag observations, byte paths,
-  and linked/separate-gitdir routing. No checkout or reference-backend operation is required.
+- `index`: SHA-1/SHA-256 v2 parsing/encoding, held-lock replacement, Git stat/flag observations,
+  byte paths, and linked/separate-gitdir routing. No checkout or reference-backend operation is
+  required.
 - `status_portable`: Cancellation before storage access and explicit unsupported-platform status
   rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.

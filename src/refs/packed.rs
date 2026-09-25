@@ -9,7 +9,12 @@ use crate::ObjectId;
 // validates the complete file, even for one lookup; it has no cached snapshot to invalidate.
 pub(super) type Packed = BTreeMap<RefName, ObjectId>;
 
-pub(super) fn parse(bytes: &[u8], path: &Path) -> Result<Packed, ReferenceError> {
+pub(super) fn parse(
+    format: crate::ObjectFormat,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<Packed, ReferenceError> {
+    let width = format.digest_len() * 2;
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         return Err(malformed(path, "unterminated packed record"));
     }
@@ -43,15 +48,15 @@ pub(super) fn parse(bytes: &[u8], path: &Path) -> Result<Packed, ReferenceError>
             if !can_peel {
                 return Err(malformed(path, "orphan or repeated peeled record"));
             }
-            parse_id(peeled, path)?;
+            parse_id(format, peeled, path)?;
             can_peel = false;
             continue;
         }
-        if line.len() < 42 || line[40] != b' ' {
+        if line.len() < width + 2 || line[width] != b' ' {
             return Err(malformed(path, "expected object ID and reference name"));
         }
-        let id = parse_id(&line[..40], path)?;
-        let name = RefName::new(&line[41..])
+        let id = parse_id(format, &line[..width], path)?;
+        let name = RefName::new(&line[width + 1..])
             .map_err(|_| malformed(path, "invalid packed reference name"))?;
         if name.as_bytes() == b"HEAD" || name.per_worktree() {
             return Err(ReferenceError::Unsupported("packed per-worktree reference"));
@@ -70,15 +75,16 @@ pub(super) fn parse(bytes: &[u8], path: &Path) -> Result<Packed, ReferenceError>
 
 /// Removes one direct record and its immediately following peel from already validated bytes.
 /// Retain unrelated representation exactly, including header spacing and hexadecimal case.
-pub(super) fn without_ref(bytes: &[u8], name: &RefName) -> Vec<u8> {
+pub(super) fn without_ref(format: crate::ObjectFormat, bytes: &[u8], name: &RefName) -> Vec<u8> {
+    let width = format.digest_len() * 2;
     let mut result = Vec::with_capacity(bytes.len());
     let mut removed = false;
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
         if line.starts_with(b"^") && removed {
             continue;
         }
-        removed =
-            line.get(40) == Some(&b' ') && line.get(41..line.len() - 1) == Some(name.as_bytes());
+        removed = line.get(width) == Some(&b' ')
+            && line.get(width + 1..line.len() - 1) == Some(name.as_bytes());
         if !removed {
             result.extend_from_slice(line);
         }
@@ -86,14 +92,21 @@ pub(super) fn without_ref(bytes: &[u8], name: &RefName) -> Vec<u8> {
     result
 }
 
-pub(super) fn parse_id(bytes: &[u8], path: &Path) -> Result<ObjectId, ReferenceError> {
-    if bytes.len() != 40 {
-        return Err(malformed(path, "expected SHA-1 reference target"));
+pub(super) fn parse_id(
+    format: crate::ObjectFormat,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<ObjectId, ReferenceError> {
+    if bytes.len() != format.digest_len() * 2 {
+        return Err(malformed(
+            path,
+            "expected repository-format reference target",
+        ));
     }
     let id = std::str::from_utf8(bytes)
         .ok()
-        .and_then(|v| v.parse::<ObjectId>().ok())
-        .ok_or_else(|| malformed(path, "invalid SHA-1 reference target"))?;
+        .and_then(|v| ObjectId::from_hex(format, v).ok())
+        .ok_or_else(|| malformed(path, "invalid repository-format reference target"))?;
     if id.is_null() {
         return Err(malformed(path, "zero reference target"));
     }
@@ -110,7 +123,12 @@ mod tests {
     #[test]
     fn reads_unsorted_records_and_discards_valid_peeled_metadata() {
         let bytes = format!("{ID} refs/tags/z\n^{ID}\n{ID} refs/heads/a\n");
-        let entries = parse(bytes.as_bytes(), Path::new("packed-refs")).unwrap();
+        let entries = parse(
+            crate::ObjectFormat::Sha1,
+            bytes.as_bytes(),
+            Path::new("packed-refs"),
+        )
+        .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(
             entries[&RefName::new(b"refs/tags/z").unwrap()],
@@ -132,9 +150,13 @@ mod tests {
         #[case] expected: &str,
     ) {
         let bytes = b"ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD refs/tags/z\n^1111111111111111111111111111111111111111\n2222222222222222222222222222222222222222 refs/heads/a\n";
-        parse(bytes, Path::new("packed-refs")).unwrap();
+        parse(crate::ObjectFormat::Sha1, bytes, Path::new("packed-refs")).unwrap();
         assert_eq!(
-            without_ref(bytes, &RefName::new(name).unwrap()),
+            without_ref(
+                crate::ObjectFormat::Sha1,
+                bytes,
+                &RefName::new(name).unwrap()
+            ),
             expected.as_bytes()
         );
     }
@@ -142,12 +164,20 @@ mod tests {
     #[test]
     fn removing_final_record_leaves_valid_empty_packed_file() {
         let bytes = format!("{ID} refs/heads/a\n");
-        let remaining = without_ref(bytes.as_bytes(), &RefName::new(b"refs/heads/a").unwrap());
+        let remaining = without_ref(
+            crate::ObjectFormat::Sha1,
+            bytes.as_bytes(),
+            &RefName::new(b"refs/heads/a").unwrap(),
+        );
         assert!(remaining.is_empty());
         assert!(
-            parse(&remaining, Path::new("packed-refs"))
-                .unwrap()
-                .is_empty()
+            parse(
+                crate::ObjectFormat::Sha1,
+                &remaining,
+                Path::new("packed-refs")
+            )
+            .unwrap()
+            .is_empty()
         );
     }
 
@@ -161,7 +191,11 @@ mod tests {
     #[case::zero("0000000000000000000000000000000000000000 refs/heads/a\n")]
     fn rejects_malformed(#[case] bytes: &str) {
         assert!(matches!(
-            parse(bytes.as_bytes(), Path::new("packed-refs")),
+            parse(
+                crate::ObjectFormat::Sha1,
+                bytes.as_bytes(),
+                Path::new("packed-refs")
+            ),
             Err(ReferenceError::Malformed { .. })
         ));
     }
@@ -171,6 +205,13 @@ mod tests {
     #[case::out_of_order("refs/heads/z", "refs/heads/a")]
     fn rejects_invalid_sorted_records(#[case] first: &str, #[case] second: &str) {
         let bytes = format!("# pack-refs with: sorted\n{ID} {first}\n{ID} {second}\n");
-        assert!(parse(bytes.as_bytes(), Path::new("packed-refs")).is_err());
+        assert!(
+            parse(
+                crate::ObjectFormat::Sha1,
+                bytes.as_bytes(),
+                Path::new("packed-refs")
+            )
+            .is_err()
+        );
     }
 }

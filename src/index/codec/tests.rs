@@ -13,10 +13,14 @@ fn entry(path: &[u8], stage: Stage) -> Entry {
     }
 }
 fn encoded() -> Vec<u8> {
-    Index::new(vec![entry(b"a", Stage::Normal)], Limits::default())
-        .unwrap()
-        .encode(Limits::default())
-        .unwrap()
+    Index::new(
+        crate::ObjectFormat::Sha1,
+        vec![entry(b"a", Stage::Normal)],
+        Limits::default(),
+    )
+    .unwrap()
+    .encode(Limits::default())
+    .unwrap()
 }
 fn resign(bytes: &mut Vec<u8>) {
     bytes.truncate(bytes.len() - 20);
@@ -60,9 +64,14 @@ fn retains_modes_flags_and_every_stat_word(#[case] mode: Mode) {
         },
         ..entry(b"dir/a", Stage::Ours)
     };
-    let index = Index::new(vec![original.clone()], Limits::default()).unwrap();
+    let index = Index::new(
+        crate::ObjectFormat::Sha1,
+        vec![original.clone()],
+        Limits::default(),
+    )
+    .unwrap();
     let bytes = index.encode(Limits::default()).unwrap();
-    let parsed = Index::parse(&bytes, Limits::default()).unwrap();
+    let parsed = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
     assert_eq!(parsed.entries(), &[original]);
     assert_eq!(parsed.encode(Limits::default()).unwrap(), bytes);
 }
@@ -76,10 +85,18 @@ fn retains_modes_flags_and_every_stat_word(#[case] mode: Mode) {
 #[case::padding_eight(vec![b'x'; 2])]
 #[case::platform_unsafe(b"C:\\a/.GIT/con".to_vec())]
 fn retains_path_bytes_without_checkout_validation(#[case] path: Vec<u8>) {
-    let index = Index::new(vec![entry(&path, Stage::Normal)], Limits::default()).unwrap();
+    let index = Index::new(
+        crate::ObjectFormat::Sha1,
+        vec![entry(&path, Stage::Normal)],
+        Limits::default(),
+    )
+    .unwrap();
     let bytes = index.encode(Limits::default()).unwrap();
     assert_eq!(
-        Index::parse(&bytes, Limits::default()).unwrap().entries()[0].path,
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default())
+            .unwrap()
+            .entries()[0]
+            .path,
         path
     );
 }
@@ -95,14 +112,20 @@ fn retains_path_bytes_without_checkout_validation(#[case] path: Vec<u8>) {
 #[case::nul(b"a\0b")]
 fn rejects_invalid_paths(#[case] path: &[u8]) {
     assert!(matches!(
-        Index::new(vec![entry(path, Stage::Normal)], Limits::default()),
+        Index::new(
+            crate::ObjectFormat::Sha1,
+            vec![entry(path, Stage::Normal)],
+            Limits::default()
+        ),
         Err(Error::Entry { .. })
     ));
 }
 
 #[test]
 fn empty_has_independent_header_and_checksum() {
-    let bytes = Index::default().encode(Limits::default()).unwrap();
+    let bytes = Index::empty(crate::ObjectFormat::Sha1)
+        .encode(Limits::default())
+        .unwrap();
     assert_eq!(&bytes[..12], b"DIRC\0\0\0\x02\0\0\0\0");
     // Independently obtained using Git read-tree --empty in an isolated repository.
     assert_eq!(
@@ -113,7 +136,7 @@ fn empty_has_independent_header_and_checksum() {
         ]
     );
     assert!(
-        Index::parse(&bytes, Limits::default())
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default())
             .unwrap()
             .entries()
             .is_empty()
@@ -126,13 +149,18 @@ fn empty_has_independent_header_and_checksum() {
 #[case::duplicate_conflict(Stage::Theirs, Stage::Theirs)]
 fn rejects_stage_relationships(#[case] a: Stage, #[case] b: Stage) {
     assert!(matches!(
-        Index::new(vec![entry(b"a", a), entry(b"a", b)], Limits::default()),
+        Index::new(
+            crate::ObjectFormat::Sha1,
+            vec![entry(b"a", a), entry(b"a", b)],
+            Limits::default()
+        ),
         Err(Error::Entry { .. })
     ));
 }
 #[test]
 fn sorts_partial_conflict_stages() {
     let index = Index::new(
+        crate::ObjectFormat::Sha1,
         vec![entry(b"a", Stage::Theirs), entry(b"a", Stage::Base)],
         Limits::default(),
     )
@@ -142,7 +170,12 @@ fn sorts_partial_conflict_stages() {
         [Stage::Base, Stage::Theirs]
     );
     assert_eq!(
-        Index::parse(&index.encode(Limits::default()).unwrap(), Limits::default()).unwrap(),
+        Index::parse(
+            crate::ObjectFormat::Sha1,
+            &index.encode(Limits::default()).unwrap(),
+            Limits::default()
+        )
+        .unwrap(),
         index
     );
 }
@@ -157,6 +190,7 @@ fn validates_prefix_relationships(
     #[case] valid: bool,
 ) {
     let result = Index::new(
+        crate::ObjectFormat::Sha1,
         vec![
             entry(b"a", parent),
             entry(b"a-b", Stage::Normal),
@@ -179,7 +213,7 @@ fn rejects_resigned_corruption(#[case] offset: usize, #[case] value: u8) {
     let mut bytes = encoded();
     bytes[offset] = value;
     resign(&mut bytes);
-    assert!(Index::parse(&bytes, Limits::default()).is_err());
+    assert!(Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).is_err());
 }
 #[rstest]
 #[case::v1(1)]
@@ -191,7 +225,7 @@ fn rejects_versions(#[case] version: u32) {
     bytes[4..8].copy_from_slice(&version.to_be_bytes());
     resign(&mut bytes);
     assert_eq!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Version(version))
     );
 }
@@ -204,14 +238,14 @@ fn rejects_versions(#[case] version: u32) {
 fn rejects_truncated_input(#[case] length: usize) {
     let mut bytes = encoded();
     bytes.truncate(length);
-    assert!(Index::parse(&bytes, Limits::default()).is_err());
+    assert!(Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).is_err());
 }
 #[test]
 fn rejects_checksum_damage() {
     let mut bytes = encoded();
     bytes[12] ^= 1;
     assert_eq!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Checksum)
     );
 }
@@ -221,7 +255,11 @@ fn rejects_checksum_damage() {
 #[case::unknown(b"abcd")]
 fn rejects_mandatory_extensions(#[case] signature: &[u8; 4]) {
     assert_eq!(
-        Index::parse(&extension(signature, b"opaque"), Limits::default()),
+        Index::parse(
+            crate::ObjectFormat::Sha1,
+            &extension(signature, b"opaque"),
+            Limits::default()
+        ),
         Err(Error::MandatoryExtension(*signature))
     );
 }
@@ -232,7 +270,7 @@ fn rejects_mandatory_extensions(#[case] signature: &[u8; 4]) {
 #[case::offsets(b"EOIE")]
 fn opaque_extensions_roundtrip_and_block_edits(#[case] signature: &[u8; 4]) {
     let bytes = extension(signature, b"opaque\0\xff");
-    let mut index = Index::parse(&bytes, Limits::default()).unwrap();
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
     let original = index.clone();
     index
         .replace_entries(index.entries().to_vec(), Limits::default())
@@ -247,7 +285,12 @@ fn opaque_extensions_roundtrip_and_block_edits(#[case] signature: &[u8; 4]) {
 }
 #[test]
 fn changed_entries_invalidate_tree_cache() {
-    let mut index = Index::parse(&extension(b"TREE", b"opaque"), Limits::default()).unwrap();
+    let mut index = Index::parse(
+        crate::ObjectFormat::Sha1,
+        &extension(b"TREE", b"opaque"),
+        Limits::default(),
+    )
+    .unwrap();
     index
         .replace_entries(Vec::new(), Limits::default())
         .unwrap();
@@ -259,8 +302,11 @@ fn changed_entries_invalidate_tree_cache() {
 #[case::path(Limits { max_path_bytes: 0, ..Limits::default() })]
 fn bounded_parse_and_encode(#[case] limits: Limits) {
     let bytes = encoded();
-    let index = Index::parse(&bytes, Limits::default()).unwrap();
-    assert!(matches!(Index::parse(&bytes, limits), Err(Error::Limit(_))));
+    let index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    assert!(matches!(
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, limits),
+        Err(Error::Limit(_))
+    ));
     assert!(matches!(index.encode(limits), Err(Error::Limit(_))));
 }
 #[test]
@@ -273,7 +319,7 @@ fn exact_limits_succeed() {
     };
     let bytes = encoded();
     assert_eq!(
-        Index::parse(&bytes, limits)
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, limits)
             .unwrap()
             .encode(limits)
             .unwrap(),
@@ -287,13 +333,18 @@ fn extension_count_is_bounded() {
         ..Limits::default()
     };
     assert_eq!(
-        Index::parse(&extension(b"TREE", b""), limits),
+        Index::parse(crate::ObjectFormat::Sha1, &extension(b"TREE", b""), limits),
         Err(Error::Limit("extensions"))
     );
 }
 #[test]
 fn failed_edit_preserves_entries_and_extensions() {
-    let mut index = Index::parse(&extension(b"TREE", b"opaque"), Limits::default()).unwrap();
+    let mut index = Index::parse(
+        crate::ObjectFormat::Sha1,
+        &extension(b"TREE", b"opaque"),
+        Limits::default(),
+    )
+    .unwrap();
     let before = index.clone();
     assert!(
         index
@@ -312,7 +363,7 @@ fn rejects_resigned_truncated_entry(#[case] payload_length: usize) {
     bytes.extend_from_slice(&[0; 20]);
     resign(&mut bytes);
     assert!(matches!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Malformed { .. })
     ));
 }
@@ -326,7 +377,7 @@ fn rejects_resigned_truncated_extension(#[case] extension_length: usize) {
     bytes.extend_from_slice(&[0; 20]);
     resign(&mut bytes);
     assert!(matches!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Malformed { .. })
     ));
 }
@@ -337,6 +388,7 @@ fn rejects_resigned_truncated_extension(#[case] extension_length: usize) {
 #[case::normal_conflict(b'a', b'a', 0x20)]
 fn parsing_never_repairs_order_or_stages(#[case] first: u8, #[case] second: u8, #[case] flags: u8) {
     let index = Index::new(
+        crate::ObjectFormat::Sha1,
         vec![entry(b"a", Stage::Normal), entry(b"b", Stage::Normal)],
         Limits::default(),
     )
@@ -347,7 +399,7 @@ fn parsing_never_repairs_order_or_stages(#[case] first: u8, #[case] second: u8, 
     bytes[136] = flags;
     resign(&mut bytes);
     assert!(matches!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Entry { entry: 1, .. })
     ));
 }
@@ -362,7 +414,7 @@ fn huge_declared_entry_count_fails_before_allocation() {
         ..Limits::default()
     };
     assert!(matches!(
-        Index::parse(&bytes, limits),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, limits),
         Err(Error::Malformed { offset: 8, .. })
     ));
 }
@@ -373,7 +425,7 @@ fn huge_declared_extension_length_fails_before_allocation() {
     bytes[80..84].copy_from_slice(&u32::MAX.to_be_bytes());
     resign(&mut bytes);
     assert!(matches!(
-        Index::parse(&bytes, Limits::default()),
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
         Err(Error::Malformed { .. })
     ));
 }
@@ -385,7 +437,7 @@ fn optional_extension_order_is_preserved() {
     bytes.extend_from_slice(b"REUC\0\0\0\x01b");
     bytes.extend_from_slice(&[0; 20]);
     resign(&mut bytes);
-    let index = Index::parse(&bytes, Limits::default()).unwrap();
+    let index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
     assert_eq!(
         index
             .extensions()

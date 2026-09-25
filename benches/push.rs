@@ -19,7 +19,7 @@ fn push(c: &mut Criterion) {
     let cancel = AtomicBool::new(false);
     let mut group = c.benchmark_group("push");
     for count in [16, 256] {
-        let fixture = pack_git::Fixture::new(true, count);
+        let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, count);
         assert!(fixture.index_path.exists());
         let objects = fixture.repo.objects(PackLimits::default()).unwrap();
         assert!(

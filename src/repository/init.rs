@@ -57,9 +57,8 @@ impl Repository {
     /// Creates an empty repository in the selected object format with unborn `refs/heads/main`.
     ///
     /// Creates version-0 configuration for SHA-1 or version-1 with `extensions.objectFormat` for
-    /// SHA-256, files-backend reference directories and an object directory. SHA-256 refs and
-    /// indexes require Git until their girt implementations land; loose objects are usable. No Git
-    /// process, templates, hooks, ambient configuration, index, or initial commit are used. The
+    /// SHA-256, files-backend reference directories and an object directory. No Git process,
+    /// templates, hooks, ambient configuration, index, or initial commit are used. The
     /// destination's parent must exist. Ordinary worktrees may use an existing directory
     /// containing unrelated files; a `.git`, `HEAD`, or `objects` entry refuses initialization.
     /// Bare destinations must not exist, even as empty directories. Separate Git directories

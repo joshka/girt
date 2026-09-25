@@ -1,4 +1,4 @@
-//! SHA-1 Git index v2 entries and synchronous per-worktree storage.
+//! SHA-1/SHA-256 Git index v2 entries and synchronous per-worktree storage.
 //!
 //! An index records candidate tree entries and cached filesystem metadata. [`Index`] validates
 //! format structure without resolving objects or touching working files. Paths remain bytes;
@@ -23,9 +23,12 @@
 //!     Mode::Regular,
 //!     ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n"),
 //! );
-//! let index = Index::new(vec![entry], Limits::default())?;
+//! let index = Index::new(girt::ObjectFormat::Sha1, vec![entry], Limits::default())?;
 //! let bytes = index.encode(Limits::default())?;
-//! assert_eq!(Index::parse(&bytes, Limits::default())?, index);
+//! assert_eq!(
+//!     Index::parse(girt::ObjectFormat::Sha1, &bytes, Limits::default())?,
+//!     index
+//! );
 //! # Ok::<(), girt::index::Error>(())
 //! ```
 mod codec;

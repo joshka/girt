@@ -1,5 +1,3 @@
-use sha1::{Digest, Sha1};
-
 use crate::{ObjectId, ObjectReadError as Error};
 
 #[derive(Debug)]
@@ -15,11 +13,16 @@ pub(crate) struct Entry {
 pub(super) struct Index {
     pub entries: Vec<Entry>,
     pub offsets: Vec<usize>,
-    pub pack_hash: [u8; 20],
+    pub pack_hash: ObjectId,
 }
 
 impl Index {
-    pub fn parse(bytes: &[u8], pack_end: usize) -> Result<Self, Error> {
+    pub fn parse(
+        format: crate::ObjectFormat,
+        bytes: &[u8],
+        pack_end: usize,
+    ) -> Result<Self, Error> {
+        let width = format.digest_len();
         if bytes.len() < 8 {
             return Err(Error::Corrupt("truncated index header"));
         }
@@ -32,17 +35,17 @@ impl Index {
         }
         let count = word(bytes, 1028)? as usize;
         let table_end = count
-            .checked_mul(28)
+            .checked_mul(width + 8)
             .and_then(|n| n.checked_add(1032))
             .ok_or(Error::Corrupt("index length overflow"))?;
         let trailer = bytes
             .len()
-            .checked_sub(40)
+            .checked_sub(2 * width)
             .ok_or(Error::Corrupt("truncated index"))?;
         if table_end > trailer || (trailer - table_end) % 8 != 0 {
             return Err(Error::Corrupt("index table length"));
         }
-        verify_hash(bytes, "index checksum")?;
+        verify_hash(format, bytes, "index checksum")?;
         let large_count = (trailer - table_end) / 8;
         if large_count > count {
             return Err(Error::Corrupt("excess large offsets"));
@@ -51,14 +54,14 @@ impl Index {
         let mut entries = Vec::with_capacity(count);
         let mut fanout = [0u32; 256];
         for position in 0..count {
-            let start = 1032 + position * 20;
-            let id = ObjectId::Sha1(bytes[start..start + 20].try_into().unwrap());
+            let start = 1032 + position * width;
+            let id = ObjectId::from_bytes(format, &bytes[start..start + width]).unwrap();
             if entries.last().is_some_and(|entry: &Entry| entry.id >= id) {
                 return Err(Error::Corrupt("unsorted or duplicate index identities"));
             }
             fanout[id.as_bytes()[0] as usize] += 1;
-            let crc = word(bytes, 1032 + count * 20 + position * 4)?;
-            let raw_offset = word(bytes, 1032 + count * 24 + position * 4)?;
+            let crc = word(bytes, 1032 + count * width + position * 4)?;
+            let raw_offset = word(bytes, 1032 + count * (width + 4) + position * 4)?;
             let offset = if raw_offset & 0x8000_0000 == 0 {
                 raw_offset as u64
             } else {
@@ -111,7 +114,7 @@ impl Index {
         Ok(Self {
             entries,
             offsets,
-            pack_hash: bytes[trailer..trailer + 20].try_into().unwrap(),
+            pack_hash: ObjectId::from_bytes(format, &bytes[trailer..trailer + width]).unwrap(),
         })
     }
 
@@ -132,14 +135,26 @@ impl Index {
 
 pub(crate) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
     let word = bytes
-        .get(position..position + 4)
+        .get(
+            position
+                ..position
+                    .checked_add(4)
+                    .ok_or(Error::Corrupt("integer offset overflow"))?,
+        )
         .ok_or(Error::Corrupt("truncated integer"))?;
     Ok(u32::from_be_bytes(word.try_into().unwrap()))
 }
 
-pub(crate) fn verify_hash(bytes: &[u8], reason: &'static str) -> Result<(), Error> {
-    let end = bytes.len().checked_sub(20).ok_or(Error::Corrupt(reason))?;
-    if Sha1::digest(&bytes[..end])[..] != bytes[end..] {
+pub(crate) fn verify_hash(
+    format: crate::ObjectFormat,
+    bytes: &[u8],
+    reason: &'static str,
+) -> Result<(), Error> {
+    let end = bytes
+        .len()
+        .checked_sub(format.digest_len())
+        .ok_or(Error::Corrupt(reason))?;
+    if *format.checksum(&bytes[..end]).as_bytes() != bytes[end..] {
         return Err(Error::Corrupt(reason));
     }
     Ok(())

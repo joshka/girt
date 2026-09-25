@@ -126,7 +126,7 @@ fn verify(f: &Fixture, dest: &Repository) {
 #[case::ofs(true)]
 #[case::ref_delta(false)]
 fn publishes_branches_tags_and_complete_mixed_object_graph(#[case] ofs: bool) {
-    let f = Fixture::new(ofs, 16);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, ofs, 16);
     let (_root, dest) = destination(true);
     let tag = f.records.last().unwrap().0;
     let result = push(
@@ -146,7 +146,7 @@ fn publishes_branches_tags_and_complete_mixed_object_graph(#[case] ofs: bool) {
 }
 #[test]
 fn advances_branch_and_repeats_without_implicit_local_ref_updates() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = main(&f);
     let new = next(&f);
@@ -180,7 +180,7 @@ fn advances_branch_and_repeats_without_implicit_local_ref_updates() {
 }
 #[test]
 fn stale_expected_value_rejects_entire_request_before_any_updates() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = main(&f);
     push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
@@ -201,7 +201,7 @@ fn stale_expected_value_rejects_entire_request_before_any_updates() {
 }
 #[test]
 fn explicit_force_rewinds_when_server_allows_it() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = main(&f);
     let new = next(&f);
@@ -214,7 +214,7 @@ fn explicit_force_rewinds_when_server_allows_it() {
 }
 #[test]
 fn server_non_fast_forward_policy_overrides_explicit_force() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = main(&f);
     let new = next(&f);
@@ -235,7 +235,7 @@ fn server_non_fast_forward_policy_overrides_explicit_force() {
 }
 #[test]
 fn checked_out_branch_is_rejected_by_server() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(false);
     let result = push(
         &f.repo,
@@ -262,7 +262,7 @@ fn hook(repo: &Repository, name: &str, script: &str) {
 #[cfg(unix)]
 #[test]
 fn update_hook_rejection_preserves_partial_success() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(
         &dest,
@@ -291,7 +291,7 @@ fn update_hook_rejection_preserves_partial_success() {
 #[cfg(unix)]
 #[test]
 fn pre_receive_hook_rejects_all_commands() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(&dest, "pre-receive", "#!/bin/sh\ncat >/dev/null\nexit 1\n");
     let result = push(
@@ -426,7 +426,7 @@ fn empty_push_to_empty_repository_succeeds_without_pack() {
 #[cfg(unix)]
 #[test]
 fn remote_race_after_advertisement_is_reported_as_rejection() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let root = main(&f);
     let newer = next(&f);
@@ -458,7 +458,7 @@ fn remote_race_after_advertisement_is_reported_as_rejection() {
 
 #[test]
 fn tag_replacement_requires_explicit_force_but_creation_does_not() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = f.records.last().unwrap().0;
     let new = next(&f);
@@ -499,7 +499,7 @@ fn deadline_interrupts_stalled_hook_with_uncertain_outcome(
 
     use girt::push::send_local_with_control;
     use girt::transport::TransportControl;
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     // A finite fallback prevents a broken cancellation path from leaving a hanging hook.
     hook(
@@ -533,7 +533,7 @@ fn cancellation_interrupts_stalled_hook() {
 
     use girt::push::send_local_with_control;
     use girt::transport::TransportControl;
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(
         &dest,
@@ -578,7 +578,7 @@ fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bo
 
     use girt::push::send_local_with_control;
     use girt::transport::TransportControl;
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
     let cancel = AtomicBool::new(cancelled);
@@ -614,7 +614,7 @@ fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bo
 
 #[test]
 fn exclusion_reduces_incremental_and_noop_packs() {
-    let f = Fixture::new(true, 16);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 16);
     let (_root, dest) = destination(true);
     let old = main(&f);
     assert!(
@@ -661,7 +661,7 @@ fn exclusion_reduces_incremental_and_noop_packs() {
 
 #[test]
 fn arbitrary_local_possession_is_not_receiver_knowledge() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let prepared = PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
@@ -682,7 +682,7 @@ fn arbitrary_local_possession_is_not_receiver_knowledge() {
 
 #[test]
 fn receiver_root_missing_locally_preserves_full_forced_transfer() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let foreign = dest.loose_objects().write_blob(b"foreign root").unwrap();
     git(
@@ -739,7 +739,7 @@ fn commit_with_parents(f: &Fixture, parents: &[ObjectId], message: &[u8]) -> Obj
 
 #[test]
 fn merge_push_excludes_receiver_second_parent_and_preserves_other_side() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let left = commit_with_parents(&f, &[main(&f)], b"left\n");
     let right = commit_with_parents(&f, &[main(&f)], b"right\n");
@@ -769,7 +769,7 @@ fn merge_push_excludes_receiver_second_parent_and_preserves_other_side() {
 
 #[test]
 fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_possession() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let left = commit_with_parents(&f, &[main(&f)], b"left\n");
     let right = commit_with_parents(&f, &[main(&f)], b"right\n");
@@ -806,7 +806,7 @@ fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_posses
 
 #[test]
 fn delta_push_then_incremental_update_preserves_payloads() {
-    let fixture = Fixture::new(false, 12);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, false, 12);
     let (_root, dest) = destination(true);
     let cancel = AtomicBool::new(false);
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();

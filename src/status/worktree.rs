@@ -47,6 +47,7 @@ fn scan_with_hook(
         metadata.push(stat);
     }
     let mut scan = Scan {
+        format: repo.object_format(),
         entries: entries
             .iter()
             .map(|entry| (entry.path.as_slice(), entry))
@@ -112,6 +113,7 @@ enum Observed {
 }
 
 struct Scan<'a> {
+    format: crate::ObjectFormat,
     entries: BTreeMap<&'a [u8], &'a index::Entry>,
     needed: BTreeSet<Vec<u8>>,
     observations: BTreeMap<Vec<u8>, Observed>,
@@ -282,7 +284,7 @@ impl Scan<'_> {
         self.observations.insert(
             path.to_vec(),
             Observed::Leaf(TreeValue {
-                id: ObjectId::for_blob(crate::ObjectFormat::Sha1, &bytes),
+                id: ObjectId::for_blob(self.format, &bytes),
                 mode,
             }),
         );

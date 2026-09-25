@@ -5,7 +5,7 @@ use girt::{InitKind, Repository};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let repository = Repository::init(
-        girt::ObjectFormat::Sha1,
+        girt::ObjectFormat::Sha256,
         temporary.path().join("repo"),
         InitKind::Worktree,
     )?;

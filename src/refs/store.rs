@@ -7,10 +7,12 @@ use crate::{ObjectId, Repository};
 
 /// A files-backend reference store borrowed from an opened [`Repository`].
 ///
-/// Supports SHA-1 references on Unix filesystems. `HEAD`, `refs/bisect/`, `refs/rewritten/`, and
-/// `refs/worktree/` use the current worktree's Git directory; other `refs/` names and packed refs
-/// use the common directory. Cross-worktree aliases and other pseudorefs are not supported.
-/// Filesystem symlinks within these paths are rejected, including legacy symlink HEADs.
+/// Supports SHA-1 and SHA-256 references on Unix filesystems. Repository configuration selects
+/// the format; mixed-format targets and expectations fail before locks are acquired. `HEAD`,
+/// `refs/bisect/`, `refs/rewritten/`, and `refs/worktree/` use the current worktree's Git
+/// directory; other `refs/` names and packed refs use the common directory. Cross-worktree aliases
+/// and other pseudorefs are not supported. Filesystem symlinks within these paths are rejected,
+/// including legacy symlink HEADs.
 ///
 /// Operations are synchronous. Reads are live, not a snapshot across multiple refs or symbolic
 /// hops. Loose files take precedence, including malformed loose files (no fallback on errors).
@@ -29,7 +31,7 @@ pub struct References<'a> {
 /// The stored value of one reference, before symbolic resolution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Target {
-    /// SHA-1 object identity. Existence and object type are not checked.
+    /// Repository-format object identity. Existence and object type are not checked.
     Direct(ObjectId),
     /// Another full reference name; it may be missing or form a cycle.
     Symbolic(RefName),
@@ -58,7 +60,7 @@ pub struct Resolution {
 /// Reference validation, storage, resolution, or update failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ReferenceError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A supplied identity differs from the repository format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Filesystem failure, with its original cause and path.
@@ -119,9 +121,6 @@ pub enum ReferenceError {
 
 impl<'a> References<'a> {
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
-        if repository.object_format() != crate::ObjectFormat::Sha1 {
-            return Err(ReferenceError::Unsupported("SHA-256 reference storage"));
-        }
         if !cfg!(unix) {
             return Err(ReferenceError::Unsupported(
                 "reference storage on non-Unix platforms",
@@ -143,7 +142,7 @@ impl<'a> References<'a> {
     pub fn read(&self, name: &RefName) -> Result<Option<Target>, ReferenceError> {
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
-            return parse_loose(&bytes, &path).map(Some);
+            return parse_loose(self.repository.object_format(), &bytes, &path).map(Some);
         }
         if name.per_worktree() {
             return Ok(None);
@@ -218,13 +217,13 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
-        validate_expected(&expected)?;
+        validate_expected(self.repository.object_format(), &expected)?;
         if name.as_bytes() == b"HEAD"
             && matches!(&target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
         {
             return Err(ReferenceError::InvalidHeadTarget);
         }
-        validate_target(&target)?;
+        validate_target(self.repository.object_format(), &target)?;
         let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let packed = self.packed()?;
         self.check_packed_namespace(name, &packed)?;
@@ -251,9 +250,9 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
-        validate_expected(&expected)?;
+        validate_expected(self.repository.object_format(), &expected)?;
         let target = Target::Direct(id);
-        validate_target(&target)?;
+        validate_target(self.repository.object_format(), &target)?;
         let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let packed = self.packed()?;
         let (current, actual, mut locks) = self.lock_resolution(name, &packed)?;
@@ -294,14 +293,25 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
-        validate_expected(&expected)?;
+        validate_expected(self.repository.object_format(), &expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
-        let packed = packed::parse(&bytes, &packed_lock.destination)?;
+        let packed = packed::parse(
+            self.repository.object_format(),
+            &bytes,
+            &packed_lock.destination,
+        )?;
         self.check_packed_namespace(name, &packed)?;
         let lock = Lock::acquire(self.path(name)?)?;
         check_expected(self.read_locked(name, &packed)?, expected)?;
-        delete_locked(&packed_lock, &lock, name, &bytes, &packed)
+        delete_locked(
+            self.repository.object_format(),
+            &packed_lock,
+            &lock,
+            name,
+            &bytes,
+            &packed,
+        )
     }
 
     /// Deletes the terminal direct/missing ref while preserving every symbolic name in its chain.
@@ -320,13 +330,18 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
-        validate_expected(&expected)?;
+        validate_expected(self.repository.object_format(), &expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
-        let packed = packed::parse(&bytes, &packed_lock.destination)?;
+        let packed = packed::parse(
+            self.repository.object_format(),
+            &bytes,
+            &packed_lock.destination,
+        )?;
         let (current, actual, locks) = self.lock_resolution(name, &packed)?;
         check_expected(actual, expected)?;
         delete_locked(
+            self.repository.object_format(),
             &packed_lock,
             locks.last().unwrap(),
             &current,
@@ -370,7 +385,7 @@ impl<'a> References<'a> {
     ) -> Result<Option<Target>, ReferenceError> {
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
-            return parse_loose(&bytes, &path).map(Some);
+            return parse_loose(self.repository.object_format(), &bytes, &path).map(Some);
         }
         Ok(packed
             .get(name)
@@ -382,7 +397,7 @@ impl<'a> References<'a> {
     pub(super) fn packed(&self) -> Result<packed::Packed, ReferenceError> {
         let path = self.repository.common_dir().join("packed-refs");
         let bytes = read_optional(&path)?.unwrap_or_default();
-        packed::parse(&bytes, &path)
+        packed::parse(self.repository.object_format(), &bytes, &path)
     }
 
     pub(super) fn path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
@@ -423,6 +438,7 @@ impl<'a> References<'a> {
 // Publish packed removal while the loose value still masks the old packed value. Keeping the
 // packed lock separate from the replacement file excludes packed writers through both steps.
 fn delete_locked(
+    format: crate::ObjectFormat,
     packed_lock: &Lock,
     loose_lock: &Lock,
     name: &RefName,
@@ -431,7 +447,7 @@ fn delete_locked(
 ) -> Result<(), ReferenceError> {
     let packed_changed = packed.contains_key(name);
     if packed_changed {
-        let replacement = packed::without_ref(bytes, name);
+        let replacement = packed::without_ref(format, bytes, name);
         packed_lock.publish_retaining_lock(&replacement)?;
     }
     remove_loose(&loose_lock.destination, packed_changed)
@@ -459,18 +475,24 @@ fn direct_id(target: Option<Target>) -> Option<ObjectId> {
         _ => None,
     }
 }
-pub(super) fn validate_target(target: &Target) -> Result<(), ReferenceError> {
+pub(super) fn validate_target(
+    format: crate::ObjectFormat,
+    target: &Target,
+) -> Result<(), ReferenceError> {
     if let Target::Direct(id) = target {
-        id.require_sha1()?;
+        id.require_format(format)?;
     }
     if matches!(target, Target::Direct(id) if id.is_null()) {
         return Err(ReferenceError::ZeroId);
     }
     Ok(())
 }
-pub(super) fn validate_expected(expected: &Expected) -> Result<(), ReferenceError> {
+pub(super) fn validate_expected(
+    format: crate::ObjectFormat,
+    expected: &Expected,
+) -> Result<(), ReferenceError> {
     if let Expected::Value(Target::Direct(id)) = expected {
-        id.require_sha1()?;
+        id.require_format(format)?;
     }
     Ok(())
 }
@@ -489,7 +511,11 @@ pub(super) fn check_expected(
     Ok(())
 }
 
-pub(super) fn parse_loose(bytes: &[u8], path: &Path) -> Result<Target, ReferenceError> {
+pub(super) fn parse_loose(
+    format: crate::ObjectFormat,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<Target, ReferenceError> {
     // Git accepts trailing ASCII whitespace, including no final newline.
     let end = bytes
         .iter()
@@ -500,7 +526,7 @@ pub(super) fn parse_loose(bytes: &[u8], path: &Path) -> Result<Target, Reference
         let name = RefName::new(name).map_err(|_| malformed(path, "invalid symbolic target"))?;
         return Ok(Target::Symbolic(name));
     }
-    packed::parse_id(bytes, path).map(Target::Direct)
+    packed::parse_id(format, bytes, path).map(Target::Direct)
 }
 
 pub(super) fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, ReferenceError> {
@@ -663,7 +689,7 @@ mod tests {
     #[case::trailing_space(b"1111111111111111111111111111111111111111 \r\n\t")]
     fn parses_loose_ids(#[case] bytes: &[u8]) {
         assert_eq!(
-            parse_loose(bytes, Path::new("ref")).unwrap(),
+            parse_loose(crate::ObjectFormat::Sha1, bytes, Path::new("ref")).unwrap(),
             Target::Direct(ObjectId::Sha1([0x11; 20]))
         );
     }
@@ -677,7 +703,7 @@ mod tests {
     #[case::extra_line(b"1111111111111111111111111111111111111111\nextra\n")]
     fn rejects_loose_data(#[case] bytes: &[u8]) {
         assert!(matches!(
-            parse_loose(bytes, Path::new("ref")),
+            parse_loose(crate::ObjectFormat::Sha1, bytes, Path::new("ref")),
             Err(ReferenceError::Malformed { .. })
         ));
     }

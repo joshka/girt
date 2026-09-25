@@ -46,7 +46,7 @@ fn all(advertisement: &Advertisement) -> Vec<ObjectId> {
 
 #[test]
 fn downloads_validates_installs_and_reuses_known_objects() {
-    let source = Fixture::new(true, 4);
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let source_index = std::fs::read(&source.index_path).unwrap();
     let server = Server::new(source.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -131,7 +131,7 @@ fn downloads_validates_installs_and_reuses_known_objects() {
 
 #[test]
 fn pushes_objects_and_git_publishes_the_remote_ref() {
-    let source = Fixture::new(true, 4);
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let root = tempfile::tempdir().unwrap();
     Repository::init(
         girt::ObjectFormat::Sha1,
@@ -233,7 +233,7 @@ fn stalled_discovery_observes_deadline() {
 
 #[test]
 fn truncated_rpc_never_produces_installable_objects() {
-    let source = Fixture::new(true, 4);
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(source.root.path(), "post-truncate", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);

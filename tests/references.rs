@@ -55,14 +55,14 @@ fn name(value: &str) -> RefName {
 fn oid(bytes: &[u8]) -> ObjectId {
     std::str::from_utf8(bytes).unwrap().trim().parse().unwrap()
 }
-fn fixture() -> (tempfile::TempDir, Repository, ObjectId) {
+fn fixture(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository, ObjectId) {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
         &[
             "init",
             "--bare",
-            "--object-format=sha1",
+            &format!("--object-format={format}"),
             "--template=",
             "--initial-branch=main",
             ".",
@@ -100,9 +100,11 @@ fn names_agree_with_git(#[case] value: &str, #[case] valid: bool) {
     assert_eq!(RefName::new(value).is_ok(), valid);
 }
 
-#[test]
-fn reads_git_loose_packed_and_symbolic_then_shadows_packed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn reads_git_loose_packed_and_symbolic_then_shadows_packed(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     let refs = repo.references().unwrap();
     let branch = name("refs/heads/main");
     git(
@@ -176,9 +178,13 @@ fn second_commit(root: &Path, first: ObjectId) -> ObjectId {
     ))
 }
 
-#[test]
-fn publishes_unborn_branch_and_distinguishes_symbolic_replacement() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn publishes_unborn_branch_and_distinguishes_symbolic_replacement(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     let refs = repo.references().unwrap();
     assert_eq!(refs.resolve(&name("HEAD"), 8).unwrap().id, None);
     assert_eq!(
@@ -205,9 +211,11 @@ fn publishes_unborn_branch_and_distinguishes_symbolic_replacement() {
     );
 }
 
-#[test]
-fn explicitly_omits_new_and_existing_reflogs() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn explicitly_omits_new_and_existing_reflogs(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["config", "core.logAllRefUpdates", "true"],
@@ -255,16 +263,62 @@ fn explicitly_omits_new_and_existing_reflogs() {
 }
 
 #[rstest]
-#[case::loose(false, "refs/heads/topic", "refs/heads/topic/sub")]
-#[case::loose_child(false, "refs/heads/topic/sub", "refs/heads/topic")]
-#[case::packed(true, "refs/heads/topic", "refs/heads/topic/sub")]
-#[case::packed_child(true, "refs/heads/topic/sub", "refs/heads/topic")]
+#[case::loose_sha1(
+    girt::ObjectFormat::Sha1,
+    false,
+    "refs/heads/topic",
+    "refs/heads/topic/sub"
+)]
+#[case::loose_sha256(
+    girt::ObjectFormat::Sha256,
+    false,
+    "refs/heads/topic",
+    "refs/heads/topic/sub"
+)]
+#[case::loose_child_sha1(
+    girt::ObjectFormat::Sha1,
+    false,
+    "refs/heads/topic/sub",
+    "refs/heads/topic"
+)]
+#[case::loose_child_sha256(
+    girt::ObjectFormat::Sha256,
+    false,
+    "refs/heads/topic/sub",
+    "refs/heads/topic"
+)]
+#[case::packed_sha1(
+    girt::ObjectFormat::Sha1,
+    true,
+    "refs/heads/topic",
+    "refs/heads/topic/sub"
+)]
+#[case::packed_sha256(
+    girt::ObjectFormat::Sha256,
+    true,
+    "refs/heads/topic",
+    "refs/heads/topic/sub"
+)]
+#[case::packed_child_sha1(
+    girt::ObjectFormat::Sha1,
+    true,
+    "refs/heads/topic/sub",
+    "refs/heads/topic"
+)]
+#[case::packed_child_sha256(
+    girt::ObjectFormat::Sha256,
+    true,
+    "refs/heads/topic/sub",
+    "refs/heads/topic"
+)]
 fn namespace_conflicts_preserve_existing(
+    #[case] format: girt::ObjectFormat,
+
     #[case] pack: bool,
     #[case] existing: &str,
     #[case] new: &str,
 ) {
-    let (root, repo, first) = fixture();
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", existing, &first.to_string()],
@@ -286,9 +340,11 @@ fn prepare_packed(root: &Path, pack: bool) {
     }
 }
 
-#[test]
-fn conditional_writers_cannot_both_succeed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn conditional_writers_cannot_both_succeed(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -319,11 +375,17 @@ fn conditional_writers_cannot_both_succeed() {
 }
 
 #[rstest]
-#[case::bisect("refs/bisect/test")]
-#[case::rewritten("refs/rewritten/test")]
-#[case::worktree("refs/worktree/test")]
-fn linked_worktree_routes_shared_and_private_refs(#[case] private: &str) {
-    let (root, repo, first) = fixture();
+#[case::bisect_sha1(girt::ObjectFormat::Sha1, "refs/bisect/test")]
+#[case::bisect_sha256(girt::ObjectFormat::Sha256, "refs/bisect/test")]
+#[case::rewritten_sha1(girt::ObjectFormat::Sha1, "refs/rewritten/test")]
+#[case::rewritten_sha256(girt::ObjectFormat::Sha256, "refs/rewritten/test")]
+#[case::worktree_sha1(girt::ObjectFormat::Sha1, "refs/worktree/test")]
+#[case::worktree_sha256(girt::ObjectFormat::Sha256, "refs/worktree/test")]
+fn linked_worktree_routes_shared_and_private_refs(
+    #[case] format: girt::ObjectFormat,
+    #[case] private: &str,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -381,10 +443,12 @@ fn linked_worktree_routes_shared_and_private_refs(#[case] private: &str) {
     assert!(!repo.common_dir().join(private).exists());
 }
 
-#[test]
-fn non_utf8_names_round_trip_with_git() {
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn non_utf8_names_round_trip_with_git(#[case] format: girt::ObjectFormat) {
     use std::os::unix::ffi::OsStrExt;
-    let (root, repo, first) = fixture();
+    let (root, repo, first) = fixture(format);
     let raw = b"refs/heads/byte-\xff";
     let reference = RefName::new(raw).unwrap();
     let refs = repo.references().unwrap();
@@ -406,9 +470,11 @@ fn non_utf8_names_round_trip_with_git() {
     assert_eq!(refs.read(&reference).unwrap(), Some(Target::Direct(first)));
 }
 
-#[test]
-fn malformed_loose_does_not_fall_back_to_packed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn malformed_loose_does_not_fall_back_to_packed(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -437,9 +503,11 @@ fn malformed_loose_does_not_fall_back_to_packed() {
 }
 
 #[cfg(target_os = "linux")]
-#[test]
-fn non_utf8_loose_names_on_linux() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn non_utf8_loose_names_on_linux(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     let reference = RefName::new(b"refs/heads/byte-\xff").unwrap();
     repo.references()
         .unwrap()
@@ -457,10 +525,16 @@ fn non_utf8_loose_names_on_linux() {
 }
 
 #[rstest]
-#[case::reftable("refStorage", "reftable")]
-#[case::unknown("refStorage", "unknown")]
-fn unsupported_backends_fail_open(#[case] key: &str, #[case] value: &str) {
-    let (root, _repo, _first) = fixture();
+#[case::reftable_sha1(girt::ObjectFormat::Sha1, "refStorage", "reftable")]
+#[case::reftable_sha256(girt::ObjectFormat::Sha256, "refStorage", "reftable")]
+#[case::unknown_sha1(girt::ObjectFormat::Sha1, "refStorage", "unknown")]
+#[case::unknown_sha256(girt::ObjectFormat::Sha256, "refStorage", "unknown")]
+fn unsupported_backends_fail_open(
+    #[case] format: girt::ObjectFormat,
+    #[case] key: &str,
+    #[case] value: &str,
+) {
+    let (root, _repo, _first) = fixture(format);
     fs::write(
         root.path().join("config"),
         format!("[core]\nrepositoryformatversion=1\nbare=true\n[extensions]\n{key}={value}\n"),
@@ -473,11 +547,29 @@ fn unsupported_backends_fail_open(#[case] key: &str, #[case] value: &str) {
 }
 
 #[rstest]
-#[case::unknown_header(b"# pack-refs with: future\n")]
-#[case::truncated(b"1111111111111111111111111111111111111111 refs/heads/main")]
-#[case::invalid_peel(b"1111111111111111111111111111111111111111 refs/tags/a\n^bad\n")]
-fn malformed_packed_blocks_updates_and_preserves_data(#[case] bytes: &[u8]) {
-    let (root, repo, first) = fixture();
+#[case::unknown_header_sha1(girt::ObjectFormat::Sha1, b"# pack-refs with: future\n")]
+#[case::unknown_header_sha256(girt::ObjectFormat::Sha256, b"# pack-refs with: future\n")]
+#[case::truncated_sha1(
+    girt::ObjectFormat::Sha1,
+    b"1111111111111111111111111111111111111111 refs/heads/main"
+)]
+#[case::truncated_sha256(
+    girt::ObjectFormat::Sha256,
+    b"1111111111111111111111111111111111111111 refs/heads/main"
+)]
+#[case::invalid_peel_sha1(
+    girt::ObjectFormat::Sha1,
+    b"1111111111111111111111111111111111111111 refs/tags/a\n^bad\n"
+)]
+#[case::invalid_peel_sha256(
+    girt::ObjectFormat::Sha256,
+    b"1111111111111111111111111111111111111111 refs/tags/a\n^bad\n"
+)]
+fn malformed_packed_blocks_updates_and_preserves_data(
+    #[case] format: girt::ObjectFormat,
+    #[case] bytes: &[u8],
+) {
+    let (root, repo, first) = fixture(format);
     fs::write(root.path().join("packed-refs"), bytes).unwrap();
     let refs = repo.references().unwrap();
     assert!(refs.read(&name("refs/heads/main")).is_err());
@@ -494,9 +586,11 @@ fn malformed_packed_blocks_updates_and_preserves_data(#[case] bytes: &[u8]) {
     assert!(!root.path().join("packed-refs.lock").exists());
 }
 
-#[test]
-fn git_dangling_symbolic_ref_resolves_to_missing_name() {
-    let (root, repo, _first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_dangling_symbolic_ref_resolves_to_missing_name(#[case] format: girt::ObjectFormat) {
+    let (root, repo, _first) = fixture(format);
     git(
         root.path(),
         &["symbolic-ref", "refs/heads/dangling", "refs/heads/missing"],
@@ -515,10 +609,12 @@ fn git_dangling_symbolic_ref_resolves_to_missing_name() {
     );
 }
 
-#[test]
-fn dangling_object_id_is_not_object_lookup() {
-    let (_root, repo, _first) = fixture();
-    let missing = ObjectId::Sha1([0x55; 20]);
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn dangling_object_id_is_not_object_lookup(#[case] format: girt::ObjectFormat) {
+    let (_root, repo, _first) = fixture(format);
+    let missing = ObjectId::from_bytes(format, &vec![0x55; format.digest_len()]).unwrap();
     let refs = repo.references().unwrap();
     refs.update_without_reflog(
         &name("refs/tags/missing"),
@@ -533,9 +629,11 @@ fn dangling_object_id_is_not_object_lookup() {
     assert!(repo.loose_objects().read_blob(missing, 100).is_err());
 }
 
-#[test]
-fn packed_value_is_not_absent_and_failed_condition_cleans_lock() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn packed_value_is_not_absent_and_failed_condition_cleans_lock(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -550,9 +648,11 @@ fn packed_value_is_not_absent_and_failed_condition_cleans_lock() {
     assert!(!root.path().join("refs/heads/main.lock").exists());
 }
 
-#[test]
-fn git_and_girt_conditional_writers_cannot_both_succeed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_and_girt_conditional_writers_cannot_both_succeed(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -596,9 +696,11 @@ fn git_and_girt_conditional_writers_cannot_both_succeed() {
     assert!(!root.path().join("packed-refs.lock").exists());
 }
 
-#[test]
-fn symbolic_head_cannot_point_outside_refs() {
-    let (root, repo, _first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn symbolic_head_cannot_point_outside_refs(#[case] format: girt::ObjectFormat) {
+    let (root, repo, _first) = fixture(format);
     let head = name("HEAD");
     assert!(
         !git_attempt(root.path(), &["symbolic-ref", "HEAD", "HEAD"], b"")
@@ -621,9 +723,13 @@ fn symbolic_head_cannot_point_outside_refs() {
     assert!(Repository::open(root.path()).is_ok());
 }
 
-#[test]
-fn enumerates_git_refs_and_deletes_shadowed_branch_and_packed_tag() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn enumerates_git_refs_and_deletes_shadowed_branch_and_packed_tag(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -731,11 +837,17 @@ fn enumerates_git_refs_and_deletes_shadowed_branch_and_packed_tag() {
 }
 
 #[rstest]
-#[case::bisect("refs/bisect/test")]
-#[case::rewritten("refs/rewritten/test")]
-#[case::worktree("refs/worktree/test")]
-fn lists_and_deletes_current_worktree_refs_without_touching_other_worktree(#[case] private: &str) {
-    let (root, repo, first) = fixture();
+#[case::bisect_sha1(girt::ObjectFormat::Sha1, "refs/bisect/test")]
+#[case::bisect_sha256(girt::ObjectFormat::Sha256, "refs/bisect/test")]
+#[case::rewritten_sha1(girt::ObjectFormat::Sha1, "refs/rewritten/test")]
+#[case::rewritten_sha256(girt::ObjectFormat::Sha256, "refs/rewritten/test")]
+#[case::worktree_sha1(girt::ObjectFormat::Sha1, "refs/worktree/test")]
+#[case::worktree_sha256(girt::ObjectFormat::Sha256, "refs/worktree/test")]
+fn lists_and_deletes_current_worktree_refs_without_touching_other_worktree(
+    #[case] format: girt::ObjectFormat,
+    #[case] private: &str,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -801,8 +913,10 @@ fn lists_and_deletes_current_worktree_refs_without_touching_other_worktree(#[cas
     );
 }
 
-#[test]
-fn ordinary_gitdir_file_layout_lists_and_deletes_refs() {
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn ordinary_gitdir_file_layout_lists_and_deletes_refs(#[case] format: girt::ObjectFormat) {
     let parent = tempfile::tempdir().unwrap();
     let worktree = parent.path().join("worktree");
     let metadata = parent.path().join("metadata");
@@ -812,7 +926,7 @@ fn ordinary_gitdir_file_layout_lists_and_deletes_refs() {
             "init",
             "--template=",
             "--initial-branch=main",
-            "--object-format=sha1",
+            &format!("--object-format={format}"),
             "--separate-git-dir",
             metadata.to_str().unwrap(),
             worktree.to_str().unwrap(),
@@ -851,9 +965,13 @@ fn ordinary_gitdir_file_layout_lists_and_deletes_refs() {
     );
 }
 
-#[test]
-fn git_conditional_update_racing_girt_deletion_cannot_both_succeed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_conditional_update_racing_girt_deletion_cannot_both_succeed(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -895,9 +1013,11 @@ fn git_conditional_update_racing_girt_deletion_cannot_both_succeed() {
     );
 }
 
-#[test]
-fn git_packing_racing_deletion_does_not_resurrect_the_branch() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_packing_racing_deletion_does_not_resurrect_the_branch(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -935,9 +1055,11 @@ fn git_packing_racing_deletion_does_not_resurrect_the_branch() {
     assert_ne!(actual, Some(Target::Direct(first)));
 }
 
-#[test]
-fn git_packed_writer_honors_lock_retained_across_replacement() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_packed_writer_honors_lock_retained_across_replacement(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -1022,9 +1144,11 @@ fn logged_edit(
     }
 }
 
-#[test]
-fn git_reads_transaction_records_and_girt_reads_git_appends() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_reads_transaction_records_and_girt_reads_git_appends(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     let refs = repo.references().unwrap();
     refs.transaction(&[
         logged_edit("HEAD", Some(first), Expected::Absent),
@@ -1037,7 +1161,7 @@ fn git_reads_transaction_records_and_girt_reads_git_appends() {
         bytes,
         format!(
             "{} {first} C. Recorder <committer@example.com> 1700000123 -0700\ttransaction\n",
-            ObjectId::Sha1([0; 20])
+            ObjectId::null(format)
         )
         .as_bytes()
     );
@@ -1090,9 +1214,13 @@ fn git_reads_transaction_records_and_girt_reads_git_appends() {
     );
 }
 
-#[test]
-fn transaction_deletes_packed_and_shadowed_refs_without_resurrection() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn transaction_deletes_packed_and_shadowed_refs_without_resurrection(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/tags/a", &first.to_string()],
@@ -1132,7 +1260,7 @@ fn transaction_deletes_packed_and_shadowed_refs_without_resurrection() {
             .unwrap()
             .unwrap()[0]
             .new,
-        ObjectId::Sha1([0; 20])
+        ObjectId::null(format)
     );
     git(
         root.path(),
@@ -1156,9 +1284,11 @@ fn transaction_deletes_packed_and_shadowed_refs_without_resurrection() {
     );
 }
 
-#[test]
-fn git_empty_message_reflog_is_readable() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_empty_message_reflog_is_readable(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &[
@@ -1180,9 +1310,13 @@ fn git_empty_message_reflog_is_readable() {
     );
 }
 
-#[test]
-fn linked_worktree_transaction_routes_head_branch_and_private_logs() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn linked_worktree_transaction_routes_head_branch_and_private_logs(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -1238,8 +1372,10 @@ fn linked_worktree_transaction_routes_head_branch_and_private_logs() {
     );
 }
 
-#[test]
-fn separate_git_directory_routes_transaction_logs() {
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn separate_git_directory_routes_transaction_logs(#[case] format: girt::ObjectFormat) {
     let root = tempfile::tempdir().unwrap();
     let metadata = root.path().join("metadata");
     let worktree = root.path().join("worktree");
@@ -1248,7 +1384,7 @@ fn separate_git_directory_routes_transaction_logs() {
         &[
             "init",
             "--template=",
-            "--object-format=sha1",
+            &format!("--object-format={format}"),
             "--initial-branch=main",
             "--separate-git-dir",
             metadata.to_str().unwrap(),
@@ -1274,9 +1410,13 @@ fn separate_git_directory_routes_transaction_logs() {
     );
 }
 
-#[test]
-fn git_conditional_writer_racing_transaction_cannot_both_succeed() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_conditional_writer_racing_transaction_cannot_both_succeed(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "refs/heads/main", &first.to_string()],
@@ -1329,9 +1469,11 @@ fn git_conditional_writer_racing_transaction_cannot_both_succeed() {
     assert!(!root.path().join("refs/heads/main.lock").exists());
 }
 
-#[test]
-fn detached_head_transaction_records_previous_tip() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn detached_head_transaction_records_previous_tip(#[case] format: girt::ObjectFormat) {
+    let (root, repo, first) = fixture(format);
     git(
         root.path(),
         &["update-ref", "--no-deref", "HEAD", &first.to_string()],
@@ -1368,9 +1510,13 @@ fn detached_head_transaction_records_previous_tip() {
     );
 }
 
-#[test]
-fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch() {
-    let (root, repo, first) = fixture();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo, first) = fixture(format);
     let second = second_commit(root.path(), first);
     git(
         root.path(),
@@ -1389,7 +1535,7 @@ fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch() {
         .unwrap()
         .transaction(&[operation])
         .unwrap();
-    let (git_root, _git_repo, git_first) = fixture();
+    let (git_root, _git_repo, git_first) = fixture(format);
     let git_second = second_commit(git_root.path(), git_first);
     git(
         git_root.path(),

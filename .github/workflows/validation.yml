@@ -46,6 +46,7 @@ jobs:
       - run: cargo +stable run --locked --features ssh --example ssh_local
       - run: cargo +stable run --locked --example content_diff
       - run: cargo +stable run --locked --example index
+      - run: cargo +stable run --locked --example write_pack
       - run: cargo +stable run --locked --example status
       - run: cargo +stable run --locked --example checkout
       - name: Rustdoc
@@ -81,7 +82,7 @@ jobs:
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo +stable test --locked --all-features --lib
       - run: cargo +stable test --locked --all-features --doc
-      - name: Portable Git interoperability
+      - name: Portable Git interoperability in both object formats
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
           --test object_ids --test sha256 --test blobs --test trees --test commits --test tags --test packs
@@ -91,3 +92,4 @@ jobs:
         run: cargo +stable test --locked --no-default-features --features http --test http_portable
       - run: cargo +stable run --locked --example content_diff
       - run: cargo +stable run --locked --example index
+      - run: cargo +stable run --locked --example write_pack

@@ -506,7 +506,9 @@ fn noncooperating_index_change_prevents_publication_after_worktree_update() {
     let f = Fixture::new();
     let old = f.initial(b"file", EntryMode::Blob, b"old");
     let new = f.tree(b"file", EntryMode::Blob, b"new");
-    let foreign = index::Index::default().encode(Default::default()).unwrap();
+    let foreign = index::Index::empty(crate::ObjectFormat::Sha1)
+        .encode(Default::default())
+        .unwrap();
     let error = run(
         &f.repo,
         Some(old),

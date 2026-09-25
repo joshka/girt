@@ -139,7 +139,7 @@ fn verify(f: &Fixture, repo: &Repository) {
 
 #[test]
 fn real_git_full_incremental_and_known_only_fetch() {
-    let f = Fixture::new(true, 8);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
@@ -270,7 +270,7 @@ fn failed_worker_validation_releases_negotiated_history(
     #[case] cancelled: bool,
     #[case] limits: FetchLimits,
 ) {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let cancel = AtomicBool::new(false);
     let known = Arc::new(
         KnownHistory::new(
@@ -310,7 +310,7 @@ fn failed_worker_validation_releases_negotiated_history(
 
 #[test]
 fn discarding_download_releases_negotiated_history() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let cancel = AtomicBool::new(false);
     let limits = FetchLimits::default();
     let known = Arc::new(
@@ -341,7 +341,7 @@ fn discarding_download_releases_negotiated_history() {
 
 #[test]
 fn real_git_delta_push_incremental_and_empty_commands() {
-    let f = Fixture::new(false, 8);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 8);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "", "Bearer supplied", None);
     let remote =
@@ -449,7 +449,7 @@ fn rejects_invalid_http_discovery(#[case] fault: &str) {
 
 #[test]
 fn truncated_mutating_response_retains_acknowledged_prefix() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "partial", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -612,7 +612,7 @@ fn https_validates_chain_and_hostname(
 #[case::stalled_status("post-stall")]
 #[case::invalid_rpc_media("post-media")]
 fn attempted_push_http_failures_are_uncertain_and_not_retried(#[case] fault: &str) {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), fault, "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -643,7 +643,7 @@ fn attempted_push_http_failures_are_uncertain_and_not_retried(#[case] fault: &st
 #[test]
 fn server_can_accept_one_ref_and_reject_another() {
     use std::os::unix::fs::PermissionsExt;
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let hook = dest.git_dir().join("hooks/update");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -676,7 +676,7 @@ fn server_can_accept_one_ref_and_reject_another() {
 
 #[test]
 fn download_and_decoding_limits_are_independent() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
@@ -769,7 +769,7 @@ fn cancellation_during_stalled_upload_is_uncertain() {
 
 #[test]
 fn cancelled_status_body_preserves_completed_acknowledgements() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "partial-stall", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -831,7 +831,7 @@ fn stalled_tls_handshake_observes_deadline() {
 
 #[test]
 fn push_authentication_rejection_is_not_sent() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "", "Bearer required", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -861,7 +861,7 @@ fn push_authentication_rejection_is_not_sent() {
 
 #[test]
 fn complete_git_report_does_not_hide_truncated_http() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "post-truncate", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -884,7 +884,7 @@ fn complete_git_report_does_not_hide_truncated_http() {
 
 #[test]
 fn https_push_and_fetch_agree_with_git() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let certs = tempfile::tempdir().unwrap();
     let (cert, key, ca) = certificates(certs.path());
@@ -964,7 +964,7 @@ fn network_wait_leaves_single_thread_executor_responsive() {
 
 #[test]
 fn orchestration_installs_and_publishes_on_owned_worker() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let (_root, dest) = destination();
@@ -1025,7 +1025,7 @@ fn orchestration_installs_and_publishes_on_owned_worker() {
 
 #[test]
 fn clone_download_finishes_on_owned_worker_without_checkout() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1080,7 +1080,7 @@ fn clone_download_finishes_on_owned_worker_without_checkout() {
 
 #[test]
 fn clone_validation_cancellation_leaves_destination_absent() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let root = tempfile::tempdir().unwrap();

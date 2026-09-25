@@ -5,12 +5,12 @@
 //! [`ObjectId`] carries SHA-1 or SHA-256 digest bytes. [`ObjectFormat::hash_object`] hashes exact
 //! payloads with Git framing; it does not validate payload structure or translate embedded IDs.
 //! Hex parsing accepts full 40/64-digit identities, while [`ObjectId::from_hex`] requires an
-//! explicit format. Null IDs are format-specific sentinels. Codecs, loose storage and loose-backed
+//! explicit format. Null IDs are format-specific sentinels. Codecs, loose/packed storage and
 //! traversal support both formats. Tree construction and all decoded payload parsing take an
 //! explicit format, including empty trees. Commit construction derives the format from its tree
-//! and requires matching parents; tag construction derives it from the target. Packs, refs,
-//! indexes and transports currently support SHA-1 only. SHA-256 repository operations refuse
-//! those unsupported features before mutation.
+//! and requires matching parents; tag construction derives it from the target. References,
+//! reflogs and working-tree index v2 use the repository format. Transport negotiation remains
+//! SHA-1-only and refuses SHA-256 operations before mutation.
 //!
 //! # Reading a repository
 //!
@@ -39,11 +39,11 @@
 //!
 //! # Reading and replacing the index
 //!
-//! [`index::Index`] parses and encodes bounded SHA-1 v2 indexes with byte paths, stat words and
-//! conflict stages. [`Repository::read_index`] distinguishes missing storage from an empty index;
-//! [`Repository::edit_index`] holds `index.lock` while the caller derives and publishes changes.
-//! Optional extensions round-trip, but edits reject extensions other than the invalidatable
-//! `TREE` cache. Index operations never create working files or apply staging policy.
+//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2 indexes with byte paths, stat words
+//! and conflict stages. [`Repository::read_index`] distinguishes missing storage from an empty
+//! index; [`Repository::edit_index`] holds `index.lock` while the caller derives and publishes
+//! changes. Optional extensions round-trip, but edits reject extensions other than the
+//! invalidatable `TREE` cache. Index operations never create working files or apply staging policy.
 //! Run `cargo run --example index` for a disposable repository example.
 //!
 //! # Observing working-tree status
@@ -171,15 +171,16 @@
 //!   storage assumptions.
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
-//! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1 pack/index v2
-//! reads, caller-owned pack/index v2 exports, object transfer and fetch orchestration, and
-//! conditional branch/tag push. Fetch and push accept v0 streams or local Git server adapters. The
-//! optional `http` feature adds async smart-HTTP(S) adapters; `ssh` adds system OpenSSH adapters on
-//! macOS/Linux. Both use a caller-owned Tokio runtime; fetch pack validation remains an explicit
-//! synchronous step. Files references support enumeration, reads, symbolic resolution, and explicit
-//! no-reflog updates and deletion, plus conditional batches and caller-controlled reflog appends.
-//! SHA-1 working-tree index v2, raw status and conservative raw tree checkout are available.
-//! Attribute/filter/EOL conversion, branch switching, sparse checkout and submodules are deferred.
+//! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1/SHA-256
+//! pack/index v2 reads, caller-owned pack/index v2 exports, object transfer and fetch
+//! orchestration, and conditional branch/tag push. Fetch and push remain SHA-1-only and accept v0
+//! streams or local Git server adapters. The optional `http` feature adds async smart-HTTP(S)
+//! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio
+//! runtime; fetch pack validation remains an explicit synchronous step. Files references support
+//! enumeration, reads, symbolic resolution, and explicit no-reflog updates and deletion, plus
+//! conditional batches and caller-controlled reflog appends. SHA-1/SHA-256 working-tree index v2,
+//! raw status and conservative raw tree checkout are available. Attribute/filter/EOL conversion,
+//! branch switching, sparse checkout and submodules are deferred.
 
 pub mod checkout;
 pub mod clone;

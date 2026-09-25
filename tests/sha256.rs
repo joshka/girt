@@ -277,7 +277,7 @@ fn exact_signed_commit_and_opaque_headers(#[case] format: ObjectFormat) {
 }
 
 #[test]
-fn sha256_scoped_refusals_preserve_metadata() {
+fn sha256_corrupt_storage_preserves_metadata() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("repo");
     let repo = Repository::init(ObjectFormat::Sha256, &path, InitKind::Bare).unwrap();
@@ -285,15 +285,11 @@ fn sha256_scoped_refusals_preserve_metadata() {
     std::fs::write(path.join("index"), b"existing index sentinel").unwrap();
     assert!(matches!(
         repo.read_index(Default::default()),
-        Err(girt::index::StorageError::UnsupportedFormat(
-            ObjectFormat::Sha256
-        ))
+        Err(girt::index::StorageError::Format { .. })
     ));
     assert!(matches!(
         repo.edit_index(Default::default()),
-        Err(girt::index::StorageError::UnsupportedFormat(
-            ObjectFormat::Sha256
-        ))
+        Err(girt::index::StorageError::Format { .. })
     ));
     assert!(!path.join("index.lock").exists());
     assert_eq!(
@@ -301,22 +297,18 @@ fn sha256_scoped_refusals_preserve_metadata() {
         b"existing index sentinel"
     );
     assert!(matches!(
-        repo.references(),
-        Err(girt::refs::ReferenceError::Unsupported(_))
-    ));
-    assert!(matches!(
         Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare),
         Err(girt::InitError::AlreadyExists(_))
     ));
     assert_eq!(std::fs::read(path.join("config")).unwrap(), config);
     std::fs::write(
-        path.join("objects/pack/unpaired.pack"),
+        path.join("objects/pack/unpaired.idx"),
         b"existing pack sentinel",
     )
     .unwrap();
     assert!(matches!(
         repo.objects(PackLimits::default()),
-        Err(girt::ObjectReadError::Unsupported(_))
+        Err(girt::ObjectReadError::Path { .. })
     ));
     // Explicit loose access remains usable even in a repository with packed artifacts.
     let loose = repo.loose_objects();
@@ -370,7 +362,7 @@ fn git_created_separate_and_linked_layouts(#[case] format: ObjectFormat) {
 }
 
 #[test]
-fn sha256_git_pack_is_explicitly_unsupported() {
+fn sha256_git_pack_is_readable() {
     let root = tempfile::tempdir().unwrap();
     let repo = Repository::init(
         ObjectFormat::Sha256,
@@ -391,10 +383,15 @@ fn sha256_git_pack_is_explicitly_unsupported() {
         b"",
     );
     git(repo.git_dir(), &["repack", "-ad"], b"");
-    assert!(matches!(
-        repo.objects(PackLimits::default()),
-        Err(girt::ObjectReadError::Unsupported(_))
-    ));
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(id, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        id
+    );
     git(repo.git_dir(), &["fsck", "--strict"], b"");
 }
 
@@ -505,4 +502,134 @@ fn sha256_cannot_become_sha1_fetch_knowledge() {
         girt::fetch::KnownHistory::new(&objects, &[], Default::default(), &AtomicBool::new(false)),
         Err(girt::fetch::FetchError::Unsupported(_))
     ));
+}
+
+/// Uses packed history as checkout input, then asks Git to interpret the resulting index.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn packed_history_checkout_and_status_use_repository_format(#[case] format: ObjectFormat) {
+    use girt::refs::{Expected, RefName, Target};
+    use girt::status::{Baseline, Untracked};
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("repo");
+    let repo = Repository::init(format, &path, InitKind::Worktree).unwrap();
+    let loose = repo.loose_objects();
+    let blob = loose.write_blob(b"packed worktree content\n").unwrap();
+    let tree = Tree::new(format, vec![entry(EntryMode::Blob, b"file", blob)]).unwrap();
+    let tree_id = loose.write_tree(&tree).unwrap();
+    let tip = loose
+        .write_commit(&commit(tree_id, vec![], 1700000000))
+        .unwrap();
+    repo.references()
+        .unwrap()
+        .update_without_reflog(
+            &RefName::new(b"refs/heads/main").unwrap(),
+            Target::Direct(tip),
+            Expected::Absent,
+        )
+        .unwrap();
+    git(&path, &["repack", "-ad"], b"");
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects.walk(&[tip], HistoryLimits::default()).unwrap(),
+        [tip]
+    );
+    let report = repo
+        .checkout_tree(
+            None,
+            Some(tree_id),
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.index_published);
+    assert_eq!(
+        git(&path, &["write-tree"], b""),
+        format!("{tree_id}\n").as_bytes()
+    );
+    assert_eq!(
+        git(&path, &["ls-files", "--stage"], b""),
+        format!("100644 {blob} 0\tfile\n").as_bytes()
+    );
+    let status = repo
+        .raw_status(
+            Baseline::Head,
+            Untracked::Omit,
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(status.staged.is_empty());
+    assert!(status.unstaged.is_empty());
+    git(&path, &["diff", "--quiet"], b"");
+    git(&path, &["fsck", "--strict"], b"");
+    std::fs::write(path.join("file"), b"dirty").unwrap();
+    let status = repo
+        .raw_status(
+            Baseline::Head,
+            Untracked::Omit,
+            Default::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(status.unstaged.len(), 1);
+    assert!(
+        repo.checkout_tree(
+            Some(tree_id),
+            None,
+            Default::default(),
+            &AtomicBool::new(false)
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(path.join("file")).unwrap(), b"dirty");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+#[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+fn foreign_storage_ids_are_rejected_without_publication(
+    #[case] format: ObjectFormat,
+    #[case] other: ObjectFormat,
+) {
+    use girt::refs::{Expected, RefName, ReferenceError, Target};
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+    let foreign = ObjectId::for_blob(other, b"foreign");
+    let name = RefName::new(b"refs/heads/foreign").unwrap();
+    let bytes = format!("{foreign}\n");
+    let path = repo.git_dir().join("refs/heads/foreign");
+    std::fs::write(&path, &bytes).unwrap();
+    let refs = repo.references().unwrap();
+    assert!(matches!(
+        refs.read(&name),
+        Err(ReferenceError::Malformed { .. })
+    ));
+    assert!(matches!(
+        refs.update_without_reflog(&name, Target::Direct(foreign), Expected::Any),
+        Err(ReferenceError::ObjectFormat(_))
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
+    assert!(!repo.git_dir().join("packed-refs.lock").exists());
+    let packed = format!("{foreign} refs/tags/foreign\n");
+    std::fs::write(repo.git_dir().join("packed-refs"), &packed).unwrap();
+    assert!(matches!(refs.list(), Err(ReferenceError::Malformed { .. })));
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("packed-refs")).unwrap(),
+        packed.as_bytes()
+    );
+    let index = girt::index::Index::empty(other)
+        .encode(Default::default())
+        .unwrap();
+    std::fs::write(repo.git_dir().join("index"), &index).unwrap();
+    assert!(repo.read_index(Default::default()).is_err());
+    assert!(repo.edit_index(Default::default()).is_err());
+    assert!(!repo.git_dir().join("index.lock").exists());
+    assert_eq!(std::fs::read(repo.git_dir().join("index")).unwrap(), index);
 }

@@ -13,21 +13,25 @@ pub(crate) struct Pack {
 }
 
 impl Pack {
-    pub fn open(index_bytes: &[u8], data: Vec<u8>) -> Result<Self, Error> {
-        if data.len() < 32 || &data[..4] != b"PACK" {
+    pub fn open(
+        format: crate::ObjectFormat,
+        index_bytes: &[u8],
+        data: Vec<u8>,
+    ) -> Result<Self, Error> {
+        if data.len() < 12 + format.digest_len() || &data[..4] != b"PACK" {
             return Err(Error::Corrupt("pack header"));
         }
         let version = word(&data, 4)?;
         if version != 2 {
             return Err(Error::PackVersion(version));
         }
-        let end = data.len() - 20;
-        let index = Index::parse(index_bytes, end)?;
+        let end = data.len() - format.digest_len();
+        let index = Index::parse(format, index_bytes, end)?;
         if word(&data, 8)? as usize != index.entries.len() {
             return Err(Error::Corrupt("pack object count"));
         }
-        verify_hash(&data, "pack checksum")?;
-        if index.pack_hash != data[end..] {
+        verify_hash(format, &data, "pack checksum")?;
+        if *index.pack_hash.as_bytes() != data[end..] {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
         for entry in &index.entries {
@@ -43,6 +47,8 @@ impl Pack {
     }
 
     pub fn read(&self, mut position: usize, limits: ReadLimits) -> Result<Object, Error> {
+        let format = self.index.pack_hash.format();
+        let width = format.digest_len();
         let mut remaining = limits.max_decode_bytes;
         let mut pending = Vec::new();
         let mut seen = HashSet::new();
@@ -79,10 +85,10 @@ impl Pack {
                 }
                 7 => {
                     let raw = input
-                        .get(..20)
+                        .get(..width)
                         .ok_or(Error::Corrupt("truncated base identity"))?;
-                    let id = ObjectId::Sha1(raw.try_into().unwrap());
-                    input = &input[20..];
+                    let id = ObjectId::from_bytes(format, raw).unwrap();
+                    input = &input[width..];
                     Some(self.index.find(id).ok_or(Error::MissingBase(id))?)
                 }
                 other => return Err(Error::ObjectType(other)),
@@ -115,11 +121,7 @@ impl Pack {
                     4 => ObjectKind::Tag,
                     _ => unreachable!("non-delta kinds validated above"),
                 };
-                let object = Object {
-                    kind,
-                    data,
-                    format: crate::ObjectFormat::Sha1,
-                };
+                let object = Object { kind, data, format };
                 verify_identity(&object, entry.id)?;
                 break object;
             }

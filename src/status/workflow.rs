@@ -137,7 +137,7 @@ mod supported {
                     let object =
                         read_object(&objects, id, b"HEAD", ObjectKind::Commit, &mut limits)?;
                     Ok::<_, Error>(
-                        Commit::parse(crate::ObjectFormat::Sha1, object.data())?
+                        Commit::parse(repo.object_format(), object.data())?
                             .fields()
                             .tree,
                     )
@@ -288,7 +288,9 @@ mod supported {
         fn replacement(file: &str) -> Vec<u8> {
             match file {
                 "HEAD" => b"ref: refs/heads/different\n".to_vec(),
-                _ => index::Index::default().encode(Default::default()).unwrap(),
+                _ => index::Index::empty(crate::ObjectFormat::Sha1)
+                    .encode(Default::default())
+                    .unwrap(),
             }
         }
     }

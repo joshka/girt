@@ -210,7 +210,12 @@ fn conflicts_are_explicit_and_not_staged_deletions() {
     ours.stage = Stage::Ours;
     let mut theirs = ours.clone();
     theirs.stage = Stage::Theirs;
-    let index = Index::new(vec![ours, theirs], Default::default()).unwrap();
+    let index = Index::new(
+        girt::ObjectFormat::Sha1,
+        vec![ours, theirs],
+        Default::default(),
+    )
+    .unwrap();
     fs::write(
         repo.git_dir().join("index"),
         index.encode(Default::default()).unwrap(),
@@ -283,7 +288,7 @@ fn gitlinks_are_explicitly_unchecked_and_never_traversed() {
         Mode::Gitlink,
         ObjectId::for_blob(girt::ObjectFormat::Sha1, b"not a local commit"),
     );
-    let index = Index::new(vec![entry], Default::default()).unwrap();
+    let index = Index::new(girt::ObjectFormat::Sha1, vec![entry], Default::default()).unwrap();
     fs::write(
         repo.git_dir().join("index"),
         index.encode(Default::default()).unwrap(),
@@ -362,6 +367,7 @@ fn invalid_index_is_an_error_without_writes() {
 fn missing_index_blob_is_an_error_even_when_working_file_is_missing() {
     let (_temp, repo) = fixture();
     let index = Index::new(
+        girt::ObjectFormat::Sha1,
         vec![Entry::new(
             b"file".to_vec(),
             Mode::Regular,
@@ -445,6 +451,7 @@ fn wrong_kind_index_object_is_an_error() {
     let tree = girt::Tree::new(girt::ObjectFormat::Sha1, vec![]).unwrap();
     let id = repo.loose_objects().write_tree(&tree).unwrap();
     let index = Index::new(
+        girt::ObjectFormat::Sha1,
         vec![Entry::new(b"file".to_vec(), Mode::Regular, id)],
         Default::default(),
     )
@@ -526,6 +533,7 @@ fn workflow_enforces_composed_resource_bounds(#[case] limits: Limits) {
 fn unsafe_index_bytes_do_not_reach_filesystem_traversal() {
     let (_temp, repo) = fixture();
     let index = Index::new(
+        girt::ObjectFormat::Sha1,
         vec![Entry::new(
             b".GIT/config".to_vec(),
             Mode::Regular,

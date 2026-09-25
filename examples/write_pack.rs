@@ -9,8 +9,9 @@ use girt::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
+    let format = girt::ObjectFormat::Sha256;
     let payload = b"explicit export\0\xff";
-    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, payload);
+    let id = ObjectId::for_blob(format, payload);
     let inputs = [PackObject {
         id,
         kind: ObjectKind::Blob,
@@ -18,7 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }];
     let mut pack = BufWriter::new(File::create(root.path().join("export.pack"))?);
     let mut index = BufWriter::new(File::create(root.path().join("export.idx"))?);
-    let written = write_pack(&inputs, &mut pack, &mut index, PackWriteLimits::default())?;
+    let written = write_pack(
+        format,
+        &inputs,
+        &mut pack,
+        &mut index,
+        PackWriteLimits::default(),
+    )?;
     pack.flush()?;
     index.flush()?;
     drop((pack, index));
@@ -26,13 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Only this example owns the new repository. Prepare both files before opening any readers.
     // A live repository needs a separate safe publication protocol, not this two-rename sequence.
     let repo_path = root.path().join("private.git");
-    fs::create_dir_all(repo_path.join("objects/pack"))?;
-    fs::create_dir_all(repo_path.join("refs"))?;
-    fs::write(repo_path.join("HEAD"), b"ref: refs/heads/main\n")?;
-    fs::write(
-        repo_path.join("config"),
-        b"[core]\nrepositoryformatversion = 0\nbare = true\n",
-    )?;
+    let repo = Repository::init(format, &repo_path, girt::InitKind::Bare)?;
     let basename = format!("objects/pack/pack-{}", written.checksum);
     fs::rename(
         root.path().join("export.pack"),
@@ -42,7 +43,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.path().join("export.idx"),
         repo_path.join(format!("{basename}.idx")),
     )?;
-    let repo = Repository::open(repo_path)?;
     let objects = repo.objects(PackLimits::default())?;
     let restored = objects
         .read(id, ReadLimits::default())?

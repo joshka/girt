@@ -172,7 +172,7 @@ fn transactions(c: &mut Criterion) {
         );
         let bytes = record.repeat(count).into_bytes();
         c.bench_function(&format!("transactions/parse-log-{count}"), |b| {
-            b.iter(|| ReflogEntry::parse(black_box(&bytes)).unwrap())
+            b.iter(|| ReflogEntry::parse(girt::ObjectFormat::Sha1, black_box(&bytes)).unwrap())
         });
     }
 }

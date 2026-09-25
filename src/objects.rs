@@ -99,10 +99,11 @@ impl Default for ReadLimits {
 /// Reads loose objects and an immutable, validated snapshot of local packs.
 ///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening loads
-/// all SHA-1 `.idx`/`.pack` pairs in filename order and verifies index v2 structure, checksums,
-/// pack v2 headers/counts, offset ranges, and entry CRCs. Pack v3 and index v1 are explicitly
-/// unsupported. Entry framing, zlib streams, delta programs, and object identities are checked on
-/// reads, including every base and intermediate delta; opening is not a full pack fsck.
+/// all `.idx`/`.pack` pairs in the repository's object format in filename order and verifies index
+/// v2 structure, checksums, pack v2 headers/counts, offset ranges, and entry CRCs. Pack v3 and
+/// index v1 are explicitly unsupported. Entry framing, zlib streams, delta programs, and object
+/// identities are checked on reads, including every base and intermediate delta; opening is not a
+/// full pack fsck.
 ///
 /// Loose objects take precedence and are read fresh on each call. Corruption never falls through
 /// to a duplicate packed copy. Packs remain readable after Git repacks/deletes the original files;
@@ -119,8 +120,9 @@ impl Default for ReadLimits {
 /// repository opener's supported scope. Loose writes use [`LooseObjects`]; validated received-pack
 /// installation uses [`crate::fetch::ReceivedFetch::install`].
 ///
-/// SHA-256 snapshots support loose-only repositories and refuse any `.idx` or `.pack` artifact
-/// before interpreting its bytes. Direct [`LooseObjects`] access remains available.
+/// The repository selects SHA-1 or SHA-256 for both artifacts. Their headers and filenames do
+/// not select the format. Every `.idx` filename is a publication marker, including noncanonical
+/// basenames; matching checksums and object identities validate contents independently of names.
 ///
 /// # Example
 ///
@@ -187,13 +189,6 @@ impl Objects {
                         source,
                     })?
                     .path();
-                if format == ObjectFormat::Sha256
-                    && path
-                        .extension()
-                        .is_some_and(|extension| extension == "idx" || extension == "pack")
-                {
-                    return Err(ObjectReadError::Unsupported("SHA-256 packed storage"));
-                }
                 if path.extension().is_some_and(|extension| extension == "idx") {
                     if paths.len() == limits.max_packs {
                         return Err(ObjectReadError::Limit("pack count"));
@@ -207,7 +202,7 @@ impl Objects {
             for path in paths {
                 let index = read_bounded(&path, &mut remaining)?;
                 let data = read_bounded(&path.with_extension("pack"), &mut remaining)?;
-                packs.push(Pack::open(&index, data).map_err(|source| {
+                packs.push(Pack::open(format, &index, data).map_err(|source| {
                     ObjectReadError::PackArtifacts {
                         pack: path.with_extension("pack"),
                         index: path,

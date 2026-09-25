@@ -4,14 +4,9 @@ use super::*;
 use crate::index::{Mode, Stat, Timestamp};
 use crate::{InitKind, ObjectId};
 
-fn repository() -> (tempfile::TempDir, Repository) {
+fn repository(format: crate::ObjectFormat) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(
-        crate::ObjectFormat::Sha1,
-        root.path().join("repo"),
-        InitKind::Worktree,
-    )
-    .unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Worktree).unwrap();
     (root, repo)
 }
 fn populated(repo: &Repository) -> Vec<u8> {
@@ -19,15 +14,17 @@ fn populated(repo: &Repository) -> Vec<u8> {
     edit.replace_entries(vec![Entry::new(
         b"a".to_vec(),
         Mode::Regular,
-        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
+        ObjectId::for_blob(repo.object_format(), b"a"),
     )])
     .unwrap();
     edit.commit().unwrap();
     fs::read(repo.git_dir().join("index")).unwrap()
 }
-#[test]
-fn absent_is_distinct_from_published_empty() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn absent_is_distinct_from_published_empty(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     assert!(repo.read_index(Limits::default()).unwrap().is_none());
     repo.edit_index(Limits::default())
         .unwrap()
@@ -42,9 +39,11 @@ fn absent_is_distinct_from_published_empty() {
     );
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn lock_contention_and_drop_preserve_original() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn lock_contention_and_drop_preserve_original(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let edit = repo.edit_index(Limits::default()).unwrap();
     assert!(matches!(
@@ -56,9 +55,11 @@ fn lock_contention_and_drop_preserve_original() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn foreign_lock_is_never_removed() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn foreign_lock_is_never_removed(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let path = repo.git_dir().join("index.lock");
     fs::write(&path, b"foreign").unwrap();
     assert!(matches!(
@@ -68,10 +69,12 @@ fn foreign_lock_is_never_removed() {
     assert_eq!(fs::read(path).unwrap(), b"foreign");
 }
 #[rstest]
-#[case::created(false)]
-#[case::modified(true)]
-fn detects_noncooperating_writer(#[case] existing: bool) {
-    let (_root, repo) = repository();
+#[case::created_sha1(crate::ObjectFormat::Sha1, false)]
+#[case::created_sha256(crate::ObjectFormat::Sha256, false)]
+#[case::modified_sha1(crate::ObjectFormat::Sha1, true)]
+#[case::modified_sha256(crate::ObjectFormat::Sha256, true)]
+fn detects_noncooperating_writer(#[case] format: crate::ObjectFormat, #[case] existing: bool) {
+    let (_root, repo) = repository(format);
     let before = existing.then(|| populated(&repo));
     let edit = repo.edit_index(Limits::default()).unwrap();
     fs::write(repo.git_dir().join("index"), b"concurrent").unwrap();
@@ -83,18 +86,22 @@ fn detects_noncooperating_writer(#[case] existing: bool) {
     assert!(!repo.git_dir().join("index.lock").exists());
     drop(before);
 }
-#[test]
-fn detects_deleted_original() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detects_deleted_original(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     populated(&repo);
     let edit = repo.edit_index(Limits::default()).unwrap();
     fs::remove_file(repo.git_dir().join("index")).unwrap();
     assert!(matches!(edit.commit(), Err(StorageError::Changed(_))));
     assert!(!repo.git_dir().join("index").exists());
 }
-#[test]
-fn invalid_read_releases_lock() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn invalid_read_releases_lock(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     fs::write(repo.git_dir().join("index"), b"broken").unwrap();
     assert!(matches!(
         repo.edit_index(Limits::default()),
@@ -103,16 +110,18 @@ fn invalid_read_releases_lock() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), b"broken");
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn invalid_edit_preserves_snapshot_and_storage() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn invalid_edit_preserves_snapshot_and_storage(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     assert!(
         edit.replace_entries(vec![Entry::new(
             b"../a".to_vec(),
             Mode::Regular,
-            ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a")
+            ObjectId::for_blob(repo.object_format(), b"a")
         )])
         .is_err()
     );
@@ -120,9 +129,11 @@ fn invalid_edit_preserves_snapshot_and_storage() {
     drop(edit);
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
 }
-#[test]
-fn encoding_failure_preserves_original() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn encoding_failure_preserves_original(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     // Inject an encode-only limit failure after the valid snapshot was read.
@@ -137,9 +148,11 @@ fn encoding_failure_preserves_original() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn write_failure_preserves_original() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn write_failure_preserves_original(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     // A read-only descriptor injects failure without permission/root assumptions.
@@ -155,9 +168,11 @@ fn write_failure_preserves_original() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn rename_failure_preserves_original() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn rename_failure_preserves_original(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     let error = edit.publish_with_rename(|_, _| Err(io::Error::other("injected rename failure")));
@@ -172,9 +187,11 @@ fn rename_failure_preserves_original() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn bounded_read_preserves_storage() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn bounded_read_preserves_storage(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let before = populated(&repo);
     let limits = Limits {
         max_bytes: before.len() - 1,
@@ -190,18 +207,24 @@ fn bounded_read_preserves_storage() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
-#[test]
-fn directory_is_not_a_missing_index() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn directory_is_not_a_missing_index(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     fs::create_dir(repo.git_dir().join("index")).unwrap();
     assert!(matches!(
         repo.read_index(Limits::default()),
         Err(StorageError::NotRegular(_))
     ));
 }
-#[test]
-fn publication_preserves_stat_words_and_invalidates_timestamp_trust() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn publication_preserves_stat_words_and_invalidates_timestamp_trust(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
     let stat = Stat {
         mtime: Timestamp {
             seconds: 42,
@@ -213,7 +236,7 @@ fn publication_preserves_stat_words_and_invalidates_timestamp_trust() {
     let mut entry = Entry::new(
         b"a".to_vec(),
         Mode::Regular,
-        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"a"),
+        ObjectId::for_blob(repo.object_format(), b"a"),
     );
     entry.stat = stat;
     let mut edit = repo.edit_index(Limits::default()).unwrap();
@@ -237,9 +260,11 @@ fn publication_preserves_stat_words_and_invalidates_timestamp_trust() {
 }
 
 #[cfg(unix)]
-#[test]
-fn symlink_index_is_rejected_without_following_it() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn symlink_index_is_rejected_without_following_it(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let target = repo.git_dir().join("other");
     fs::write(&target, b"keep").unwrap();
     std::os::unix::fs::symlink(&target, repo.git_dir().join("index")).unwrap();
@@ -252,9 +277,11 @@ fn symlink_index_is_rejected_without_following_it() {
 }
 
 #[cfg(unix)]
-#[test]
-fn explicit_abort_does_not_remove_replaced_lock() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn explicit_abort_does_not_remove_replaced_lock(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let edit = repo.edit_index(Limits::default()).unwrap();
     fs::rename(
         repo.git_dir().join("index.lock"),

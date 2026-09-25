@@ -9,7 +9,7 @@ mod pack_git;
 
 fn packs(c: &mut Criterion) {
     for count in [16, 256] {
-        let fixture = pack_git::Fixture::new(true, count);
+        let fixture = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, count);
         let objects = fixture.repo.objects(PackLimits::default()).unwrap();
         // Retain and inspect the shared fixture metadata outside timed operations.
         assert!(fixture.root.path().exists());

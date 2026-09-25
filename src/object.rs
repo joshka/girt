@@ -5,8 +5,8 @@ use sha1::{Digest, Sha1};
 
 /// The hash format used by a Git object database.
 ///
-/// [`crate::LooseObjects`] supports both formats; packs, refs, indexes and transports currently
-/// support SHA-1 only.
+/// Object codecs, loose/packed storage, references and index v2 support both formats.
+/// Transport negotiation currently supports SHA-1 only.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectFormat {
     /// Git's SHA-1 object format, with 20-byte identities.
@@ -44,6 +44,7 @@ impl ObjectId {
         format.hash_object(crate::ObjectKind::Blob, bytes)
     }
 
+    #[cfg(test)]
     pub(crate) fn for_object(kind: &str, bytes: &[u8]) -> Self {
         hash_sha1(kind, bytes)
     }
@@ -151,6 +152,44 @@ impl ObjectFormat {
                 ObjectId::Sha256(hash.finalize().into())
             }
         }
+    }
+}
+
+/// Incremental checksum in the repository's selected storage format.
+#[derive(Clone)]
+pub(crate) enum Hasher {
+    Sha1(Sha1),
+    Sha256(sha2::Sha256),
+}
+
+impl Hasher {
+    pub(crate) fn new(format: ObjectFormat) -> Self {
+        match format {
+            ObjectFormat::Sha1 => Self::Sha1(Sha1::new()),
+            ObjectFormat::Sha256 => Self::Sha256(sha2::Sha256::new()),
+        }
+    }
+
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Sha1(hash) => hash.update(bytes),
+            Self::Sha256(hash) => hash.update(bytes),
+        }
+    }
+
+    pub(crate) fn finalize(self) -> ObjectId {
+        match self {
+            Self::Sha1(hash) => ObjectId::Sha1(hash.finalize().into()),
+            Self::Sha256(hash) => ObjectId::Sha256(hash.finalize().into()),
+        }
+    }
+}
+
+impl ObjectFormat {
+    pub(crate) fn checksum(self, bytes: &[u8]) -> ObjectId {
+        let mut hash = Hasher::new(self);
+        hash.update(bytes);
+        hash.finalize()
     }
 }
 

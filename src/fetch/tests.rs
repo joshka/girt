@@ -21,6 +21,7 @@ fn blob_pack() -> (ObjectId, Vec<u8>) {
     let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"fetch fixture");
     let mut pack = Vec::new();
     let written = write_pack(
+        crate::ObjectFormat::Sha1,
         &[PackObject {
             id,
             kind: ObjectKind::Blob,

@@ -1,27 +1,28 @@
 # Git Compatibility Evidence
 
-SHA-1 and SHA-256 identities, codecs, loose storage, repository initialization/opening and
-loose-backed traversal are supported. The [R04 evidence](evidence/r04.md) records the public API,
-Git interoperability and scoped refusals. Pack/ref/reflog/index widths remain R05; transport
-negotiation remains later work. No dual-hash conversion is provided.
+SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-tree index v2 use
+the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and
+loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation, including Git
+interoperability and failure contracts. Transport negotiation remains SHA-1-only under R26/R29. No
+dual-hash conversion is provided.
 
-Loose storage uses canonical object headers and an explicitly selected format. Repositories detect
-the format from common configuration. SHA-256 repositories may be opened for loose access, but
-indexed object snapshots refuse SHA-256 pack artifacts and refs/index operations refuse before
-mutation. Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain
-their historical evidence scope; R04 supersedes their SHA-1-only codec and loose-storage limits.
+Explicit format arguments select standalone pack/index/reflog codecs, including empty artifacts.
+Repository operations derive the format from common configuration, never from artifact lengths.
+Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain their
+historical evidence scope; R04/R05 supersede their SHA-1-only storage and codec limits. R06 owns the
+native Linux/Windows refresh for these increments; local macOS tests do not establish those hosts.
 
 ## Current Capabilities and Evidence
 
-The current API supports both-format loose objects and complete-history queries, SHA-1 pack/index
-v2, object-only fetch, conditional branch/tag push, reference enumeration, and conditional
-transactions with explicit reflog policy, named remote/refspec mapping, explicit fetch
+The current API supports both-format loose objects and complete-history queries, SHA-1/SHA-256
+pack/index v2, object-only fetch, conditional branch/tag push, reference enumeration, and
+conditional transactions with explicit reflog policy, named remote/refspec mapping, explicit fetch
 orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories, recursive
-tree comparison, and byte-preserving content diff, SHA-1 working-tree index v2 read/replacement, and
-raw read-only working-tree status and conservative raw tree checkout on macOS/Linux. The
-single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
-validation state. Installation takes explicit destination snapshot limits. Read and operation limits
-remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
+tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index v2
+read/replacement, and raw read-only working-tree status and conservative raw tree checkout on
+macOS/Linux. The single-reference no-reflog operations remain available. HTTP and SSH downloads
+share owned validation state. Installation takes explicit destination snapshot limits. Read and
+operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
 
 | Platform       | Current evidence boundary                                |
 | -------------- | -------------------------------------------------------- |

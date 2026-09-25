@@ -19,7 +19,7 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// opening is not a security boundary against concurrent filesystem changes or untrusted paths.
 ///
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
-/// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 loose objects are
+/// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 objects are
 /// supported. Includes, worktree configuration, alternates, shallow repositories and other
 /// extensions are rejected explicitly. Object access uses [`Self::loose_objects`] for loose
 /// reads/writes or [`Self::objects`] for bounded loose/packed reads. Opening repository metadata
@@ -100,7 +100,7 @@ impl Repository {
     ///
     /// # Errors
     ///
-    /// SHA-256 reference storage and non-Unix platforms are explicitly unsupported. Repository
+    /// Non-Unix reference storage is explicitly unsupported. Repository
     /// backends such as reftable are rejected by [`Self::open`] before a handle can be constructed.
     pub fn references(&self) -> Result<crate::refs::References<'_>, crate::refs::ReferenceError> {
         crate::refs::References::new(self)
@@ -231,9 +231,8 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
-    /// failures, or exhausted snapshot limits. SHA-256 snapshots support loose-only storage; any
-    /// `.pack` or `.idx` artifact returns [`crate::ObjectReadError::Unsupported`]. Use
-    /// [`Self::loose_objects`] to explicitly read loose objects alongside unsupported packs.
+    /// failures, or exhausted snapshot limits. Both SHA-1 and SHA-256 pack/index v2 pairs use
+    /// the repository's configured format; wrong-format bytes are corruption.
     /// Reopen after a concurrent repack failure.
     pub fn objects(
         &self,

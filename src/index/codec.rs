@@ -1,10 +1,11 @@
+#[cfg(test)]
 use sha1::{Digest, Sha1};
 use thiserror::Error;
 
 use super::{Entry, Mode, Stage, Stat, Timestamp};
 use crate::ObjectId;
 
-/// Owned, structurally valid SHA-1 v2 index with immutable entry access.
+/// Owned, structurally valid SHA-1/SHA-256 v2 index with immutable entry access.
 ///
 /// Parsing verifies the checksum, canonical modes, flags, paths, padding, ordering and stage
 /// relationships. It does not verify object targets, cached stat data or opaque extension payloads.
@@ -12,8 +13,9 @@ use crate::ObjectId;
 /// which parsing already requires, and preserves extension order and payloads. Construction sorts
 /// entries; parsing never repairs their order. Editing may discard a `TREE` cache explicitly under
 /// the policy in [`Self::replace_entries`].
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Index {
+    format: crate::ObjectFormat,
     entries: Vec<Entry>,
     extensions: Vec<Extension>,
 }
@@ -69,7 +71,7 @@ impl Default for Limits {
 /// Index format, unsupported feature or resource-limit failure.
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum Error {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A supplied identity differs from the selected index format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Header, entry or extension framing is malformed at a byte offset.
@@ -80,7 +82,7 @@ pub enum Error {
         /// Structural failure.
         reason: &'static str,
     },
-    /// Stored SHA-1 does not match the bytes preceding it (zero checksums are not accepted).
+    /// Stored checksum does not match the bytes preceding it (zero checksums are not accepted).
     #[error("index checksum mismatch")]
     Checksum,
     /// Only v2 is supported, including explicit rejection of recognized v3/v4.
@@ -106,22 +108,42 @@ pub enum Error {
 }
 
 impl Index {
+    /// Creates an empty index in an explicit repository format, including when no file exists.
+    pub fn empty(format: crate::ObjectFormat) -> Self {
+        Self {
+            format,
+            entries: Vec::new(),
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Returns the format used by every entry and the file checksum.
+    pub fn object_format(&self) -> crate::ObjectFormat {
+        self.format
+    }
+
     /// Validates and sorts drafts by unsigned path bytes, then stage.
     ///
-    /// Creates an index without extensions. Prefix-related paths are allowed across different
-    /// conflict stages (directory/file conflicts), but forbidden within the same stage or when
-    /// either entry is normal. No staging policy, conflict resolution or object reads are
-    /// performed.
+    /// Creates an index in `format` without extensions; even an empty index retains its format.
+    /// Prefix-related paths are allowed across different conflict stages (directory/file
+    /// conflicts), but forbidden within the same stage or when either entry is normal. No
+    /// staging policy, conflict resolution or object reads are performed.
     ///
     /// # Errors
     ///
-    /// Rejects invalid paths, duplicates, normal/conflict mixtures, file/directory collisions in
-    /// the same stage, or exhausted limits. Caller-owned input is consumed even on failure.
-    pub fn new(mut entries: Vec<Entry>, limits: Limits) -> Result<Self, Error> {
+    /// Rejects foreign-format identities, invalid paths, duplicates, normal/conflict mixtures,
+    /// file/directory collisions in the same stage, or exhausted limits. Caller-owned input is
+    /// consumed even on failure.
+    pub fn new(
+        format: crate::ObjectFormat,
+        mut entries: Vec<Entry>,
+        limits: Limits,
+    ) -> Result<Self, Error> {
         check_count(entries.len(), limits.max_entries, "entries")?;
         entries.sort_unstable_by(|a, b| (&a.path, a.stage).cmp(&(&b.path, b.stage)));
-        validate_entries(&entries, limits)?;
+        validate_entries(format, &entries, limits)?;
         let index = Self {
+            format,
             entries,
             extensions: Vec::new(),
         };
@@ -150,7 +172,7 @@ impl Index {
     /// Returns construction/limit errors or [`Error::ExtensionPreventsEdit`]. On every failure
     /// the original index, including its extensions, remains unchanged.
     pub fn replace_entries(&mut self, entries: Vec<Entry>, limits: Limits) -> Result<(), Error> {
-        let replacement = Self::new(entries, limits)?;
+        let replacement = Self::new(self.format, entries, limits)?;
         if replacement.entries == self.entries {
             self.encoded_len(limits)?;
             return Ok(());
@@ -170,7 +192,8 @@ impl Index {
 
     /// Parses a complete index, copying paths and optional extensions into owned storage.
     ///
-    /// SHA-1 input must be selected by the caller; the header does not identify the hash format.
+    /// The caller must select the repository format; the header does not identify it.
+    /// Neither file length nor digest-like bytes select or change that format.
     /// Checksum validation precedes entry allocation. All supported structural invariants hold on
     /// success; optional extension internals remain opaque. No filesystem paths are materialized.
     ///
@@ -178,28 +201,34 @@ impl Index {
     ///
     /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes/extended
     /// flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
-    pub fn parse(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
+    pub fn parse(format: crate::ObjectFormat, bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         check_count(bytes.len(), limits.max_bytes, "bytes")?;
-        if bytes.len() < 32 || &bytes[..4] != b"DIRC" {
+        if bytes.len() < 12 + format.digest_len() || &bytes[..4] != b"DIRC" {
             return Err(malformed(0, "missing header or checksum"));
         }
         let version = word(bytes, 4);
         if version != 2 {
             return Err(Error::Version(version));
         }
-        let end = bytes.len() - 20;
-        if Sha1::digest(&bytes[..end])[..] != bytes[end..] {
+        let end = bytes.len() - format.digest_len();
+        if *format.checksum(&bytes[..end]).as_bytes() != bytes[end..] {
             return Err(Error::Checksum);
         }
         let count = word(bytes, 8) as usize;
         check_count(count, limits.max_entries, "entries")?;
-        if count > (end - 12) / 64 {
+        if count > (end - 12) / entry_len(format, 0)? {
             return Err(malformed(8, "entry count exceeds available bytes"));
         }
         let mut cursor = 12;
         let mut entries = Vec::with_capacity(count);
         for position in 0..count {
-            entries.push(parse_entry(&bytes[..end], &mut cursor, position, limits)?);
+            entries.push(parse_entry(
+                format,
+                &bytes[..end],
+                &mut cursor,
+                position,
+                limits,
+            )?);
         }
         let mut extensions = Vec::new();
         while cursor < end {
@@ -222,14 +251,16 @@ impl Index {
             });
             cursor += length;
         }
-        validate_entries(&entries, limits)?;
+        validate_entries(format, &entries, limits)?;
         Ok(Self {
+            format,
             entries,
             extensions,
         })
     }
 
-    /// Encodes canonical v2 framing and a SHA-1 checksum, preserving all stored information.
+    /// Encodes canonical v2 framing and the selected format's checksum, preserving all stored
+    /// information.
     ///
     /// Parsing already requires canonical framing, so unedited parsed indexes round-trip exactly.
     /// New entries use derived name-length flags and zero padding. Stat words and opaque optional
@@ -252,8 +283,8 @@ impl Index {
             put_word(&mut out, extension.data.len() as u32);
             out.extend_from_slice(&extension.data);
         }
-        let checksum = Sha1::digest(&out);
-        out.extend_from_slice(&checksum);
+        let checksum = self.format.checksum(&out);
+        out.extend_from_slice(checksum.as_bytes());
         Ok(out)
     }
 
@@ -264,11 +295,11 @@ impl Index {
             "entries",
         )?;
         check_count(self.extensions.len(), limits.max_extensions, "extensions")?;
-        let mut length = 32usize;
+        let mut length = 12 + self.format.digest_len();
         for entry in &self.entries {
             check_count(entry.path.len(), limits.max_path_bytes, "path bytes")?;
             length = length
-                .checked_add(entry_len(entry.path.len())?)
+                .checked_add(entry_len(self.format, entry.path.len())?)
                 .ok_or(Error::Limit("bytes"))?;
         }
         for extension in &self.extensions {
@@ -284,14 +315,17 @@ impl Index {
 }
 
 fn parse_entry(
+    format: crate::ObjectFormat,
     bytes: &[u8],
     cursor: &mut usize,
     position: usize,
     limits: Limits,
 ) -> Result<Entry, Error> {
+    let width = format.digest_len();
+    let fixed_len = 42 + width;
     let start = *cursor;
     let fixed = bytes
-        .get(start..start.saturating_add(62))
+        .get(start..start.saturating_add(fixed_len))
         .ok_or(malformed(start, "truncated entry"))?;
     let mode = match word(fixed, 24) {
         0o100644 => Mode::Regular,
@@ -305,11 +339,11 @@ fn parse_entry(
             ));
         }
     };
-    let flags = u16::from_be_bytes(fixed[60..62].try_into().unwrap());
+    let flags = u16::from_be_bytes(fixed[40 + width..fixed_len].try_into().unwrap());
     if flags & 0x4000 != 0 {
         return Err(entry_error(position, "extended flags unsupported in v2"));
     }
-    let path_start = start + 62;
+    let path_start = start + fixed_len;
     let search_end = bytes.len().min(
         path_start
             .saturating_add(limits.max_path_bytes)
@@ -328,7 +362,7 @@ fn parse_entry(
     if (flags & 0xfff) as usize != name_len.min(0xfff) {
         return Err(entry_error(position, "name length flag mismatch"));
     }
-    let length = entry_len(name_len)?;
+    let length = entry_len(format, name_len)?;
     let end = start.checked_add(length).ok_or(Error::Limit("bytes"))?;
     let padding = bytes
         .get(path_start + name_len..end)
@@ -340,7 +374,7 @@ fn parse_entry(
     Ok(Entry {
         path: bytes[path_start..path_start + name_len].to_vec(),
         mode,
-        id: ObjectId::Sha1(fixed[40..60].try_into().unwrap()),
+        id: ObjectId::from_bytes(format, &fixed[40..40 + width]).unwrap(),
         stage: match (flags >> 12) & 3 {
             0 => Stage::Normal,
             1 => Stage::Base,
@@ -366,9 +400,13 @@ fn parse_entry(
     })
 }
 
-fn validate_entries(entries: &[Entry], limits: Limits) -> Result<(), Error> {
+fn validate_entries(
+    format: crate::ObjectFormat,
+    entries: &[Entry],
+    limits: Limits,
+) -> Result<(), Error> {
     for (position, entry) in entries.iter().enumerate() {
-        entry.id.require_sha1()?;
+        entry.id.require_format(format)?;
         check_count(entry.path.len(), limits.max_path_bytes, "path bytes")?;
         if entry.path.contains(&0)
             || entry
@@ -437,11 +475,14 @@ fn encode_entry(out: &mut Vec<u8>, entry: &Entry) {
     out.extend_from_slice(&flags.to_be_bytes());
     out.extend_from_slice(&entry.path);
     // encoded_len has already checked this arithmetic.
-    out.resize(start + entry_len(entry.path.len()).unwrap(), 0);
+    out.resize(
+        start + entry_len(entry.id.format(), entry.path.len()).unwrap(),
+        0,
+    );
 }
-fn entry_len(path_len: usize) -> Result<usize, Error> {
+fn entry_len(format: crate::ObjectFormat, path_len: usize) -> Result<usize, Error> {
     path_len
-        .checked_add(70)
+        .checked_add(50 + format.digest_len())
         .map(|n| n & !7)
         .ok_or(Error::Limit("path bytes"))
 }
@@ -476,8 +517,123 @@ mod format_boundary_tests {
     fn rejects_sha256_index_entry() {
         let entry = Entry::new(b"a".to_vec(), Mode::Regular, ObjectId::Sha256([1; 32]));
         assert!(matches!(
-            Index::new(vec![entry], Limits::default()),
+            Index::new(crate::ObjectFormat::Sha1, vec![entry], Limits::default()),
             Err(Error::ObjectFormat(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod dual_format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn empty_indexes_require_the_selected_format(
+        #[case] format: ObjectFormat,
+        #[case] other: ObjectFormat,
+    ) {
+        let index = Index::empty(format);
+        let bytes = index.encode(Limits::default()).unwrap();
+        assert_eq!(bytes.len(), 12 + format.digest_len());
+        assert_eq!(
+            Index::parse(format, &bytes, Limits::default()).unwrap(),
+            index
+        );
+        assert!(Index::parse(other, &bytes, Limits::default()).is_err());
+        let short = Limits {
+            max_bytes: bytes.len() - 1,
+            ..Limits::default()
+        };
+        assert!(matches!(index.encode(short), Err(Error::Limit("bytes"))));
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn mixed_replacement_preserves_original(
+        #[case] format: ObjectFormat,
+        #[case] other: ObjectFormat,
+    ) {
+        let mut index = Index::new(
+            format,
+            vec![Entry::new(
+                b"a".to_vec(),
+                Mode::Regular,
+                ObjectId::null(format),
+            )],
+            Limits::default(),
+        )
+        .unwrap();
+        let before = index.encode(Limits::default()).unwrap();
+        let entry = Entry::new(b"b".to_vec(), Mode::Regular, ObjectId::null(other));
+        assert!(matches!(
+            index.replace_entries(vec![entry], Limits::default()),
+            Err(Error::ObjectFormat(_))
+        ));
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+        assert_eq!(
+            Index::parse(format, &before, Limits::default())
+                .unwrap()
+                .entries()[0]
+                .id,
+            ObjectId::null(format)
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn all_truncations_and_corrupt_checksum_are_rejected(#[case] format: ObjectFormat) {
+        let id = ObjectId::for_blob(format, b"data");
+        let index = Index::new(
+            format,
+            vec![Entry::new(b"a".to_vec(), Mode::Regular, id)],
+            Limits::default(),
+        )
+        .unwrap();
+        let mut bytes = index.encode(Limits::default()).unwrap();
+        assert!(
+            (0..bytes.len())
+                .all(|end| Index::parse(format, &bytes[..end], Limits::default()).is_err())
+        );
+        bytes[15] ^= 1;
+        assert_eq!(
+            Index::parse(format, &bytes, Limits::default()),
+            Err(Error::Checksum)
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn opaque_extensions_retain_exact_bytes_and_prevent_edits(#[case] format: ObjectFormat) {
+        let mut bytes = Index::empty(format).encode(Limits::default()).unwrap();
+        bytes.truncate(12);
+        bytes.extend_from_slice(b"TEST\0\0\0\x03\xff\0a");
+        bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
+        let mut index = Index::parse(format, &bytes, Limits::default()).unwrap();
+        let replacement = Entry::new(b"a".to_vec(), Mode::Regular, ObjectId::null(format));
+        assert_eq!(
+            index.replace_entries(vec![replacement], Limits::default()),
+            Err(Error::ExtensionPreventsEdit(*b"TEST"))
+        );
+        assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn checksum_does_not_hide_truncated_entry_table(#[case] format: ObjectFormat) {
+        let mut bytes = b"DIRC\0\0\0\x02\0\0\0\x01".to_vec();
+        bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
+        assert!(matches!(
+            Index::parse(format, &bytes, Limits::default()),
+            Err(Error::Malformed { .. })
         ));
     }
 }

@@ -124,6 +124,7 @@ impl PreparedPush {
                 cancel,
             };
             let result = crate::pack::write_controlled(
+                crate::ObjectFormat::Sha1,
                 &inputs,
                 &mut pack,
                 &mut io::sink(),

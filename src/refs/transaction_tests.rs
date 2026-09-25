@@ -5,19 +5,16 @@ use rstest::rstest;
 use super::*;
 use crate::{Repository, Signature};
 
-fn fixture() -> (tempfile::TempDir, Repository) {
+fn fixture(format: crate::ObjectFormat) -> (tempfile::TempDir, Repository) {
     let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("objects")).unwrap();
-    fs::create_dir(temp.path().join("refs")).unwrap();
-    fs::write(temp.path().join("HEAD"), b"ref: refs/heads/main\n").unwrap();
-    let repo = Repository::open(temp.path()).unwrap();
+    let repo = Repository::init(format, temp.path().join("repo"), crate::InitKind::Bare).unwrap();
     (temp, repo)
 }
 fn name(s: &str) -> RefName {
     RefName::new(s).unwrap()
 }
-fn id(n: u8) -> ObjectId {
-    ObjectId::Sha1([n; 20])
+fn id(format: crate::ObjectFormat, n: u8) -> ObjectId {
+    ObjectId::from_bytes(format, &vec![n; format.digest_len()]).unwrap()
 }
 fn log() -> Reflog {
     Reflog::Append {
@@ -30,11 +27,11 @@ fn log() -> Reflog {
         message: b"publish\tbatch".to_vec(),
     }
 }
-fn edit(s: &str) -> RefEdit {
+fn edit(format: crate::ObjectFormat, s: &str) -> RefEdit {
     RefEdit {
         name: name(s),
         dereference: false,
-        target: Some(Target::Direct(id(1))),
+        target: Some(Target::Direct(id(format, 1))),
         expected: Expected::Absent,
         reflog: log(),
     }
@@ -59,13 +56,17 @@ fn clean(repo: &Repository) {
     visit(repo.git_dir());
 }
 
-#[test]
-fn resolved_head_and_second_ref_log_exact_ids() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn resolved_head_and_second_ref_log_exact_ids(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    let mut head = edit("HEAD");
+    let mut head = edit(format, "HEAD");
     head.dereference = true;
-    let result = refs.transaction(&[head, edit("refs/tags/v1")]).unwrap();
+    let result = refs
+        .transaction(&[head, edit(format, "refs/tags/v1")])
+        .unwrap();
     assert_eq!(result[0].name, name("refs/heads/main"));
     assert_eq!(result[0].reference, RefOutcome::Published);
     assert_eq!(
@@ -80,18 +81,20 @@ fn resolved_head_and_second_ref_log_exact_ids() {
         Some(Target::Symbolic(name("refs/heads/main")))
     );
     let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
-    assert_eq!(entries[0].old, id(0));
-    assert_eq!(entries[0].new, id(1));
+    assert_eq!(entries[0].old, id(format, 0));
+    assert_eq!(entries[0].new, id(format, 1));
     assert_eq!(entries[0].message, b"publish\tbatch");
     clean(&repo);
 }
 
-#[test]
-fn final_mismatch_preserves_all_refs_and_logs() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn final_mismatch_preserves_all_refs_and_logs(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let before = fs::read(repo.git_dir().join("HEAD")).unwrap();
-    let result = refs.transaction(&[edit("refs/tags/a"), edit("HEAD")]);
+    let result = refs.transaction(&[edit(format, "refs/tags/a"), edit(format, "HEAD")]);
     assert!(matches!(
         result,
         Err(TransactionError::Prepare {
@@ -106,32 +109,22 @@ fn final_mismatch_preserves_all_refs_and_logs() {
 }
 
 #[rstest]
-#[case::duplicate("refs/heads/a", "refs/heads/a")]
-#[case::ancestor("refs/heads/a", "refs/heads/a/b")]
-#[case::descendant("refs/heads/a/b", "refs/heads/a")]
-fn rejects_conflicting_batch(#[case] first: &str, #[case] second: &str) {
-    let (_temp, repo) = fixture();
+#[case::duplicate_sha1(crate::ObjectFormat::Sha1, "refs/heads/a", "refs/heads/a")]
+#[case::duplicate_sha256(crate::ObjectFormat::Sha256, "refs/heads/a", "refs/heads/a")]
+#[case::ancestor_sha1(crate::ObjectFormat::Sha1, "refs/heads/a", "refs/heads/a/b")]
+#[case::ancestor_sha256(crate::ObjectFormat::Sha256, "refs/heads/a", "refs/heads/a/b")]
+#[case::descendant_sha1(crate::ObjectFormat::Sha1, "refs/heads/a/b", "refs/heads/a")]
+#[case::descendant_sha256(crate::ObjectFormat::Sha256, "refs/heads/a/b", "refs/heads/a")]
+fn rejects_conflicting_batch(
+    #[case] format: crate::ObjectFormat,
+    #[case] first: &str,
+    #[case] second: &str,
+) {
+    let (_temp, repo) = fixture(format);
     assert!(matches!(
         repo.references()
             .unwrap()
-            .transaction(&[edit(first), edit(second)]),
-        Err(TransactionError::Prepare {
-            source: ReferenceError::Conflict(_),
-            ..
-        })
-    ));
-    clean(&repo);
-}
-
-#[test]
-fn overlapping_symbolic_destination_is_rejected() {
-    let (_temp, repo) = fixture();
-    let mut head = edit("HEAD");
-    head.dereference = true;
-    assert!(matches!(
-        repo.references()
-            .unwrap()
-            .transaction(&[head, edit("refs/heads/main")]),
+            .transaction(&[edit(format, first), edit(format, second)]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Conflict(_),
             ..
@@ -141,18 +134,40 @@ fn overlapping_symbolic_destination_is_rejected() {
 }
 
 #[rstest]
-#[case::packed("packed-refs.lock")]
-#[case::ref_lock("refs/tags/a.lock")]
-#[case::log_lock("logs/refs/tags/a.lock")]
-fn contention_preserves_foreign_lock(#[case] path: &str) {
-    let (_temp, repo) = fixture();
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn overlapping_symbolic_destination_is_rejected(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let mut head = edit(format, "HEAD");
+    head.dereference = true;
+    assert!(matches!(
+        repo.references()
+            .unwrap()
+            .transaction(&[head, edit(format, "refs/heads/main")]),
+        Err(TransactionError::Prepare {
+            source: ReferenceError::Conflict(_),
+            ..
+        })
+    ));
+    clean(&repo);
+}
+
+#[rstest]
+#[case::packed_sha1(crate::ObjectFormat::Sha1, "packed-refs.lock")]
+#[case::packed_sha256(crate::ObjectFormat::Sha256, "packed-refs.lock")]
+#[case::ref_lock_sha1(crate::ObjectFormat::Sha1, "refs/tags/a.lock")]
+#[case::ref_lock_sha256(crate::ObjectFormat::Sha256, "refs/tags/a.lock")]
+#[case::log_lock_sha1(crate::ObjectFormat::Sha1, "logs/refs/tags/a.lock")]
+#[case::log_lock_sha256(crate::ObjectFormat::Sha256, "logs/refs/tags/a.lock")]
+fn contention_preserves_foreign_lock(#[case] format: crate::ObjectFormat, #[case] path: &str) {
+    let (_temp, repo) = fixture(format);
     let lock = repo.git_dir().join(path);
     fs::create_dir_all(lock.parent().unwrap()).unwrap();
     fs::write(&lock, b"foreign").unwrap();
     assert!(matches!(
         repo.references()
             .unwrap()
-            .transaction(&[edit("refs/tags/a")]),
+            .transaction(&[edit(format, "refs/tags/a")]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Locked(_),
             ..
@@ -170,15 +185,17 @@ fn contention_preserves_foreign_lock(#[case] path: &str) {
     clean(&repo);
 }
 
-#[test]
-fn malformed_log_prevents_reference_publication() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn malformed_log_prevents_reference_publication(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     fs::create_dir_all(repo.git_dir().join("logs/refs/tags")).unwrap();
     fs::write(repo.git_dir().join("logs/refs/tags/a"), b"broken").unwrap();
     assert!(matches!(
         repo.references()
             .unwrap()
-            .transaction(&[edit("refs/tags/a")]),
+            .transaction(&[edit(format, "refs/tags/a")]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Malformed { .. },
             ..
@@ -204,16 +221,23 @@ fn deletion(s: &str) -> RefEdit {
     }
 }
 fn packed(repo: &Repository) {
+    let format = repo.object_format();
     fs::write(
         repo.git_dir().join("packed-refs"),
-        format!("{} refs/tags/a\n{} refs/tags/b\n", id(1), id(2)),
+        format!(
+            "{} refs/tags/a\n{} refs/tags/b\n",
+            id(format, 1),
+            id(format, 2)
+        ),
     )
     .unwrap();
 }
 
-#[test]
-fn packed_failure_preserves_loose_and_packed_outcomes() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn packed_failure_preserves_loose_and_packed_outcomes(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     packed(&repo);
     let refs = repo.references().unwrap();
     let prepared = refs
@@ -229,9 +253,13 @@ fn packed_failure_preserves_loose_and_packed_outcomes() {
     clean(&repo);
 }
 
-#[test]
-fn packed_first_failure_reports_all_removals_and_retains_loose() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn packed_first_failure_reports_all_removals_and_retains_loose(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
     packed(&repo);
     let refs = repo.references().unwrap();
     let prepared = refs
@@ -248,12 +276,14 @@ fn packed_first_failure_reports_all_removals_and_retains_loose() {
     clean(&repo);
 }
 
-#[test]
-fn second_ref_failure_retains_first_ref_and_log() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn second_ref_failure_retains_first_ref_and_log(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[edit("refs/tags/a"), edit("refs/tags/b")])
+        .prepare_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
         .unwrap();
     fs::create_dir(repo.git_dir().join("refs/tags/b")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
@@ -265,17 +295,19 @@ fn second_ref_failure_retains_first_ref_and_log() {
     assert_eq!(outcomes[1].logs[0].1, LogOutcome::NotAttempted);
     assert_eq!(
         refs.read(&name("refs/tags/a")).unwrap(),
-        Some(Target::Direct(id(1)))
+        Some(Target::Direct(id(format, 1)))
     );
     clean(&repo);
 }
 
-#[test]
-fn log_failure_leaves_published_ref_and_stops_batch() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn log_failure_leaves_published_ref_and_stops_batch(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[edit("refs/tags/a"), edit("refs/tags/b")])
+        .prepare_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
         .unwrap();
     fs::create_dir(repo.git_dir().join("logs/refs/tags/a")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
@@ -291,7 +323,7 @@ fn log_failure_leaves_published_ref_and_stops_batch() {
     clean(&repo);
 }
 
-#[test]
+#[rstest]
 fn short_append_retains_byte_count() {
     struct FailAfterPrefix(Vec<u8>);
     impl Write for FailAfterPrefix {
@@ -313,26 +345,30 @@ fn short_append_retains_byte_count() {
     assert_eq!(writer.0, b"rec");
 }
 
-#[test]
-fn deletion_keeps_history_and_records_zero() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn deletion_keeps_history_and_records_zero(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    refs.transaction(&[edit("refs/tags/a")]).unwrap();
+    refs.transaction(&[edit(format, "refs/tags/a")]).unwrap();
     let mut remove = deletion("refs/tags/a");
     remove.reflog = log();
     refs.transaction(&[remove]).unwrap();
     let entries = refs.reflog(&name("refs/tags/a")).unwrap().unwrap();
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[1].old, id(1));
-    assert_eq!(entries[1].new, id(0));
+    assert_eq!(entries[1].old, id(format, 1));
+    assert_eq!(entries[1].new, id(format, 0));
     assert_eq!(refs.read(&name("refs/tags/a")).unwrap(), None);
     clean(&repo);
 }
 
-#[test]
-fn stored_symbolic_edit_requires_preserve() {
-    let (_temp, repo) = fixture();
-    let mut symbolic = edit("refs/heads/alias");
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn stored_symbolic_edit_requires_preserve(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let mut symbolic = edit(format, "refs/heads/alias");
     symbolic.target = Some(Target::Symbolic(name("refs/heads/missing")));
     assert!(matches!(
         repo.references().unwrap().transaction(&[symbolic.clone()]),
@@ -354,13 +390,17 @@ fn stored_symbolic_edit_requires_preserve() {
     clean(&repo);
 }
 
-#[test]
-fn locks_remain_owned_after_ref_publication_until_logs_finish() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn locks_remain_owned_after_ref_publication_until_logs_finish(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    let prepared = refs.prepare_transaction(&[edit("refs/tags/a")]).unwrap();
+    let prepared = refs
+        .prepare_transaction(&[edit(format, "refs/tags/a")])
+        .unwrap();
     prepared.locks[&name("refs/tags/a")]
-        .publish_retaining_lock(format!("{}\n", id(1)).as_bytes())
+        .publish_retaining_lock(format!("{}\n", id(format, 1)).as_bytes())
         .unwrap();
     assert!(repo.git_dir().join("refs/tags/a.lock").exists());
     assert!(repo.git_dir().join("packed-refs.lock").exists());
@@ -368,11 +408,13 @@ fn locks_remain_owned_after_ref_publication_until_logs_finish() {
     clean(&repo);
 }
 
-#[test]
-fn failing_second_chain_log_preserves_first_log_outcome() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn failing_second_chain_log_preserves_first_log_outcome(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    let mut head = edit("HEAD");
+    let mut head = edit(format, "HEAD");
     head.dereference = true;
     let prepared = refs.prepare_transaction(&[head]).unwrap();
     fs::create_dir(repo.git_dir().join("logs/refs/heads/main")).unwrap();
@@ -394,10 +436,12 @@ fn failing_second_chain_log_preserves_first_log_outcome() {
     clean(&repo);
 }
 
-#[test]
-fn invalid_message_fails_before_logs_or_refs_are_created() {
-    let (_temp, repo) = fixture();
-    let mut operation = edit("refs/tags/a");
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn invalid_message_fails_before_logs_or_refs_are_created(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    let mut operation = edit(format, "refs/tags/a");
     operation.reflog = Reflog::Append {
         committer: Signature {
             name: b"A".to_vec(),
@@ -422,12 +466,14 @@ fn invalid_message_fails_before_logs_or_refs_are_created() {
     clean(&repo);
 }
 
-#[test]
-fn malformed_logs_are_untouched_by_preserve_policy() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn malformed_logs_are_untouched_by_preserve_policy(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     fs::create_dir_all(repo.git_dir().join("logs/refs/tags")).unwrap();
     fs::write(repo.git_dir().join("logs/refs/tags/a"), b"opaque").unwrap();
-    let mut operation = edit("refs/tags/a");
+    let mut operation = edit(format, "refs/tags/a");
     operation.reflog = Reflog::Preserve;
     repo.references()
         .unwrap()
@@ -440,14 +486,17 @@ fn malformed_logs_are_untouched_by_preserve_policy() {
     clean(&repo);
 }
 
-#[test]
-fn packed_namespace_conflict_rejects_whole_batch() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn packed_namespace_conflict_rejects_whole_batch(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     packed(&repo);
     assert!(matches!(
-        repo.references()
-            .unwrap()
-            .transaction(&[edit("refs/tags/new"), edit("refs/tags/a/child")]),
+        repo.references().unwrap().transaction(&[
+            edit(format, "refs/tags/new"),
+            edit(format, "refs/tags/a/child")
+        ]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Conflict(_),
             ..
@@ -463,9 +512,11 @@ fn packed_namespace_conflict_rejects_whole_batch() {
     clean(&repo);
 }
 
-#[test]
-fn resolved_cycle_is_rejected_without_publication() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn resolved_cycle_is_rejected_without_publication(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     refs.update_without_reflog(
         &name("refs/heads/main"),
@@ -473,7 +524,7 @@ fn resolved_cycle_is_rejected_without_publication() {
         Expected::Absent,
     )
     .unwrap();
-    let mut head = edit("HEAD");
+    let mut head = edit(format, "HEAD");
     head.dereference = true;
     assert!(matches!(
         refs.transaction(&[head]),
@@ -485,11 +536,11 @@ fn resolved_cycle_is_rejected_without_publication() {
     clean(&repo);
 }
 
-fn detach() -> RefEdit {
+fn detach(format: crate::ObjectFormat) -> RefEdit {
     RefEdit {
         name: name("HEAD"),
         dereference: false,
-        target: Some(Target::Direct(id(1))),
+        target: Some(Target::Direct(id(format, 1))),
         expected: Expected::Value(Target::Symbolic(name("refs/heads/main"))),
         reflog: log(),
     }
@@ -508,19 +559,25 @@ fn old_branch(repo: &Repository, old: Option<ObjectId>) {
 }
 
 #[rstest]
-#[case::unborn(None, id(0))]
-#[case::born(Some(id(2)), id(2))]
+#[case::unborn_sha1(crate::ObjectFormat::Sha1, None, 0)]
+#[case::unborn_sha256(crate::ObjectFormat::Sha256, None, 0)]
+#[case::born_sha1(crate::ObjectFormat::Sha1, Some(2), 2)]
+#[case::born_sha256(crate::ObjectFormat::Sha256, Some(2), 2)]
 fn stored_detachment_logs_resolved_old_identity_only_on_head(
-    #[case] old: Option<ObjectId>,
-    #[case] expected: ObjectId,
+    #[case] format: crate::ObjectFormat,
+
+    #[case] old: Option<u8>,
+    #[case] expected: u8,
 ) {
-    let (_temp, repo) = fixture();
+    let old = old.map(|n| id(format, n));
+    let expected = id(format, expected);
+    let (_temp, repo) = fixture(format);
     old_branch(&repo, old);
     let refs = repo.references().unwrap();
-    let outcomes = refs.transaction(&[detach()]).unwrap();
+    let outcomes = refs.transaction(&[detach(format)]).unwrap();
     assert_eq!(
         refs.read(&name("HEAD")).unwrap(),
-        Some(Target::Direct(id(1)))
+        Some(Target::Direct(id(format, 1)))
     );
     assert_eq!(
         refs.read(&name("refs/heads/main")).unwrap(),
@@ -531,14 +588,16 @@ fn stored_detachment_logs_resolved_old_identity_only_on_head(
     let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].old, expected);
-    assert_eq!(entries[0].new, id(1));
+    assert_eq!(entries[0].new, id(format, 1));
     assert_eq!(refs.reflog(&name("refs/heads/main")).unwrap(), None);
     clean(&repo);
 }
 
-#[test]
-fn detachment_resolves_multiple_hops_to_packed_old_tip() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_resolves_multiple_hops_to_packed_old_tip(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     refs.update_without_reflog(
         &name("refs/heads/main"),
@@ -548,19 +607,22 @@ fn detachment_resolves_multiple_hops_to_packed_old_tip() {
     .unwrap();
     fs::write(
         repo.git_dir().join("packed-refs"),
-        format!("{} refs/heads/old\n", id(2)),
+        format!("{} refs/heads/old\n", id(format, 2)),
     )
     .unwrap();
-    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
     assert!(prepared.locks.contains_key(&name("HEAD")));
     assert!(prepared.locks.contains_key(&name("refs/heads/main")));
     assert!(prepared.locks.contains_key(&name("refs/heads/old")));
     let outcomes = prepared.publish().unwrap();
     assert_eq!(outcomes[0].logs, vec![(name("HEAD"), LogOutcome::Appended)]);
-    assert_eq!(refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old, id(2));
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old,
+        id(format, 2)
+    );
     assert_eq!(
         refs.read(&name("refs/heads/old")).unwrap(),
-        Some(Target::Direct(id(2)))
+        Some(Target::Direct(id(format, 2)))
     );
     assert_eq!(
         refs.read(&name("refs/heads/main")).unwrap(),
@@ -569,13 +631,17 @@ fn detachment_resolves_multiple_hops_to_packed_old_tip() {
     clean(&repo);
 }
 
-#[test]
-fn detachment_checks_stored_symbolic_value_not_resolved_identity() {
-    let (_temp, repo) = fixture();
-    old_branch(&repo, Some(id(2)));
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_checks_stored_symbolic_value_not_resolved_identity(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    old_branch(&repo, Some(id(format, 2)));
     let refs = repo.references().unwrap();
-    let mut operation = detach();
-    operation.expected = Expected::Value(Target::Direct(id(2)));
+    let mut operation = detach(format);
+    operation.expected = Expected::Value(Target::Direct(id(format, 2)));
     assert!(matches!(
         refs.transaction(&[operation]),
         Err(TransactionError::Prepare {
@@ -591,17 +657,21 @@ fn detachment_checks_stored_symbolic_value_not_resolved_identity() {
     clean(&repo);
 }
 
-#[test]
-fn detachment_locks_unborn_dependency_against_concurrent_creation() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_locks_unborn_dependency_against_concurrent_creation(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
     let writer = std::thread::scope(|scope| {
         scope
             .spawn(|| {
                 repo.references().unwrap().update_without_reflog(
                     &name("refs/heads/main"),
-                    Target::Direct(id(2)),
+                    Target::Direct(id(format, 2)),
                     Expected::Absent,
                 )
             })
@@ -610,22 +680,30 @@ fn detachment_locks_unborn_dependency_against_concurrent_creation() {
     });
     assert!(matches!(writer, Err(ReferenceError::Locked(_))));
     prepared.publish().unwrap();
-    assert_eq!(refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old, id(0));
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap().unwrap()[0].old,
+        id(format, 0)
+    );
     assert_eq!(refs.read(&name("refs/heads/main")).unwrap(), None);
     clean(&repo);
 }
 
 #[rstest]
-#[case::old_branch("refs/heads/main.lock")]
-#[case::head_log("logs/HEAD.lock")]
-fn detachment_dependency_or_log_lock_preserves_head(#[case] path: &str) {
-    let (_temp, repo) = fixture();
+#[case::old_branch_sha1(crate::ObjectFormat::Sha1, "refs/heads/main.lock")]
+#[case::old_branch_sha256(crate::ObjectFormat::Sha256, "refs/heads/main.lock")]
+#[case::head_log_sha1(crate::ObjectFormat::Sha1, "logs/HEAD.lock")]
+#[case::head_log_sha256(crate::ObjectFormat::Sha256, "logs/HEAD.lock")]
+fn detachment_dependency_or_log_lock_preserves_head(
+    #[case] format: crate::ObjectFormat,
+    #[case] path: &str,
+) {
+    let (_temp, repo) = fixture(format);
     let path = repo.git_dir().join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, b"foreign").unwrap();
     let refs = repo.references().unwrap();
     assert!(matches!(
-        refs.transaction(&[detach()]),
+        refs.transaction(&[detach(format)]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Locked(_),
             ..
@@ -641,12 +719,16 @@ fn detachment_dependency_or_log_lock_preserves_head(#[case] path: &str) {
     clean(&repo);
 }
 
-#[test]
-fn failed_detachment_log_reports_published_head_without_changing_old_branch() {
-    let (_temp, repo) = fixture();
-    old_branch(&repo, Some(id(2)));
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn failed_detachment_log_reports_published_head_without_changing_old_branch(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    old_branch(&repo, Some(id(format, 2)));
     let refs = repo.references().unwrap();
-    let prepared = refs.prepare_transaction(&[detach()]).unwrap();
+    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
     fs::create_dir(repo.git_dir().join("logs/HEAD")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
         panic!("expected append failure")
@@ -659,18 +741,20 @@ fn failed_detachment_log_reports_published_head_without_changing_old_branch() {
     );
     assert_eq!(
         refs.read(&name("HEAD")).unwrap(),
-        Some(Target::Direct(id(1)))
+        Some(Target::Direct(id(format, 1)))
     );
     assert_eq!(
         refs.read(&name("refs/heads/main")).unwrap(),
-        Some(Target::Direct(id(2)))
+        Some(Target::Direct(id(format, 2)))
     );
     clean(&repo);
 }
 
-#[test]
-fn detachment_rejects_old_chain_cycle_before_publication() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_rejects_old_chain_cycle_before_publication(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     refs.update_without_reflog(
         &name("refs/heads/main"),
@@ -679,7 +763,7 @@ fn detachment_rejects_old_chain_cycle_before_publication() {
     )
     .unwrap();
     assert!(matches!(
-        refs.transaction(&[detach()]),
+        refs.transaction(&[detach(format)]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Cycle(_),
             ..
@@ -693,12 +777,14 @@ fn detachment_rejects_old_chain_cycle_before_publication() {
     clean(&repo);
 }
 
-#[test]
-fn detachment_rejects_batch_edit_of_old_identity_dependency() {
-    let (_temp, repo) = fixture();
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_rejects_batch_edit_of_old_identity_dependency(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     assert!(matches!(
-        refs.transaction(&[detach(), edit("refs/heads/main")]),
+        refs.transaction(&[detach(format), edit(format, "refs/heads/main")]),
         Err(TransactionError::Prepare {
             source: ReferenceError::Conflict(_),
             ..
@@ -712,17 +798,22 @@ fn detachment_rejects_batch_edit_of_old_identity_dependency() {
     clean(&repo);
 }
 
-#[test]
-fn detachment_does_not_read_or_append_old_branch_log() {
-    let (_temp, repo) = fixture();
-    old_branch(&repo, Some(id(2)));
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn detachment_does_not_read_or_append_old_branch_log(#[case] format: crate::ObjectFormat) {
+    let (_temp, repo) = fixture(format);
+    old_branch(&repo, Some(id(format, 2)));
     fs::create_dir_all(repo.git_dir().join("logs/refs/heads")).unwrap();
     fs::write(
         repo.git_dir().join("logs/refs/heads/main"),
         b"opaque old branch log",
     )
     .unwrap();
-    repo.references().unwrap().transaction(&[detach()]).unwrap();
+    repo.references()
+        .unwrap()
+        .transaction(&[detach(format)])
+        .unwrap();
     assert_eq!(
         fs::read(repo.git_dir().join("logs/refs/heads/main")).unwrap(),
         b"opaque old branch log"
@@ -731,13 +822,19 @@ fn detachment_does_not_read_or_append_old_branch_log() {
 }
 
 #[rstest]
-#[case::target(Some(Target::Direct(ObjectId::Sha256([1;32]))), Expected::Absent)]
-#[case::expectation(None, Expected::Value(Target::Direct(ObjectId::Sha256([1;32]))))]
-fn rejects_wrong_format_before_locking(#[case] target: Option<Target>, #[case] expected: Expected) {
-    let (root, repo) = fixture();
-    let lock = root.path().join("packed-refs.lock");
+#[case::sha1_target(crate::ObjectFormat::Sha1, Some(Target::Direct(ObjectId::Sha256([1;32]))), Expected::Absent)]
+#[case::sha256_target(crate::ObjectFormat::Sha256, Some(Target::Direct(ObjectId::Sha1([1;20]))), Expected::Absent)]
+#[case::sha1_expectation(crate::ObjectFormat::Sha1, None, Expected::Value(Target::Direct(ObjectId::Sha256([1;32]))))]
+#[case::sha256_expectation(crate::ObjectFormat::Sha256, None, Expected::Value(Target::Direct(ObjectId::Sha1([1;20]))))]
+fn rejects_wrong_format_before_locking(
+    #[case] format: crate::ObjectFormat,
+    #[case] target: Option<Target>,
+    #[case] expected: Expected,
+) {
+    let (_root, repo) = fixture(format);
+    let lock = repo.git_dir().join("packed-refs.lock");
     fs::write(&lock, b"another owner").unwrap();
-    let mut change = edit("refs/heads/new");
+    let mut change = edit(format, "refs/heads/new");
     change.target = target;
     change.expected = expected;
     let result = repo.references().unwrap().transaction(&[change]);
@@ -749,6 +846,6 @@ fn rejects_wrong_format_before_locking(#[case] target: Option<Target>, #[case] e
         })
     ));
     assert_eq!(fs::read(lock).unwrap(), b"another owner");
-    assert!(!root.path().join("refs/heads/new").exists());
-    assert!(!root.path().join("logs").exists());
+    assert!(!repo.git_dir().join("refs/heads/new").exists());
+    assert!(!repo.git_dir().join("logs").exists());
 }

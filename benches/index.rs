@@ -17,11 +17,11 @@ fn benchmark(c: &mut Criterion) {
                 )
             })
             .collect();
-        let index = Index::new(entries, limits).unwrap();
+        let index = Index::new(girt::ObjectFormat::Sha1, entries, limits).unwrap();
         let bytes = index.encode(limits).unwrap();
         group.throughput(Throughput::Bytes(bytes.len() as u64));
         group.bench_with_input(BenchmarkId::new("parse", count), &bytes, |b, bytes| {
-            b.iter(|| Index::parse(black_box(bytes), limits).unwrap())
+            b.iter(|| Index::parse(girt::ObjectFormat::Sha1, black_box(bytes), limits).unwrap())
         });
         group.bench_with_input(BenchmarkId::new("encode", count), &index, |b, index| {
             b.iter(|| black_box(index).encode(limits).unwrap())

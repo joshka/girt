@@ -144,9 +144,11 @@ impl References<'_> {
                 return Ok(Vec::new());
             }
             for (index, edit) in edits.iter().enumerate() {
-                validate_edit(edit).map_err(|source| TransactionError::Prepare {
-                    operation: Some(index),
-                    source,
+                validate_edit(self.repository.object_format(), edit).map_err(|source| {
+                    TransactionError::Prepare {
+                        operation: Some(index),
+                        source,
+                    }
                 })?;
             }
             self.prepare_transaction(edits)?.publish()
@@ -183,7 +185,12 @@ impl References<'_> {
             let bytes = read_optional(&packed_lock.destination)
                 .map_err(batch_error)?
                 .unwrap_or_default();
-            let packed = packed::parse(&bytes, &packed_lock.destination).map_err(batch_error)?;
+            let packed = packed::parse(
+                self.repository.object_format(),
+                &bytes,
+                &packed_lock.destination,
+            )
+            .map_err(batch_error)?;
             let mut plans = Vec::new();
             let mut names = BTreeSet::new();
             for (index, edit) in edits.iter().enumerate() {
@@ -243,8 +250,13 @@ impl References<'_> {
                     // Discovery includes the old chain for a stored direct replacement. All its
                     // values have now been rechecked under locks; only the edited name is
                     // published.
-                    let old = log_id(chain.last().unwrap().1.as_ref()).map_err(error)?;
-                    let new = log_id(edit.target.as_ref()).map_err(error)?;
+                    let old = log_id(
+                        self.repository.object_format(),
+                        chain.last().unwrap().1.as_ref(),
+                    )
+                    .map_err(error)?;
+                    let new = log_id(self.repository.object_format(), edit.target.as_ref())
+                        .map_err(error)?;
                     let record = ReflogEntry {
                         old,
                         new,
@@ -274,14 +286,19 @@ impl References<'_> {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
                 let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
                 if let Some(bytes) = read_optional(&path).map_err(batch_error)? {
-                    reflog::parse(&bytes, &path).map_err(batch_error)?;
+                    reflog::parse(self.repository.object_format(), &bytes, &path)
+                        .map_err(batch_error)?;
                 }
                 log_locks.insert(name, lock);
             }
             let mut replacement = bytes;
             for operation in &operations {
                 if operation.packed_removed {
-                    replacement = packed::without_ref(&replacement, &operation.name);
+                    replacement = packed::without_ref(
+                        self.repository.object_format(),
+                        &replacement,
+                        &operation.name,
+                    );
                 }
             }
             Ok(Prepared {
@@ -333,10 +350,10 @@ impl References<'_> {
     }
 }
 
-fn validate_edit(edit: &RefEdit) -> Result<(), ReferenceError> {
-    super::store::validate_expected(&edit.expected)?;
+fn validate_edit(format: crate::ObjectFormat, edit: &RefEdit) -> Result<(), ReferenceError> {
+    super::store::validate_expected(format, &edit.expected)?;
     if let Some(target) = &edit.target {
-        validate_target(target)?;
+        validate_target(format, target)?;
         if edit.name.as_bytes() == b"HEAD"
             && matches!(target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
         {
@@ -352,9 +369,12 @@ fn validate_edit(edit: &RefEdit) -> Result<(), ReferenceError> {
     Ok(())
 }
 
-fn log_id(target: Option<&Target>) -> Result<ObjectId, ReferenceError> {
+fn log_id(
+    format: crate::ObjectFormat,
+    target: Option<&Target>,
+) -> Result<ObjectId, ReferenceError> {
     match target {
-        None => Ok(ObjectId::Sha1([0; 20])),
+        None => Ok(ObjectId::null(format)),
         Some(Target::Direct(id)) => Ok(*id),
         Some(Target::Symbolic(_)) => Err(ReferenceError::Unsupported(
             "stored symbolic edits with reflogs",

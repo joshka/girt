@@ -13,7 +13,7 @@ pub struct Entry {
     pub path: Vec<u8>,
     /// Canonical leaf mode (directories are unsupported).
     pub mode: Mode,
-    /// SHA-1 identity; not resolved by index operations.
+    /// Identity in the index's selected object format; not resolved by index operations.
     pub id: ObjectId,
     /// Normal entry or side of an unresolved conflict.
     pub stage: Stage,

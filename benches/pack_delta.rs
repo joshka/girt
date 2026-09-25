@@ -89,6 +89,7 @@ fn pack_delta(c: &mut Criterion) {
             ("delta", PackCompression::Delta(DeltaOptions::default())),
         ] {
             let written = write_pack_with_compression(
+                girt::ObjectFormat::Sha1,
                 &objects,
                 &mut io::sink(),
                 &mut io::sink(),
@@ -107,6 +108,7 @@ fn pack_delta(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new(label, policy), &objects, |b, objects| {
                 b.iter(|| {
                     write_pack_with_compression(
+                        girt::ObjectFormat::Sha1,
                         black_box(objects),
                         &mut io::sink(),
                         &mut io::sink(),

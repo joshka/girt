@@ -57,14 +57,9 @@ fn input(root: &Path, args: &[&str], bytes: &[u8]) -> Vec<u8> {
     child.stdin.take().unwrap().write_all(bytes).unwrap();
     success(child.wait_with_output().unwrap())
 }
-fn repository() -> (tempfile::TempDir, Repository) {
+fn repository(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(
-        girt::ObjectFormat::Sha1,
-        root.path().join("repo"),
-        InitKind::Worktree,
-    )
-    .unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Worktree).unwrap();
     (root, repo)
 }
 fn seed(repo: &Repository) {
@@ -73,9 +68,11 @@ fn seed(repo: &Repository) {
     git(root, &["add", "file"]);
 }
 
-#[test]
-fn reads_git_stat_flags_and_roundtrips_exactly() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn reads_git_stat_flags_and_roundtrips_exactly(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     seed(&repo);
     let root = repo.worktree().unwrap();
     git(root, &["update-index", "--assume-unchanged", "file"]);
@@ -83,10 +80,7 @@ fn reads_git_stat_flags_and_roundtrips_exactly() {
     let index = repo.read_index(Limits::default()).unwrap().unwrap();
     let entry = &index.entries()[0];
     assert_eq!(entry.path, b"file");
-    assert_eq!(
-        entry.id,
-        ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n")
-    );
+    assert_eq!(entry.id, ObjectId::for_blob(format, b"hello\n"));
     assert_eq!(entry.mode, Mode::Regular);
     assert_eq!(entry.stage, Stage::Normal);
     assert!(entry.assume_valid);
@@ -112,12 +106,20 @@ fn reads_git_stat_flags_and_roundtrips_exactly() {
 }
 
 #[rstest]
-#[case::regular(Mode::Regular, "100644")]
-#[case::executable(Mode::Executable, "100755")]
-#[case::symlink(Mode::Symlink, "120000")]
-#[case::gitlink(Mode::Gitlink, "160000")]
-fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] spelling: &str) {
-    let (_root, repo) = repository();
+#[case::regular_sha1(girt::ObjectFormat::Sha1, Mode::Regular, "100644")]
+#[case::regular_sha256(girt::ObjectFormat::Sha256, Mode::Regular, "100644")]
+#[case::executable_sha1(girt::ObjectFormat::Sha1, Mode::Executable, "100755")]
+#[case::executable_sha256(girt::ObjectFormat::Sha256, Mode::Executable, "100755")]
+#[case::symlink_sha1(girt::ObjectFormat::Sha1, Mode::Symlink, "120000")]
+#[case::symlink_sha256(girt::ObjectFormat::Sha256, Mode::Symlink, "120000")]
+#[case::gitlink_sha1(girt::ObjectFormat::Sha1, Mode::Gitlink, "160000")]
+#[case::gitlink_sha256(girt::ObjectFormat::Sha256, Mode::Gitlink, "160000")]
+fn git_reads_written_modes_and_writes_expected_tree(
+    #[case] format: girt::ObjectFormat,
+    #[case] mode: Mode,
+    #[case] spelling: &str,
+) {
+    let (_root, repo) = repository(format);
     let root = repo.worktree().unwrap();
     let id = repo.loose_objects().write_blob(b"payload").unwrap();
     let mut edit = repo.edit_index(Limits::default()).unwrap();
@@ -132,7 +134,7 @@ fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] 
     // explicit. Tree bytes independently verify index-to-object compatibility for every mode.
     let tree_id = String::from_utf8(git(root, &["write-tree", "--missing-ok"])).unwrap();
     let payload = git(root, &["cat-file", "tree", tree_id.trim()]);
-    let tree = Tree::parse(girt::ObjectFormat::Sha1, &payload).unwrap();
+    let tree = Tree::parse(format, &payload).unwrap();
     tree.validate().unwrap();
     assert_eq!(tree.entries()[0].id, id);
     assert_eq!(tree.entries()[0].name, b"leaf");
@@ -150,13 +152,15 @@ fn git_reads_written_modes_and_writes_expected_tree(#[case] mode: Mode, #[case] 
     edit.commit().unwrap();
     assert_eq!(
         git(root, &["write-tree"]),
-        b"4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
+        format!("{}\n", Tree::new(format, vec![]).unwrap().id()).as_bytes()
     );
 }
 
-#[test]
-fn git_conflict_stages_and_byte_paths_roundtrip() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_conflict_stages_and_byte_paths_roundtrip(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let root = repo.worktree().unwrap();
     let id = repo.loose_objects().write_blob(b"data").unwrap();
     let mut records =
@@ -176,9 +180,11 @@ fn git_conflict_stages_and_byte_paths_roundtrip() {
     assert_eq!(git(root, &["ls-files", "--stage", "-z"]), records);
 }
 
-#[test]
-fn git_long_paths_need_no_filesystem_materialization() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_long_paths_need_no_filesystem_materialization(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let root = repo.worktree().unwrap();
     let id = repo.loose_objects().write_blob(b"data").unwrap();
     let mut records = format!("100644 {id} 0\t").into_bytes();
@@ -195,14 +201,19 @@ fn git_long_paths_need_no_filesystem_materialization() {
 }
 
 #[rstest]
-#[case::v4(&["update-index", "--index-version=4"], 4)]
-#[case::skip_worktree(&["update-index", "--skip-worktree", "file"], 3)]
-#[case::intent_to_add(&["add", "-N", "new"], 3)]
+#[case::v4_sha1(girt::ObjectFormat::Sha1, &["update-index", "--index-version=4"], 4)]
+#[case::v4_sha256(girt::ObjectFormat::Sha256, &["update-index", "--index-version=4"], 4)]
+#[case::skip_worktree_sha1(girt::ObjectFormat::Sha1, &["update-index", "--skip-worktree", "file"], 3)]
+#[case::skip_worktree_sha256(girt::ObjectFormat::Sha256, &["update-index", "--skip-worktree", "file"], 3)]
+#[case::intent_to_add_sha1(girt::ObjectFormat::Sha1, &["add", "-N", "new"], 3)]
+#[case::intent_to_add_sha256(girt::ObjectFormat::Sha256, &["add", "-N", "new"], 3)]
 fn git_unsupported_flags_and_versions_fail_without_writing(
+    #[case] format: girt::ObjectFormat,
+
     #[case] args: &[&str],
     #[case] version: u32,
 ) {
-    let (_root, repo) = repository();
+    let (_root, repo) = repository(format);
     seed(&repo);
     let root = repo.worktree().unwrap();
     fs::write(root.join("new"), b"new").unwrap();
@@ -215,9 +226,11 @@ fn git_unsupported_flags_and_versions_fail_without_writing(
     assert!(!repo.git_dir().join("index.lock").exists());
 }
 
-#[test]
-fn split_index_is_refused_without_writing() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn split_index_is_refused_without_writing(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     seed(&repo);
     git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
     let before = fs::read(repo.git_dir().join("index")).unwrap();
@@ -226,9 +239,11 @@ fn split_index_is_refused_without_writing() {
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
 }
 
-#[test]
-fn linked_worktree_uses_its_own_index() {
-    let (root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn linked_worktree_uses_its_own_index(#[case] format: girt::ObjectFormat) {
+    let (root, repo) = repository(format);
     seed(&repo);
     git(
         repo.worktree().unwrap(),
@@ -261,8 +276,10 @@ fn linked_worktree_uses_its_own_index() {
     );
 }
 
-#[test]
-fn separate_gitdir_uses_resolved_index_location() {
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn separate_gitdir_uses_resolved_index_location(#[case] format: girt::ObjectFormat) {
     let root = tempfile::tempdir().unwrap();
     let worktree = root.path().join("worktree");
     let metadata = root.path().join("metadata");
@@ -270,6 +287,7 @@ fn separate_gitdir_uses_resolved_index_location() {
         root.path(),
         &[
             "init",
+            &format!("--object-format={format}"),
             "--separate-git-dir",
             metadata.to_str().unwrap(),
             worktree.to_str().unwrap(),
@@ -283,13 +301,15 @@ fn separate_gitdir_uses_resolved_index_location() {
     assert!(metadata.join("index").is_file());
     assert_eq!(
         git(&worktree, &["write-tree"]),
-        b"4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
+        format!("{}\n", Tree::new(format, vec![]).unwrap().id()).as_bytes()
     );
 }
 
-#[test]
-fn git_lock_protocol_excludes_both_writer_directions() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_lock_protocol_excludes_both_writer_directions(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     seed(&repo);
     let root = repo.worktree().unwrap();
     let before = fs::read(repo.git_dir().join("index")).unwrap();
@@ -314,9 +334,11 @@ fn git_lock_protocol_excludes_both_writer_directions() {
     );
 }
 
-#[test]
-fn rewritten_index_does_not_hide_same_stat_content_changes() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn rewritten_index_does_not_hide_same_stat_content_changes(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     let root = repo.worktree().unwrap();
     let file_path = root.join("file");
     let original_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
@@ -354,25 +376,29 @@ fn rewritten_index_does_not_hide_same_stat_content_changes() {
     assert_eq!(git(root, &["diff-files", "--name-only"]), b"file\n");
 }
 
-#[test]
-fn git_empty_index_matches_pure_encoder() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_empty_index_matches_pure_encoder(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     git(repo.worktree().unwrap(), &["read-tree", "--empty"]);
     let bytes = fs::read(repo.git_dir().join("index")).unwrap();
-    let parsed = Index::parse(&bytes, Limits::default()).unwrap();
+    let parsed = Index::parse(format, &bytes, Limits::default()).unwrap();
     assert!(parsed.entries().is_empty());
     assert_eq!(parsed.encode(Limits::default()).unwrap(), bytes);
 }
 
-#[test]
-fn git_resolve_undo_information_blocks_destructive_edits() {
-    let (_root, repo) = repository();
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn git_resolve_undo_information_blocks_destructive_edits(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
     seed(&repo);
     let root = repo.worktree().unwrap();
-    let id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"hello\n");
+    let id = ObjectId::for_blob(format, b"hello\n");
     let records = format!(
         "0 {}\tfile\n100644 {id} 1\tfile\n100644 {id} 2\tfile\n",
-        "0".repeat(40)
+        ObjectId::null(format)
     );
     input(root, &["update-index", "--index-info"], records.as_bytes());
     git(root, &["add", "file"]);

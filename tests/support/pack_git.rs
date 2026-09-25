@@ -55,14 +55,14 @@ pub struct Fixture {
 impl Fixture {
     /// Builds varied but similar blobs plus a tree, commit, and tag. Git chooses actual deltas;
     /// verify-pack offsets let the fixture assert that the requested encoding was generated.
-    pub fn new(ofs: bool, count: usize) -> Self {
+    pub fn new(format: girt::ObjectFormat, ofs: bool, count: usize) -> Self {
         let root = tempfile::tempdir().unwrap();
         git(
             root.path(),
             &[
                 "init",
                 "--bare",
-                "--object-format=sha1",
+                &format!("--object-format={format}"),
                 "--template=",
                 "--initial-branch=main",
                 ".",
@@ -143,7 +143,7 @@ impl Fixture {
             args.push("--delta-base-offset");
         }
         let pack = git(root.path(), &args, input.as_bytes());
-        let checksum = pack[pack.len() - 20..]
+        let checksum = pack[pack.len() - format.digest_len()..]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();

@@ -241,11 +241,17 @@ fn failed_packed_publication_preserves_loose_and_cleans_temporary_file() {
     let mut lock = Lock::acquire(repo.git_dir().join("packed-refs")).unwrap();
     let loose_lock = Lock::acquire(repo.git_dir().join("refs/heads/main")).unwrap();
     let bytes = packed_bytes();
-    let packed = packed::parse(bytes.as_bytes(), &lock.destination).unwrap();
+    let packed = packed::parse(
+        crate::ObjectFormat::Sha1,
+        bytes.as_bytes(),
+        &lock.destination,
+    )
+    .unwrap();
     // A directory destination injects a rename failure without permission/root assumptions.
     lock.destination = repo.git_dir().join("refs");
     assert!(
         delete_locked(
+            crate::ObjectFormat::Sha1,
             &lock,
             &loose_lock,
             &name(b"refs/heads/main"),
@@ -280,12 +286,18 @@ fn failed_unlink_after_packed_publication_reports_partial_completion() {
     let lock = Lock::acquire(repo.git_dir().join("packed-refs")).unwrap();
     let mut loose_lock = Lock::acquire(repo.git_dir().join("refs/heads/main")).unwrap();
     let bytes = packed_bytes();
-    let packed = packed::parse(bytes.as_bytes(), &lock.destination).unwrap();
+    let packed = packed::parse(
+        crate::ObjectFormat::Sha1,
+        bytes.as_bytes(),
+        &lock.destination,
+    )
+    .unwrap();
     // Substitute a directory at the unlink boundary without changing the actual loose value.
     // The full deletion path must publish packed removal before returning this failure.
     loose_lock.destination = repo.git_dir().join("refs/heads");
     assert!(matches!(
         delete_locked(
+            crate::ObjectFormat::Sha1,
             &lock,
             &loose_lock,
             &name(b"refs/heads/main"),

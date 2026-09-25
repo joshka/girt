@@ -15,7 +15,8 @@ pub enum PackCompression {
 /// Pack and index order remain ascending object ID. Search visits the preceding `window` entries
 /// newest first, trying at most `max_candidates` of the same kind, with lengths within a factor of
 /// two and within `max_object_bytes`. Bases always precede dependents; no external bases or
-/// OFS_DELTA offsets are emitted. REF_DELTA needs no receive-pack capability negotiation.
+/// OFS_DELTA offsets are emitted. REF_DELTA needs no delta-specific receive-pack capability; the
+/// transport must still negotiate the repository object format independently.
 ///
 /// A fixed 4096-slot table indexes 8-byte anchors every 16 base bytes; the earliest anchor wins a
 /// hash collision. Target scanning and match extension consume `max_work` units per object across
@@ -25,9 +26,9 @@ pub enum PackCompression {
 /// Each completed candidate additionally compresses at most roughly `2 * max_object_bytes + 20`
 /// instruction bytes. Identity hashing and ordinary compression retain the pack input bounds.
 ///
-/// Selection compares complete entry headers, the 20-byte base ID, and zlib bytes. A delta must
-/// save at least `min_savings` bytes against the ordinary entry and strictly beat the current best;
-/// ties retain the first candidate. Search is skipped when mandatory header/base-ID overhead
+/// Selection compares complete entry headers, the format-sized base ID, and zlib bytes. A delta
+/// must save at least `min_savings` bytes against the ordinary entry and strictly beat the current
+/// best; ties retain the first candidate. Search is skipped when mandatory header/base-ID overhead
 /// already rules out sufficient savings. The default saves at least 16 bytes. Output is
 /// reproducible for fixed inputs, options, and compression backend/version, independent of caller
 /// order.

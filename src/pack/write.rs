@@ -2,12 +2,12 @@ use std::io::{self, Write};
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use sha1::{Digest, Sha1};
 
 use super::compression::{DeltaOptions, DeltaStats, PackCompression, instructions};
+use crate::object::Hasher;
 use crate::{ObjectId, ObjectKind};
 
-/// One explicit SHA-1 object to export, borrowing its exact uncompressed payload.
+/// One format-bearing object to export, borrowing its exact uncompressed payload.
 ///
 /// The writer verifies `id` against `kind` and `data`. Payload syntax and referenced object
 /// existence are not checked; callers choose the object set and any graph validation. The kind
@@ -57,7 +57,8 @@ impl Default for PackWriteLimits {
 /// Completed artifact lengths and identity; no files have been installed by the library.
 #[derive(Debug, Clone, Copy)]
 pub struct PackWritten {
-    /// SHA-1 checksum of the pack before its trailer, suitable for a `pack-<hash>` basename.
+    /// Repository-format checksum of the pack before its trailer, suitable for a `pack-<hash>`
+    /// basename.
     pub checksum: ObjectId,
     /// Number of distinct objects emitted.
     pub objects: u32,
@@ -72,7 +73,7 @@ pub struct PackWritten {
 /// Failure to validate inputs or finish a caller-owned artifact pair.
 #[derive(Debug, thiserror::Error)]
 pub enum PackWriteError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A supplied identity differs from the selected pack format.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// An expected identity does not match the supplied kind and bytes.
@@ -94,7 +95,10 @@ pub enum PackWriteError {
     Io(#[from] io::Error),
 }
 
-/// Writes a SHA-1 pack v2 and matching index v2 from an explicit set of objects.
+/// Writes a pack v2 and matching index v2 in the explicitly selected object format.
+///
+/// `format` selects object IDs, REF_DELTA bases and both artifacts' checksums, including for an
+/// empty set. Every input must use that format; no format inference or translation occurs.
 ///
 /// Exact duplicates collapse to one entry. Both artifacts use ascending object-ID order,
 /// independent of input order. Each ordinary entry uses zlib level 6, without deltas. Repeated
@@ -111,11 +115,12 @@ pub enum PackWriteError {
 ///
 /// # Errors
 ///
-/// Input count, payload bounds, identities, and conflicting duplicates are checked before either
-/// sink is touched. Output bounds, I/O, or flush failures can leave partial artifacts (or a
-/// complete pack and incomplete index). Discard both on any error. Output counters use checked
-/// `u64` arithmetic; index offsets at or above 2 GiB use the v2 large-offset table. The number of
-/// large offsets cannot exceed 2^31. Allocation failure follows Rust's allocator behavior.
+/// Input count, payload bounds, identity formats/digests, and conflicting duplicates are checked
+/// before either sink is touched. Output bounds, I/O, or flush failures can leave partial artifacts
+/// (or a complete pack and incomplete index). Discard both on any error. Output counters use
+/// checked `u64` arithmetic; index offsets at or above 2 GiB use the v2 large-offset table. The
+/// number of large offsets cannot exceed 2^31. Allocation failure follows Rust's allocator
+/// behavior.
 ///
 /// ```
 /// use girt::{ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
@@ -126,6 +131,7 @@ pub enum PackWriteError {
 /// };
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
 /// let written = write_pack(
+///     girt::ObjectFormat::Sha1,
 ///     &[input, input],
 ///     &mut pack,
 ///     &mut index,
@@ -135,12 +141,20 @@ pub enum PackWriteError {
 /// # Ok::<(), girt::PackWriteError>(())
 /// ```
 pub fn write_pack(
+    format: crate::ObjectFormat,
     objects: &[PackObject<'_>],
     pack: &mut impl Write,
     index: &mut impl Write,
     limits: PackWriteLimits,
 ) -> Result<PackWritten, PackWriteError> {
-    write_pack_with_compression(objects, pack, index, limits, PackCompression::Ordinary)
+    write_pack_with_compression(
+        format,
+        objects,
+        pack,
+        index,
+        limits,
+        PackCompression::Ordinary,
+    )
 }
 
 /// Writes a pack/index pair with explicit bounded compression selection.
@@ -176,6 +190,7 @@ pub fn write_pack(
 ///     ..DeltaOptions::default()
 /// });
 /// let written = write_pack_with_compression(
+///     girt::ObjectFormat::Sha1,
 ///     &inputs,
 ///     &mut pack,
 ///     &mut index,
@@ -187,16 +202,26 @@ pub fn write_pack(
 /// # Ok::<(), girt::PackWriteError>(())
 /// ```
 pub fn write_pack_with_compression(
+    format: crate::ObjectFormat,
     objects: &[PackObject<'_>],
     pack: &mut impl Write,
     index: &mut impl Write,
     limits: PackWriteLimits,
     compression: PackCompression,
 ) -> Result<PackWritten, PackWriteError> {
-    write_controlled(objects, pack, index, limits, compression, &mut || Ok(()))
+    write_controlled(
+        format,
+        objects,
+        pack,
+        index,
+        limits,
+        compression,
+        &mut || Ok(()),
+    )
 }
 
 pub(crate) fn write_controlled(
+    format: crate::ObjectFormat,
     objects: &[PackObject<'_>],
     pack: &mut impl Write,
     index: &mut impl Write,
@@ -204,10 +229,10 @@ pub(crate) fn write_controlled(
     compression: PackCompression,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<PackWritten, PackWriteError> {
-    let objects = validate(objects, limits, check)?;
+    let objects = validate(format, objects, limits, check)?;
     check()?;
     let count = objects.len() as u32;
-    let mut pack = Output::new(pack, limits.max_pack_bytes, "pack bytes");
+    let mut pack = Output::new(format, pack, limits.max_pack_bytes, "pack bytes");
     pack.put(b"PACK")?;
     pack.put(&2u32.to_be_bytes())?;
     pack.put(&count.to_be_bytes())?;
@@ -247,7 +272,7 @@ pub(crate) fn write_controlled(
     }
     let checksum = pack.finish()?;
     let pack_bytes = pack.bytes;
-    let mut index = Output::new(index, limits.max_index_bytes, "index bytes");
+    let mut index = Output::new(format, index, limits.max_index_bytes, "index bytes");
     write_index(&entries, checksum, &mut index)?;
     index.finish()?;
     Ok(PackWritten {
@@ -305,8 +330,10 @@ fn select_entry(
             let bytes = compressed(entry_header(object.kind, length as u64), object.data)?;
             ordinary_cost = bytes.len();
             best = Some(SelectedEntry { bytes, depth: 0 });
-            // Even before zlib bytes, a REF_DELTA needs a header and a 20-byte base ID.
-            if ordinary_cost.saturating_sub(21) <= options.min_savings {
+            // Even before zlib bytes, a REF_DELTA needs a header and a format-sized base ID.
+            if ordinary_cost.saturating_sub(1 + object.id.format().digest_len())
+                <= options.min_savings
+            {
                 break;
             }
         }
@@ -339,6 +366,7 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
 }
 
 fn validate<'a>(
+    format: crate::ObjectFormat,
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
@@ -349,7 +377,7 @@ fn validate<'a>(
     }
     let mut total = 0u64;
     for object in objects {
-        object.id.require_sha1()?;
+        object.id.require_format(format)?;
         check()?;
         let length = object.data.len() as u64;
         if length > limits.max_object_bytes {
@@ -376,7 +404,7 @@ fn validate<'a>(
     sorted.dedup_by_key(|object| object.id);
     for object in &sorted {
         check()?;
-        let actual = ObjectId::for_object(object.kind.as_str(), object.data);
+        let actual = format.hash_object(object.kind, object.data);
         if actual != object.id {
             return Err(PackWriteError::Identity {
                 expected: object.id,
@@ -421,7 +449,7 @@ pub(crate) fn encode_index(
     checksum: ObjectId,
 ) -> Result<Vec<u8>, PackWriteError> {
     let mut bytes = Vec::new();
-    let mut out = Output::new(&mut bytes, u64::MAX, "index bytes");
+    let mut out = Output::new(checksum.format(), &mut bytes, u64::MAX, "index bytes");
     write_index(entries, checksum, &mut out)?;
     out.finish()?;
     Ok(bytes)
@@ -491,18 +519,18 @@ struct Output<'a, W> {
     bytes: u64,
     limit: u64,
     label: &'static str,
-    hash: Sha1,
+    hash: Hasher,
     crc: crc32fast::Hasher,
 }
 
 impl<'a, W: Write> Output<'a, W> {
-    fn new(sink: &'a mut W, limit: u64, label: &'static str) -> Self {
+    fn new(format: crate::ObjectFormat, sink: &'a mut W, limit: u64, label: &'static str) -> Self {
         Self {
             sink,
             bytes: 0,
             limit,
             label,
-            hash: Sha1::new(),
+            hash: Hasher::new(format),
             crc: crc32fast::Hasher::new(),
         }
     }
@@ -510,7 +538,7 @@ impl<'a, W: Write> Output<'a, W> {
         self.write_all(bytes).map_err(output_error)
     }
     fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
-        let checksum = ObjectId::Sha1(self.hash.clone().finalize().into());
+        let checksum = self.hash.clone().finalize();
         self.put(checksum.as_bytes())?;
         self.flush()?;
         Ok(checksum)
@@ -552,9 +580,16 @@ mod tests {
     fn order_and_exact_duplicates_do_not_change_artifacts() {
         let (a, b) = (blob(b"a"), blob(b"b"));
         let (mut pack, mut idx, mut other_pack, mut other_idx) = (vec![], vec![], vec![], vec![]);
-        let result =
-            write_pack(&[a, b, a], &mut pack, &mut idx, PackWriteLimits::default()).unwrap();
+        let result = write_pack(
+            crate::ObjectFormat::Sha1,
+            &[a, b, a],
+            &mut pack,
+            &mut idx,
+            PackWriteLimits::default(),
+        )
+        .unwrap();
         write_pack(
+            crate::ObjectFormat::Sha1,
             &[b, a],
             &mut other_pack,
             &mut other_idx,
@@ -572,7 +607,13 @@ mod tests {
     fn invalid_identity_leaves_outputs_untouched(#[case] input: PackObject<'_>) {
         let (mut pack, mut idx) = (vec![], vec![]);
         assert!(matches!(
-            write_pack(&[input], &mut pack, &mut idx, PackWriteLimits::default()),
+            write_pack(
+                crate::ObjectFormat::Sha1,
+                &[input],
+                &mut pack,
+                &mut idx,
+                PackWriteLimits::default()
+            ),
             Err(PackWriteError::Identity { .. })
         ));
         assert!(pack.is_empty());
@@ -585,6 +626,7 @@ mod tests {
         let (mut pack, mut idx) = (vec![], vec![]);
         assert!(matches!(
             write_pack(
+                crate::ObjectFormat::Sha1,
                 &[a, PackObject { data: b"b", ..a }],
                 &mut pack,
                 &mut idx,
@@ -603,7 +645,13 @@ mod tests {
     fn input_bounds_precede_output(#[case] limits: PackWriteLimits) {
         let (mut pack, mut idx) = (vec![], vec![]);
         assert!(matches!(
-            write_pack(&[blob(b"a"), blob(b"a")], &mut pack, &mut idx, limits),
+            write_pack(
+                crate::ObjectFormat::Sha1,
+                &[blob(b"a"), blob(b"a")],
+                &mut pack,
+                &mut idx,
+                limits
+            ),
             Err(PackWriteError::Limit(_))
         ));
         assert!(pack.is_empty());
@@ -627,7 +675,7 @@ mod tests {
         };
         let (mut pack, mut idx) = (vec![], vec![]);
         assert!(
-            matches!(write_pack(&[blob(b"a")], &mut pack, &mut idx, limits), Err(PackWriteError::Limit(actual)) if actual == label)
+            matches!(write_pack(crate::ObjectFormat::Sha1, &[blob(b"a")], &mut pack, &mut idx, limits), Err(PackWriteError::Limit(actual)) if actual == label)
         );
         assert!(pack.len() as u64 <= pack_limit);
         assert!(idx.len() as u64 <= index_limit);
@@ -637,6 +685,7 @@ mod tests {
     fn exact_limits_succeed() {
         let (mut pack, mut idx) = (vec![], vec![]);
         let first = write_pack(
+            crate::ObjectFormat::Sha1,
             &[blob(b"a")],
             &mut pack,
             &mut idx,
@@ -650,7 +699,14 @@ mod tests {
             max_pack_bytes: first.pack_bytes,
             max_index_bytes: first.index_bytes,
         };
-        let result = write_pack(&[blob(b"a")], &mut vec![], &mut vec![], limits).unwrap();
+        let result = write_pack(
+            crate::ObjectFormat::Sha1,
+            &[blob(b"a")],
+            &mut vec![],
+            &mut vec![],
+            limits,
+        )
+        .unwrap();
         assert_eq!(result.checksum, first.checksum);
     }
 
@@ -701,6 +757,7 @@ mod tests {
         };
         assert!(matches!(
             write_pack(
+                crate::ObjectFormat::Sha1,
                 &[blob(b"a")],
                 &mut pack,
                 &mut index,
@@ -719,6 +776,7 @@ mod tests {
         };
         let (mut index, mut expected_pack, mut expected_index) = (vec![], vec![], vec![]);
         write_pack(
+            crate::ObjectFormat::Sha1,
             &[blob(b"abc")],
             &mut pack,
             &mut index,
@@ -726,6 +784,7 @@ mod tests {
         )
         .unwrap();
         write_pack(
+            crate::ObjectFormat::Sha1,
             &[blob(b"abc")],
             &mut expected_pack,
             &mut expected_index,
@@ -772,7 +831,12 @@ mod tests {
             },
         ];
         let mut bytes = vec![];
-        let mut output = Output::new(&mut bytes, u64::MAX, "index bytes");
+        let mut output = Output::new(
+            crate::ObjectFormat::Sha1,
+            &mut bytes,
+            u64::MAX,
+            "index bytes",
+        );
         write_index(&entries, ObjectId::Sha1([9; 20]), &mut output).unwrap();
         output.finish().unwrap();
         assert_eq!(
@@ -785,7 +849,9 @@ mod tests {
             &bytes[1144..1160],
             &[0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
         );
-        let parsed = crate::pack::index::Index::parse(&bytes, 0x1_0000_0001).unwrap();
+        let parsed =
+            crate::pack::index::Index::parse(crate::ObjectFormat::Sha1, &bytes, 0x1_0000_0001)
+                .unwrap();
         assert_eq!(parsed.entries[2].offset, 0x8000_0000);
         assert_eq!(parsed.entries[3].offset, 0x1_0000_0000);
     }
@@ -799,13 +865,14 @@ mod tests {
         let id = ObjectId::for_object(kind.as_str(), data);
         let (mut pack, mut index) = (vec![], vec![]);
         write_pack(
+            crate::ObjectFormat::Sha1,
             &[PackObject { id, kind, data }],
             &mut pack,
             &mut index,
             PackWriteLimits::default(),
         )
         .unwrap();
-        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        let reader = crate::pack::Pack::open(crate::ObjectFormat::Sha1, &index, pack).unwrap();
         let restored = reader
             .read(reader.find(id).unwrap(), crate::ReadLimits::default())
             .unwrap();
@@ -822,7 +889,14 @@ mod tests {
             max_pack_bytes: 32,
             max_index_bytes: 1072,
         };
-        let written = write_pack(&[], &mut vec![], &mut vec![], limits).unwrap();
+        let written = write_pack(
+            crate::ObjectFormat::Sha1,
+            &[],
+            &mut vec![],
+            &mut vec![],
+            limits,
+        )
+        .unwrap();
         assert_eq!(written.objects, 0);
         assert_eq!(written.pack_bytes, 32);
         assert_eq!(written.index_bytes, 1072);
@@ -831,8 +905,14 @@ mod tests {
     #[test]
     fn zero_progress_sink_returns_write_zero() {
         let mut empty = &mut [][..];
-        let error =
-            write_pack(&[], &mut empty, &mut vec![], PackWriteLimits::default()).unwrap_err();
+        let error = write_pack(
+            crate::ObjectFormat::Sha1,
+            &[],
+            &mut empty,
+            &mut vec![],
+            PackWriteLimits::default(),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, PackWriteError::Io(error) if error.kind() == io::ErrorKind::WriteZero)
         );
@@ -841,7 +921,12 @@ mod tests {
     #[test]
     fn output_counter_overflow_fails_before_sink() {
         let mut bytes = vec![];
-        let mut output = Output::new(&mut bytes, u64::MAX, "pack bytes");
+        let mut output = Output::new(
+            crate::ObjectFormat::Sha1,
+            &mut bytes,
+            u64::MAX,
+            "pack bytes",
+        );
         output.bytes = u64::MAX;
         assert!(matches!(
             output.put(b"a"),
@@ -885,6 +970,7 @@ mod compression_tests {
             .collect();
         let (mut pack, mut index) = (vec![], vec![]);
         let written = write_pack_with_compression(
+            crate::ObjectFormat::Sha1,
             &inputs,
             &mut pack,
             &mut index,
@@ -944,7 +1030,7 @@ mod compression_tests {
         assert!(written.deltas.max_depth <= depth);
         assert!(written.deltas.candidates <= 12 * candidates.min(window) as u64);
         assert!(written.deltas.work <= 12 * options.max_work);
-        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        let reader = crate::pack::Pack::open(crate::ObjectFormat::Sha1, &index, pack).unwrap();
         verify_payloads(&reader, &data, written.deltas.max_depth);
     }
     fn verify_payloads(reader: &crate::pack::Pack, data: &[Vec<u8>], max_delta_depth: usize) {
@@ -981,6 +1067,7 @@ mod compression_tests {
             .collect();
         let (mut pack, mut index) = (vec![], vec![]);
         let written = write_pack_with_compression(
+            crate::ObjectFormat::Sha1,
             &inputs,
             &mut pack,
             &mut index,
@@ -989,7 +1076,7 @@ mod compression_tests {
         )
         .unwrap();
         assert!(written.deltas.entries > 0);
-        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        let reader = crate::pack::Pack::open(crate::ObjectFormat::Sha1, &index, pack).unwrap();
         let restored = reader
             .read(
                 reader.find(inputs[0].id).unwrap(),
@@ -1016,6 +1103,7 @@ mod compression_tests {
             },
         ];
         let written = write_pack_with_compression(
+            crate::ObjectFormat::Sha1,
             &inputs,
             &mut vec![],
             &mut vec![],
@@ -1044,6 +1132,7 @@ mod compression_tests {
         };
         let (mut pack, mut index) = (vec![], vec![]);
         let result = write_pack_with_compression(
+            crate::ObjectFormat::Sha1,
             &inputs,
             &mut pack,
             &mut index,
@@ -1067,7 +1156,7 @@ mod compression_tests {
         assert!(written.deltas.entries > 0);
         assert!(written.deltas.candidates > u64::from(written.deltas.entries));
         assert!(written.deltas.work <= 12 * options.max_work);
-        let reader = crate::pack::Pack::open(&index, pack).unwrap();
+        let reader = crate::pack::Pack::open(crate::ObjectFormat::Sha1, &index, pack).unwrap();
         verify_payloads(&reader, &data, written.deltas.max_depth);
     }
 
@@ -1102,6 +1191,7 @@ mod compression_tests {
         };
         let (mut pack, mut index) = (vec![], vec![]);
         let result = write_pack_with_compression(
+            crate::ObjectFormat::Sha1,
             &[input],
             &mut pack,
             &mut index,
@@ -1135,6 +1225,7 @@ mod cancellation_tests {
         let mut checks = 0;
         let (mut pack, mut index) = (vec![], vec![]);
         let result = write_controlled(
+            crate::ObjectFormat::Sha1,
             &objects,
             &mut pack,
             &mut index,
@@ -1170,9 +1261,142 @@ mod format_boundary_tests {
         };
         let mut pack = vec![];
         let mut index = vec![];
-        let result = write_pack(&[object], &mut pack, &mut index, PackWriteLimits::default());
+        let result = write_pack(
+            crate::ObjectFormat::Sha1,
+            &[object],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+        );
         assert!(matches!(result, Err(PackWriteError::ObjectFormat(_))));
         assert!(pack.is_empty());
+        assert!(index.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod dual_format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    fn blob(format: ObjectFormat) -> PackObject<'static> {
+        PackObject {
+            id: ObjectId::for_blob(format, b"blob"),
+            kind: ObjectKind::Blob,
+            data: b"blob",
+        }
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn rejects_mixed_inputs_before_either_sink(
+        #[case] format: ObjectFormat,
+        #[case] other: ObjectFormat,
+    ) {
+        let (mut pack, mut index) = (vec![], vec![]);
+        let result = write_pack(
+            format,
+            &[blob(format), blob(other)],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+        );
+        assert!(matches!(result, Err(PackWriteError::ObjectFormat(_))));
+        assert!(pack.is_empty());
+        assert!(index.is_empty());
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn empty_artifact_bounds_include_both_trailers(#[case] format: ObjectFormat) {
+        let limits = PackWriteLimits {
+            max_objects: 0,
+            max_object_bytes: 0,
+            max_input_bytes: 0,
+            max_pack_bytes: (12 + format.digest_len()) as u64,
+            max_index_bytes: (1032 + 2 * format.digest_len()) as u64,
+        };
+        let (mut pack, mut index) = (vec![], vec![]);
+        let written = write_pack(format, &[], &mut pack, &mut index, limits).unwrap();
+        assert_eq!(written.pack_bytes, limits.max_pack_bytes);
+        assert_eq!(written.index_bytes, limits.max_index_bytes);
+        assert_eq!(written.checksum.format(), format);
+        assert!(crate::pack::Pack::open(format, &index, pack).is_ok());
+        let short = PackWriteLimits {
+            max_index_bytes: limits.max_index_bytes - 1,
+            ..limits
+        };
+        let (mut pack, mut index) = (vec![], vec![]);
+        assert!(matches!(
+            write_pack(format, &[], &mut pack, &mut index, short),
+            Err(PackWriteError::Limit("index bytes"))
+        ));
+        assert_eq!(pack.len() as u64, limits.max_pack_bytes);
+        assert!(index.len() as u64 <= short.max_index_bytes);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn cancellation_during_validation_has_no_output(#[case] format: ObjectFormat) {
+        let (mut pack, mut index) = (vec![], vec![]);
+        let mut checks = 0;
+        let result = write_controlled(
+            format,
+            &[blob(format)],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+            PackCompression::Ordinary,
+            &mut || {
+                checks += 1;
+                if checks == 2 {
+                    Err(PackWriteError::Limit("injected cancellation"))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PackWriteError::Limit("injected cancellation"))
+        ));
+        assert!(pack.is_empty());
+        assert!(index.is_empty());
+    }
+
+    struct FlushFailure(Vec<u8>);
+    impl Write for FlushFailure {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::other("injected flush failure"))
+        }
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn failed_pack_flush_leaves_index_untouched(#[case] format: ObjectFormat) {
+        let mut pack = FlushFailure(vec![]);
+        let mut index = vec![];
+        assert!(matches!(
+            write_pack(
+                format,
+                &[],
+                &mut pack,
+                &mut index,
+                PackWriteLimits::default()
+            ),
+            Err(PackWriteError::Io(_))
+        ));
+        assert_eq!(pack.0.len(), 12 + format.digest_len());
         assert!(index.is_empty());
     }
 }

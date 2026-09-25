@@ -18,25 +18,25 @@ validates fields separately from parsing existing commits. Annotated tags preser
 and type, byte names, optional taggers, opaque extra headers, and message bytes, including embedded
 signatures. Storing a tag object does not create a tag reference. Explicit-path repository opening
 supports ordinary, bare, separate Git directories, and linked worktrees, deriving the object format
-from repository-local configuration. SHA-256 pack/ref/reflog/index support remains queued under R05;
-those storage operations refuse explicitly. Transport negotiation remains SHA-1-only. Unsupported
-configuration sources and repository extensions return errors. Files-backend references support
-byte-preserving names, loose/packed enumeration and reads, symbolic resolution, and conditional
-batches with explicit reflog policy, plus single-ref operations without reflogs. HEAD and
-per-worktree refs use the detected layout. Repository object reads combine live loose storage with
-bounded snapshots of SHA-1 pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA
-reconstruction. The API is experimental.
+from repository-local configuration. Packs, refs, reflogs and working-tree index v2 support both
+formats. Transport negotiation remains SHA-1-only. Unsupported configuration sources and repository
+extensions return errors. Files-backend references support byte-preserving names, loose/packed
+enumeration and reads, symbolic resolution, and conditional batches with explicit reflog policy,
+plus single-ref operations without reflogs. HEAD and per-worktree refs use the detected layout.
+Repository object reads combine live loose storage with bounded snapshots of SHA-1/SHA-256
+pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is
+experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
 dependencies and [platform validation](docs/compatibility.md#platform-and-git-version-validation).
-SHA-256 storage/codecs, reflog expiry, atomic multi-ref visibility, and a CLI are not implemented.
-Run `cargo run --example reference_transaction` for conditional branch/tag publication with
+Reflog expiry, atomic multi-ref visibility, and a CLI are not implemented. Run
+`cargo run --example reference_transaction` for conditional branch/tag publication with
 caller-supplied reflog identity, timestamps and messages.
 
 Repository discovery searches physical ancestors, with an optional inclusive ceiling. Initialization
-creates ordinary or bare SHA-1 repositories with unborn `main` and refuses reinitialization. See the
-[initialization example](examples/init_repository.rs) and
+creates ordinary or bare SHA-1/SHA-256 repositories with unborn `main` and refuses reinitialization.
+See the [initialization example](examples/init_repository.rs) and
 [discovery and initialization boundaries](docs/compatibility.md#repository-discovery-and-initialization).
 
 `CloneRequest::prepare_tracking` prepares new bare repositories and ordinary repositories without
@@ -58,10 +58,11 @@ edits. `BlobContent::read` loads the blob sides of a tree change separately. Run
 `cargo run --example content_diff` for a tree-to-content comparison; see
 [content diff scope](docs/compatibility.md#content-diff).
 
-SHA-1 working-tree index v2 entries can be parsed, constructed and encoded with `index::Index`.
-`Repository::edit_index` holds `index.lock` from read through replacement, with bounded input, byte
-paths, conflict stages and explicit extension restrictions. No working files are created. Run
-`cargo run --example index`; see [index scope](docs/compatibility.md#working-tree-index).
+SHA-1/SHA-256 working-tree index v2 entries can be parsed, constructed and encoded with
+`index::Index`. `Repository::edit_index` holds `index.lock` from read through replacement, with
+bounded input, byte paths, conflict stages and explicit extension restrictions. No working files are
+created. Run `cargo run --example index`; see
+[index scope](docs/compatibility.md#working-tree-index).
 
 `Repository::raw_status` separates staged changes, literal working-file changes, conflicts and
 unchecked gitlinks on macOS/Linux. It verifies content without refreshing the index and exposes

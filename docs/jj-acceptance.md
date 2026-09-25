@@ -62,8 +62,10 @@ change.
 
 R02 closes the identity/hash and current-boundary-refusal subset only; see its
 [evidence and ownership audit](evidence/r02.md). Both-format codecs, storage, refs, indexes and
-transport remain open under their owning tasks. R04 codec/loose-storage evidence and precise R05
-refusals are recorded in [its completion report](evidence/r04.md).
+transport remain open under their owning tasks. R04 codec/loose-storage evidence is recorded in
+[its completion report](evidence/r04.md). R05 pack/ref/reflog/index propagation and retained
+transport boundaries are recorded in [its completion report](evidence/r05.md). Native matrix refresh
+remains R06.
 
 ### A03 — Instrumentation, errors and scheduling
 

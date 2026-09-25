@@ -14,7 +14,7 @@ mod http_git;
 mod pack_git;
 
 fn http(c: &mut Criterion) {
-    let f = pack_git::Fixture::new(true, 16);
+    let f = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, 16);
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     assert!(
         objects

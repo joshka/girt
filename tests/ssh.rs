@@ -138,7 +138,7 @@ fn verify(f: &Fixture, repo: &Repository) {
 
 #[test]
 fn real_git_full_incremental_and_known_only_fetch() {
-    let f = Fixture::new(true, 8);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
     let server = Server::new(f.root.path(), "none");
     let remote = server.remote("config");
     let cancel = AtomicBool::new(false);
@@ -268,7 +268,7 @@ fn failed_worker_validation_releases_negotiated_history(
     #[case] cancelled: bool,
     #[case] limits: FetchLimits,
 ) {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let cancel = AtomicBool::new(false);
     let known = Arc::new(
         KnownHistory::new(
@@ -308,7 +308,7 @@ fn failed_worker_validation_releases_negotiated_history(
 
 #[test]
 fn discarding_download_releases_negotiated_history() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let cancel = AtomicBool::new(false);
     let limits = FetchLimits::default();
     let known = Arc::new(
@@ -339,7 +339,7 @@ fn discarding_download_releases_negotiated_history() {
 
 #[test]
 fn real_git_delta_push_incremental_and_empty_commands() {
-    let f = Fixture::new(false, 8);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 8);
     let (_root, dest) = destination();
     let server = Server::new(dest.git_dir(), "none");
     let remote = server.remote("config");
@@ -423,7 +423,7 @@ fn rejects_untrusted_hosts_and_failed_authentication(#[case] config: &str) {
 
 #[test]
 fn trust_failure_is_not_sent_for_push() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let server = Server::new(repo.git_dir(), "none");
     let prepared = prepared(
@@ -486,7 +486,7 @@ fn literal_repository_path_round_trips(#[case] path: &str) {
 #[test]
 fn git_rejection_is_a_report_and_preserves_mixed_outcomes() {
     use std::os::unix::fs::PermissionsExt;
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let hook = repo.git_dir().join("hooks/update");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -519,7 +519,7 @@ fn git_rejection_is_a_report_and_preserves_mixed_outcomes() {
 #[case::diagnostics("diagnostics")]
 #[case::normal("none")]
 fn stderr_cannot_block_service_io(#[case] fault: &str) {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let server = Server::new(f.root.path(), fault);
     let cancel = AtomicBool::new(false);
     let remote = server.remote("config");
@@ -566,7 +566,7 @@ fn stalled_service_has_a_deadline() {
 #[case::exit("exit-stall")]
 #[case::partial("partial-report")]
 fn cancellation_preserves_acknowledged_statuses(#[case] fault: &str) {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let server = Server::new(repo.git_dir(), fault);
     let prepared = prepared(
@@ -608,7 +608,7 @@ fn cancellation_preserves_acknowledged_statuses(#[case] fault: &str) {
 
 #[test]
 fn nonzero_service_exit_retains_complete_report() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let server = Server::new(repo.git_dir(), "exit-failure");
     let prepared = prepared(
@@ -766,7 +766,7 @@ fn malformed_advertisement_is_rejected() {
 #[case::advertisement(FetchLimits { max_advertisement_bytes: 4, ..FetchLimits::default() })]
 #[case::body(FetchLimits { max_wire_bytes: 1024, ..FetchLimits::default() })]
 fn download_respects_wire_budgets(#[case] limits: FetchLimits) {
-    let f = Fixture::new(false, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 4);
     let server = Server::new(f.root.path(), "none");
     let cancel = AtomicBool::new(false);
     let error = runtime()
@@ -787,7 +787,7 @@ fn download_respects_wire_budgets(#[case] limits: FetchLimits) {
 #[test]
 fn cancellation_after_real_git_ref_commit_is_uncertain() {
     use std::os::unix::fs::PermissionsExt;
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let hook = repo.git_dir().join("hooks/post-receive");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -827,7 +827,7 @@ fn cancellation_after_real_git_ref_commit_is_uncertain() {
 
 #[test]
 fn orchestration_installs_and_publishes_on_owned_worker() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "none");
     let remote = server.remote("config");
     let (_root, dest) = destination();
@@ -888,7 +888,7 @@ fn orchestration_installs_and_publishes_on_owned_worker() {
 
 #[test]
 fn orchestration_rejects_malformed_transfer_without_installation() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let server = Server::new(f.root.path(), "malformed");
     let (_root, dest) = destination();
     let path = dest.git_dir().to_path_buf();
@@ -927,7 +927,7 @@ fn orchestration_rejects_malformed_transfer_without_installation() {
 
 #[test]
 fn clone_download_finishes_on_owned_worker_without_checkout() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "none");
     let remote = server.remote("config");
     let root = tempfile::tempdir().unwrap();
@@ -982,7 +982,7 @@ fn clone_download_finishes_on_owned_worker_without_checkout() {
 
 #[test]
 fn clone_validation_cancellation_leaves_destination_absent() {
-    let f = Fixture::new(true, 4);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let server = Server::new(f.root.path(), "none");
     let remote = server.remote("config");
     let root = tempfile::tempdir().unwrap();
@@ -1015,7 +1015,7 @@ fn clone_validation_cancellation_leaves_destination_absent() {
 
 #[test]
 fn clone_malformed_transfer_leaves_destination_absent() {
-    let f = Fixture::new(false, 2);
+    let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let server = Server::new(f.root.path(), "malformed");
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("clone");

@@ -198,7 +198,6 @@ pub(crate) fn transaction(
 pub(crate) fn index(error: &crate::index::StorageError, span: &tracing::Span) -> &'static str {
     use crate::index::StorageError::*;
     match error {
-        UnsupportedFormat(_) => "unsupported",
         Cleanup { operation, .. } => {
             span.record("effects", "cleanup_failed");
             index(operation, span)

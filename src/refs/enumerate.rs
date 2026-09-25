@@ -90,6 +90,7 @@ impl References<'_> {
             .collect();
         let separate = self.repository.git_dir() != self.repository.common_dir();
         collect_loose(
+            self.repository.object_format(),
             self.repository.common_dir(),
             namespace,
             if separate {
@@ -101,6 +102,7 @@ impl References<'_> {
         )?;
         if separate {
             collect_loose(
+                self.repository.object_format(),
                 self.repository.git_dir(),
                 namespace,
                 LooseScope::Private,
@@ -153,6 +155,7 @@ enum LooseScope {
 }
 
 fn collect_loose(
+    format: crate::ObjectFormat,
     root: &Path,
     namespace: Option<&RefName>,
     scope: LooseScope,
@@ -220,7 +223,7 @@ fn collect_loose(
             let name = RefName::new(bytes)
                 .map_err(|_| malformed(&path, "invalid loose reference name"))?;
             if let Some(bytes) = read_optional(&path)? {
-                entries.insert(name, parse_loose(&bytes, &path)?);
+                entries.insert(name, parse_loose(format, &bytes, &path)?);
             }
         }
     }
@@ -349,7 +352,13 @@ mod tests {
         std::os::unix::fs::symlink(outside.path(), repo.git_dir().join("refs/worktree")).unwrap();
         let mut entries = BTreeMap::new();
         assert!(matches!(
-            collect_loose(repo.git_dir(), None, LooseScope::Private, &mut entries),
+            collect_loose(
+                repo.object_format(),
+                repo.git_dir(),
+                None,
+                LooseScope::Private,
+                &mut entries
+            ),
             Err(ReferenceError::Unsupported(_))
         ));
     }

@@ -37,6 +37,7 @@ fn transfer() -> (ObjectId, Vec<u8>) {
     let id = ObjectId::for_blob(ObjectFormat::Sha1, SECRET);
     let mut pack = Vec::new();
     girt::write_pack(
+        girt::ObjectFormat::Sha1,
         &[PackObject {
             id,
             kind: ObjectKind::Blob,
@@ -395,15 +396,18 @@ fn sha256_storage_spans_include_format_and_classify_refusal() {
     let capture = Capture::default();
     tracing::dispatcher::with_default(&capture.dispatch(), || {
         assert_eq!(loose.read_blob(id, 100).unwrap(), SECRET);
-        assert!(repo.edit_index(Default::default()).is_err());
+        repo.edit_index(Default::default())
+            .unwrap()
+            .abort()
+            .unwrap();
     });
     assert_eq!(
         capture.named("loose.read").fields["object_format"],
         "sha256"
     );
     assert_eq!(
-        capture.named("index.edit_index").fields["failure_class"],
-        "unsupported"
+        capture.named("index.edit_index").fields["outcome"],
+        "success"
     );
     assert!(capture.spans().iter().all(|s| s.closed));
     assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));

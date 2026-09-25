@@ -1129,3 +1129,39 @@ memory bounds or tracing-overhead estimates.
 This establishes a reproducible baseline for both implemented formats. It does not establish a
 speedup over earlier revisions or a universal hash-cost ratio. No numerical acceptance threshold is
 imposed. See the [R04 report](evidence/r04.md) for compatibility and storage-failure evidence.
+
+## R05 Dual-Format Storage Baseline
+
+`cargo bench --bench object_formats -- storage_formats` measures the format-propagated storage paths
+at `7a9ef5dcf17dc08af0593bd3487142e4d6499037`. The
+[source fingerprints](benchmarks/r05-storage-formats.sha256) cover Rust sources, test fixtures,
+examples, benchmarks and Cargo inputs; they were verified unchanged after sampling.
+[Raw Criterion output and estimates](/Users/joshka/.codex/reports/girt-r05/bench.log) and the
+[CSV means and 95% confidence intervals](benchmarks/r05-storage-formats.csv) are retained.
+
+The run used macOS 26.6.2 arm64 on Apple M2 Max, Rust/Cargo 1.98.1, Git 2.55.0, the release profile,
+20 samples, 500-ms warmups and 1-second measurement targets. It ran serially in a normal desktop
+session without CPU isolation or cache eviction. Filesystem reads were warm on APFS; free space was
+approximately 46 GiB. These are descriptive estimates, not latency percentiles, cold-storage
+observations or numerical acceptance gates.
+
+The pack workload has sixteen 16-KiB deterministic pseudorandom blobs, each with one altered byte.
+Payload generation, identity construction, repository creation and initial artifact publication are
+outside timing. Writes include input validation/hashing, sorting, ordinary or bounded REF_DELTA
+compression, checksums and index encoding to sinks. Opening includes warm file reads and pack/index
+validation; reading decodes all sixteen objects from an already-open delta snapshot, including base
+reconstruction and identity verification. Index parsing/encoding uses 10,000 regular entries; reflog
+parsing uses 1,000 records; reference listing reads 128 loose branches without reflogs. Fixture
+construction is outside every measured operation. No native Linux/Windows measurements or
+peak-RSS/file-handle claims are made.
+
+| Operation             | SHA-1 mean (µs) | SHA-256 mean (µs) |
+| --------------------- | --------------: | ----------------: |
+| `write_ordinary`      |         3429.27 |           4311.64 |
+| `write_delta`         |         4501.51 |           5008.97 |
+| `open_validate_warm`  |           69.69 |            106.35 |
+| `read_all_delta_warm` |         1325.01 |           3376.27 |
+| `parse_index_10000`   |         2401.71 |           4463.31 |
+| `encode_index_10000`  |         1038.04 |           3069.74 |
+| `parse_reflog_1000`   |          349.23 |            444.54 |
+| `list_refs_128_warm`  |         3405.19 |           3406.62 |

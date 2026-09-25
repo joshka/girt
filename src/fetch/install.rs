@@ -67,7 +67,7 @@ impl ReceivedFetch {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
-        let imported = Imported::read(&pack, limits, cancel)?;
+        let imported = Imported::read(crate::ObjectFormat::Sha1, &pack, limits, cancel)?;
         let dependencies = connectivity::validate_with_known(
             &imported.objects,
             &known.objects,

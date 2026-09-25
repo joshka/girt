@@ -33,6 +33,7 @@ fn pack_write(c: &mut Criterion) {
                 })
                 .collect();
             let written = write_pack(
+                girt::ObjectFormat::Sha1,
                 &objects,
                 &mut io::sink(),
                 &mut io::sink(),
@@ -52,6 +53,7 @@ fn pack_write(c: &mut Criterion) {
                 |b, objects| {
                     b.iter(|| {
                         write_pack(
+                            girt::ObjectFormat::Sha1,
                             black_box(objects),
                             &mut io::sink(),
                             &mut io::sink(),

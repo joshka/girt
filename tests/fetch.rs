@@ -71,7 +71,7 @@ fn verify_contents(fixture: &Fixture, repo: &Repository) {
 #[case::ofs_source(true)]
 #[case::ref_source(false)]
 fn imports_server_deltas_and_all_object_kinds(#[case] ofs: bool) {
-    let fixture = Fixture::new(ofs, 16);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, ofs, 16);
     let (root, repo) = destination();
     assert!(fixture.index_path.exists());
     let received = fetch(fixture.root.path());
@@ -141,7 +141,7 @@ fn empty_repository_transfers_nothing() {
 
 #[test]
 fn empty_selection_does_not_request_a_pack() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let received = receive_local(
         fixture.root.path(),
         |_| vec![],
@@ -158,7 +158,7 @@ fn empty_selection_does_not_request_a_pack() {
 #[case::branch("refs/heads/main", false)]
 #[case::tag("refs/tags/packed", true)]
 fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = receive_local(
         fixture.root.path(),
@@ -191,7 +191,7 @@ fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
 
 #[test]
 fn repeated_and_incremental_fetches_allow_conditional_updates() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (root, repo) = destination();
     let first = fetch(fixture.root.path());
     let installed = first
@@ -251,7 +251,7 @@ fn repeated_and_incremental_fetches_allow_conditional_updates() {
 
 #[test]
 fn concurrent_ref_change_fails_only_the_callers_conditional_update() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     let branch = RefName::new("refs/heads/main").unwrap();
@@ -279,7 +279,7 @@ fn concurrent_ref_change_fails_only_the_callers_conditional_update() {
 
 #[test]
 fn existing_snapshots_and_concurrent_openers_see_complete_pairs() {
-    let fixture = Fixture::new(true, 16);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 16);
     let (_root, repo) = destination();
     let old = repo.objects(PackLimits::default()).unwrap();
     let received = fetch(fixture.root.path());
@@ -308,7 +308,7 @@ fn existing_snapshots_and_concurrent_openers_see_complete_pairs() {
 
 #[test]
 fn concurrent_publishers_reuse_identical_artifacts() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     let results = std::thread::scope(|scope| {
@@ -328,7 +328,7 @@ fn concurrent_publishers_reuse_identical_artifacts() {
 
 #[test]
 fn installation_failure_preserves_existing_objects() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let loose = repo.loose_objects();
     let id = loose.write_blob(b"keep me").unwrap();
@@ -348,7 +348,7 @@ fn installation_failure_preserves_existing_objects() {
 
 #[test]
 fn cancelled_install_has_no_side_effects() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     assert!(matches!(
@@ -365,7 +365,7 @@ fn cancelled_install_has_no_side_effects() {
 
 #[test]
 fn conflicting_artifacts_are_never_overwritten() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     let installed = received
@@ -384,7 +384,7 @@ fn conflicting_artifacts_are_never_overwritten() {
 
 #[test]
 fn retries_after_index_publication_failure() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let received = fetch(fixture.root.path());
     // Obtain the deterministic basename in a separate disposable destination.
@@ -482,7 +482,7 @@ fn main_id(fixture: &Fixture) -> ObjectId {
 
 #[test]
 fn negotiated_initial_noop_and_incremental_preserve_connectivity() {
-    let fixture = Fixture::new(true, 16);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 16);
     let (_root, repo) = destination();
     let initial = negotiated(fixture.root.path(), &girt::fetch::KnownHistory::default());
     initial
@@ -527,7 +527,7 @@ fn negotiated_initial_noop_and_incremental_preserve_connectivity() {
 #[case::divergent(false)]
 #[case::merge(true)]
 fn negotiated_shared_history_and_merge(#[case] merge: bool) {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let old = main_id(&fixture);
     let left = child(&fixture, &[old], b"left\n");
     let right = child(&fixture, &[old], b"right\n");
@@ -556,7 +556,7 @@ fn negotiated_shared_history_and_merge(#[case] merge: bool) {
 
 #[test]
 fn disconnected_haves_fall_back_to_complete_transfer() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, local) = destination();
     let loose = local.loose_objects();
     let tree = loose
@@ -587,7 +587,7 @@ fn disconnected_haves_fall_back_to_complete_transfer() {
 #[case::missing(false)]
 #[case::corrupt(true)]
 fn installation_rechecks_known_objects_before_publication(#[case] corrupt: bool) {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, local) = destination();
     let loose = local.loose_objects();
     copy_loose(&fixture, &loose);
@@ -659,7 +659,7 @@ fn copy_loose(fixture: &Fixture, loose: &girt::LooseObjects) {
 
 #[test]
 fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let tag = fixture.records.last().unwrap().0;
     let known = known(&fixture.repo, &[tag]);
     let next = child(&fixture, &[main_id(&fixture)], b"no have budget\n");
@@ -690,7 +690,7 @@ fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
 
 #[test]
 fn installation_honors_destination_snapshot_limits_and_allows_retry() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let initial = fetch(fixture.root.path());
     initial
@@ -772,7 +772,7 @@ fn repeat_snapshot_pair(repo: &Repository, checksum: ObjectId, count: usize) {
 
 #[test]
 fn known_only_installation_can_exceed_default_snapshot_count() {
-    let fixture = Fixture::new(true, 4);
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, repo) = destination();
     let initial = fetch(fixture.root.path());
     let installed = initial

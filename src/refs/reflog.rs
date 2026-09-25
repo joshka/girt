@@ -4,7 +4,7 @@ use super::store::{malformed, read_optional};
 use super::{RefName, ReferenceError, References};
 use crate::{ObjectId, Signature};
 
-/// One SHA-1 reflog record, in oldest-to-newest file order.
+/// One format-bearing reflog record, in oldest-to-newest file order.
 ///
 /// Zero IDs represent absence. Parsing preserves message and identity bytes, but normalizes the
 /// numeric timestamp and timezone (including negative zero). An omitted message separator maps to
@@ -43,20 +43,21 @@ pub enum Reflog {
 impl ReflogEntry {
     /// Parses a complete newline-terminated reflog, returning records in file order.
     ///
-    /// Empty input is valid. Names/emails must be nonempty, timestamps nonnegative, timezone
+    /// The caller selects the repository format, including for empty input; every ID must match.
+    /// Names/emails must be nonempty, timestamps nonnegative, timezone
     /// hours at most 23 and minutes at most 59. UTF-8 is not required. Messages may contain tabs.
     ///
     /// # Errors
     ///
-    /// Rejects malformed IDs, identity/date framing, invalid identities, NUL/CR messages, and
-    /// truncated records. Errors identify the format rule; filesystem readers add the log path.
-    pub fn parse(bytes: &[u8]) -> Result<Vec<Self>, ReferenceError> {
-        parse(bytes, &std::path::PathBuf::from("<reflog>"))
+    /// Rejects malformed or foreign-format IDs, identity/date framing, invalid identities, NUL/CR
+    /// messages, and truncated records. Errors identify the format rule; filesystem readers add
+    /// the log path.
+    pub fn parse(format: crate::ObjectFormat, bytes: &[u8]) -> Result<Vec<Self>, ReferenceError> {
+        parse(format, bytes, &std::path::PathBuf::from("<reflog>"))
     }
 
     pub(super) fn encode(&self) -> Result<Vec<u8>, ReferenceError> {
-        self.old.require_sha1()?;
-        self.new.require_sha1()?;
+        self.new.require_format(self.old.format())?;
         validate(&self.committer, &self.message)?;
         let mut bytes = format!("{} {}", self.old, self.new).into_bytes();
         self.committer.encode(b"", &mut bytes);
@@ -81,7 +82,7 @@ impl References<'_> {
     pub fn reflog(&self, name: &RefName) -> Result<Option<Vec<ReflogEntry>>, ReferenceError> {
         let path = self.reflog_path(name)?;
         read_optional(&path)?
-            .map(|bytes| parse(&bytes, &path))
+            .map(|bytes| parse(self.repository.object_format(), &bytes, &path))
             .transpose()
     }
 
@@ -116,6 +117,7 @@ pub(super) fn validate(committer: &Signature, message: &[u8]) -> Result<(), Refe
 }
 
 pub(super) fn parse(
+    format: crate::ObjectFormat,
     bytes: &[u8],
     path: &std::path::Path,
 ) -> Result<Vec<ReflogEntry>, ReferenceError> {
@@ -126,23 +128,28 @@ pub(super) fn parse(
         .strip_suffix(b"\n")
         .ok_or_else(|| malformed(path, "unterminated reflog record"))?;
     body.split(|b| *b == b'\n')
-        .map(|line| parse_line(line, path))
+        .map(|line| parse_line(format, line, path))
         .collect()
 }
 
-fn parse_line(line: &[u8], path: &std::path::Path) -> Result<ReflogEntry, ReferenceError> {
-    if line.get(40) != Some(&b' ') || line.get(81) != Some(&b' ') {
-        return Err(malformed(path, "expected two SHA-1 reflog IDs"));
+fn parse_line(
+    format: crate::ObjectFormat,
+    line: &[u8],
+    path: &std::path::Path,
+) -> Result<ReflogEntry, ReferenceError> {
+    let width = format.digest_len() * 2;
+    if line.get(width) != Some(&b' ') || line.get(2 * width + 1) != Some(&b' ') {
+        return Err(malformed(path, "expected two repository-format reflog IDs"));
     }
     let parse_id = |bytes| {
         std::str::from_utf8(bytes)
             .ok()
-            .and_then(|s| s.parse().ok())
+            .and_then(|s| ObjectId::from_hex(format, s).ok())
             .ok_or_else(|| malformed(path, "invalid reflog ID"))
     };
-    let old = parse_id(&line[..40])?;
-    let new = parse_id(&line[41..81])?;
-    let rest = &line[82..];
+    let old = parse_id(&line[..width])?;
+    let new = parse_id(&line[width + 1..2 * width + 1])?;
+    let rest = &line[2 * width + 2..];
     let tab = rest.iter().position(|b| *b == b'\t').unwrap_or(rest.len());
     let identity = &rest[..tab];
     let mut committer = Signature::parse(identity)
@@ -191,7 +198,7 @@ mod tests {
     #[case::missing_separator(b"A <a@b> 1 +0000 message\n")]
     fn rejects_malformed_records(#[case] tail: &[u8]) {
         assert!(matches!(
-            ReflogEntry::parse(&record(tail)),
+            ReflogEntry::parse(crate::ObjectFormat::Sha1, &record(tail)),
             Err(ReferenceError::Malformed { .. })
         ));
     }
@@ -199,7 +206,7 @@ mod tests {
     #[test]
     fn parses_byte_identity_and_message_without_utf8() {
         let bytes = record(b"A\xff <a@b> 123 -0330\tm\xff\tend\n");
-        let entries = ReflogEntry::parse(&bytes).unwrap();
+        let entries = ReflogEntry::parse(crate::ObjectFormat::Sha1, &bytes).unwrap();
         assert_eq!(entries[0].committer.name, b"A\xff");
         assert_eq!(entries[0].committer.offset_minutes, -210);
         assert_eq!(entries[0].encode().unwrap(), bytes);
@@ -209,6 +216,42 @@ mod tests {
     fn rejects_bad_ids() {
         let mut bytes = record(b"A <a@b> 1 +0000\tm\n");
         bytes[0] = b'z';
-        assert!(ReflogEntry::parse(&bytes).is_err());
+        assert!(ReflogEntry::parse(crate::ObjectFormat::Sha1, &bytes).is_err());
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1, ObjectFormat::Sha256)]
+    #[case::sha256(ObjectFormat::Sha256, ObjectFormat::Sha1)]
+    fn null_records_use_the_selected_format(
+        #[case] format: ObjectFormat,
+        #[case] other: ObjectFormat,
+    ) {
+        let bytes = format!(
+            "{} {} A <a@b> 1 +0000\tmessage\n",
+            ObjectId::null(format),
+            ObjectId::null(format)
+        );
+        let records = ReflogEntry::parse(format, bytes.as_bytes()).unwrap();
+        assert_eq!(records[0].old, ObjectId::null(format));
+        assert_eq!(records[0].new, ObjectId::null(format));
+        assert_eq!(records[0].encode().unwrap(), bytes.as_bytes());
+        assert!(ReflogEntry::parse(other, bytes.as_bytes()).is_err());
+        assert!(ReflogEntry::parse(format, b"").unwrap().is_empty());
+        let mixed = ReflogEntry {
+            new: ObjectId::null(other),
+            ..records[0].clone()
+        };
+        assert!(matches!(
+            mixed.encode(),
+            Err(ReferenceError::ObjectFormat(_))
+        ));
     }
 }

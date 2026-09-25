@@ -18,7 +18,7 @@ mod supported {
     use super::{pack_git, ssh_git};
 
     pub fn ssh(c: &mut Criterion) {
-        let f = pack_git::Fixture::new(true, 16);
+        let f = pack_git::Fixture::new(girt::ObjectFormat::Sha1, true, 16);
         let objects = f.repo.objects(PackLimits::default()).unwrap();
         assert!(
             objects
