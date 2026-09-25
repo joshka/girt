@@ -204,6 +204,7 @@ pub mod push;
 pub mod refs;
 pub mod remote;
 mod repository;
+pub mod rewrites;
 pub mod status;
 mod tag;
 pub mod transport;

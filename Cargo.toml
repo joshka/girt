@@ -260,3 +260,7 @@ harness = false
 [[bench]]
 name = "ignore"
 harness = false
+
+[[bench]]
+name = "rewrites"
+harness = false
