@@ -9,9 +9,10 @@ pub use init::{InitError, InitKind};
 pub(crate) use init::{initial_branch, initial_config};
 use thiserror::Error;
 
+use crate::config::{ConfigFile, ConfigInputs, ConfigScope, ResolveError, integer};
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
-/// An opened repository's canonical paths and local configuration snapshot.
+/// An opened repository's canonical paths and resolved configuration snapshot.
 ///
 /// Opening accepts a worktree root, Git directory, or `gitdir:` file. It never searches parents,
 /// initializes files, runs Git, or reads environment overrides or system/global configuration.
@@ -20,10 +21,10 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 ///
 /// Ordinary, bare, separate-Git-directory and linked-worktree layouts are supported. Repository
 /// format versions 0 and 1 with SHA-1 objects, and version 1 with SHA-256 objects are
-/// supported. Includes, worktree configuration, alternates, shallow repositories and other
-/// extensions are rejected explicitly. Object access uses [`Self::loose_objects`] for loose
-/// reads/writes or [`Self::objects`] for bounded loose/packed reads. Opening repository metadata
-/// alone does not validate object storage.
+/// supported. Includes and enabled worktree configuration are resolved. Alternates, shallow
+/// repositories and other extensions are rejected explicitly. Object access uses
+/// [`Self::loose_objects`] for loose reads/writes or [`Self::objects`] for bounded loose/packed
+/// reads. Opening repository metadata alone does not validate object storage.
 ///
 /// Paths preserve OS bytes on Unix. On other platforms metadata paths must be UTF-8. No tilde,
 /// environment-variable or prefix interpolation is performed. Tilde and `%(...)` prefixes in
@@ -82,6 +83,9 @@ pub enum OpenError {
         #[source]
         source: ConfigError,
     },
+    /// Effective configuration could not be resolved.
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     /// A recognized feature cannot be interpreted by this implementation.
     #[error("unsupported repository feature at {path}: {feature}")]
     Unsupported {
@@ -112,9 +116,9 @@ impl Repository {
     /// Missing config uses version 0, SHA-1, and layout-based worktree inference. `core.bare` and
     /// `core.worktree` override ordinary layout inference; relative core.worktree is relative to
     /// the Git directory. A linked worktree uses its `gitdir` backlink, verified against its
-    /// `.git` file. Shared core.worktree is rejected in linked layouts because this slice does
-    /// not implement worktree-specific configuration. Unknown extension keys are rejected even
-    /// in version 0.
+    /// `.git` file. Shared core.worktree remains rejected in linked layouts. Direct worktree
+    /// settings participate in layout bootstrap when enabled. Includes participate only in the
+    /// effective snapshot. Unknown extension keys are rejected even in version 0.
     ///
     /// # Errors
     ///
@@ -123,6 +127,28 @@ impl Repository {
     /// on success or failure. Filesystem reads and allocation are synchronous and unbounded by a
     /// caller-supplied resource limit.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        Self::open_with_config(path, &ConfigInputs::default())
+    }
+
+    /// Opens a repository with explicit inherited sources, environment pairs and caller overrides.
+    ///
+    /// Adds common-directory local configuration and, when enabled in that file, per-worktree
+    /// configuration to the supplied inputs. Repository paths and HEAD provide include context;
+    /// caller Git-directory aliases are retained. No ambient environment is read.
+    /// Format bootstrap uses only the direct common configuration; enabled direct worktree settings
+    /// also participate in layout bootstrap. Includes, worktree format settings and overrides
+    /// cannot change the opened object format. Reopen to refresh both
+    /// metadata and effective configuration; existing handles remain snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns the layout/format errors of [`Self::open`] or contextual configuration resolution
+    /// failures. All operations are read-only. Config resolution obeys the supplied budgets;
+    /// repository metadata bootstrap retains [`Self::open`]'s allocation contract.
+    pub fn open_with_config(
+        path: impl AsRef<Path>,
+        inputs: &ConfigInputs,
+    ) -> Result<Self, OpenError> {
         let input = path.as_ref();
         let metadata = match fs::metadata(input) {
             Ok(metadata) => metadata,
@@ -130,6 +156,14 @@ impl Repository {
                 return Err(OpenError::NotFound(input.into()));
             }
             Err(source) => return Err(io_error(input, source)),
+        };
+        let logical_input = std::path::absolute(input).map_err(|error| io_error(input, error))?;
+        let logical_git_dir = if metadata.is_dir() && logical_input.join(".git").is_dir() {
+            Some(logical_input.join(".git"))
+        } else if metadata.is_dir() && !logical_input.join(".git").exists() {
+            Some(logical_input)
+        } else {
+            None
         };
         let input = canonical(input)?;
         let (git_dir, inferred_worktree) = if metadata.is_file() {
@@ -167,7 +201,7 @@ impl Repository {
         }
         let config_path = common_dir.join("config");
         let bytes = if exists(&config_path)? {
-            read(&config_path)?
+            read_config(&config_path, inputs.limits.bytes)?
         } else {
             Vec::new()
         };
@@ -177,13 +211,47 @@ impl Repository {
         })?;
         let (format_version, object_format) = validate_config(&config, &config_path)?;
         reject_storage_features(&common_dir, &object_dir)?;
+        let mut inputs = inputs.clone();
+        inputs.context.git_dirs.push(git_dir.clone());
+        if let Some(logical_git_dir) = logical_git_dir {
+            inputs.context.git_dirs.push(logical_git_dir);
+        }
+        let head = read(&git_dir.join("HEAD"))?;
+        let head = head.strip_suffix(b"\n").unwrap_or(&head);
+        let head = head.strip_suffix(b"\r").unwrap_or(head);
+        inputs.context.branch = head.strip_prefix(b"ref: refs/heads/").map(<[u8]>::to_vec);
+        inputs.files.push(ConfigFile {
+            path: config_path.clone(),
+            scope: ConfigScope::Local,
+            optional: true,
+        });
+        let mut layout_config = config.clone();
+        if extension_boolean(&config, &config_path, "worktreeconfig")? {
+            let worktree_path = git_dir.join("config.worktree");
+            if exists(&worktree_path)? {
+                let worktree_config =
+                    Config::parse(&read_config(&worktree_path, inputs.limits.bytes)?).map_err(
+                        |source| OpenError::Config {
+                            path: worktree_path,
+                            source,
+                        },
+                    )?;
+                layout_config.append(&worktree_config);
+            }
+            inputs.files.push(ConfigFile {
+                path: git_dir.join("config.worktree"),
+                scope: ConfigScope::Worktree,
+                optional: true,
+            });
+        }
         let worktree = resolve_worktree(
             &git_dir,
             &common_dir,
             inferred_worktree,
-            &config,
+            &layout_config,
             &config_path,
         )?;
+        let config = Config::resolve(&inputs)?;
         Ok(Self {
             git_dir,
             common_dir,
@@ -211,7 +279,7 @@ impl Repository {
     pub fn worktree(&self) -> Option<&Path> {
         self.worktree.as_deref()
     }
-    /// Parsed common-directory config snapshot; no ambient sources are merged.
+    /// Resolved configuration snapshot, including provenance and explicit inherited sources.
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -250,17 +318,40 @@ impl Repository {
     }
 }
 
+fn read_config(path: &Path, max_bytes: usize) -> Result<Vec<u8>, OpenError> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|error| io_error(path, error))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error(path, error))?;
+    if bytes.len() > max_bytes {
+        return Err(ResolveError {
+            location: crate::config::SourceLocation {
+                path: Some(path.into()),
+                line: 1,
+            },
+            included_from: Vec::new(),
+            source: crate::config::ResolveFailure::Limit("bootstrap configuration bytes"),
+        }
+        .into());
+    }
+    Ok(bytes)
+}
+
 fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), OpenError> {
     for entry in config.entries() {
-        if entry.section == b"include" || entry.section == b"includeif" {
-            return Err(unsupported(path, "configuration includes"));
-        }
-        if entry.section == b"extensions"
-            && (entry.subsection.is_some() || entry.name != b"objectformat")
+        if entry.section.eq_ignore_ascii_case(b"extensions")
+            && (entry.subsection.is_some()
+                || !entry.name.eq_ignore_ascii_case(b"objectformat")
+                    && !entry.name.eq_ignore_ascii_case(b"worktreeconfig"))
         {
             return Err(unsupported(
                 path,
-                &format!("extensions.{}", String::from_utf8_lossy(&entry.name)),
+                &format!(
+                    "extensions.{}",
+                    String::from_utf8_lossy(&entry.name.to_ascii_lowercase())
+                ),
             ));
         }
     }
@@ -293,41 +384,22 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
     Ok((version, object_format))
 }
 
-fn parse_version(value: &[u8]) -> Option<u32> {
-    u32::try_from(integer(value)?).ok()
+fn extension_boolean(config: &Config, path: &Path, name: &str) -> Result<bool, OpenError> {
+    match config.value("extensions", None, name) {
+        None => Ok(false),
+        Some(None) => Ok(true),
+        Some(Some(value)) => match value.to_ascii_lowercase().as_slice() {
+            b"true" | b"yes" | b"on" => Ok(true),
+            b"false" | b"no" | b"off" | b"" => Ok(false),
+            _ => integer(value)
+                .map(|n| n != 0)
+                .ok_or_else(|| malformed(path, "invalid extension boolean")),
+        },
+    }
 }
 
-// Git integer syntax has C-style bases and binary k/m/g multipliers.
-fn integer(value: &[u8]) -> Option<i64> {
-    let text = std::str::from_utf8(value).ok()?;
-    let (text, multiplier) = match text.as_bytes().last()? {
-        b'k' | b'K' => (&text[..text.len() - 1], 1024i64),
-        b'm' | b'M' => (&text[..text.len() - 1], 1024i64.pow(2)),
-        b'g' | b'G' => (&text[..text.len() - 1], 1024i64.pow(3)),
-        _ => (text, 1),
-    };
-    let (digits, sign) = if let Some(rest) = text.strip_prefix('-') {
-        (rest, -1)
-    } else {
-        (text.strip_prefix('+').unwrap_or(text), 1)
-    };
-    let (digits, radix) = if let Some(rest) = digits
-        .strip_prefix("0x")
-        .or_else(|| digits.strip_prefix("0X"))
-    {
-        (rest, 16)
-    } else if digits.starts_with('0') {
-        (digits, 8)
-    } else {
-        (digits, 10)
-    };
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    i64::from_str_radix(digits, radix)
-        .ok()?
-        .checked_mul(sign)?
-        .checked_mul(multiplier)
+fn parse_version(value: &[u8]) -> Option<u32> {
+    u32::try_from(integer(value)?).ok()
 }
 
 fn boolean(config: &Config, path: &Path, name: &str) -> Result<Option<bool>, OpenError> {

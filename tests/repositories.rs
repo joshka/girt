@@ -240,10 +240,7 @@ fn git_generated_quoted_subsections_and_repeated_keys() {
 }
 
 #[rstest]
-#[case::include("include.path", "other", "configuration includes")]
-#[case::conditional_include("includeIf.gitdir:foo.path", "other", "configuration includes")]
 #[case::unknown_extension("extensions.future", "true", "extensions.future")]
-#[case::worktree_config("extensions.worktreeConfig", "true", "extensions.worktreeconfig")]
 #[case::ref_storage("extensions.refStorage", "reftable", "extensions.refstorage")]
 #[case::future_version("core.repositoryFormatVersion", "2", "repository format version 2")]
 fn rejects_unsupported_without_mutation(
@@ -705,7 +702,6 @@ fn discovers_linked_worktree_before_parent_repository() {
 
 #[rstest]
 #[case::reftable("sha1", Some(("extensions.refStorage", "reftable")))]
-#[case::worktree_config("sha1", Some(("extensions.worktreeConfig", "true")))]
 fn discovery_and_initialization_reject_unsupported_without_changes(
     #[case] format: &str,
     #[case] extension: Option<(&str, &str)>,

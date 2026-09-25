@@ -4,8 +4,9 @@ use crate::Config;
 /// An owned snapshot of a named remote's raw URLs and parsed fetch/push refspecs.
 ///
 /// Names and values preserve bytes. Only `url`, `pushurl`, `fetch` and `push` are interpreted;
-/// other settings remain available through the original configuration. No global sources,
-/// includes, URL rewriting, remote-name-as-path fallback or implicit refspecs are consulted.
+/// other settings remain available through the original configuration. Resolved snapshots retain
+/// inherited values in precedence order. This consumer performs no additional source reads, URL
+/// rewriting, remote-name-as-path fallback or implicit refspec selection.
 #[derive(Debug, Clone)]
 pub struct Remote {
     name: Vec<u8>,

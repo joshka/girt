@@ -19,13 +19,13 @@ and type, byte names, optional taggers, opaque extra headers, and message bytes,
 signatures. Storing a tag object does not create a tag reference. Explicit-path repository opening
 supports ordinary, bare, separate Git directories, and linked worktrees, deriving the object format
 from repository-local configuration. Packs, refs, reflogs and working-tree index v2 support both
-formats. Transport negotiation remains SHA-1-only. Unsupported configuration sources and repository
-extensions return errors. Files-backend references support byte-preserving names, loose/packed
-enumeration and reads, symbolic resolution, and conditional batches with explicit reflog policy,
-plus single-ref operations without reflogs. HEAD and per-worktree refs use the detected layout.
-Repository object reads combine live loose storage with bounded snapshots of SHA-1/SHA-256
-pack/index v2 pairs, including OFS_DELTA and same-pack REF_DELTA reconstruction. The API is
-experimental.
+formats. Transport negotiation remains SHA-1-only. Explicit layered configuration resolves includes
+and conditional includes with provenance; unsupported repository extensions return errors.
+Files-backend references support byte-preserving names, loose/packed enumeration and reads, symbolic
+resolution, and conditional batches with explicit reflog policy, plus single-ref operations without
+reflogs. HEAD and per-worktree refs use the detected layout. Repository object reads combine live
+loose storage with bounded snapshots of SHA-1/SHA-256 pack/index v2 pairs, including OFS_DELTA and
+same-pack REF_DELTA reconstruction. The API is experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and

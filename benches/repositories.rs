@@ -20,6 +20,40 @@ fn repositories(c: &mut Criterion) {
     std::fs::create_dir(root.path().join("refs")).unwrap();
     std::fs::write(root.path().join("HEAD"), b"ref: refs/heads/main\n").unwrap();
     std::fs::write(root.path().join("config"), small).unwrap();
+    std::fs::write(root.path().join("large"), &large).unwrap();
+    let large_inputs = girt::config::ConfigInputs {
+        files: vec![girt::config::ConfigFile {
+            path: root.path().join("large"),
+            scope: girt::config::ConfigScope::Local,
+            optional: false,
+        }],
+        ..Default::default()
+    };
+    c.bench_function("config/resolve-1000-remotes-warm", |b| {
+        b.iter(|| Config::resolve(black_box(&large_inputs)).unwrap())
+    });
+    for depth in 0..10 {
+        std::fs::write(
+            root.path().join(format!("depth-{depth}")),
+            format!(
+                "[include]\npath=depth-{}\n[demo]\nvalue={depth}\n",
+                depth + 1
+            ),
+        )
+        .unwrap();
+    }
+    std::fs::write(root.path().join("depth-10"), b"[demo]\nvalue=end\n").unwrap();
+    let deep_inputs = girt::config::ConfigInputs {
+        files: vec![girt::config::ConfigFile {
+            path: root.path().join("depth-0"),
+            scope: girt::config::ConfigScope::Local,
+            optional: false,
+        }],
+        ..Default::default()
+    };
+    c.bench_function("config/resolve-depth-10-warm", |b| {
+        b.iter(|| Config::resolve(black_box(&deep_inputs)).unwrap())
+    });
     c.bench_function("repository/open-bare-warm", |b| {
         b.iter(|| Repository::open(black_box(root.path())).unwrap())
     });

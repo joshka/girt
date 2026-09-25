@@ -141,6 +141,8 @@ The Windows integration selection follows implemented operations, not just file 
 - `checkout_portable`: Cancellation before locking and explicit unsupported-platform checkout
   rejection. Actual checkout and native symlink tests run only on macOS/Linux.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
+- `config_resolution`: Portable layered configuration, conditions, provenance, environment and Git
+  observations in both formats; arbitrary-byte filenames are Linux-only.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
 - `references`, `fetch_workflow`, `clone`: Excluded: require girt's unsupported Windows ref backend.
@@ -274,9 +276,9 @@ Later records may supersede earlier limitations, with the original evidence reta
 - Configuration unit tests cover byte parsing, quoting, escapes, implicit/empty/repeated values,
   subsection case, malformed syntax and numeric interpretation. Independent Git CLI comparisons
   establish the supported forms and relevant core/extensions behavior.
-- Rejection tests cover unsupported formats, includes, worktree configuration, extensions, storage
-  layouts and malformed metadata. Snapshots check non-mutation; missing paths are not created. An
-  example subprocess proves that inherited Git overrides do not affect explicit opening.
+- Rejection tests cover unsupported formats, extensions, storage layouts and malformed metadata.
+  Snapshots check non-mutation; missing paths are not created. An example subprocess proves that
+  inherited Git overrides do not affect explicit opening.
 - `examples/open_repository.rs` runs against a disposable Git fixture. Public Rustdoc describes
   source semantics and limitations; [compatibility evidence](compatibility.md) owns the detailed
   boundary and provenance.
@@ -284,7 +286,8 @@ Later records may supersede earlier limitations, with the original evidence reta
   opening. [Performance evidence](benchmarks.md#repository-opening-baseline) records the baseline;
   there is no numerical performance gate.
 - Only macOS arm64 is exercised. Initialization, upward discovery, refs, packed reads, history and
-  transport are excluded. Worktree configuration, includes and unknown extensions fail explicitly.
+  transport are excluded. R08 subsequently adds layered resolution and worktree configuration;
+  unknown extensions fail.
 
 ### Reference Completion
 
@@ -644,9 +647,9 @@ was performed for this revision.
       storage.
 - [x] Git uses generated repositories for object access, commits, reference updates, and strict
       fsck; girt discovers Git-generated ordinary, bare, separate, and linked layouts.
-- [x] Unsupported SHA-256, reftable settings, and worktree-specific configuration fail without
-      mutation or fallback to an outer repository. Partial initialization remains available for
-      inspection.
+- [x] At this historical checkpoint, unsupported SHA-256, reftable and worktree config failed
+      without mutation or fallback to an outer repository. Partial initialization remains available
+      for inspection.
 - [x] No benchmark is required: this increment adds small metadata setup and parent traversal
       without a performance claim or a change to an existing processing hot path.
 - [x] Public contracts, the README, and compatibility evidence describe the supported boundaries.

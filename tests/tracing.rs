@@ -508,3 +508,64 @@ fn peel_failure_classification(#[case] cancel: bool, #[case] outcome: &str, #[ca
     assert_eq!(span.fields["outcome"], outcome);
     assert_eq!(span.fields["failure_class"], class);
 }
+
+#[test]
+fn config_resolution_span_is_categorical_and_redacted() {
+    let root = tempfile::Builder::new()
+        .prefix("R03_SECRET_path")
+        .tempdir()
+        .unwrap();
+    let path = root.path().join("config");
+    std::fs::write(
+        &path,
+        b"[remote \"R03_SECRET_name\"]\nurl=R03_SECRET_url\n[include]\npath=config\n",
+    )
+    .unwrap();
+    let inputs = girt::config::ConfigInputs {
+        files: vec![girt::config::ConfigFile {
+            path,
+            scope: girt::config::ConfigScope::Local,
+            optional: false,
+        }],
+        ..Default::default()
+    };
+    let capture = Capture::default();
+    let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
+        let parent = tracing::info_span!("config.owner");
+        parent.in_scope(|| girt::Config::resolve(&inputs))
+    });
+    assert!(result.is_err());
+    let span = capture.named("config.resolve");
+    assert_eq!(capture.parent_name(&span), "config.owner");
+    assert_eq!(span.fields["outcome"], "failure");
+    assert_eq!(span.fields["failure_class"], "cycle");
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+    assert!(capture.spans().iter().all(|s| s.closed));
+    assert!(capture.events().is_empty());
+}
+
+#[test]
+fn filtered_config_resolution_keeps_parent_completion_fields() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let capture = Capture::default();
+    let dispatch =
+        tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()).with(
+            tracing_subscriber::filter::filter_fn(|metadata| metadata.name() != "config.resolve"),
+        ));
+    tracing::dispatcher::with_default(&dispatch, || {
+        tracing::info_span!(
+            "config.parent",
+            outcome = "parent_owned",
+            failure_class = "parent_owned"
+        )
+        .in_scope(|| girt::Config::resolve(&girt::config::ConfigInputs::default()).unwrap());
+    });
+    assert_eq!(
+        capture.named("config.parent").fields["outcome"],
+        "parent_owned"
+    );
+    assert_eq!(
+        capture.named("config.parent").fields["failure_class"],
+        "parent_owned"
+    );
+}

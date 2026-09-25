@@ -57,7 +57,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Complete              | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r05.md)     |
 | R06 | Native CI foundation for both formats                       | R05                             | Complete              | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r06.md)                                                                                    |
 | R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Complete              | [A01/A04 evidence](evidence/r07.md)                                                                                                                                          |
-| R08 | Layered config resolution and provenance                    | R03                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
+| R08 | Layered config resolution and provenance                    | R03                             | In validation         | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
 | R09 | Lossless config and remote mutation                         | R08                             | Planned               | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing)                                                                                                                |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Planned               | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state)                                                                                                            |
 | C01 | First architecture and abstraction-debt review              | R01–R10                         | Planned               | [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                                                                                        |
@@ -109,8 +109,9 @@ broader refs and index semantics. Concrete format/refresh follow-ups are assigne
 
 R07 resolves the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-ups) through decoded
 graph/identity access and bounded tag peeling. Its [evidence](evidence/r07.md) distinguishes Git
-read/display/write/fsck behavior, exact signature bytes, tested revisions and native limits. R08 is
-the next serial item; final jj integration remains R35.
+read/display/write/fsck behavior, exact signature bytes, tested revisions and native limits. R08
+layered resolution is implemented and undergoing validation; its [evidence](evidence/r08.md) tracks
+completion. R09 remains the next serial item after acceptance; final jj integration remains R35.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
 required format, helper, platform, or policy feature, append bounded dependent tasks before marking

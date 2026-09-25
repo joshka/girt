@@ -559,31 +559,25 @@ was added, and no Git implementation or upstream fixture was copied.
 
 ### Configuration Boundary
 
-- `Config::parse` consumes caller-supplied bytes from one source. Repository opening supplies only
-  the common directory's `config`; a missing file uses layout defaults, repository version 0 and
-  SHA-1. No system/global config, command-line settings, `GIT_*` override, home directory lookup or
-  precedence merge is consulted. The current directory only resolves relative input paths.
-- Section/variable names use ASCII case-insensitive lookup; quoted subsections preserve exact case
-  and bytes. Ordered repeated values, implicit booleans and explicit empty values remain distinct.
-  Scalar lookup selects the last occurrence. Includes remain inert entries in standalone parsing;
-  opening rejects every include/includeIf entry, even an apparently inactive condition.
-- Supported syntax includes comments, mixed quoted/unquoted values, documented escapes, physical
-  line continuations, LF/CRLF and an initial UTF-8 BOM. Arbitrary value bytes are preserved. NUL,
-  invalid escapes, multiline quoted strings, unsectioned variables and malformed headers are
-  rejected. Deprecated dotted section syntax is explicitly rejected rather than misinterpreted as a
-  modern quoted subsection.
-- Opening interprets core.repositoryFormatVersion, core.bare, core.worktree and
-  extensions.objectFormat. Integer settings support signs, decimal/octal/hexadecimal notation and
-  binary k/m/g suffixes within the implementation's integer range. Boolean words are
-  case-insensitive; empty values are false, implicit values true, and numeric zero is false.
-- Versions 0 and 1 with SHA-1 are supported. SHA-256, unknown object formats, every other extension
-  (including refStorage and worktreeConfig), and objectFormat under version 0 are rejected.
-  Rejecting extensions under version 0 is intentionally stricter than historical Git behavior.
-  Ordinary unrelated settings remain queryable without affecting opening.
-- `config.worktree` is ignored when its extension is absent, as in Git. Enabling the extension is
-  unsupported, including on ordinary repositories; this prevents accidentally missing overrides.
-  Shared core.worktree is rejected for linked layouts. Linked worktrees use the verified absolute
-  `gitdir` backlink; relative backlinks are explicitly unsupported.
+- `Config::parse` consumes bytes without I/O. `Config::resolve` reads explicit system/global/local/
+  worktree sources, environment pairs and caller overrides, preserving ordered occurrences and
+  source provenance. See [layered configuration](configuration.md) for inputs, limits and refresh.
+- Section/variable lookup folds ASCII case while retaining original spelling. Quoted subsections
+  preserve bytes and case; deprecated dotted subsections fold ASCII case. Repeated, implicit and
+  empty values remain distinct. Scalar lookup selects the last occurrence.
+- Parsing supports comments, mixed quoted/unquoted values, escapes, physical continuations, LF/CRLF
+  and an initial UTF-8 BOM. Values need not be UTF-8. NUL, invalid escapes, multiline quoted
+  strings, unsectioned variables and malformed headers fail with a physical line number.
+- Repository format bootstrap reads only direct common configuration. Versions 0/1 with SHA-1 and
+  version 1 with SHA-256 are supported. Unknown formats/extensions, refStorage, and objectFormat
+  under version 0 are rejected. Version-0 extension rejection is stricter than historical Git.
+- Direct `extensions.worktreeConfig` enables the private `config.worktree` source. Its direct core
+  settings participate in layout detection; format settings, includes and inherited sources cannot
+  reinterpret the object format. Without the extension, the file is ignored.
+- Core integer settings support signed decimal/octal/hexadecimal and binary k/m/g suffixes. Boolean
+  words ignore ASCII case; implicit values mean true and empty/numeric zero mean false.
+- Shared core.worktree remains rejected in linked layouts. Linked worktrees use the verified
+  absolute `gitdir` backlink; relative backlinks remain unsupported and owned by R10.
 - Relative core.worktree paths resolve against the Git directory. Bare/worktree conflicts and empty
   worktree values fail. Tilde and `%(...)` path interpolation is unsupported. A directly supplied,
   non-bare metadata directory needs an explicit worktree relationship; no current-directory worktree
@@ -1411,9 +1405,9 @@ power-loss durability is promised. Initialization never removes files or overwri
 Independent fixtures in `tests/repositories.rs` exercise Git object access, commit creation,
 reference updates and `git fsck --strict` in both generated layouts, plus Git staging and committing
 in an ordinary worktree. Git-generated ordinary, bare, relative gitfile, and linked-worktree layouts
-are discovered from nested directories. SHA-256, reftable configuration, and worktree-specific
-configuration are rejected without mutation or outer-repository fallback. These tests derive from
-the [repository layout](https://git-scm.com/docs/gitrepository-layout) and
+are discovered from nested directories. Reftable configuration is rejected without mutation or
+outer-repository fallback. R04 added SHA-256 and R08 added worktree-specific configuration. These
+tests derive from the [repository layout](https://git-scm.com/docs/gitrepository-layout) and
 [initialization](https://git-scm.com/docs/git-init) manuals and independent CLI observations, not
 Git implementation code or upstream fixtures. Existing opening compatibility evidence remains
 applicable.
@@ -1523,13 +1517,14 @@ expected old values, object kinds, namespace restrictions, destination prefix co
 authorization remain separate. Mapping can describe push deletion even though current `push`
 transports cannot send it. Push preparation may reject namespaces accepted by this general mapper.
 
-No network, object lookup, config editing or reference mutation occurs in these APIs. System/global
-configuration, includes, URL rewriting, credential discovery, `push.default`, branch selection,
-matching push, shorthand names, arbitrary revision expressions, raw object-ID sources, empty/default
-fetch forms and `tag <name>` shorthand are outside the supported slice. Other configuration options
-are uninterpreted, including mirror, pruning, tag following, partial clone, custom service commands
-and transport options. Their presence does not change the four-key interpretation. Consumers must
-choose their own orchestration policy rather than treat the result as all of Git's remote behavior.
+No network, object lookup, config editing or reference mutation occurs in these APIs. Resolved
+configuration supplies inherited and included values. URL rewriting, credential discovery,
+`push.default`, branch selection, matching push, shorthand names, arbitrary revision expressions,
+raw object-ID sources, empty/default fetch forms and `tag <name>` shorthand are outside the
+supported slice. Other configuration options are uninterpreted, including mirror, pruning, tag
+following, partial clone, custom service commands and transport options. Their presence does not
+change the four-key interpretation. Consumers must choose their own orchestration policy rather than
+treat the result as all of Git's remote behavior.
 
 `examples/remote_plan.rs` reads disposable repository config, selects IDs from a supplied
 advertisement, retains destination mappings, and prepares a conditional creation push with an

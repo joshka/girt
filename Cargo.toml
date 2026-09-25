@@ -244,3 +244,7 @@ harness = false
 [[bench]]
 name = "peeling"
 harness = false
+
+[[example]]
+name = "config"
+doc-scrape-examples = true

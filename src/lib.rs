@@ -145,7 +145,8 @@
 //! - [`refs`]: validated reference names, loose/packed enumeration and reads, symbolic resolution,
 //!   conditional transactions with explicit reflogs, and single-reference operations without
 //!   reflogs.
-//! - [`Config`] and [`ConfigError`]: byte-oriented parsing of one configuration source.
+//! - [`Config`] and [`ConfigError`]: byte-oriented parsing and explicit layered resolution with
+//!   provenance.
 //! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
 //! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
 //! - [`clone`]: bare and ordinary no-checkout creation with persistent origin configuration.
