@@ -67,8 +67,9 @@ jobs:
       - run: cargo +stable test --locked --all-features --doc
       - name: Portable Git interoperability
         run: >-
-          cargo +stable test --locked --no-default-features
+          cargo +stable test --locked --no-default-features --no-fail-fast
           --test blobs --test trees --test commits --test tags --test packs
           --test history --test repositories --test remotes --test tree_compare
       - name: Portable HTTP runtime
+        if: ${{ !cancelled() }}
         run: cargo +stable test --locked --no-default-features --features http --test http_portable

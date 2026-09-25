@@ -321,8 +321,8 @@ fn core_worktree_is_relative_to_git_directory() {
     );
     let git_root = git(root.path(), &["rev-parse", "--show-toplevel"], b"");
     assert_eq!(
-        std::str::from_utf8(&git_root).unwrap().trim(),
-        repo.worktree().unwrap().to_str().unwrap()
+        canonical(Path::new(std::str::from_utf8(&git_root).unwrap().trim())),
+        repo.worktree().unwrap()
     );
 }
 
