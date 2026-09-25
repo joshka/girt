@@ -254,19 +254,30 @@ impl Index {
     ///
     /// Returns construction/limit errors or [`Error::ExtensionPreventsEdit`]. On every failure
     /// the original index, including its extensions, remains unchanged.
-    pub fn replace_entries(&mut self, entries: Vec<Entry>, limits: Limits) -> Result<(), Error> {
-        let mut replacement = Self::new(self.format, entries, limits)?;
-        if replacement.entries == self.entries {
+    pub fn replace_entries(
+        &mut self,
+        mut entries: Vec<Entry>,
+        limits: Limits,
+    ) -> Result<(), Error> {
+        check_count(entries.len(), limits.max_entries, "entries")?;
+        entries.sort_unstable_by(|a, b| (&a.path, a.stage).cmp(&(&b.path, b.stage)));
+        validate_entries(self.format, &entries, limits)?;
+        if entries == self.entries {
             self.encoded_len(limits)?;
             return Ok(());
         }
-        replacement.version =
-            if self.version == Version::V2 && replacement.entries.iter().any(extended) {
-                Version::V3
-            } else {
-                self.version
-            };
-        replacement.extensions = self.extensions.clone();
+        let version = if self.version == Version::V2 && entries.iter().any(extended) {
+            Version::V3
+        } else {
+            self.version
+        };
+        let mut replacement = Self {
+            format: self.format,
+            version,
+            original: None,
+            entries,
+            extensions: self.extensions.clone(),
+        };
         replacement.invalidate_extensions()?;
         replacement.encoded_len(limits)?;
         *self = replacement;

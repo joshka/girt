@@ -553,3 +553,40 @@ fn preserves_nonmaximal_v4_compression_until_edit() {
         Err(Error::Limit("path bytes"))
     );
 }
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn compressed_edit_limits_use_actual_version(#[case] format: crate::ObjectFormat) {
+    let prefix = vec![b'a'; 200];
+    let mut first = prefix.clone();
+    first.push(b'1');
+    let mut second = prefix;
+    second.push(b'2');
+    let entries = vec![
+        Entry::new(first, Mode::Regular, ObjectId::null(format)),
+        Entry::new(second, Mode::Regular, ObjectId::null(format)),
+    ];
+    let mut index = Index::new(format, entries, Limits::default()).unwrap();
+    let padded_size = index.encode(Limits::default()).unwrap().len();
+    index.set_version(Version::V4, Limits::default()).unwrap();
+    let compressed_size = index.encode(Limits::default()).unwrap().len();
+    assert!(compressed_size < padded_size);
+    let limits = Limits {
+        max_bytes: compressed_size,
+        ..Limits::default()
+    };
+    index
+        .replace_entries(index.entries().to_vec(), limits)
+        .unwrap();
+    let mut entries = index.entries().to_vec();
+    entries[0].assume_valid = true;
+    index.replace_entries(entries, limits).unwrap();
+    assert_eq!(index.encode(limits).unwrap().len(), compressed_size);
+    let before = index.clone();
+    assert_eq!(
+        index.set_version(Version::V2, limits),
+        Err(Error::Limit("bytes"))
+    );
+    assert_eq!(index, before);
+}
