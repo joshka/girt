@@ -1,0 +1,408 @@
+{
+  "git": "git version 2.55.0",
+  "jj": "jj 0.45.1",
+  "results": [
+    {
+      "format": "sha1",
+      "kind": "split",
+      "index_before_sha256": "3650042e1fb018f3795765e70647ef33f23d202304b5a6691132370564d24b74",
+      "index_after_sha256": "3650042e1fb018f3795765e70647ef33f23d202304b5a6691132370564d24b74",
+      "commands": [
+        {
+          "args": [
+            "git",
+            "init",
+            "--object-format=sha1",
+            "."
+          ],
+          "status": 0,
+          "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpu3177pbv/.git/\n",
+          "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+        },
+        {
+          "args": [
+            "git",
+            "add",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "original index fixture"
+          ],
+          "status": 0,
+          "stdout": "[master (root-commit) fe78dd3] original index fixture\n 2 files changed, 2 insertions(+)\n create mode 100644 inside/a\n create mode 100644 outside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "update-index",
+            "--split-index"
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 d881d78b4d1f01ad560a0a94b83fec09af349274 0\tinside/a\n100644 c430f12755e53c4100d02b58aca019e7f8e256a0 0\toutside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "jj",
+            "--config",
+            "user.name=\"Index Probe\"",
+            "--config",
+            "user.email=\"index@example.invalid\"",
+            "git",
+            "init",
+            "--colocate",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+        },
+        {
+          "args": [
+            "jj",
+            "status"
+          ],
+          "status": 0,
+          "stdout": "The working copy has no changes.\nWorking copy  (@) : pxnlrpwq 71722e96 (empty) (no description set)\nParent commit (@-): srvwurrq fe78dd30 master | original index fixture\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 d881d78b4d1f01ad560a0a94b83fec09af349274 0\tinside/a\n100644 c430f12755e53c4100d02b58aca019e7f8e256a0 0\toutside/b\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "format": "sha1",
+      "kind": "sparse",
+      "index_before_sha256": "238b9ddab2fdb9e365cc7b7bb58340b7d06e0f62546b653374f48ab98bba95cb",
+      "index_after_sha256": "26071bab32a15ed31808902a21292b2cc790c9e765dc7ee192bbc49e6ada61a8",
+      "commands": [
+        {
+          "args": [
+            "git",
+            "init",
+            "--object-format=sha1",
+            "."
+          ],
+          "status": 0,
+          "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpwo2zxxbs/.git/\n",
+          "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+        },
+        {
+          "args": [
+            "git",
+            "add",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "original index fixture"
+          ],
+          "status": 0,
+          "stdout": "[master (root-commit) fe78dd3] original index fixture\n 2 files changed, 2 insertions(+)\n create mode 100644 inside/a\n create mode 100644 outside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "sparse-checkout",
+            "set",
+            "--cone",
+            "--sparse-index",
+            "inside"
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 d881d78b4d1f01ad560a0a94b83fec09af349274 0\tinside/a\n040000 a689ed9401bfa805094f9eb03716da387838dfca 0\toutside/\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "jj",
+            "--config",
+            "user.name=\"Index Probe\"",
+            "--config",
+            "user.email=\"index@example.invalid\"",
+            "git",
+            "init",
+            "--colocate",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+        },
+        {
+          "args": [
+            "jj",
+            "status"
+          ],
+          "status": 0,
+          "stdout": "Working copy changes:\nD outside/b\nWorking copy  (@) : mwrkluqy 35b23b51 (no description set)\nParent commit (@-): srvwurrq fe78dd30 master | original index fixture\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 d881d78b4d1f01ad560a0a94b83fec09af349274 0\tinside/a\n040000 a689ed9401bfa805094f9eb03716da387838dfca 0\toutside/\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "format": "sha256",
+      "kind": "split",
+      "index_before_sha256": "c120bd9c5000b896f32cdd025ab0136e404475d3fa469a3a1bb128acfbc20484",
+      "index_after_sha256": "c120bd9c5000b896f32cdd025ab0136e404475d3fa469a3a1bb128acfbc20484",
+      "commands": [
+        {
+          "args": [
+            "git",
+            "init",
+            "--object-format=sha256",
+            "."
+          ],
+          "status": 0,
+          "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmphiuzxjpi/.git/\n",
+          "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+        },
+        {
+          "args": [
+            "git",
+            "add",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "original index fixture"
+          ],
+          "status": 0,
+          "stdout": "[master (root-commit) 20bc355] original index fixture\n 2 files changed, 2 insertions(+)\n create mode 100644 inside/a\n create mode 100644 outside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "update-index",
+            "--split-index"
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 9c0c16aa1d818ecdf1f1c98b6c7c4984d64ac93f1127fde0a83acca4de363a5c 0\tinside/a\n100644 4e6f9dfaef6b64da2bf49a8420838655639f28466c47152b0574c83fbef0e6cc 0\toutside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "jj",
+            "--config",
+            "user.name=\"Index Probe\"",
+            "--config",
+            "user.email=\"index@example.invalid\"",
+            "git",
+            "init",
+            "--colocate",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+        },
+        {
+          "args": [
+            "jj",
+            "status"
+          ],
+          "status": 0,
+          "stdout": "The working copy has no changes.\nWorking copy  (@) : znytzvwy c0638e3f (empty) (no description set)\nParent commit (@-): tuoluruw 20bc355a master | original index fixture\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 9c0c16aa1d818ecdf1f1c98b6c7c4984d64ac93f1127fde0a83acca4de363a5c 0\tinside/a\n100644 4e6f9dfaef6b64da2bf49a8420838655639f28466c47152b0574c83fbef0e6cc 0\toutside/b\n",
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "format": "sha256",
+      "kind": "sparse",
+      "index_before_sha256": "70c5ce2a6358bb812f0c47710a5b3638a4cf984b3acc173d27137ea8fd5d5a07",
+      "index_after_sha256": "4ccb4ca5975e9118ba6aefbb48ba126ec5b34a9745d882faeb7e44df1ee0cf16",
+      "commands": [
+        {
+          "args": [
+            "git",
+            "init",
+            "--object-format=sha256",
+            "."
+          ],
+          "status": 0,
+          "stdout": "Initialized empty Git repository in /private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/tmpu1ewvt_t/.git/\n",
+          "stderr": "hint: Using 'master' as the name for the initial branch. This default branch name\nhint: will change to \"main\" in Git 3.0. To configure the initial branch name\nhint: to use in all of your new repositories, which will suppress this warning,\nhint: call:\nhint:\nhint: \tgit config --global init.defaultBranch <name>\nhint:\nhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\nhint: 'development'. The just-created branch can be renamed via this command:\nhint:\nhint: \tgit branch -m <name>\nhint:\nhint: Disable this message with \"git config set advice.defaultBranchName false\"\n"
+        },
+        {
+          "args": [
+            "git",
+            "add",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "original index fixture"
+          ],
+          "status": 0,
+          "stdout": "[master (root-commit) b2ec8ee] original index fixture\n 2 files changed, 2 insertions(+)\n create mode 100644 inside/a\n create mode 100644 outside/b\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "sparse-checkout",
+            "set",
+            "--cone",
+            "--sparse-index",
+            "inside"
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 9c0c16aa1d818ecdf1f1c98b6c7c4984d64ac93f1127fde0a83acca4de363a5c 0\tinside/a\n040000 880b22fa9d967b4e9e23689e6649d3a63b8409e8b94b69d11191fb2cfa3727c3 0\toutside/\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "jj",
+            "--config",
+            "user.name=\"Index Probe\"",
+            "--config",
+            "user.email=\"index@example.invalid\"",
+            "git",
+            "init",
+            "--colocate",
+            "."
+          ],
+          "status": 0,
+          "stdout": "",
+          "stderr": "Done importing changes from the underlying Git repo.\nInitialized repo in \".\"\n"
+        },
+        {
+          "args": [
+            "jj",
+            "status"
+          ],
+          "status": 0,
+          "stdout": "Working copy changes:\nD outside/b\nWorking copy  (@) : tokuxusu f9bf174c (no description set)\nParent commit (@-): rtlwwqzq b2ec8ee2 master | original index fixture\n",
+          "stderr": ""
+        },
+        {
+          "args": [
+            "git",
+            "ls-files",
+            "--sparse",
+            "--stage"
+          ],
+          "status": 0,
+          "stdout": "100644 9c0c16aa1d818ecdf1f1c98b6c7c4984d64ac93f1127fde0a83acca4de363a5c 0\tinside/a\n040000 880b22fa9d967b4e9e23689e6649d3a63b8409e8b94b69d11191fb2cfa3727c3 0\toutside/\n",
+          "stderr": ""
+        }
+      ]
+    }
+  ]
+}
