@@ -3,6 +3,16 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 pub fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
+    let output = attempt(directory, args, input);
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+pub fn attempt(directory: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -28,13 +38,5 @@ pub fn git(directory: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         .expect("Git is required for interoperability tests");
 
     child.stdin.take().unwrap().write_all(input).unwrap();
-    let output = child.wait_with_output().unwrap();
-
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    output.stdout
+    child.wait_with_output().unwrap()
 }

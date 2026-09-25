@@ -33,7 +33,7 @@ pub enum ShallowError {
     /// A line is not a full hexadecimal ID in the repository format.
     #[error("invalid shallow root on line {line}")]
     InvalidRoot {
-        /// One-based line number. Wrong-width IDs are invalid as well.
+        /// One-based line number. Short or non-hexadecimal prefixes are invalid as well.
         line: usize,
     },
     /// The supplied byte budget is exhausted.
@@ -54,8 +54,9 @@ impl ShallowRoots {
 
     /// Reads `path` with a byte budget and cooperative cancellation. Missing files are empty.
     ///
-    /// LF and CRLF records and a final record without a newline are accepted. Blank records,
-    /// whitespace, non-hexadecimal bytes and wrong-format IDs are rejected. The default
+    /// LF and CRLF records and a final record without a newline are accepted. Each record uses
+    /// the selected format's leading hexadecimal ID; trailing bytes are ignored. Blank records
+    /// and short or non-hexadecimal prefixes are rejected. The default
     /// repository opener allows 16 MiB. Missing/non-commit objects are retained as declarations;
     /// traversal still requires every visited boundary to be a readable, parseable commit. Null
     /// IDs are retained as declarations, like other identities whose objects may not exist.
@@ -131,9 +132,9 @@ impl ShallowRoots {
         let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
         for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
             check(cancel)?;
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            let id = std::str::from_utf8(line)
-                .ok()
+            let id = line
+                .get(..format.digest_len() * 2)
+                .and_then(|prefix| std::str::from_utf8(prefix).ok())
                 .and_then(|line| ObjectId::from_hex(format, line).ok())
                 .ok_or(ShallowError::InvalidRoot { line: index + 1 })?;
             result.roots.insert(id);
@@ -186,7 +187,6 @@ mod tests {
     #[rstest]
     #[case::blank(b"\n")]
     #[case::invalid(b"xyz\n")]
-    #[case::wrong_format(b"1111111111111111111111111111111111111111111111111111111111111111\n")]
     fn invalid_root_has_line(#[case] bytes: &[u8]) {
         assert!(matches!(
             ShallowRoots::parse(bytes, ObjectFormat::Sha1, &AtomicBool::new(false)),

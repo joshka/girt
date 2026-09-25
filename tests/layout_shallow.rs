@@ -657,3 +657,68 @@ fn separate_metadata_opens_without_inventing_a_checkout(#[case] format: ObjectFo
         b"independent metadata"
     );
 }
+
+#[rstest]
+#[case::lf(b"\n")]
+#[case::crlf(b"\r\n")]
+#[case::unterminated(b"")]
+#[case::hex_suffix(b"aaaaaaaaaaaaaaaaaaaaaaaa\n")]
+#[case::text_suffix(b" trailing-junk\n")]
+#[case::nul_suffix(b"\0junk\n")]
+#[case::binary_suffix(b"\xff\n")]
+fn shallow_prefix_matches_git_history(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] suffix: &[u8],
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    let parent = commit(root.path(), "parent");
+    let tip = commit(root.path(), "tip");
+    let mut bytes = tip.to_string().into_bytes();
+    bytes.extend_from_slice(suffix);
+    let path = root.path().join(".git/shallow");
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(
+        git(root.path(), &["rev-list", "--parents", "HEAD"], b""),
+        format!("{tip}\n").as_bytes()
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects.walk(&[tip], HistoryLimits::default()).unwrap(),
+        vec![tip]
+    );
+    let raw = objects.read(tip, ReadLimits::default()).unwrap().unwrap();
+    assert_eq!(
+        Commit::parse(format, raw.data()).unwrap().parents(),
+        &[parent]
+    );
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+#[rstest]
+#[case::short(1, b"", 1)]
+#[case::nonhex(1, b"z\n", 1)]
+#[case::blank(0, b"\n\n", 2)]
+fn invalid_shallow_prefix_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] truncate: usize,
+    #[case] suffix: &[u8],
+    #[case] line: usize,
+) {
+    let root = tempfile::tempdir().unwrap();
+    init(root.path(), format);
+    let tip = commit(root.path(), "tip");
+    let mut bytes = tip.to_string().into_bytes();
+    bytes.truncate(bytes.len() - truncate);
+    bytes.extend_from_slice(suffix);
+    std::fs::write(root.path().join(".git/shallow"), &bytes).unwrap();
+    assert!(
+        !layout_git::attempt(root.path(), &["rev-list", "--parents", "HEAD"], b"")
+            .status
+            .success()
+    );
+    assert!(
+        matches!(Repository::open(root.path()), Err(OpenError::Shallow(ShallowError::InvalidRoot { line: actual })) if actual == line)
+    );
+}

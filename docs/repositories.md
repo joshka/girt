@@ -71,10 +71,10 @@ coordinate externally before acting on a result. Paths and object IDs are absent
 
 Opening captures a sorted, deduplicated `ShallowRoots` set from the common `shallow` file. The IDs
 carry the repository format. Empty/absent files mean no boundaries. LF, CRLF and an unterminated
-last record are accepted. Blank records, non-hexadecimal data and wrong-width IDs fail with a
-one-based line number. Girt requires exact-width records; Git 2.55.0 also accepts trailing bytes
-after a valid ID prefix. That permissive prefix parsing is not used to reinterpret wrong-format
-metadata.
+last record are accepted. Each record uses the leading 40 (SHA-1) or 64 (SHA-256) hexadecimal
+digits; remaining bytes are ignored, as observed with Git 2.55.0. The repository format selects
+the width. Blank records and short or non-hexadecimal prefixes fail with a one-based line number.
+Standalone object IDs and commit parent records still require exact widths.
 
 Declarations do not prove object existence or kind. Missing IDs and null declarations are retained,
 as Git permits, but walking one still fails if its object is missing. A blob boundary fails with
