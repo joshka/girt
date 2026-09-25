@@ -129,6 +129,31 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
     assert!(!fixture.records.is_empty());
     assert!(fixture.index_path.exists());
     assert!(read(&a, fixture.ordinary).is_some());
+    let primary_index = a.object_dir().join("pack/copied.idx");
+    fs::copy(&fixture.index_path, &primary_index).unwrap();
+    fs::copy(
+        fixture.index_path.with_extension("pack"),
+        primary_index.with_extension("pack"),
+    )
+    .unwrap();
+    assert!(matches!(
+        a.objects(PackLimits {
+            max_packs: 1,
+            ..PackLimits::default()
+        }),
+        Err(ObjectReadError::Limit("pack count"))
+    ));
+    let pair_bytes = fs::metadata(&primary_index).unwrap().len()
+        + fs::metadata(primary_index.with_extension("pack"))
+            .unwrap()
+            .len();
+    assert!(matches!(
+        a.objects(PackLimits {
+            max_bytes: pair_bytes as usize,
+            ..PackLimits::default()
+        }),
+        Err(ObjectReadError::Limit("pack snapshot bytes"))
+    ));
 }
 
 #[rstest]
@@ -367,7 +392,7 @@ fn denied_metadata_retains_permission_cause() {
     let a = init(root.path(), ObjectFormat::Sha1);
     alternate(&a, b".\n");
     let path = a.object_dir().join("info/alternates");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0)).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o0)).unwrap();
     let result = a.objects(PackLimits::default());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert!(

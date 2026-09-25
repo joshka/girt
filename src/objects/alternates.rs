@@ -163,7 +163,7 @@ fn unquote(record: &[u8]) -> Result<Vec<u8>, &'static str> {
                             .next()
                             .filter(|b| (b'0'..=b'7').contains(b))
                             .ok_or("invalid octal path escape")?;
-                        (escaped - b'0') * 64 + (second - b'0') * 8 + third - b'0'
+                        (escaped - b'0') * 64 + (second - b'0') * 8 + (third - b'0')
                     }
                     _ => return Err("invalid path escape"),
                 };
@@ -201,6 +201,11 @@ mod tests {
             parse_path(input).unwrap().as_os_str().as_encoded_bytes(),
             expected
         );
+    }
+
+    #[test]
+    fn decodes_full_byte_range_without_intermediate_overflow() {
+        assert_eq!(unquote(b"\"\\000\\377\"").unwrap(), [0, 255]);
     }
 
     #[rstest]
