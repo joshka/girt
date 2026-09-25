@@ -14,6 +14,7 @@ pub struct Span {
     pub name: &'static str,
     pub parent: Option<u64>,
     pub fields: BTreeMap<String, String>,
+    pub initial_fields: BTreeMap<String, String>,
     pub closed: bool,
 }
 #[derive(Clone, Default)]
@@ -60,6 +61,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Capture {
             Span {
                 name: attrs.metadata().name(),
                 parent,
+                initial_fields: fields.clone(),
                 fields,
                 closed: false,
             },

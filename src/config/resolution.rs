@@ -60,9 +60,10 @@ impl Config {
     /// valid UTF-8 in path values. `~user` and prefix expansion require explicit context mappings.
     pub fn resolve(inputs: &ConfigInputs) -> Result<Self, ResolveError> {
         #[cfg(feature = "tracing")]
-        let span = tracing::info_span!(
+        let span = tracing::debug_span!(
+            target: "girt",
             "config.resolve",
-            outcome = tracing::field::Empty,
+            outcome = "incomplete",
             failure_class = tracing::field::Empty
         );
         let operation = || Resolver::new(inputs).resolve();

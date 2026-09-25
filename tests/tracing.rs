@@ -681,3 +681,24 @@ fn filtered_repository_metadata_spans_preserve_parent_fields() {
         "owner"
     );
 }
+
+#[test]
+fn config_resolution_obeys_exact_target_filter_and_initial_outcome() {
+    use tracing_subscriber::layer::SubscriberExt;
+    let capture = Capture::default();
+    let dispatch =
+        tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()).with(
+            tracing_subscriber::filter::filter_fn(|metadata| {
+                metadata.target() == "girt" && *metadata.level() == tracing::Level::DEBUG
+            }),
+        ));
+    tracing::dispatcher::with_default(&dispatch, || {
+        girt::Config::resolve(&girt::config::ConfigInputs::default()).unwrap();
+    });
+    let span = capture.named("config.resolve");
+    assert_eq!(span.initial_fields.len(), 1);
+    assert_eq!(span.initial_fields["outcome"], "incomplete");
+    assert_eq!(span.fields["outcome"], "success");
+    assert!(span.closed);
+    assert!(capture.events().is_empty());
+}

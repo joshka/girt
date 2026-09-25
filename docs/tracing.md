@@ -41,7 +41,7 @@ outside push, tree comparison, content diff, status and checkout have no dedicat
 they make to covered operations can still appear. Future roadmap operations extend this coverage at
 their owning boundaries rather than claiming crate-wide instrumentation.
 
-Configuration resolution emits `config.resolve`; mutation emits `config.edit_config`,
+Configuration resolution emits `config.resolve` at DEBUG; mutation emits `config.edit_config`,
 `config.commit` and `config.abort`. These spans record categorical outcomes and cleanup failure
 without paths, names, values or URLs. Failed commit cleanup is nested under the commit span.
 
