@@ -26,7 +26,19 @@ jobs:
           rustc +stable -Vv
           git --version
           uname -a
+          if [ "$RUNNER_OS" = Linux ]; then
+            cat /etc/os-release
+            df -T . "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')"
+          else
+            sw_vers
+            diskutil info "$(df . | tail -1 | awk '{print $1}')"
+            diskutil info "$(df "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')" | tail -1 | awk '{print $1}')"
+          fi
       - run: cargo +stable test --locked --all-features
+      - name: Core-only runtime without tracing
+        run: >-
+          cargo +stable test --locked --no-default-features --no-fail-fast
+          --lib --test object_ids --test sha256 --test commits --test packs --test index --test references
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
@@ -39,6 +51,10 @@ jobs:
         run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features ssh
+      - name: HTTP-only runtime without tracing
+        run: cargo +stable test --locked --no-default-features --features http --test http --test http_portable
+      - name: SSH-only runtime without tracing
+        run: cargo +stable test --locked --no-default-features --features ssh --test ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo +stable run --locked --example fetch_local
       - run: cargo +stable run --locked --example push_local
@@ -47,6 +63,9 @@ jobs:
       - run: cargo +stable run --locked --example content_diff
       - run: cargo +stable run --locked --example index
       - run: cargo +stable run --locked --example write_pack
+      - run: cargo +stable run --locked --example init_repository
+      - run: cargo +stable run --locked --features tracing --example tracing
+      - run: cargo +stable run --locked --example reference_transaction
       - run: cargo +stable run --locked --example status
       - run: cargo +stable run --locked --example checkout
       - name: Rustdoc
@@ -67,6 +86,9 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustc +stable -Vv
           git --version
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
+          Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel
+          Write-Output "Temporary directory: $env:TEMP"
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
@@ -81,6 +103,8 @@ jobs:
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
       - run: cargo +stable test --locked --all-features --lib
+      - name: Core-only units without tracing
+        run: cargo +stable test --locked --no-default-features --lib
       - run: cargo +stable test --locked --all-features --doc
       - name: Portable Git interoperability in both object formats
         run: >-
@@ -93,3 +117,9 @@ jobs:
       - run: cargo +stable run --locked --example content_diff
       - run: cargo +stable run --locked --example index
       - run: cargo +stable run --locked --example write_pack
+      - run: cargo +stable run --locked --example init_repository
+      - run: cargo +stable run --locked --features tracing --example tracing
+      - name: Public Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc --locked --all-features --no-deps
