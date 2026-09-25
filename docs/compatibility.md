@@ -2,8 +2,9 @@
 
 R11 extends the files backend to portable conditional refs and reflogs; its current
 [contracts](reference-transactions.md) and [evidence](evidence/r11.md) supersede historical
-Unix-only reference and strict imported-reflog restrictions below. Reftable is still required under
-R37 before full readiness. Historical validation records retain their original scope.
+Unix-only reference and strict imported-reflog restrictions below. R37 adds reftable under its
+[staged evidence](evidence/r37.md); native acceptance remains pending. Historical validation records
+retain their original scope.
 
 SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-tree index v2/v3/v4
 use the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and

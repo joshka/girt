@@ -100,6 +100,10 @@ pub enum TransactionError {
 impl References<'_> {
     /// Applies a conditional batch with explicit reflog policy.
     ///
+    /// Reftable publishes references and logs atomically within each stack, with explicit partial
+    /// effects across linked-worktree stacks; see [`References`]. The remaining storage details
+    /// below describe the files backend.
+    ///
     /// Preparation holds `packed-refs.lock`, discovers symbolic chains, locks their union in
     /// name-byte order, and rechecks every stored chain value and precondition. Reflog locks follow
     /// in name-byte order. Duplicate/overlapping chains and ancestor/descendant names are rejected,
@@ -172,6 +176,18 @@ impl References<'_> {
     }
 
     pub(crate) fn prepare_transaction(
+        &self,
+        edits: &[RefEdit],
+    ) -> Result<PreparedBackend, TransactionError> {
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            super::reftable::backend::prepare(self, edits).map(PreparedBackend::Reftable)
+        } else {
+            self.prepare_files_transaction(edits)
+                .map(PreparedBackend::Files)
+        }
+    }
+
+    pub(super) fn prepare_files_transaction(
         &self,
         edits: &[RefEdit],
     ) -> Result<Prepared, TransactionError> {
@@ -389,7 +405,10 @@ impl References<'_> {
     }
 }
 
-fn validate_edit(format: crate::ObjectFormat, edit: &RefEdit) -> Result<(), ReferenceError> {
+pub(super) fn validate_edit(
+    format: crate::ObjectFormat,
+    edit: &RefEdit,
+) -> Result<(), ReferenceError> {
     super::store::validate_expected(format, &edit.expected)?;
     if edit.reflog == Reflog::Delete && edit.target.is_some() {
         return Err(ReferenceError::Unsupported(
@@ -572,3 +591,17 @@ fn append_record(writer: &mut impl Write, record: &[u8]) -> Result<(), (usize, i
 #[cfg(test)]
 #[path = "transaction_tests.rs"]
 mod tests;
+
+pub(crate) enum PreparedBackend {
+    Files(Prepared),
+    Reftable(super::reftable::backend::Prepared),
+}
+
+impl PreparedBackend {
+    pub(crate) fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        match self {
+            Self::Files(prepared) => prepared.publish(),
+            Self::Reftable(prepared) => prepared.publish(),
+        }
+    }
+}

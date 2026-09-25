@@ -525,8 +525,6 @@ fn non_utf8_loose_names_on_linux(#[case] format: girt::ObjectFormat) {
 }
 
 #[rstest]
-#[case::reftable_sha1(girt::ObjectFormat::Sha1, "refStorage", "reftable")]
-#[case::reftable_sha256(girt::ObjectFormat::Sha256, "refStorage", "reftable")]
 #[case::unknown_sha1(girt::ObjectFormat::Sha1, "refStorage", "unknown")]
 #[case::unknown_sha256(girt::ObjectFormat::Sha256, "refStorage", "unknown")]
 fn unsupported_backends_fail_open(

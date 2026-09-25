@@ -1,6 +1,6 @@
-//! Git's files reference backend: names, conditional transactions, and reflogs.
+//! Git references, conditional transactions and reflogs across files and reftable storage.
 //!
-//! [`References`] reads loose refs before packed refs and separates symbolic resolution from
+//! The files backend reads loose refs before packed refs and separates symbolic resolution from
 //! object lookup. [`References::transaction`] checks a batch before sequential publication and
 //! exposes partial results. [`Reflog`] selects explicit history policy; the separately named
 //! no-reflog methods remain available for callers that deliberately omit recovery records.
@@ -16,5 +16,5 @@ mod transaction;
 pub use enumerate::Reference;
 pub use name::{InvalidRefName, RefName};
 pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
-pub use store::{Expected, ReferenceError, References, Resolution, Target};
+pub use store::{Backend, Expected, ReferenceError, References, Resolution, Target};
 pub use transaction::{LogOutcome, RefEdit, RefEditOutcome, RefOutcome, TransactionError};

@@ -124,3 +124,67 @@ fn compaction_never_steals_stack_lock() {
         b"other writer"
     );
 }
+
+#[test]
+fn interrupted_list_publication_preserves_old_stack_and_leaves_unlisted_table() {
+    use crate::refs::store::Lock;
+    let root = fixture("sha1");
+    let directory = root.path().join(".git/reftable").canonicalize().unwrap();
+    let before = fs::read(directory.join("tables.list")).unwrap();
+    let snapshot = Snapshot::read(
+        &directory,
+        ObjectFormat::Sha1,
+        StackLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let lock = Lock::acquire(directory.join("tables.list")).unwrap();
+    let bytes = snapshot.table.encode(super::Limits::default()).unwrap();
+    let count = fs::read_dir(&directory).unwrap().count();
+    assert!(
+        super::stack::publish_with(
+            &lock,
+            &snapshot.names,
+            &snapshot.table,
+            &bytes,
+            StackLimits::default(),
+            || Err(std::io::Error::other("injected before list replacement"))
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(directory.join("tables.list")).unwrap(), before);
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), count + 1);
+    drop(lock);
+    let after = Snapshot::read(
+        &directory,
+        ObjectFormat::Sha1,
+        StackLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(after.table, snapshot.table);
+}
+
+#[test]
+fn compaction_respects_existing_compactor_table_lock() {
+    let root = fixture("sha1");
+    let directory = root.path().join(".git/reftable");
+    let before = fs::read_to_string(directory.join("tables.list")).unwrap();
+    let lock = directory.join(format!("{}.lock", before.lines().next().unwrap()));
+    fs::write(&lock, b"other compactor").unwrap();
+    assert!(matches!(
+        compact(
+            &directory,
+            ObjectFormat::Sha1,
+            StackLimits::default(),
+            &AtomicBool::new(false)
+        ),
+        Err(ReferenceError::Locked(_))
+    ));
+    assert_eq!(
+        fs::read_to_string(directory.join("tables.list")).unwrap(),
+        before
+    );
+    assert_eq!(fs::read(lock).unwrap(), b"other compactor");
+    assert!(!directory.join("tables.list.lock").exists());
+}

@@ -60,11 +60,15 @@ pub struct Repository {
     format_version: u32,
     object_format: ObjectFormat,
     shallow: ShallowRoots,
+    reference_backend: crate::refs::Backend,
 }
 
 /// Repository location, metadata, configuration or supported-format failure.
 #[derive(Debug, Error)]
 pub enum OpenError {
+    /// Reftable HEAD metadata could not be read for branch-conditional configuration.
+    #[error(transparent)]
+    References(#[from] crate::refs::ReferenceError),
     /// The opened checkout belongs to a different common repository.
     #[error("unrelated common repository: {0}")]
     Unrelated(PathBuf),
@@ -114,7 +118,12 @@ pub enum OpenError {
 }
 
 impl Repository {
-    /// Borrows this repository's files-backend reference store.
+    /// Returns the on-disk reference backend selected by local repository configuration.
+    pub fn reference_backend(&self) -> crate::refs::Backend {
+        self.reference_backend
+    }
+
+    /// Borrows this repository's reference store.
     ///
     /// Uses the detected common/worktree directories. See [`crate::refs::References`] for the
     /// byte-name, platform, read and explicit no-reflog update boundaries.
@@ -122,7 +131,7 @@ impl Repository {
     /// # Errors
     ///
     /// Reference storage supports Unix and Windows local filesystems. Repository
-    /// backends such as reftable are rejected by [`Self::open`] before a handle can be constructed.
+    /// unknown backends are rejected by [`Self::open`] before a handle can be constructed.
     pub fn references(&self) -> Result<crate::refs::References<'_>, crate::refs::ReferenceError> {
         crate::refs::References::new(self)
     }
@@ -169,6 +178,28 @@ impl Repository {
     pub fn open_with_config(
         path: impl AsRef<Path>,
         inputs: &ConfigInputs,
+    ) -> Result<Self, OpenError> {
+        Self::open_with_config_and_reference_limits(
+            path,
+            inputs,
+            crate::refs::reftable::StackLimits::default(),
+        )
+    }
+
+    /// Opens configured metadata with explicit reftable HEAD-reading budgets.
+    ///
+    /// Reftable HEAD supplies branch-conditional include context. These bounds apply to that
+    /// bootstrap stack read; reference operations select their own budgets with
+    /// [`crate::refs::References::with_reftable_limits`]. Files repositories ignore these bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::open_with_config`]'s errors, including bounded reftable decoding failures.
+    /// The operation does not mutate the repository or retry a raced stack read.
+    pub fn open_with_config_and_reference_limits(
+        path: impl AsRef<Path>,
+        inputs: &ConfigInputs,
+        reference_limits: crate::refs::reftable::StackLimits,
     ) -> Result<Self, OpenError> {
         let input = path.as_ref();
         let metadata = match fs::metadata(input) {
@@ -242,6 +273,10 @@ impl Repository {
             source,
         })?;
         let (format_version, object_format) = validate_config(&config, &config_path)?;
+        let reference_backend = match config.value("extensions", None, "refstorage") {
+            Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
+            _ => crate::refs::Backend::Files,
+        };
         let mut inputs = inputs.clone();
         inputs.context.git_dirs.push(git_dir.clone());
         if let Some(logical_git_dir) = logical_git_dir {
@@ -250,7 +285,28 @@ impl Repository {
         let head = read(&git_dir.join("HEAD"))?;
         let head = head.strip_suffix(b"\n").unwrap_or(&head);
         let head = head.strip_suffix(b"\r").unwrap_or(head);
-        inputs.context.branch = head.strip_prefix(b"ref: refs/heads/").map(<[u8]>::to_vec);
+        inputs.context.branch = if reference_backend == crate::refs::Backend::Reftable {
+            let snapshot = crate::refs::reftable::Snapshot::read(
+                &git_dir.join("reftable"),
+                object_format,
+                reference_limits,
+                &std::sync::atomic::AtomicBool::new(false),
+            )?;
+            snapshot
+                .table
+                .references
+                .into_iter()
+                .find(|record| record.name.as_bytes() == b"HEAD")
+                .and_then(|record| match record.target {
+                    Some(crate::refs::Target::Symbolic(name)) => name
+                        .as_bytes()
+                        .strip_prefix(b"refs/heads/")
+                        .map(<[u8]>::to_vec),
+                    _ => None,
+                })
+        } else {
+            head.strip_prefix(b"ref: refs/heads/").map(<[u8]>::to_vec)
+        };
         inputs.files.push(ConfigFile {
             path: config_path.clone(),
             scope: ConfigScope::Local,
@@ -305,6 +361,7 @@ impl Repository {
             format_version,
             object_format,
             shallow,
+            reference_backend,
         })
     }
 
@@ -487,7 +544,8 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
                     && !entry.name.eq_ignore_ascii_case(b"relativeworktrees")
                     && !entry.name.eq_ignore_ascii_case(b"noop")
                     && !entry.name.eq_ignore_ascii_case(b"preciousobjects")
-                    && !entry.name.eq_ignore_ascii_case(b"partialclone"))
+                    && !entry.name.eq_ignore_ascii_case(b"partialclone")
+                    && !entry.name.eq_ignore_ascii_case(b"refstorage"))
         {
             return Err(unsupported(
                 path,
@@ -514,6 +572,14 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
     extension_boolean(config, path, "preciousobjects")?;
     if config.value("extensions", None, "partialclone") == Some(None) {
         return Err(malformed(path, "implicit extensions.partialClone"));
+    }
+    if let Some(value) = config.value("extensions", None, "refstorage")
+        && (version != 1 || !matches!(value, Some(b"files" | b"reftable")))
+    {
+        return Err(unsupported(
+            path,
+            "unknown or version-zero extensions.refStorage",
+        ));
     }
     let mut object_format = ObjectFormat::Sha1;
     if let Some(value) = config.value("extensions", None, "objectformat") {

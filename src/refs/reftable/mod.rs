@@ -4,11 +4,12 @@
 //! precedence and filesystem publication are separate operations. Binary log timestamps retain
 //! their full unsigned range independently of [`crate::Signature`]'s signed interpretation.
 
+pub(crate) mod backend;
 mod decode;
 mod encode;
 mod records;
 mod stack;
-pub use records::{Error, Limits, LogRecord, LogValue, RefRecord, Table};
+pub use records::{Error, Limits, LogRecord, LogValue, RecordName, RefRecord, Table};
 pub use stack::{Compaction, Snapshot, StackLimits, compact};
 
 #[cfg(test)]

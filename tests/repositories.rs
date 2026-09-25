@@ -241,7 +241,7 @@ fn git_generated_quoted_subsections_and_repeated_keys() {
 
 #[rstest]
 #[case::unknown_extension("extensions.future", "true", "extensions.future")]
-#[case::ref_storage("extensions.refStorage", "reftable", "extensions.refstorage")]
+#[case::ref_storage("extensions.refStorage", "unknown", "extensions.refStorage")]
 #[case::future_version("core.repositoryFormatVersion", "2", "repository format version 2")]
 fn rejects_unsupported_without_mutation(
     #[case] key: &str,
@@ -692,7 +692,7 @@ fn discovers_linked_worktree_before_parent_repository() {
 }
 
 #[rstest]
-#[case::reftable("sha1", Some(("extensions.refStorage", "reftable")))]
+#[case::unknown_backend("sha1", Some(("extensions.refStorage", "unknown")))]
 fn discovery_and_initialization_reject_unsupported_without_changes(
     #[case] format: &str,
     #[case] extension: Option<(&str, &str)>,

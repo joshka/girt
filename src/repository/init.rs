@@ -33,6 +33,9 @@ pub enum InitError {
         #[source]
         source: io::Error,
     },
+    /// Reftable initial-record encoding failed; newly created metadata may remain.
+    #[error(transparent)]
+    Reftable(#[from] crate::refs::reftable::Error),
     /// Inspecting existing metadata or opening the newly created repository failed.
     #[error(transparent)]
     Open(#[from] OpenError),
@@ -50,7 +53,12 @@ impl Repository {
                 git_dir
             }
         };
-        populate(&git_dir, kind, crate::ObjectFormat::Sha1)?;
+        populate(
+            &git_dir,
+            kind,
+            crate::ObjectFormat::Sha1,
+            crate::refs::Backend::Files,
+        )?;
         Ok(Self::open(path)?)
     }
 
@@ -96,6 +104,25 @@ impl Repository {
         path: impl AsRef<Path>,
         kind: InitKind,
     ) -> Result<Self, InitError> {
+        Self::init_with_backend(format, path, kind, crate::refs::Backend::Files)
+    }
+
+    /// Creates an empty repository with explicit object format and reference backend.
+    ///
+    /// Reftable initialization writes version-1 configuration, an unborn HEAD record and Git's
+    /// compatibility markers. Files initialization is identical to [`Self::init`]. Existing data,
+    /// templates and global configuration are never imported.
+    ///
+    /// # Errors
+    ///
+    /// Inherits [`Self::init`]'s exclusive creation, retained partial metadata and durability
+    /// contracts. Reftable encoding errors retain any newly created metadata for inspection.
+    pub fn init_with_backend(
+        format: crate::ObjectFormat,
+        path: impl AsRef<Path>,
+        kind: InitKind,
+        backend: crate::refs::Backend,
+    ) -> Result<Self, InitError> {
         let path = path.as_ref();
         if has_marker(path)? {
             // Preserve unsupported format/layout errors before any mutation.
@@ -121,12 +148,20 @@ impl Repository {
                 git_dir
             }
         };
-        populate(&git_dir, kind, format)?;
+        populate(&git_dir, kind, format, backend)?;
         Ok(Self::open(path)?)
     }
 }
 
-fn populate(git_dir: &Path, kind: InitKind, format: crate::ObjectFormat) -> Result<(), InitError> {
+fn populate(
+    git_dir: &Path,
+    kind: InitKind,
+    format: crate::ObjectFormat,
+    backend: crate::refs::Backend,
+) -> Result<(), InitError> {
+    if backend == crate::refs::Backend::Reftable {
+        return populate_reftable(git_dir, kind, format);
+    }
     for name in [
         "objects",
         "objects/info",
@@ -143,6 +178,56 @@ fn populate(git_dir: &Path, kind: InitKind, format: crate::ObjectFormat) -> Resu
     head.extend_from_slice(initial_branch().as_bytes());
     head.push(b'\n');
     create_file(&git_dir.join("HEAD"), &head)
+}
+
+fn populate_reftable(
+    git_dir: &Path,
+    kind: InitKind,
+    format: crate::ObjectFormat,
+) -> Result<(), InitError> {
+    use crate::refs::Target;
+    use crate::refs::reftable::{Limits, RefRecord, Table};
+    for name in [
+        "objects",
+        "objects/info",
+        "objects/pack",
+        "refs",
+        "reftable",
+    ] {
+        create_directory(&git_dir.join(name))?;
+    }
+    let config = format!(
+        "[core]\n\trepositoryformatversion = 1\n\tbare = {}\n[extensions]\n\tobjectformat = {}\n\trefStorage = reftable\n",
+        kind == InitKind::Bare,
+        if format == crate::ObjectFormat::Sha1 {
+            "sha1"
+        } else {
+            "sha256"
+        }
+    );
+    create_file(&git_dir.join("config"), config.as_bytes())?;
+    let table = Table {
+        format,
+        min_update_index: 1,
+        max_update_index: 1,
+        references: vec![RefRecord {
+            name: RefName::new(b"HEAD").unwrap().into(),
+            update_index: 1,
+            target: Some(Target::Symbolic(initial_branch())),
+            peeled: None,
+        }],
+        logs: Vec::new(),
+    };
+    create_file(
+        &git_dir.join("reftable/initial.ref"),
+        &table.encode(Limits::default())?,
+    )?;
+    create_file(&git_dir.join("reftable/tables.list"), b"initial.ref\n")?;
+    create_file(
+        &git_dir.join("refs/heads"),
+        b"this repository uses the reftable format\n",
+    )?;
+    create_file(&git_dir.join("HEAD"), b"ref: refs/heads/.invalid\n")
 }
 
 // Initialization owns these defaults, including exact bytes used by clone's config precondition.
@@ -279,7 +364,15 @@ mod tests {
     fn partial_population_failure_preserves_files_and_omits_head() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("config"), b"another writer").unwrap();
-        assert!(populate(root.path(), InitKind::Bare, crate::ObjectFormat::Sha1).is_err());
+        assert!(
+            populate(
+                root.path(),
+                InitKind::Bare,
+                crate::ObjectFormat::Sha1,
+                crate::refs::Backend::Files
+            )
+            .is_err()
+        );
         assert_eq!(
             fs::read(root.path().join("config")).unwrap(),
             b"another writer"

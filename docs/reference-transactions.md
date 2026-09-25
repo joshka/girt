@@ -78,3 +78,40 @@ survival.
 The executable [reference transaction example](../examples/reference_transaction.rs) demonstrates
 unborn publication, retained deletion history, absent-or-same retention refs and explicit ref/log
 deletion. [R11 evidence](evidence/r11.md) identifies exact tested revisions and platform results.
+
+## Reftable Backend
+
+R37 adds configured reftable storage behind the existing `References` operations. See
+[its acceptance and evidence](evidence/r37.md). `Repository::init_with_backend` selects files or
+reftable for a new repository. Opening reads the real reftable HEAD for branch-conditional config;
+`open_with_config_and_reference_limits` selects its bootstrap budgets. `References` independently
+selects operation budgets with `with_reftable_limits`.
+
+Each stack snapshot pins the listed immutable files before decoding, then owns the merged records
+without retained file handles. A missing table fails one attempt; callers may explicitly reopen.
+Reads across separate calls or common/private stacks are not a single global snapshot. The codec
+preserves uppercase pseudorefs and arbitrary binary reflog fields. Ordinary edits retain the
+`HEAD`/`refs/` namespace. Interpreted reflogs strip one final message newline and reject timestamps
+above signed `i64`; the raw snapshot preserves those timestamps for compaction and other consumers.
+
+Writers lock common/private `tables.list` files in path order, check expectations, symbolic chains,
+namespace overlap and output budgets, then publish immutable tables followed by stack lists. One
+stack exposes refs and logs together. A linked-worktree transaction may publish the common branch
+and its log before its private HEAD log; errors retain exact per-reference and per-log outcomes.
+Colocation keeps those locks while publishing the index first. `transaction_controlled` checks
+cancellation during preparation and between stack publications; files-backend cancellation is
+limited to the initial check.
+
+Compaction locks the complete stack and every input table, retains live refs/logs, discards
+full-stack tombstones and replaces the list. It holds the stack lock during encoding, so competing
+writers fail immediately. Unlink failures are reported after successful publication. Failed list
+publication can leave an unlisted immutable table; process termination can leave locks. There is no
+automatic orphan collection, stale-lock stealing, log expiry, fsync or power-loss durability.
+
+Default per-stack limits are 1,024 table handles, a 1 MiB list, 64 MiB encoded data, one million
+records (including accelerators), 128 MiB aggregate decoded payload accounting, 1 MiB strings and
+16,777,215-byte blocks. Container overhead, transient buffers and independently retained snapshots
+are additional bounded allocations; these limits do not claim a process-wide RSS cap. Linked
+worktrees may hold two independently bounded stacks. Cancellation is cooperative between bounded
+table decodes, not a hard CPU or filesystem latency guarantee. Raising limits or explicit compaction
+is required before a publication that would exceed its resulting-stack budget.

@@ -5,7 +5,27 @@ use std::path::{Path, PathBuf};
 use super::{RefName, packed};
 use crate::{ObjectId, Repository};
 
-/// A files-backend reference store borrowed from an opened [`Repository`].
+/// A reference store using the opened [`Repository`]'s configured backend.
+///
+/// Reftable operations read owned bounded stack snapshots. Each public read takes a fresh
+/// snapshot; separate reads or symbolic hops are not a shared snapshot. Use
+/// [`super::reftable::Snapshot`] to retain a complete generation. Reads make one attempt and
+/// report missing tables during concurrent compaction; callers decide whether to retry.
+/// [`Self::with_reftable_limits`] selects per-stack budgets. Binary logs preserve arbitrary
+/// fields through the codec; [`Self::reflog`] interprets signed timestamps and removes one trailing
+/// message newline. Other uppercase pseudorefs are preserved by the codec and compaction but
+/// remain outside [`RefName`]'s operation namespace.
+///
+/// Reftable writes hold common/private `tables.list.lock` files in path order, validate every
+/// edit and result budget, and publish one immutable table per affected stack. Each stack's
+/// references and logs become visible together. A linked-worktree edit can span two stacks:
+/// publication follows path order and failures report completed per-reference/per-log effects.
+/// No automatic compaction, expiry, fsync or retry occurs. Failed list publication may leave an
+/// unlisted immutable table; readers ignore it. Explicit [`super::reftable::compact`] preserves
+/// live logs and reports obsolete-file cleanup failures. Owned locks use best-effort cleanup;
+/// termination can leave stale locks requiring caller-authorized recovery.
+///
+/// The following storage details describe the files backend.
 ///
 /// Supports SHA-1 and SHA-256 references on Unix and Windows local filesystems. Repository
 /// configuration selects the format; mixed-format targets and expectations fail before locks are
@@ -32,7 +52,17 @@ use crate::{ObjectId, Repository};
 /// directory ACLs. Existing destination ACLs and crash durability are not preserved guarantees.
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
+    pub(super) reftable_limits: super::reftable::StackLimits,
     pub(super) repository: &'a Repository,
+}
+
+/// On-disk reference storage selected by repository configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Backend {
+    /// Loose references, packed references and files reflogs.
+    Files,
+    /// Immutable reference/reflog tables and a stack ordering file.
+    Reftable,
 }
 
 /// The stored value of one reference, before symbolic resolution.
@@ -49,7 +79,7 @@ pub enum Target {
 pub enum Expected {
     /// Accept any valid current value or absence.
     Any,
-    /// Require neither a loose nor a packed value; deletion then succeeds without a change.
+    /// Require no effective stored value; deletion then succeeds without a change.
     Absent,
     /// Require this exact direct ID or symbolic name (without dereferencing it).
     Value(Target),
@@ -143,10 +173,16 @@ impl<'a> References<'a> {
                 "reference storage on this platform",
             ));
         }
-        Ok(Self { repository })
+        Ok(Self {
+            repository,
+            reftable_limits: super::reftable::StackLimits::default(),
+        })
     }
 
     /// Reads a stored direct or symbolic target without following symbolic links.
+    ///
+    /// Reftable uses the snapshot/publication contract on [`References`]. The files-backend
+    /// storage details below do not apply to reftable.
     ///
     /// Returns `None` for an absent name. Packed records are consulted only when the loose file
     /// is absent; per-worktree names never use packed fallback. A directory at the exact name
@@ -157,6 +193,9 @@ impl<'a> References<'a> {
     /// Reports I/O, malformed loose/packed data, unsupported packed traits, and filesystem
     /// symlinks.
     pub fn read(&self, name: &RefName) -> Result<Option<Target>, ReferenceError> {
+        if self.repository.reference_backend() == Backend::Reftable {
+            return super::reftable::backend::read(self, name);
+        }
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
             return parse_loose(self.repository.object_format(), &bytes, &path).map(Some);
@@ -203,6 +242,9 @@ impl<'a> References<'a> {
 
     /// Replaces the named reference itself, without dereferencing it or writing reflogs.
     ///
+    /// Reftable uses the snapshot/publication contract on [`References`]. The files-backend
+    /// storage details below do not apply to reftable.
+    ///
     /// `expected` compares its stored target, including any packed value. The new loose file
     /// shadows packed data; packed-refs is never rewritten. Symbolic targets may be dangling or
     /// cyclic, except HEAD itself must point into `refs/`. IDs must be nonzero, but object
@@ -235,6 +277,10 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        if self.repository.reference_backend() == Backend::Reftable {
+            return super::reftable::backend::single(self, name, Some(target), expected, false)
+                .map(|_| ());
+        }
         validate_expected(self.repository.object_format(), &expected)?;
         if name.as_bytes() == b"HEAD"
             && matches!(&target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
@@ -252,6 +298,9 @@ impl<'a> References<'a> {
 
     /// Advances a terminal direct/missing reference while keeping the symbolic chain unchanged.
     ///
+    /// Reftable uses the snapshot/publication contract on [`References`]. The files-backend
+    /// storage details below do not apply to reftable.
+    ///
     /// Holds `packed-refs.lock` and every visited name's lock through publication, with the same
     /// no-reflog, namespace, cleanup, concurrency and durability contracts as
     /// [`Self::update_without_reflog`]. `expected` applies to the terminal name, so `Absent` can
@@ -268,6 +317,16 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        if self.repository.reference_backend() == Backend::Reftable {
+            return super::reftable::backend::single(
+                self,
+                name,
+                Some(Target::Direct(id)),
+                expected,
+                true,
+            )
+            .map(|outcome| outcome.name);
+        }
         validate_expected(self.repository.object_format(), &expected)?;
         let target = Target::Direct(id);
         validate_target(self.repository.object_format(), &target)?;
@@ -311,6 +370,9 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        if self.repository.reference_backend() == Backend::Reftable {
+            return super::reftable::backend::single(self, name, None, expected, false).map(|_| ());
+        }
         validate_expected(self.repository.object_format(), &expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
@@ -348,6 +410,10 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        if self.repository.reference_backend() == Backend::Reftable {
+            return super::reftable::backend::single(self, name, None, expected, true)
+                .map(|outcome| outcome.name);
+        }
         validate_expected(self.repository.object_format(), &expected)?;
         let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();

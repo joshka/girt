@@ -5,7 +5,7 @@ use crate::{ObjectFormat, ObjectId};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefRecord {
     /// Full reference name.
-    pub name: RefName,
+    pub name: RecordName,
     /// Transaction that last changed this reference.
     pub update_index: u64,
     /// Stored target, or a deletion tombstone.
@@ -37,7 +37,7 @@ pub struct LogValue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogRecord {
     /// Reference whose history contains the record.
-    pub name: RefName,
+    pub name: RecordName,
     /// Transaction index; records sort newest first within each name.
     pub update_index: u64,
     /// Record data, or a tombstone hiding this exact key in older tables.
@@ -104,4 +104,50 @@ pub enum Error {
     /// A caller-selected budget was exhausted before allocation or processing.
     #[error("reftable resource limit: {0}")]
     Limit(&'static str),
+}
+
+/// A table key name, including Git's uppercase pseudorefs.
+///
+/// Reference operations use [`RefName`]; the wider binary codec also preserves names such as
+/// `ORIG_HEAD` while compacting a private worktree stack.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RecordName(Vec<u8>);
+
+impl RecordName {
+    /// Validates a full reference name or uppercase/underscore pseudoref.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty names, invalid full references and other one-level names.
+    pub fn new(bytes: impl AsRef<[u8]>) -> Result<Self, Error> {
+        let bytes = bytes.as_ref();
+        if RefName::new(bytes).is_err()
+            && (bytes.is_empty() || !bytes.iter().all(|b| b.is_ascii_uppercase() || *b == b'_'))
+        {
+            return Err(Error::Malformed("table record name"));
+        }
+        Ok(Self(bytes.to_vec()))
+    }
+
+    /// Returns the exact stored name bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Interprets a name within the public `HEAD`/`refs/` operation namespace.
+    pub fn reference_name(&self) -> Option<RefName> {
+        RefName::new(&self.0).ok()
+    }
+}
+
+impl From<RefName> for RecordName {
+    fn from(name: RefName) -> Self {
+        Self(name.as_bytes().to_vec())
+    }
+}
+
+impl PartialEq<RefName> for RecordName {
+    fn eq(&self, other: &RefName) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
 }

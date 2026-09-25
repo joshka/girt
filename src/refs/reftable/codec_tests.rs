@@ -12,19 +12,19 @@ fn table(format: ObjectFormat) -> Table {
         max_update_index: 2,
         references: vec![
             RefRecord {
-                name: name(b"HEAD"),
+                name: name(b"HEAD").into(),
                 update_index: 1,
                 target: Some(Target::Symbolic(name(b"refs/heads/main"))),
                 peeled: None,
             },
             RefRecord {
-                name: name(b"refs/deleted"),
+                name: name(b"refs/deleted").into(),
                 update_index: 2,
                 target: None,
                 peeled: None,
             },
             RefRecord {
-                name: name(b"refs/heads/main"),
+                name: name(b"refs/heads/main").into(),
                 update_index: 2,
                 target: Some(Target::Direct(id)),
                 peeled: Some(id),
@@ -32,7 +32,7 @@ fn table(format: ObjectFormat) -> Table {
         ],
         logs: vec![
             LogRecord {
-                name: name(b"HEAD"),
+                name: name(b"HEAD").into(),
                 update_index: 2,
                 value: Some(LogValue {
                     old: id,
@@ -45,7 +45,7 @@ fn table(format: ObjectFormat) -> Table {
                 }),
             },
             LogRecord {
-                name: name(b"HEAD"),
+                name: name(b"HEAD").into(),
                 update_index: 1,
                 value: None,
             },
@@ -142,4 +142,33 @@ fn rejects_mixed_hash_formats() {
         table.encode(Limits::default()),
         Err(Error::Malformed(_))
     ));
+}
+
+#[rstest]
+#[case::prefix(28, 1)]
+#[case::reserved_value(29, 36)]
+#[case::update_range(34, 127)]
+#[case::block_length(27, 1)]
+fn rejects_corrupt_reference_framing(#[case] offset: usize, #[case] value: u8) {
+    let mut bytes = table(ObjectFormat::Sha1).encode(Limits::default()).unwrap();
+    bytes[offset] = value;
+    assert!(Table::decode(&bytes, Limits::default()).is_err());
+}
+
+#[test]
+fn rejects_corrupt_restart_pointer() {
+    let mut bytes = table(ObjectFormat::Sha1).encode(Limits::default()).unwrap();
+    let block_len = u32::from_be_bytes([0, bytes[25], bytes[26], bytes[27]]) as usize;
+    let count = u16::from_be_bytes(bytes[block_len - 2..block_len].try_into().unwrap()) as usize;
+    bytes[block_len - 2 - count * 3 + 2] += 1;
+    assert!(Table::decode(&bytes, Limits::default()).is_err());
+}
+
+#[test]
+fn rejects_corrupt_compressed_log() {
+    let mut bytes = table(ObjectFormat::Sha1).encode(Limits::default()).unwrap();
+    let footer = bytes.len() - 68;
+    let log = u64::from_be_bytes(bytes[footer + 48..footer + 56].try_into().unwrap()) as usize;
+    bytes[log + 4] = 0;
+    assert!(Table::decode(&bytes, Limits::default()).is_err());
 }

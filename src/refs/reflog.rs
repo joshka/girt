@@ -19,7 +19,8 @@ pub struct ReflogEntry {
     pub new: ObjectId,
     /// Caller-supplied identity, Unix seconds and timezone.
     pub committer: Signature,
-    /// Single-line message bytes, without the tab separator or final newline.
+    /// Message bytes without the files separator or final newline. Imported binary records may
+    /// retain embedded control bytes.
     pub message: Vec<u8>,
 }
 
@@ -119,6 +120,11 @@ impl ReflogEntry {
 impl References<'_> {
     /// Reads a complete reflog in oldest-to-newest order, or returns `None` if absent.
     ///
+    /// Reftable uses a bounded snapshot, omits tombstones and strips one trailing message newline.
+    /// It returns `None` when no live log records remain. Unsigned timestamps beyond `i64` fail
+    /// interpretation; use [`super::reftable::Snapshot`] for lossless access. The remaining
+    /// live-file details below describe the files backend.
+    ///
     /// Uses the same worktree routing as references. Reads are live and may see an incomplete
     /// append by another writer. Memory is proportional to the whole log; expiry and streaming
     /// reads are deferred.
@@ -127,6 +133,9 @@ impl References<'_> {
     ///
     /// Reports filesystem, symlink, and malformed-record errors, including a truncated tail.
     pub fn reflog(&self, name: &RefName) -> Result<Option<Vec<ReflogEntry>>, ReferenceError> {
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            return super::reftable::backend::reflog(self, name);
+        }
         let path = self.reflog_path(name)?;
         read_optional(&path)?
             .map(|bytes| parse(self.repository.object_format(), &bytes, &path))

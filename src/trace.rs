@@ -170,7 +170,7 @@ pub(crate) fn push_failure(error: &crate::push::PushFailure) -> &'static str {
     }
 }
 
-fn reference(error: &crate::refs::ReferenceError) -> &'static str {
+pub(crate) fn reference(error: &crate::refs::ReferenceError) -> &'static str {
     use crate::refs::ReferenceError::*;
     match error {
         ObjectFormat(_) | Unsupported(_) => "unsupported",

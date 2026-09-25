@@ -241,7 +241,7 @@ fn packed_failure_preserves_loose_and_packed_outcomes(#[case] format: crate::Obj
     packed(&repo);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[deletion("refs/tags/a")])
+        .prepare_files_transaction(&[deletion("refs/tags/a")])
         .unwrap();
     // A directory forces rename failure after successful preparation.
     fs::remove_file(repo.git_dir().join("packed-refs")).unwrap();
@@ -263,7 +263,7 @@ fn packed_first_failure_reports_all_removals_and_retains_loose(
     packed(&repo);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[deletion("refs/tags/a"), deletion("refs/tags/b")])
+        .prepare_files_transaction(&[deletion("refs/tags/a"), deletion("refs/tags/b")])
         .unwrap();
     fs::create_dir(repo.git_dir().join("refs/tags/a")).unwrap();
     let Err(TransactionError::Publish { outcomes, source }) = prepared.publish() else {
@@ -283,7 +283,7 @@ fn second_ref_failure_retains_first_ref_and_log(#[case] format: crate::ObjectFor
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
+        .prepare_files_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
         .unwrap();
     fs::create_dir(repo.git_dir().join("refs/tags/b")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
@@ -307,7 +307,7 @@ fn log_failure_leaves_published_ref_and_stops_batch(#[case] format: crate::Objec
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
+        .prepare_files_transaction(&[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")])
         .unwrap();
     fs::create_dir(repo.git_dir().join("logs/refs/tags/a")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
@@ -393,7 +393,7 @@ fn locks_remain_owned_after_ref_publication_until_logs_finish(#[case] format: cr
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let prepared = refs
-        .prepare_transaction(&[edit(format, "refs/tags/a")])
+        .prepare_files_transaction(&[edit(format, "refs/tags/a")])
         .unwrap();
     prepared.locks[&name("refs/tags/a")]
         .publish_retaining_lock(format!("{}\n", id(format, 1)).as_bytes())
@@ -412,7 +412,7 @@ fn failing_second_chain_log_preserves_first_log_outcome(#[case] format: crate::O
     let refs = repo.references().unwrap();
     let mut head = edit(format, "HEAD");
     head.dereference = true;
-    let prepared = refs.prepare_transaction(&[head]).unwrap();
+    let prepared = refs.prepare_files_transaction(&[head]).unwrap();
     fs::create_dir(repo.git_dir().join("logs/refs/heads/main")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
         panic!("expected failure")
@@ -606,7 +606,7 @@ fn detachment_resolves_multiple_hops_to_packed_old_tip(#[case] format: crate::Ob
         format!("{} refs/heads/old\n", id(format, 2)),
     )
     .unwrap();
-    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
+    let prepared = refs.prepare_files_transaction(&[detach(format)]).unwrap();
     assert!(prepared.locks.contains_key(&name("HEAD")));
     assert!(prepared.locks.contains_key(&name("refs/heads/main")));
     assert!(prepared.locks.contains_key(&name("refs/heads/old")));
@@ -661,7 +661,7 @@ fn detachment_locks_unborn_dependency_against_concurrent_creation(
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
-    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
+    let prepared = refs.prepare_files_transaction(&[detach(format)]).unwrap();
     let writer = std::thread::scope(|scope| {
         scope
             .spawn(|| {
@@ -724,7 +724,7 @@ fn failed_detachment_log_reports_published_head_without_changing_old_branch(
     let (_temp, repo) = fixture(format);
     old_branch(&repo, Some(id(format, 2)));
     let refs = repo.references().unwrap();
-    let prepared = refs.prepare_transaction(&[detach(format)]).unwrap();
+    let prepared = refs.prepare_files_transaction(&[detach(format)]).unwrap();
     fs::create_dir(repo.git_dir().join("logs/HEAD")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
         panic!("expected append failure")
@@ -953,7 +953,7 @@ fn failed_log_deletion_reports_published_reference(#[case] format: crate::Object
         .unwrap();
     let mut delete = deletion("refs/heads/topic");
     delete.reflog = Reflog::Delete;
-    let prepared = refs.prepare_transaction(&[delete]).unwrap();
+    let prepared = refs.prepare_files_transaction(&[delete]).unwrap();
     let log_path = repo.git_dir().join("logs/refs/heads/topic");
     fs::remove_file(&log_path).unwrap();
     fs::create_dir(&log_path).unwrap();

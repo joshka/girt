@@ -7,12 +7,18 @@ on:
       - 'tests/references_portable.rs'
       - '.github/workflows/references.yml'
   workflow_dispatch:
+    inputs:
+      reftable_only:
+        description: Run focused reftable acceptance and resource checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   references:
+    if: ${{ !inputs.reftable_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -55,3 +61,37 @@ jobs:
         run: cargo +stable run --locked --no-default-features --example reference_transaction
       - name: Clippy
         run: cargo +stable clippy --locked --no-default-features --lib --test references_portable --example reference_transaction -- -D warnings
+
+  reftable:
+    if: ${{ inputs.reftable_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Environment
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Reference codec, stack, race and fault cases
+        run: "cargo +stable test --locked --all-features --lib refs::"
+      - name: Repository and public backend workflows
+        run: cargo +stable test --locked --all-features --test reftable --test repositories --test references_portable --test colocation
+      - name: Scoped Clippy
+        run: cargo +stable clippy --locked --all-features --lib --test reftable --test repositories --test references_portable --test colocation --example reftable_resources --bench reftable -- -D warnings
+      - name: Build isolated resource probe
+        run: cargo +stable build --locked --release --example reftable_resources
+      - name: Owned snapshot and compaction resources
+        run: python tests/fixtures/reftable/measure.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reftable-${{ matrix.os }}
+          path: reftable-resources.json

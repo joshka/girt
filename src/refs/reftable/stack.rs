@@ -42,6 +42,9 @@ pub struct Snapshot {
     /// key.
     pub table: Table,
     pub(super) names: Vec<String>,
+    pub(super) used_bytes: usize,
+    pub(super) used_records: usize,
+    pub(super) used_decoded: usize,
 }
 
 impl Snapshot {
@@ -56,6 +59,24 @@ impl Snapshot {
     /// Reports I/O, malformed names/order/data, format mismatch, cancellation and exhausted
     /// aggregate budgets. No filesystem mutation or automatic retry occurs.
     pub fn read(
+        directory: &Path,
+        format: ObjectFormat,
+        limits: StackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, ReferenceError> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(target: "girt", "reftable.snapshot", outcome = "incomplete", failure_class = tracing::field::Empty);
+        let operation = || Self::read_inner(directory, format, limits, cancel);
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = operation();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, crate::trace::reference);
+        result
+    }
+
+    fn read_inner(
         directory: &Path,
         format: ObjectFormat,
         limits: StackLimits,
@@ -125,6 +146,9 @@ impl Snapshot {
                 logs: logs.into_values().collect(),
             },
             names,
+            used_bytes: limits.records.bytes - remaining.bytes,
+            used_records: limits.records.records - remaining.records,
+            used_decoded: limits.records.decoded_bytes - remaining.decoded_bytes,
         })
     }
 }
@@ -155,6 +179,24 @@ pub struct Compaction {
 /// Successful publication with failed obsolete-file cleanup is returned as
 /// [`Compaction::retained`].
 pub fn compact(
+    directory: &Path,
+    format: ObjectFormat,
+    limits: StackLimits,
+    cancel: &AtomicBool,
+) -> Result<Compaction, ReferenceError> {
+    #[cfg(feature = "tracing")]
+    let span = tracing::debug_span!(target: "girt", "reftable.compact", outcome = "incomplete", failure_class = tracing::field::Empty);
+    let operation = || compact_inner(directory, format, limits, cancel);
+    #[cfg(feature = "tracing")]
+    let result = span.in_scope(operation);
+    #[cfg(not(feature = "tracing"))]
+    let result = operation();
+    #[cfg(feature = "tracing")]
+    crate::trace::finish(&span, &result, crate::trace::reference);
+    result
+}
+
+fn compact_inner(
     directory: &Path,
     format: ObjectFormat,
     limits: StackLimits,
@@ -204,6 +246,17 @@ pub(super) fn publish(
     bytes: &[u8],
     limits: StackLimits,
 ) -> Result<(), ReferenceError> {
+    publish_with(lock, names, table, bytes, limits, || Ok(()))
+}
+
+pub(super) fn publish_with(
+    lock: &Lock,
+    names: &[String],
+    table: &Table,
+    bytes: &[u8],
+    limits: StackLimits,
+    before_list: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), ReferenceError> {
     if names.len() >= limits.tables {
         return Err(Error::Limit("stack table count").into());
     }
@@ -240,6 +293,7 @@ pub(super) fn publish(
     let (_file, _path) = temporary
         .keep()
         .map_err(|error| io_error(directory, error.error))?;
+    before_list().map_err(|error| io_error(&lock.destination, error))?;
     lock.publish_retaining_lock(&list)
 }
 

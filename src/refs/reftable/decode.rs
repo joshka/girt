@@ -1,4 +1,4 @@
-use super::{Error, Limits, LogRecord, LogValue, RefRecord, Table};
+use super::{Error, Limits, LogRecord, LogValue, RecordName, RefRecord, Table};
 use crate::refs::{RefName, Target};
 use crate::{ObjectFormat, ObjectId};
 
@@ -14,7 +14,20 @@ impl Table {
     /// limits. A failure returns no partial table. Work is synchronous and bounded by the input,
     /// inflated block and record limits.
     pub fn decode(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
-        Self::decode_usage(bytes, limits).map(|(table, _, _)| table)
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(target: "girt", "reftable.decode", outcome = "incomplete", failure_class = tracing::field::Empty, bytes = bytes.len());
+        let operation = || Self::decode_usage(bytes, limits).map(|(table, _, _)| table);
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = operation();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| match error {
+            Error::Malformed(_) => "corrupt",
+            Error::Unsupported(_) => "unsupported",
+            Error::Limit(_) => "limit",
+        });
+        result
     }
 
     pub(super) fn decode_usage(
@@ -72,6 +85,8 @@ impl Table {
         let mut records = 0;
         let mut decoded_bytes = 0_usize;
         let mut blocks = std::collections::BTreeMap::<u64, (u8, Vec<u8>)>::new();
+        let mut index_sections = std::collections::BTreeMap::new();
+        let mut index_links = std::collections::BTreeMap::new();
         let mut last_ref = Vec::new();
         let mut last_log = Vec::new();
         while position < footer_start {
@@ -102,7 +117,20 @@ impl Table {
             } else {
                 b'r'
             };
-            if kind != expected {
+            let leaf_kind = if (log != 0 && position as u64 >= log) || first_log {
+                b'g'
+            } else if object >> 5 != 0 && position as u64 >= object >> 5 {
+                b'o'
+            } else {
+                b'r'
+            };
+            let root_index = match leaf_kind {
+                b'g' => log_index,
+                b'o' => object_index,
+                _ => ref_index,
+            };
+            let child_index = kind == b'i' && root_index != 0 && position as u64 <= root_index;
+            if kind != expected && !child_index {
                 return Err(bad("block section type"));
             }
             let prefix = if position == header.size && (kind != b'g' || first_log) {
@@ -110,10 +138,19 @@ impl Table {
             } else {
                 0
             };
+            if matches!(kind, b'r' | b'o') && header.alignment != 0 {
+                let length = bytes
+                    .get(position + 1..position + 4)
+                    .ok_or(bad("block header"))?;
+                if uint24(length) > header.alignment {
+                    return Err(bad("block exceeds alignment"));
+                }
+            }
             let block = Block::read(&bytes[position..footer_start], prefix, limits)?;
             let mut cursor = Cursor::new(&block.data, limits);
             let mut key = Vec::new();
             let mut restart = 0;
+            let mut links = Vec::new();
             while cursor.position < block.records_end {
                 records += 1;
                 if records > limits.records {
@@ -143,6 +180,9 @@ impl Table {
                     return Err(Error::Limit("decoded bytes"));
                 }
                 let record_start = cursor.position;
+                cursor.end_limit = cursor
+                    .position
+                    .saturating_add(limits.decoded_bytes - decoded_bytes);
                 let mut next = key[..prefix_len].to_vec();
                 next.extend_from_slice(cursor.take(suffix_len)?);
                 if !key.is_empty() && next <= key {
@@ -170,18 +210,14 @@ impl Table {
                     }
                     b'i' => {
                         let target = cursor.varint()?;
+                        links.push(target);
                         let Some((target_kind, target_key)) = blocks.get(&target) else {
                             return Err(bad("index pointer"));
                         };
-                        let leaf_kind = if log_index != 0 && position as u64 >= log_index {
-                            b'g'
-                        } else if object_index != 0 && position as u64 >= object_index {
-                            b'o'
-                        } else {
-                            b'r'
-                        };
                         if value_type != 0
-                            || (*target_kind != leaf_kind && *target_kind != b'i')
+                            || (*target_kind != leaf_kind
+                                && (*target_kind != b'i'
+                                    || index_sections.get(&target) != Some(&leaf_kind)))
                             || *target_key != key
                         {
                             return Err(bad("index key or block type"));
@@ -225,6 +261,10 @@ impl Table {
             if cursor.position != block.records_end || restart != block.restarts.len() {
                 return Err(bad("record/restart boundary"));
             }
+            if kind == b'i' {
+                index_sections.insert(position as u64, leaf_kind);
+                index_links.insert(position as u64, links);
+            }
             blocks.insert(if prefix == 0 { position as u64 } else { 0 }, (kind, key));
             position += block.consumed;
         }
@@ -233,8 +273,81 @@ impl Table {
                 return Err(bad("section block boundary"));
             }
         }
+        validate_index(
+            ref_index,
+            b'r',
+            header.alignment == 0,
+            &blocks,
+            &index_sections,
+            &index_links,
+        )?;
+        validate_index(
+            log_index,
+            b'g',
+            false,
+            &blocks,
+            &index_sections,
+            &index_links,
+        )?;
+        validate_index(
+            object_index,
+            b'o',
+            false,
+            &blocks,
+            &index_sections,
+            &index_links,
+        )?;
         Ok((table, records, decoded_bytes))
     }
+}
+
+// Every data block must be reachable from its advertised index root. Merely validating individual
+// pointers would let a corrupt index hide records from Git while a linear scan still finds them.
+fn validate_index(
+    root: u64,
+    kind: u8,
+    required_for_multiple: bool,
+    blocks: &std::collections::BTreeMap<u64, (u8, Vec<u8>)>,
+    sections: &std::collections::BTreeMap<u64, u8>,
+    links: &std::collections::BTreeMap<u64, Vec<u64>>,
+) -> Result<(), Error> {
+    let expected: std::collections::BTreeSet<_> = blocks
+        .iter()
+        .filter(|(position, (block_kind, _))| {
+            *block_kind == kind || sections.get(position) == Some(&kind)
+        })
+        .map(|(position, _)| *position)
+        .collect();
+    if root == 0 {
+        if (required_for_multiple && expected.len() > 1)
+            || sections.values().any(|section| *section == kind)
+        {
+            return Err(bad("missing index root"));
+        }
+        return Ok(());
+    }
+    if sections.get(&root) != Some(&kind) {
+        return Err(bad("index root type"));
+    }
+    // Git can emit several root-level index blocks beginning at the advertised position.
+    let mut pending: Vec<_> = sections
+        .range(root..)
+        .filter(|(_, section)| **section == kind)
+        .map(|(position, _)| *position)
+        .collect();
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(position) = pending.pop() {
+        if !visited.insert(position) {
+            return Err(bad("duplicate index child"));
+        }
+        if let Some(children) = links.get(&position) {
+            pending.extend(children);
+        }
+    }
+    if visited != expected {
+        return Err(bad("incomplete index coverage"));
+    }
+    Ok(())
 }
 
 struct Header {
@@ -349,7 +462,7 @@ fn decode_ref(
     kind: u8,
     header: &Header,
 ) -> Result<RefRecord, Error> {
-    let name = RefName::new(key).map_err(|_| bad("reference name"))?;
+    let name = RecordName::new(key)?;
     let update_index = header
         .min
         .checked_add(cursor.varint()?)
@@ -390,7 +503,7 @@ fn decode_log(
     if key[split] != 0 {
         return Err(bad("log key separator"));
     }
-    let name = RefName::new(&key[..split]).map_err(|_| bad("log name"))?;
+    let name = RecordName::new(&key[..split])?;
     let update_index = !u64::from_be_bytes(key[split + 1..].try_into().unwrap());
     // Reflog rewrites observed in Git retain older keys in a newer transaction table.
     if update_index > header.max {
@@ -419,6 +532,7 @@ fn decode_log(
 struct Cursor<'a> {
     bytes: &'a [u8],
     position: usize,
+    end_limit: usize,
     limits: Limits,
 }
 
@@ -427,6 +541,7 @@ impl<'a> Cursor<'a> {
         Self {
             bytes,
             position: 0,
+            end_limit: bytes.len(),
             limits,
         }
     }
@@ -435,6 +550,9 @@ impl<'a> Cursor<'a> {
             .position
             .checked_add(length)
             .ok_or(bad("length overflow"))?;
+        if end > self.end_limit {
+            return Err(Error::Limit("decoded bytes"));
+        }
         let result = self
             .bytes
             .get(self.position..end)

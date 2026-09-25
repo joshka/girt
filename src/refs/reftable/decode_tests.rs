@@ -58,7 +58,7 @@ fn tables(root: &Path) -> Vec<Table> {
         .map(|name| {
             let bytes = fs::read(directory.join(name)).unwrap();
             Table::decode(&bytes, Limits::default())
-                .unwrap_or_else(|error| panic!("{name}: {error}; {bytes:02x?}"))
+                .unwrap_or_else(|error| panic!("{name}: {error}"))
         })
         .collect()
 }
@@ -94,6 +94,7 @@ fn reads_git_committed_tip_and_logs(#[case] spelling: &str, #[case] format: Obje
 #[case::sha256("sha256")]
 fn reads_git_multiblock_compacted_table(#[case] format: &str) {
     let root = fixture(format);
+    git(root.path(), &["config", "reftable.blockSize", "256"]);
     populate(root.path());
     git(root.path(), &["refs", "optimize"]);
     let tables = tables(root.path());
@@ -126,6 +127,7 @@ fn populate(root: &Path) {
 #[case::sha256("sha256")]
 fn git_reads_reencoded_references_and_reflogs(#[case] format: &str) {
     let root = fixture(format);
+    git(root.path(), &["config", "reftable.blockSize", "256"]);
     populate(root.path());
     git(root.path(), &["refs", "optimize"]);
     let before = git(root.path(), &["show-ref", "--head"]);

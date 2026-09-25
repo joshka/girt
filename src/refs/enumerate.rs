@@ -10,12 +10,15 @@ use super::{RefName, ReferenceError, References, Target};
 pub struct Reference {
     /// Exact reference-name bytes; enumeration excludes pseudorefs such as HEAD.
     pub name: RefName,
-    /// Effective loose-over-packed value. Symbolic targets may be missing or cyclic.
+    /// Effective backend value. Symbolic targets may be missing or cyclic.
     pub target: Target,
 }
 
 impl References<'_> {
     /// Lists all `refs/` names in bytewise name order, without resolving symbolic refs.
+    ///
+    /// Reftable merges bounded common/private stack snapshots using [`References`]'s contract.
+    /// The loose/packed traversal details below describe the files backend.
     ///
     /// Includes branches, tags, other shared namespaces, and the current worktree's private
     /// refs. Excludes HEAD, other pseudorefs, other worktrees' private refs, dot-prefixed entries
@@ -80,6 +83,9 @@ impl References<'_> {
     }
 
     fn enumerate(&self, namespace: Option<&RefName>) -> Result<Vec<Reference>, ReferenceError> {
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            return super::reftable::backend::list(self, namespace);
+        }
         let mut entries: BTreeMap<_, _> = self
             .packed()?
             .into_iter()
