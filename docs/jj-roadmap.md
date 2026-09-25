@@ -67,7 +67,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
-| R17 | Ignore parsing and hierarchical matching                    | R08                             | Awaiting acceptance | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
+| R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Planned             | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
@@ -406,6 +406,13 @@ successor is dispatched.
 hierarchical precedence and ignored-parent decisions. Traversal, tracked-file selection and source
 loading remain caller-owned. Local compatibility, resource limits, unchanged jj observations and
 representative matched batches and scoped native validation pass on all four hosts. Windows CLI
-backslash interpretation remains an explicit caller-adapter boundary; coordinator acceptance is
-pending. R18 remains next, with no successor dispatched. R41 retains A20 performance acceptance
-after C02 and before R21.
+backslash interpretation remains an explicit caller-adapter boundary. The coordinator accepts this
+byte-matcher scope using implementation `71da3994b2d4690076781286992be3bc54c153ba`, final native
+adapter/test revision `6fa1d9142309ae22ec7574a06abc374b179f86fe` and evidence child
+`3c424aedf718a087a6a90ae2809e770a4a7fc3ee`. Unix run
+[36181119693](https://github.com/joshka/girt/actions/runs/36181119693) and passing Windows follow-up
+[36181767288](https://github.com/joshka/girt/actions/runs/36181767288) establish the scoped native
+evidence. Source loading, OS conversion and traversal remain caller-owned; the 20 Windows
+terminal-backslash adapter differences remain recorded. Process-batch ratios do not establish
+overall matcher or library parity. R41 retains A20 performance acceptance after C02 and before R21;
+existing C02 owners remain unchanged. R18 is next.
