@@ -9,6 +9,10 @@
   behavior or another library's API is not the goal.
 - Report unsupported cases explicitly.
 - Build narrow, usable increments; avoid speculative abstractions or configuration complexity.
+- Design cohesive Git APIs from first principles; consumer call sites establish requirements, not
+  method names or architecture to copy. See [Rust Conventions](docs/rust-conventions.md).
+- Track full jj coverage in the [roadmap](docs/jj-roadmap.md); use its acceptance contracts and
+  completion process when implementing queued capabilities.
 
 ## Maintaining These Guidelines
 
@@ -21,8 +25,9 @@
 ## Independent Implementation and Licensing
 
 - Target dual MIT/Apache-2.0 licensing. Write original code, documentation, and tests.
-- Do not copy, translate, or adapt copyrightable expression from Git source code. Non-copyrightable
-  ideas, algorithms, and processes may inform the implementation.
+- Do not use upstream Git, gix, or libgit2 implementation or test source as implementation input,
+  including copyright-audit comparisons. Use specifications, jj call-site requirements, and
+  independently generated observations of the Git executable. Write original implementations.
 - Establish compatibility through format specifications and observable behavior; record reference
   and fixture provenance.
 - Check dependency licenses before adding dependencies.

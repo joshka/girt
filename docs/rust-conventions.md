@@ -35,12 +35,41 @@ maintainability and testing guidance.
 - Do not introduce an extensible format registry or speculative configuration framework to represent
   a small closed choice.
 
+## Representation and Compatibility
+
+Design APIs around cohesive Git concepts and operations. Consumer methods establish requirements;
+their signatures and layering need not become girt's architecture. Prefer simple idiomatic Rust and
+derive standard traits when their semantics fit. Keep exact representation separate from interpreted
+values: preserve object/header/path bytes and unknown fields where the contract requires them. Use
+OS path types at filesystem boundaries and explicit encoding conversions. Do not inherit a
+consumer's unnecessary UTF-8 restriction or silently normalize Unicode, case, or signed content.
+
+Characterize parsing separately from operational validation. Supported semantics must agree with Git
+observations; do not reject Git-accepted data merely to simplify library invariants. Name the Git
+operation used as the oracle: storing raw bytes, reading an object, and validating it can have
+different acceptance rules. Choose practical deterministic ambiguity resolution and document it.
+Safety, resource, and unsupported restrictions need evidence, explicit errors, and queued follow-ups
+when they block required compatibility. No finite corpus establishes every edge case.
+
 ## Errors
 
 - Use `thiserror` to derive library error implementations. Keep concrete error types and variants
   owned by their domain modules.
 - Preserve underlying causes with `#[source]` or `#[from]` where appropriate so callers can inspect
   failures without parsing display text.
+- Distinguish missing, corrupt, unsupported, resource-limited, cancelled, and uncertain outcomes
+  where callers need different actions. Preserve recoverability, retry preconditions, and partial
+  effects in structured results. Never recommend retrying an uncertain mutation without checking
+  state. Public errors need not imitate Git's CLI text.
+
+## Observability Ownership
+
+Return errors to the operation owner, which decides user-visible logging and severity. Optional
+instrumentation may expose operations, elapsed work, counts, cancellation, resource use, and failure
+classes. The caller owns subscribers, filtering, runtime, and global policy. Avoid duplicate error
+logging and event/schema frameworks without a demonstrated need. Do not record credentials, raw URLs
+with secrets, environment values, paths, identities, object contents, or signature payloads by
+default. Test redaction and disabled-instrumentation behavior at the owning boundary.
 
 ## Unit Tests
 

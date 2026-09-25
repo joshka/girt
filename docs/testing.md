@@ -33,6 +33,32 @@ needed. Generate fixtures independently and isolate filesystem tests from the wo
 global configuration. Follow [Rust Conventions](rust-conventions.md#unit-tests) and the
 [Rustdoc Standard](rustdoc.md#examples-and-validation) for local tests and executable examples.
 
+## Roadmap Completion and Coordination
+
+Before dispatch, name the capability's acceptance cases and required platform evidence using the
+[jj acceptance matrix](jj-acceptance.md). Implement one queued item at a time. Keep repeatable rules
+here and in the convention guides instead of expanding worker prompts. Keep jj unchanged until the
+roadmap's final integration item; earlier corpus work exercises girt public APIs and observes an
+unchanged jj baseline in disposable repositories.
+
+A worker completion must report implemented behavior; new or changed public calls, types, and
+modules; exact tested revision; validation commands and results; interoperability, boundary, fault,
+race, platform, and benchmark evidence; and remaining limitations. Mark inapplicable evidence with a
+reason. Link retained artifacts and independently generated fixture provenance. Never describe a
+finite corpus as exhaustive parity proof.
+
+The coordinator presents that concise summary, updates the roadmap status and completion links, adds
+discovered follow-ups and dependency changes, and dispatches the next ready item only after
+acceptance. Use completion callbacks instead of polling. A blocked acceptance criterion remains
+open; unit-test success or a platform cross-build does not close it. Newly discovered required
+behavior must be queued before final integration rather than silently excluded.
+
+Review architecture, layering, cohesion, and abstraction debt after approximately ten completed
+items, and earlier when cross-cutting issues accumulate. Record concrete findings and bounded
+remediation tasks; resolve correctness or layering blockers before depending on them. Native CI
+milestones execute on each supported OS and retain exact revisions and logs. They do not replace
+capability-specific native testing.
+
 ## Parameterized Tests
 
 Use `rstest` with named `#[case::name(...)]` inputs for parameterized unit and integration tests.
