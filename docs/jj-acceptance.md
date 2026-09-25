@@ -164,11 +164,11 @@ writers and partial batch publication. Preserve conflicts and per-ref outcomes w
 compare-and-set guarantees. Execute portable locks, rename/publication and termination cleanup on
 Windows as well as Unix; signal cleanup belongs to caller integration where process policy is
 needed. Characterize reference backends accepted by the target rather than silently excluding
-reftable. R37's [staged acceptance plan](evidence/r37.md) requires record and stack reads,
-conditional publication, compaction, coherent backend selection and native interoperability in both
-directions. R14's opening-only jj observation does not close committed-tip import parity. R40 also
-retains consumer interpretation of binary reflog timestamps above signed `i64`; R37 preserves those
-fields through raw snapshots and compaction.
+reftable. R37's [backend evidence](evidence/r37.md) covers record and stack reads, conditional
+publication, compaction, coherent backend selection and native interoperability in both directions.
+R14's opening-only jj observation does not close committed-tip import parity. R40 also retains
+consumer interpretation of binary reflog timestamps above signed `i64`; R37 preserves those fields
+through raw snapshots and compaction.
 
 C01 D1 adds both-format imported reflog fixtures with identities `b"A <a@b> 1 +0060"`,
 `b" <a@b> 1 +0000"` (empty name), and `b"A  <a@b> 1 +0000"` (padded name), alongside the canonical

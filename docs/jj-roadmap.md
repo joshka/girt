@@ -89,7 +89,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R40                | Planned             | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                                       |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
-| R37 | Reftable reference and reflog backend                       | R11, R14                        | In progress         | [Acceptance stages](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                             |
+| R37 | Reftable reference and reflog backend                       | R11, R14                        | Awaiting acceptance | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
 | R38 | Split and sparse index storage                              | R12, R14                        | Planned             | Resolve split shared-index dependencies and sparse directory trees; Git/jj observations, both-format corruption, race/fault and native evidence; required before R34.        |
 | R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
 | R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Planned             | [R14 contracts](evidence/r14.md#imported-reflogs-and-colocation); required before C02/R31/R34.                                                                               |
@@ -335,3 +335,15 @@ and generation resource costs. Executable `60b52cabfca3cac916c642cd250711b8bec83
 immutable pinned artifacts and aggregate resource limits. R15's measurement limits and C02's
 tracing, malformed-alternate policy and platform owners remain unchanged. Next remains R37, R38,
 R40, then R17; no successor is dispatched.
+
+## R37 Completion
+
+[R37 evidence](evidence/r37.md) records both-format reftable codecs, bounded owned stack snapshots,
+conditional reference/reflog publication, explicit compaction and integration with existing
+reference and colocation operations. Executable `a16ccdc7b7f178ce422abf8ab16c91ac4f600cd2` passes
+scoped native run [36172953299](https://github.com/joshka/girt/actions/runs/36172953299) on all four
+hosts and is ready for coordinator acceptance. Reads decode bounded whole stacks; compaction holds
+writer locks; common/private publication can have explicit partial effects. R40 retains
+interpretation of unsigned binary timestamps above `i64::MAX`; R19/R20 retain operation-specific
+pseudoref policy, R31/R32 maintenance policy and R35 final consumer parity. C02's existing owners
+remain unchanged. Next remains R38, R40, then R17; this task dispatches none.
