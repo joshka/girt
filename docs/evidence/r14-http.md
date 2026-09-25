@@ -64,3 +64,41 @@ and portable HTTP passes 11 (including Unix-only fixture-process tests). Scoped 
 the unchanged HTTP/tracing suite passes 30 cases. Nightly Rustfmt and actionlint pass. The original
 R14 codec/storage and native platform evidence remains applicable because library source is
 unchanged. This test-only repair makes no performance claim and adds no dependency.
+
+## Native Verification
+
+The repair revision is `42a724ab865976526130b3d536c6a3e82b0dcbe3`, a separate atomic child of R14's
+evidence change. The
+[focused Windows verification](https://github.com/joshka/girt/actions/runs/36158949345) executes
+only the HTTP/portable suites and scoped Clippy. All ordinary platform jobs are skipped by the
+explicit manual input; automatic push matrices are skipped by the validation change's commit
+message. This avoids rerunning unaffected R14 coverage.
+
+[Repair source fingerprints](r14-http-source.sha256) identify the tests, fixture, workflow and
+manifests. R14's library, pack-test and manifest fingerprints still match; its workflow fingerprint
+necessarily differs because this repair adds the manual focused job. No prior fingerprints or
+failed-run logs are overwritten. The focused native job passes 43 HTTP cases, seven portable HTTP
+cases and scoped Clippy on Windows Server 2022 Datacenter 10.0.20348/NTFS, Rust 1.98.1 and Git
+2.55.0.windows.5. All three controlled discovery-delay cases print
+`NotSent(Deadline); requests: ["GET"]`. All three repaired slow-discovery post-fault cases pass. The
+existing discovery/TLS and partial-acknowledgement deadline cases also pass. No third broad matrix
+or unrelated index/reference matrix was launched.
+
+## Completion and Remaining Ownership
+
+The HTTP fixture defect is repaired without changing library semantics. R14 is ready for coordinator
+acceptance using its existing native storage evidence plus this focused Windows result. The original
+broad workflow remains historically failed; this follow-up does not rewrite that result or claim a
+new full-matrix pass. The exact unexpected errors from its original assertions remain unknowable
+from the retained output. The controlled native experiment establishes the preflight deadline
+counterexample and the repaired tests verify the intended post-send behavior.
+
+The missing tracing span remains explicitly assigned to C02. It passed in R14's Windows retry and
+failed again in this follow-up's diagnostic run, while local tracing passes. No shared cause with
+HTTP discovery timing was demonstrated and no tracing code or assertion was changed.
+
+[Artifact fingerprints](r14-http-artifacts.sha256) cover the diagnostic/verification metadata, logs
+and local checks under
+[/Users/joshka/.codex/reports/girt-r14-http](/Users/joshka/.codex/reports/girt-r14-http). The
+canceled initial diagnostic supplies no evidence. R14's original failed attempts and fingerprint
+manifests remain intact. No successor, merge or release is performed.
