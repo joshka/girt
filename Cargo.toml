@@ -192,3 +192,11 @@ doc-scrape-examples = true
 [[bench]]
 name = "tree_compare"
 harness = false
+
+[[example]]
+name = "content_diff"
+doc-scrape-examples = true
+
+[[bench]]
+name = "content_diff"
+harness = false

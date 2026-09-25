@@ -89,8 +89,8 @@ compilation on Windows does not expose a Windows SSH adapter.
 The Windows integration selection follows implemented operations, not just file portability:
 
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
-- `packs`, `history`, `tree_compare`: Pack/index I/O, deltas, graph queries, structural tree
-  comparison.
+- `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
+  structural tree comparison and byte-preserving content diff.
 - `repositories`: Opening, initialization, discovery, configuration and Git-written layouts.
 - `remotes`: Config/refspec mapping compared with Git-managed refs and transfers.
 - `http_portable`: Real Git HTTP fetch/install/reuse and push, status errors, truncation, deadline.
@@ -837,3 +837,38 @@ Markdown lint using the global 100-column config, core-only compilation, warning
 Rustdoc and the runnable example passed. The rendered comparison contract and navigation were
 inspected in a temporary loopback preview. Native Linux/Windows execution remains pending in the
 separate platform refresh; no cross-platform runtime claim is made here.
+
+### Content Diff Completion
+
+Acceptance is exact byte comparison, explicit binary handling and deterministic shortest LF-line
+edits, composing with tree changes through separately bounded verified blob reads. The
+[content diff contract](compatibility.md#content-diff) owns limits, provenance and exclusions.
+
+- [x] Named unit cases cover addition, deletion, insertion, replacement, separated changes, repeated
+      and blank lines, CRLF, bare CR, NUL, invalid UTF-8 and missing final LF. Exact ranges
+      distinguish bytes from lines; empty inputs have no lines.
+- [x] All 3,969 pairs of binary-alphabet sequences through five lines reconstruct the destination
+  and preserve unchanged gaps. A separate dynamic-programming oracle checks minimum edit length;
+  80 deterministic varied-byte pairs exercise CR, LF, NUL and invalid UTF-8 combinations.
+- [x] Tests cover exact/exceeded input, line, trace and work bounds, cancellation checkpoints,
+  checked budget arithmetic, long-line byte charging, 100,000-line additions/small edits and
+  bounded failure for large unrelated inputs. Errors return no partial script.
+- [x] Blob adapter tests cover all accepted modes, absent sides, equal missing IDs, missing new
+  objects, wrong kinds, corrupt storage, per-read and cumulative byte limits, unsupported modes
+  and cancellation. Storage is read-only; publication/cleanup tests are inapplicable.
+- [x] Sixteen portable integration cases compare Git zero-context spans and exact bytes on simple
+  inputs, reconstruction and minimum costs on ambiguous inputs, NUL binary handling, and
+  tree-to-content composition through loose and packed Git-written blobs. Windows selection is
+  explicit in the workflow; no unsupported reference backend or owned transport adapter is used.
+- [x] The runnable `content_diff` example and doctest demonstrate borrowed byte ranges without lossy
+  rendering. The Criterion [baseline](benchmarks.md#content-diff-baseline) retains small-edit,
+  repeated-line, unrelated-input and bounded-rejection measurements without numerical gates.
+
+On 2026-09-24, `just check` passed 1,025 unit tests, 455 integration cases and 17 doctests on macOS
+arm64 with Rust 1.98.1 and Git 2.55.0, plus all-target/all-feature Clippy and docs.rs with warnings
+denied. The core-only library check, runnable example, warning-denying all-feature private Rustdoc
+build, nightly formatting, rumdl and Markdown lint with the global 100-column configuration passed.
+Rendered module navigation, the diff contract and its example were inspected in a local preview. The
+benchmark harness ran after the checks without competing task builds/tests and retains source
+fingerprints and confidence intervals. Native Linux/Windows runs for this increment remain pending;
+existing platform evidence applies only to earlier revisions.

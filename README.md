@@ -51,6 +51,11 @@ Commit ancestry is available through `Objects::walk`, `Objects::is_ancestor`, an
 and modes. Run `cargo run --example compare_trees` for a disposable comparison or pass a repository
 and two tree IDs. See [tree comparison scope](docs/compatibility.md#tree-comparison).
 
+`content_diff::diff` compares byte payloads with explicit binary policy and bounded shortest line
+edits. `BlobContent::read` loads the blob sides of a tree change separately. Run
+`cargo run --example content_diff` for a tree-to-content comparison; see
+[content diff scope](docs/compatibility.md#content-diff).
+
 Pack/index v2 artifacts can be exported from an explicit object set with `write_pack`. Run
 `cargo run --example write_pack` to export and reopen a private pack. The default writer streams
 ordinary zlib entries. `write_pack_with_compression` enables bounded internal delta selection

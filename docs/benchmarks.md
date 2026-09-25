@@ -941,3 +941,39 @@ Criterion extended deep sampling to about 5.2 seconds to collect 20 samples. An 
 same executable comparison logic had medians of 0.198, 10.192 and 33.052 ms respectively; the
 variation is not evidence of an implementation speedup. No controlled performance comparison was
 attempted.
+
+## Content Diff Baseline
+
+`cargo bench --bench content_diff` measures complete pure `content_diff::diff` calls with auto
+binary policy and default bounds, including scanning, line offsets, shortest-edit search, traceback
+and result destruction. Fixtures are constructed before timing; there is no storage I/O. Workloads
+are a one-line replacement in 1,000 unique lines, an insertion in 1,000 repeated/blank lines, 200
+unrelated lines per side, and 100,000 unrelated lines per side rejected at the trace bound. Each
+result class is checked before sampling. The rejection measurement reports the cost of refusing a
+pathological comparison, not successful large-input diff throughput.
+
+The 2026-09-24 run used Criterion 0.8.2, 20 samples, one-second warmup and three-second target
+measurement duration, the default optimized bench profile and checked-in lockfile. Host: Apple M2
+Max with 96 GiB RAM, macOS 26.6.2 (25G83), Rust/Cargo 1.98.1 and aarch64-apple-darwin. No builds or
+tests from this task overlapped sampling; desktop load, CPU placement and thermals were
+uncontrolled. Criterion extended the bounded-rejection collection to about 4.3 seconds.
+
+| Workload                                       | Median µs | 95% CI, µs        |
+| ---------------------------------------------- | --------- | ----------------- |
+| One-line replacement / 1,000 lines             | 16.628    | 16.471–17.096     |
+| Insertion / 1,000 repeated lines               | 11.246    | 11.144–11.432     |
+| Unrelated / 200 lines per side                 | 381.544   | 379.866–384.860   |
+| Trace-limit rejection / 100,000 lines per side | 6738.873  | 6711.566–6779.845 |
+
+The [CSV](benchmarks/content-diff-baseline.csv) retains median estimates and 95% confidence
+intervals in nanoseconds. The [source manifest](benchmarks/content-diff-baseline.sha256)
+fingerprints library sources, harness, Cargo manifest and lockfile. Verify it from the repository
+root with `shasum -a 256 -c docs/benchmarks/content-diff-baseline.sha256`. Criterion's original
+estimates remain under `target/criterion/content_diff/`; fixture generation and all measured
+operations are in `benches/content_diff.rs`.
+
+These are operation baselines, not latency percentiles, peak-memory measurements, cross-platform
+evidence or a controlled comparison with another implementation. The 200-line unrelated input
+succeeds, while the 100,000-line case returns the documented trace-limit error. No arbitrary gate is
+imposed. Input size alone does not predict cost: edit distance and repeated byte comparisons consume
+separate work and trace budgets.

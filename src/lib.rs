@@ -18,6 +18,13 @@
 //! [`TreeCompareLimits`] bounds traversal and eager output; cancellation is cooperative between
 //! synchronous processing steps. Run `cargo run --example compare_trees` for a disposable example.
 //!
+//! Load a change's regular, executable or symlink payloads with
+//! [`content_diff::BlobContent::read`], then borrow them in [`content_diff::diff`]. The pure engine
+//! preserves arbitrary bytes and LF boundaries, returning unchanged, binary-changed or shortest
+//! line edits with explicit resource limits. Absence and mode changes remain on the original tree
+//! record; empty and absent payloads compare equal. Gitlinks require a separate submodule policy.
+//! Run `cargo run --example content_diff` for the composed operation.
+//!
 //! # Creating and finding a repository
 //!
 //! [`Repository::init`] creates a bare or ordinary SHA-1 repository with unborn `main` and refuses
@@ -102,6 +109,7 @@
 //! - [`ObjectId`]: SHA-1 object identity, hashing blob bytes, and hexadecimal parsing.
 //! - [`TreeChange`], [`TreeValue`], [`TreeCompareLimits`], and [`TreeCompareError`]: recursive
 //!   structural tree comparison.
+//! - [`content_diff`]: bounded byte-preserving line edits and separate tree-change blob loading.
 //! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
 //! - [`Commit`], [`CommitFields`], [`Signature`], and [`CommitHeader`]: commit payloads and
 //!   identity.
@@ -125,6 +133,7 @@
 pub mod clone;
 mod commit;
 pub mod config;
+pub mod content_diff;
 mod edges;
 pub mod fetch;
 mod history;

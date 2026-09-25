@@ -10,14 +10,15 @@ is recognized and rejected. Crate Rustdoc owns the API examples and complete lim
 The current API supports SHA-1 loose objects, pack/index v2, complete-history queries, object-only
 fetch, conditional branch/tag push, reference enumeration, and conditional transactions with
 explicit reflog policy, named remote/refspec mapping, explicit fetch orchestration, and
-tracking-layout clone into bare or ordinary no-checkout repositories, and recursive tree comparison.
-The single-reference no-reflog operations remain available. HTTP and SSH downloads share owned
-validation state. Installation takes explicit destination snapshot limits. Read and operation limits
-remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
+tracking-layout clone into bare or ordinary no-checkout repositories, recursive tree comparison, and
+byte-preserving content diff. The single-reference no-reflog operations remain available. HTTP and
+SSH downloads share owned validation state. Installation takes explicit destination snapshot limits.
+Read and operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is
+implied.
 
 | Platform       | Current evidence boundary                                   |
 | -------------- | ----------------------------------------------------------- |
-| macOS arm64    | Full suite through tree comparison, including HTTP and SSH. |
+| macOS arm64    | Full suite through content diff, including HTTP and SSH.    |
 | Linux x86_64   | Full suite through tree comparison, including HTTP and SSH. |
 | Windows x86_64 | Portable integration suites and bounded HTTP runtime.       |
 
@@ -1642,8 +1643,8 @@ cumulative entry-count check; limits bound inputs rather than exact heap usage. 
 checked between reads and entry operations and around final sorting. A single read, parse,
 validation or sort remains synchronous and noninterruptible. Failure returns no partial result and
 changes no files. No object cache, store trait, async runtime or general diff framework is added.
-Text diff, rename/copy detection, pathspecs, index/worktree comparison, merge and checkout remain
-outside scope.
+Content diff is a separate [operation](#content-diff). Rename/copy detection, pathspecs,
+index/worktree comparison, merge and checkout remain outside scope.
 
 `tests/tree_compare.rs` generates original fixtures with isolated Git `hash-object` and
 `mktree -z --missing` invocations. It compares IDs, modes and paths with
@@ -1658,3 +1659,79 @@ on the host filesystem.
 The local evidence uses Git 2.55.0 on macOS arm64; native Linux and Windows refresh is separate
 work. The comparison adds no platform-specific filesystem or process behavior; it inherits the
 existing reader's storage boundary. No additional platform support is established by this slice.
+
+## Content Diff
+
+`content_diff::diff` accepts borrowed byte payloads and returns unchanged, binary-changed or owned
+edit ranges borrowing both text inputs. LF terminates a line and remains part of its bytes. Empty
+input has no lines; a nonempty unterminated suffix is one line. CRLF, bare CR, NUL in forced text,
+invalid UTF-8 and a missing final LF are significant, with no decoding or normalization. Edit ranges
+are zero-based and half-open in both original coordinate spaces. Adjacent edit edges are coalesced;
+unchanged gaps are implicit and byte-identical. Results contain zero context and are not unified
+patch hunks. There is no context expansion, heuristic boundary shifting or rendering API. The
+example escapes bytes solely for display.
+
+Auto mode classifies changed payloads as binary if either contains NUL anywhere. This is an explicit
+whole-input policy, not Git's sampling or attributes policy. Forced text and forced binary override
+it; equal bytes always return unchanged. Binary results retain both slices without encoding a binary
+patch. No path, attributes, textconv, external driver, whitespace-ignore, rename/copy,
+patch-application, merge, index or worktree policy is applied.
+
+`BlobContent::read` separately loads a tree change's regular, executable and symlink sides from
+verified loose/packed storage. Absent sides become empty buffers; the original tree change retains
+existence and modes. Symlink payloads are target bytes and are never dereferenced. Trees and
+gitlinks are rejected before reads. Equal IDs still require reads, so the adapter establishes
+existence and kind rather than trusting structural identity. Missing, wrong-kind and storage
+failures retain IDs; the caller keeps path/side context. Per-read decoding limits and a combined
+retained-payload limit apply before decoding. No storage or reference changes occur.
+
+### Algorithm and Resource Contract
+
+The original implementation uses the edit-graph frontier algorithm described in Eugene W. Myers,
+[An O(ND) Difference Algorithm and Its Variations](https://doi.org/10.1007/BF01840446), section 3
+([paper](https://neil.fraser.name/writing/diff/myers.pdf)). Only the published algorithm description
+informed implementation. No Git/xdiff implementation, upstream tests or copyright-audit material was
+consulted. No dependency was added. A compact stored-frontier implementation keeps the search and
+traceback small enough to review, while explicit limits reject expensive cases. Linear-space
+refinement, line interning and alternate algorithms are deferred until consumer evidence justifies
+the additional implementation.
+
+For N total lines and edit distance D, search takes O(ND) line comparisons and O(D²) trace
+positions, plus linear line-offset and output storage. Bytes compared also consume work budget. The
+algorithm minimizes inserted plus deleted lines, greedily extends equal runs, visits insertion-heavy
+diagonals first and selects deletion when predecessor old positions tie. This establishes
+deterministic alignment independently of Git's heuristic shifts. No minimum replacement-count,
+prettiest patch, or exact Git CLI-output guarantee is made.
+
+Defaults bound combined inputs to 64 MiB, combined lines to 1,000,000, retained frontier positions
+to 1,000,000 and work to 64 Mi units. Each frontier row reserves its full distance-plus-one width
+before allocation. Scanning and comparison charge bytes conservatively; frontier, line-comparison
+and traceback steps also charge units. Work can exhaust before other bounds, even for inputs below
+the byte cap. Empty sides bypass search; equal and binary results bypass line/trace allocation.
+Input bounds apply to all modes. Bounds are not exact process-memory limits; allocator overhead,
+spare vector capacity, caller-owned payloads and storage snapshots are separate. Raising limits can
+admit quadratic work/trace growth. Exhaustion returns an error with no approximate or partial edits.
+
+Cancellation is cooperative: checks occur before work, within byte scans at 4 KiB chunks, per
+frontier/line comparison, during traceback and before return. Allocations, deallocation and single
+storage reads cannot be interrupted. No hard wall-clock bound or async runtime is introduced.
+
+### Content Diff Evidence
+
+`src/content_diff/tests.rs` contains original named examples, an exhaustive short-sequence corpus
+checked against an independent dynamic-programming edit-distance oracle, varied byte inputs,
+resource/cancellation boundaries and large shapes. Adapter units test storage failure context and
+supported modes. `tests/content_diff.rs` writes original bytes into isolated temporary files and
+invokes Git `diff --no-index --text --minimal --diff-algorithm=myers --no-indent-heuristic` with
+zero context, no external drivers or textconv, and isolated configuration. The parser preserves
+patch body bytes and handles Git's missing-final-newline marker. Simple ranges/bytes agree exactly;
+ambiguous alignments are checked through reconstruction, unchanged gaps and equal minimum costs.
+This does not assert universal alignment equivalence. A separate simple NUL fixture compares
+ordinary Git binary classification; the whole-input sampling difference remains intentional.
+
+Git `hash-object --no-filters` supplies blobs for tree-to-content integration, including CRLF and
+non-UTF-8 data. Git repack/prune-packed supplies the packed variant and a removed loose object
+confirms packed reads. Tests use only portable files and Git-managed fixture refs, without claiming
+girt's reference backend works on Windows. The suite is included explicitly in the Windows job.
+Local execution uses macOS arm64, Git 2.55.0 and Rust 1.98.1. New native Linux/Windows runtime
+results are uncollected; platform support has not expanded.
