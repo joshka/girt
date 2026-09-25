@@ -213,6 +213,7 @@ pub(crate) fn index(error: &crate::index::StorageError, span: &tracing::Span) ->
         Locked(_) => "conflict",
         Changed(_) => "precondition",
         NotRegular(_) => "unsupported",
+        MissingShared(_) => "missing",
         Format { source, .. } => match source {
             crate::index::Error::Limit(_) => "limit",
             crate::index::Error::ObjectFormat(_)

@@ -248,7 +248,6 @@ fn rejects_checksum_damage() {
     );
 }
 #[rstest]
-#[case::split(b"link")]
 #[case::sparse(b"sdir")]
 #[case::unknown(b"abcd")]
 fn rejects_mandatory_extensions(#[case] signature: &[u8; 4]) {

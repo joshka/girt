@@ -232,13 +232,15 @@ fn git_flags_and_versions_roundtrip_without_changes(
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
-fn split_index_is_refused_without_writing(#[case] format: girt::ObjectFormat) {
+fn split_index_is_resolved_and_preserved(#[case] format: girt::ObjectFormat) {
     let (_root, repo) = repository(format);
     seed(&repo);
     git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
     let before = fs::read(repo.git_dir().join("index")).unwrap();
-    // Split replacement entries can have empty names; rejection may precede the link extension.
-    assert!(repo.edit_index(Limits::default()).is_err());
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert_eq!(edit.index().entries()[0].path, b"file");
+    assert!(edit.index().shared_index_id().is_some());
+    edit.commit().unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
 }
 
@@ -616,5 +618,97 @@ fn raw_workflows_refuse_extended_flags_without_mutation(
     ));
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert_eq!(fs::read(root.join("file")).unwrap(), b"hello\n");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+fn split_fixture(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository) {
+    let (root, repo) = repository(format);
+    let work = repo.worktree().unwrap();
+    fs::write(work.join("a"), b"old a").unwrap();
+    fs::write(work.join("b"), b"old b").unwrap();
+    fs::write(work.join("c"), b"old c").unwrap();
+    git(work, &["add", "."]);
+    git(work, &["update-index", "--split-index"]);
+    git(work, &["config", "splitIndex.maxPercentChange", "100"]);
+    fs::write(work.join("a"), b"new a").unwrap();
+    fs::write(work.join("d"), b"new d").unwrap();
+    git(work, &["add", "a", "d"]);
+    git(work, &["update-index", "--force-remove", "b"]);
+    git(work, &["update-index", "--assume-unchanged", "c"]);
+    (root, repo)
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn split_deletion_replacement_addition_and_full_publication(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let work = repo.worktree().unwrap();
+    let expected = git(work, &["ls-files", "--stage"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let index = edit.index();
+    assert_eq!(
+        index
+            .entries()
+            .iter()
+            .map(|e| e.path.as_slice())
+            .collect::<Vec<_>>(),
+        [b"a", b"c", b"d"]
+    );
+    assert_eq!(index.entries()[0].id, ObjectId::for_blob(format, b"new a"));
+    assert!(index.entries()[1].assume_valid);
+    let shared = repo
+        .git_dir()
+        .join(format!("sharedindex.{}", index.shared_index_id().unwrap()));
+    let original_shared = fs::read(&shared).unwrap();
+    edit.set_version(girt::index::Version::V4).unwrap();
+    assert!(edit.index().shared_index_id().is_none());
+    edit.commit().unwrap();
+    assert_eq!(git(work, &["ls-files", "--stage"]), expected);
+    assert_eq!(fs::read(shared).unwrap(), original_shared);
+}
+
+#[rstest]
+#[case::missing(girt::ObjectFormat::Sha1, false)]
+#[case::corrupt(girt::ObjectFormat::Sha1, true)]
+#[case::missing_sha256(girt::ObjectFormat::Sha256, false)]
+#[case::corrupt_sha256(girt::ObjectFormat::Sha256, true)]
+fn split_dependency_failure_releases_lock(
+    #[case] format: girt::ObjectFormat,
+    #[case] corrupt: bool,
+) {
+    let (_root, repo) = split_fixture(format);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    let shared = repo
+        .git_dir()
+        .join(format!("sharedindex.{}", index.shared_index_id().unwrap()));
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    damage_shared(&shared, corrupt);
+    assert!(repo.edit_index(Limits::default()).is_err());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+fn damage_shared(path: &Path, corrupt: bool) {
+    if corrupt {
+        fs::write(path, b"broken").unwrap();
+    } else {
+        fs::remove_file(path).unwrap();
+    }
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn split_publication_detects_changed_dependency(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    let shared = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    fs::remove_file(&shared).unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared));
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }

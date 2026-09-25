@@ -28,6 +28,7 @@ pub struct IndexEdit {
     lock_path: PathBuf,
     file: Option<File>,
     original: Option<Vec<u8>>,
+    shared: Option<(PathBuf, Vec<u8>)>,
     lock_identity: fs::Metadata,
     index: Index,
     limits: Limits,
@@ -65,6 +66,9 @@ pub enum StorageError {
     /// Original index bytes or presence changed despite the held lock.
     #[error("index changed while locked: {0}")]
     Changed(PathBuf),
+    /// The required immutable shared file is absent. Restore it before retrying.
+    #[error("missing shared index: {0}")]
+    MissingShared(PathBuf),
     /// The destination is a symlink, directory or other non-regular file.
     #[error("index is not a regular file: {0}")]
     NotRegular(PathBuf),
@@ -84,15 +88,17 @@ impl Repository {
     ///
     /// An existing empty index is `Some(Index)` with zero entries. Bare and separate-gitdir
     /// repositories use their Git directory; linked worktrees use the per-worktree directory,
-    /// never the shared index. Environment/config index-path overrides are not consulted.
-    /// The returned read-only snapshot has no authority to replace a later index; start an
-    /// [`Self::edit_index`] lifecycle before deriving changes that will be published.
+    /// with split dependencies resolved beside that index. Environment/config index-path overrides
+    /// are not consulted. The returned read-only snapshot has no authority to replace a later
+    /// index; start an [`Self::edit_index`] lifecycle before deriving changes that will be
+    /// published.
     ///
     /// # Errors
     ///
     /// Returns contextual I/O, non-regular-file, format and limit errors. Reads are bounded and
-    /// synchronous; nothing is written. Concurrent cooperating writers publish whole files by
-    /// rename. In-place writes by noncooperating processes may instead produce a parse error.
+    /// synchronous; nothing is written. Split dependencies share the aggregate byte budget.
+    /// Concurrent cooperating writers publish whole files by rename. In-place writes by
+    /// noncooperating processes may instead produce a parse error.
     pub fn read_index(&self, limits: Limits) -> Result<Option<Index>, StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -106,7 +112,10 @@ impl Repository {
         let operation = || {
             let path = self.git_dir().join("index");
             read_bytes(&path, limits)?
-                .map(|bytes| parse(self.object_format(), &path, &bytes, limits))
+                .map(|bytes| {
+                    parse_storage(self.object_format(), &path, &bytes, limits)
+                        .map(|(index, _)| index)
+                })
                 .transpose()
         };
         #[cfg(feature = "tracing")]
@@ -168,6 +177,7 @@ impl Repository {
                 lock_identity,
                 file: Some(file),
                 original: None,
+                shared: None,
                 index: Index::empty(self.object_format()),
                 limits,
                 published: false,
@@ -175,7 +185,8 @@ impl Repository {
             let result = (|| {
                 edit.original = read_bytes(&edit.destination, limits)?;
                 if let Some(bytes) = &edit.original {
-                    edit.index = parse(self.object_format(), &edit.destination, bytes, limits)?;
+                    (edit.index, edit.shared) =
+                        parse_storage(self.object_format(), &edit.destination, bytes, limits)?;
                 }
                 Ok(())
             })();
@@ -385,6 +396,11 @@ impl IndexEdit {
         if read_bytes(&self.destination, self.limits)? != self.original {
             return Err(StorageError::Changed(self.destination.clone()));
         }
+        if let Some((path, bytes)) = &self.shared
+            && read_bytes(path, self.limits)?.as_ref() != Some(bytes)
+        {
+            return Err(StorageError::Changed(path.clone()));
+        }
         Ok(())
     }
 
@@ -430,16 +446,34 @@ fn read_bytes(path: &Path, limits: Limits) -> Result<Option<Vec<u8>>, StorageErr
     }
     Ok(Some(bytes))
 }
-fn parse(
+type SharedFile = Option<(PathBuf, Vec<u8>)>;
+fn parse_storage(
     format: crate::ObjectFormat,
     path: &Path,
     bytes: &[u8],
     limits: Limits,
-) -> Result<Index, StorageError> {
-    Index::parse(format, bytes, limits).map_err(|source| StorageError::Format {
+) -> Result<(Index, SharedFile), StorageError> {
+    let contextual = |source| StorageError::Format {
         path: path.into(),
         source,
-    })
+    };
+    let index = Index::parse_file(format, bytes, limits).map_err(contextual)?;
+    let shared = if let Some(id) = index.shared_index_id() {
+        let shared_path = path.with_file_name(format!("sharedindex.{id}"));
+        let remaining = Limits {
+            max_bytes: limits.max_bytes.saturating_sub(bytes.len()),
+            ..limits
+        };
+        let shared_bytes = read_bytes(&shared_path, remaining)?
+            .ok_or_else(|| StorageError::MissingShared(shared_path.clone()))?;
+        Some((shared_path, shared_bytes))
+    } else {
+        None
+    };
+    let index = index
+        .resolve_shared(shared.as_ref().map(|(_, bytes)| bytes.as_slice()), limits)
+        .map_err(contextual)?;
+    Ok((index, shared))
 }
 fn io_error(operation: &'static str, path: &Path, source: io::Error) -> StorageError {
     StorageError::Io {

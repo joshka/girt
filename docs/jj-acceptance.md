@@ -182,7 +182,7 @@ identified in
 
 ### A09 — Index and colocation primitives
 
-**Tasks:** R12, R13. **Consumer:** index export/reset in `lib/src/git.rs`,
+**Tasks:** R12, R13, R38. **Consumer:** index export/reset in `lib/src/git.rs`,
 `cli/tests/test_git_colocated.rs`, `lib/tests/test_git.rs` cache-tree regression.
 
 Support required v2/v3/v4 indexes, intent-to-add and extended flags, conflict stages, stat reuse,

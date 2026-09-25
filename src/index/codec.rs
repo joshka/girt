@@ -16,12 +16,12 @@ use crate::ObjectId;
 /// byte encodings. Editing applies the extension policy in [`Self::replace_entries`].
 #[derive(Clone, Debug)]
 pub struct Index {
-    format: crate::ObjectFormat,
+    pub(super) format: crate::ObjectFormat,
     version: Version,
     // Retain alternate valid compression and flag framing until an actual edit.
-    original: Option<Vec<u8>>,
-    entries: Vec<Entry>,
-    extensions: Vec<Extension>,
+    pub(super) original: Option<Vec<u8>>,
+    pub(super) entries: Vec<Entry>,
+    pub(super) extensions: Vec<Extension>,
 }
 
 /// On-disk entry framing. V3 adds extended flags; V4 also compresses adjacent paths.
@@ -50,14 +50,15 @@ impl Eq for Index {}
 
 /// Opaque optional extension preserved in its original position and byte representation.
 ///
-/// Payload semantics are not validated or used. Mandatory extensions cannot enter an [`Index`].
+/// Optional payload semantics are not validated or used. The mandatory `link` extension is
+/// validated during shared-index resolution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Extension {
-    signature: [u8; 4],
-    data: Vec<u8>,
+    pub(super) signature: [u8; 4],
+    pub(super) data: Vec<u8>,
 }
 impl Extension {
-    /// Four-byte signature whose first byte is ASCII uppercase.
+    /// Four-byte signature; optional extensions begin with ASCII uppercase.
     pub fn signature(&self) -> [u8; 4] {
         self.signature
     }
@@ -125,6 +126,9 @@ pub enum Error {
         /// Path, mode, flags or relationship failure.
         reason: &'static str,
     },
+    /// A split index requires the named immutable shared file.
+    #[error("split index requires shared index {0}")]
+    SharedRequired(ObjectId),
     /// A mandatory extension is not supported.
     #[error("unsupported mandatory index extension {0:?}")]
     MandatoryExtension([u8; 4]),
@@ -222,7 +226,7 @@ impl Index {
         if let Some(extension) = self.extensions.iter().find(|e| {
             !matches!(
                 &e.signature,
-                b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC"
+                b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC" | b"link"
             )
         }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
@@ -247,8 +251,9 @@ impl Index {
     /// set removes derived `TREE`, `UNTR`, `FSMN`, `EOIE` and `IEOT` caches. `REUC` resolve-undo
     /// records retain their original bytes because they describe prior conflicts independently of
     /// current entries. Unknown optional extensions refuse edits. An identical set preserves every
-    /// extension and the original encoding. The version is retained, upgrading v2 to v3 when
-    /// extended flags are introduced.
+    /// extension and the original encoding. Changed split indexes deliberately become standalone
+    /// full indexes; their immutable shared file is left untouched. The version is retained,
+    /// upgrading v2 to v3 when extended flags are introduced.
     ///
     /// # Errors
     ///
@@ -288,7 +293,7 @@ impl Index {
     pub(crate) fn discard_tree_cache(&mut self) {
         self.original = None;
         self.extensions
-            .retain(|extension| extension.signature != *b"TREE");
+            .retain(|extension| !matches!(&extension.signature, b"TREE" | b"link"));
     }
 
     /// Parses a complete index, copying paths and optional extensions into owned storage.
@@ -303,6 +308,33 @@ impl Index {
     /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes or unknown
     /// extended flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
     pub fn parse(format: crate::ObjectFormat, bytes: &[u8], limits: Limits) -> Result<Self, Error> {
+        Self::parse_with_shared(format, bytes, None, limits)
+    }
+
+    /// Parses a split index using the supplied shared file, or an ordinary standalone index.
+    ///
+    /// The checksum named by `link` must match the validated shared file checksum. Limits bound
+    /// aggregate encoded input and the resolved entry set. Unchanged encoding preserves the main
+    /// file and still requires its shared file; edits deliberately encode a standalone full index.
+    /// No filesystem or staging policy is involved.
+    ///
+    /// # Errors
+    ///
+    /// Returns structural, dependency, checksum or resource errors. Nested shared indexes fail.
+    pub fn parse_with_shared(
+        format: crate::ObjectFormat,
+        bytes: &[u8],
+        shared: Option<&[u8]>,
+        limits: Limits,
+    ) -> Result<Self, Error> {
+        Self::parse_file(format, bytes, limits)?.resolve_shared(shared, limits)
+    }
+
+    pub(super) fn parse_file(
+        format: crate::ObjectFormat,
+        bytes: &[u8],
+        limits: Limits,
+    ) -> Result<Self, Error> {
         check_count(bytes.len(), limits.max_bytes, "bytes")?;
         if bytes.len() < 12 + format.digest_len() || &bytes[..4] != b"DIRC" {
             return Err(malformed(0, "missing header or checksum"));
@@ -342,7 +374,7 @@ impl Index {
                 return Err(malformed(cursor, "truncated extension header"));
             }
             let signature: [u8; 4] = bytes[cursor..cursor + 4].try_into().unwrap();
-            if !signature[0].is_ascii_uppercase() {
+            if !signature[0].is_ascii_uppercase() && signature != *b"link" {
                 return Err(Error::MandatoryExtension(signature));
             }
             let length = word(bytes, cursor + 4) as usize;
@@ -356,7 +388,9 @@ impl Index {
             });
             cursor += length;
         }
-        validate_entries(format, &entries, limits)?;
+        if !extensions.iter().any(|e| e.signature == *b"link") {
+            validate_entries(format, &entries, limits)?;
+        }
         Ok(Self {
             format,
             version,
@@ -549,7 +583,7 @@ fn parse_entry(
     })
 }
 
-fn validate_entries(
+pub(super) fn validate_entries(
     format: crate::ObjectFormat,
     entries: &[Entry],
     limits: Limits,

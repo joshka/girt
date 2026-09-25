@@ -5,10 +5,12 @@
 //! format validity does not establish checkout safety on any host filesystem.
 //!
 //! Intent-to-add, skip-worktree and assume-valid are retained as data; no staging, sparse-checkout
-//! or stat-skipping policy is implemented. Sparse directory entries and mandatory extensions
-//! (including split/sparse indexes) are explicitly unsupported. Optional extensions are opaque and
-//! round-trip unchanged. Editing discards derived caches, retains resolve-undo records and refuses
-//! unknown optional extensions. See [`Index::replace_entries`].
+//! or stat-skipping policy is implemented. Split indexes resolve their immutable shared file on
+//! repository reads; unchanged publication preserves that dependency and edits publish a full
+//! index. Sparse directory entries remain unsupported. Unknown mandatory extensions are refused.
+//! Optional extensions are opaque and round-trip unchanged. Editing discards derived caches,
+//! retains resolve-undo records and refuses unknown optional extensions. See
+//! [`Index::replace_entries`].
 //!
 //! [`crate::Repository::read_index`] distinguishes absence from an empty index.
 //! [`crate::Repository::edit_index`] locks before reading; [`IndexEdit::commit`] publishes the
@@ -33,6 +35,7 @@
 //! ```
 mod codec;
 mod entries;
+mod split;
 mod store;
 
 pub use codec::{Error, Extension, Index, Limits, Version};
