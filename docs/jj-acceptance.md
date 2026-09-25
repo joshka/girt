@@ -154,8 +154,8 @@ R26/R27.
 
 ### A08 — References and reflogs
 
-**Tasks:** R11, R37. **Consumer:** no-GC refs in `lib/src/git_backend.rs`, export/import/reset in
-`lib/src/git.rs`, `cli/src/cleanup_guard.rs` tempfile cleanup.
+**Tasks:** R11, R37, R40. **Consumer:** no-GC refs in `lib/src/git_backend.rs`, export/import/reset
+in `lib/src/git.rs`, `cli/src/cleanup_guard.rs` tempfile cleanup.
 
 Cover direct/symbolic/unborn/detached HEAD, packed/loose iteration and precedence, invalid names,
 expected-old predicates including absent-or-same and must-exist, no-GC refs, deletion and reflog
@@ -166,9 +166,11 @@ Windows as well as Unix; signal cleanup belongs to caller integration where proc
 needed. Characterize reference backends accepted by the target rather than silently excluding
 reftable. R37's [backend evidence](evidence/r37.md) covers record and stack reads, conditional
 publication, compaction, coherent backend selection and native interoperability in both directions.
-R14's opening-only jj observation does not close committed-tip import parity. R40 also retains
-consumer interpretation of binary reflog timestamps above signed `i64`; R37 preserves those fields
-through raw snapshots and compaction.
+R14's opening-only jj observation does not close committed-tip import parity. R40's
+[imported-history evidence](evidence/r40.md) supplies bounded raw records, interpreted timestamps
+including binary values above signed `i64`, recoverable roots and explicit incomplete outcomes.
+Canonical append validation remains separate; R37 preserves binary fields through raw snapshots and
+compaction. R31 owns retention policy and repository-wide coordination.
 
 C01 D1 adds both-format imported reflog fixtures with identities `b"A <a@b> 1 +0060"`,
 `b" <a@b> 1 +0000"` (empty name), and `b"A  <a@b> 1 +0000"` (padded name), alongside the canonical
@@ -322,6 +324,12 @@ disk-full, permissions and cancellation before/after publication. Compare retain
 repository usability with controlled Git GC observations, not identical pack bytes. Benchmark large
 stores and bound memory/temporary disk use. Accelerators/cruft formats require evidence-driven
 decisions; unimplemented required retention/config behavior blocks readiness.
+
+R40 supplies bounded per-name imported history and recoverable IDs with explicit incomplete
+outcomes. R31 must discover logs independently of live reference enumeration, including deleted
+names and private worktree stacks. Preserve recovered candidates and refuse destructive plans on
+corrupt, limited, cancelled or failed scans; a complete per-name live read is not repository-wide GC
+coordination. Policy and execution ownership remain unchanged.
 
 ### A18 — Architecture checkpoints
 

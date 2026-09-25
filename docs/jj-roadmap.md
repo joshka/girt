@@ -93,7 +93,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
 | R38 | Split and sparse index storage                              | R12, R14                        | Accepted            | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
 | R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
-| R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Planned             | [R14 contracts](evidence/r14.md#imported-reflogs-and-colocation); required before C02/R31/R34.                                                                               |
+| R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Awaiting acceptance | [R40 evidence](evidence/r40.md); bounded bytes/fields/roots, explicit incomplete outcomes and native evidence; required before C02/R31/R34.                                  |
 
 The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
 separates parsed identity bytes from construction policy, and exposes exact signature payload
@@ -381,3 +381,20 @@ The initial R15-only warm SHA-1 macOS
 reads at 0.20–0.25x Git throughput and selected deep deltas at 0.017–0.026x. It motivates
 investigation, not an all-function or cross-platform baseline. No performance implementation is
 included in R40.
+
+## R40 Completion
+
+[R40 evidence](evidence/r40.md) records bounded files/reftable history, exact raw data, wide numeric
+interpretation, independent recoverable IDs and explicit EOF/corrupt/limit/cancel/I/O outcomes.
+Canonical append construction remains strict; terminated unusual history no longer requires
+whole-log parsing before append. Unterminated tails refuse before publication. Original Git
+operation probes resolve the R11/R14 symbolic-HEAD fallback and distinguish display from retention
+candidates.
+
+Executable `ead930d0c3ceddc5c59b5aa22245bc20638c2156` passes scoped native run
+[36178892312](https://github.com/joshka/girt/actions/runs/36178892312) on all four hosts and is
+ready for coordinator acceptance. R31 must enumerate retained logs independently of live reference
+names, including deleted refs and private worktrees, and must refuse unsafe GC plans when any scan
+is incomplete. Repository-wide coordination and expiry policy remain R31; R32/R33 own execution. R35
+and existing C02 owners retain their scope. R41 has its separate planning change and A20 criteria;
+no performance implementation is included here. R17 remains next; no successor is dispatched.
