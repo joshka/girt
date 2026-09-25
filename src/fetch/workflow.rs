@@ -353,14 +353,14 @@ impl FetchReady {
             // the destination's actual lookup precedence before any ref can name this graph.
             KnownHistory::new(&objects, self.received.wants(), limits.verification, cancel)
                 .map_err(FetchFinishFailure::BeforePublication)?;
-            super::update::validate(
+            let validation = super::update::validate(
                 &mut report.updates,
                 &objects,
                 &self.request.authorized_force,
                 limits,
                 cancel,
-            )
-            .map_err(FetchFinishFailure::Update)?;
+            );
+            validation.map_err(FetchFinishFailure::Update)?;
         }
         super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
         let edits: Vec<_> = report
