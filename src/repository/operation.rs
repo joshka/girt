@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use super::Repository;
 
-/// Recognized metadata roots, in cleanup order. Auxiliary files can survive interrupted commands.
+/// Recognized metadata roots, in inspection order. Auxiliary files can survive interrupted
+/// commands.
 ///
 /// `BISECT_LOG` is inspected for compatibility with colocation consumers; deleting it does not
 /// implement `git bisect reset`. ORIG_HEAD, refs, logs, index and working files are never selected.

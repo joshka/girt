@@ -188,6 +188,13 @@ both hash formats. R38 retains split shared-index and sparse-directory storage b
 retains workflow and operation-state semantics. Explicit refusal and opening acceptance are not
 claims of full split/sparse parity.
 
+R13's [implementation evidence](evidence/r13.md) records conditional index/HEAD composition,
+caller-controlled extended flags and recognized operation metadata cleanup with partial effects.
+After user-authorized public repository visibility, attempt 2 of the existing index/colocation,
+reference and broad platform matrices passes on all four hosts at the unchanged executable revision.
+R13 is ready for coordinator acceptance; R14 retains assessment of any additional raw flagged-entry
+consumer needs.
+
 ### A10 — Ignore and exclude semantics
 
 **Task:** R17. **Consumer:** `lib/src/gitignore.rs`, `cli/src/cli_util.rs` global excludes.
