@@ -3,6 +3,10 @@
 //! [`Ignore`] combines caller-loaded sources in Git precedence order. It checks every ancestor
 //! before the requested path: an excluded directory prevents child rules from re-including its
 //! contents. Callers still own traversal, symlink classification and tracked-file selection.
+//! Convert native OS paths to slash-separated repository paths before querying; in particular,
+//! backslash is a literal byte here even on Windows. Git for Windows CLI path interpretation is
+//! therefore a separate adapter boundary.
+//!
 //! No filesystem, index, environment or configuration is read here. Resolve `core.excludesFile`
 //! (including home expansion/defaults) and load its bytes explicitly; do the same for the common
 //! directory's `info/exclude` and encountered `.gitignore` files. Do not follow worktree

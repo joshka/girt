@@ -27,6 +27,8 @@ fn root(content: &[u8]) -> Ignore {
 #[case::nul(b"foo\0bar\n", b"foo", false, Some(true))]
 #[case::escape_end(b"foo\\\n", b"foo", false, None)]
 #[case::invalid_class(b"[![:invalid:]]\n", b"z", false, None)]
+#[case::backslash_is_one_byte(b"a?\n", b"a\\", false, Some(true))]
+#[case::literal_backslash(b"a\\\\\n", b"a\\", false, Some(true))]
 #[case::range(b"[a-c][[:digit:]]\n", b"b7", false, Some(true))]
 fn semantics(
     #[case] content: &[u8],

@@ -23,6 +23,7 @@ patterns = [b"a/**\\/b", b"**\\/a", b"a/***/b", b"a/****/b", b"a\\/b", b"[a/]", 
 patterns += [bytes(rng.choice(b"ab/*?[]!^\\ -") for _ in range(rng.randrange(1, 15))) for _ in range(400)]
 failures = []
 observations = []
+host_path_differences = []
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     ENV["GIT_CONFIG_GLOBAL"] = str(root / "absent-config")
@@ -36,7 +37,15 @@ with tempfile.TemporaryDirectory() as directory:
         observation = {"pattern_hex": pattern.hex(), "git_hex": git.stdout.hex(), "girt_hex": girt.stdout.hex()}
         observations.append(observation)
         if git.stdout != girt.stdout:
-            failures.append(observation)
-report = {"platform": platform.platform(), "git": subprocess.check_output(["git", "--version"]).decode().strip(), "seed": 170010, "path_count": len(paths), "patterns": len(patterns), "paths_hex": [p.hex() for p in paths], "failures": failures, "observations": observations}
+            git_paths = set(git.stdout.split(b"\0"))
+            girt_paths = set(girt.stdout.split(b"\0"))
+            # Git for Windows applies native path handling to a terminal backslash. Our API
+            # accepts slash-separated byte paths, where backslash is a literal byte. Preserve
+            # these observations separately; they are not lexical matcher compatibility cases.
+            if os.name == "nt" and git_paths.symmetric_difference(girt_paths) <= {b"a\\"}:
+                host_path_differences.append(observation)
+            else:
+                failures.append(observation)
+report = {"platform": platform.platform(), "git": subprocess.check_output(["git", "--version"]).decode().strip(), "seed": 170010, "path_count": len(paths), "patterns": len(patterns), "paths_hex": [p.hex() for p in paths], "failures": failures, "host_path_differences": host_path_differences, "observations": observations}
 print(json.dumps(report, indent=2))
 sys.exit(bool(failures))

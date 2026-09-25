@@ -224,6 +224,10 @@ probe ignored-parent traversal/re-inclusion constraints. Compare independent `gi
 observations and unchanged jj behavior. jj owns traversal and tracked-file selection. Benchmark
 large pattern/path sets and bound adversarial matching work.
 
+[R17 evidence](evidence/r17.md) records the new pure byte matcher, explicit caller-loaded sources,
+case selection, ancestor exclusions, bounded work and original both-format observations. Native
+validation remains pending; R35 retains final consumer dependency replacement.
+
 ### A11 — Inferred copies and renames
 
 **Task:** R18. **Consumer:** `lib/src/git_backend.rs` copy records and

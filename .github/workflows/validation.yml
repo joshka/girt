@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      ignore_windows_only:
+        description: Restrict focused ignore checks to Windows
+        type: boolean
+        default: false
       ignore_only:
         description: Run focused ignore compatibility and performance checks
         type: boolean
@@ -235,7 +239,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+        os: ${{ inputs.ignore_windows_only && fromJSON('["windows-2022"]') || fromJSON('["ubuntu-22.04", "ubuntu-24.04", "macos-14", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
