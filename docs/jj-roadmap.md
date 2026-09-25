@@ -90,7 +90,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
-| R38 | Split and sparse index storage                              | R12, R14                        | In progress         | Resolve split shared-index dependencies and sparse directory trees; Git/jj observations, both-format corruption, race/fault and native evidence; required before R34.        |
+| R38 | Split and sparse index storage                              | R12, R14                        | Awaiting acceptance | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
 | R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
 | R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Planned             | [R14 contracts](evidence/r14.md#imported-reflogs-and-colocation); required before C02/R31/R34.                                                                               |
 
@@ -349,3 +349,17 @@ holds writer locks; common/private publication can have explicit partial effects
 interpretation of unsigned binary timestamps above `i64::MAX`; R19/R20 retain operation-specific
 pseudoref policy, R31/R32 maintenance policy and R35 final consumer parity. C02's existing owners
 remain unchanged. Next remains R38, R40, then R17; this task dispatches none.
+
+## R38 Completion
+
+[R38 evidence](evidence/r38.md) records split shared-file resolution, unchanged byte preservation,
+deliberate standalone publication after edits and explicit sparse-directory preservation/expansion
+through public index and colocation operations. Executable
+`34b5c234c06039866e6d8c8ad1c5eb732e5fa9ca` passes scoped native run
+[36175961248](https://github.com/joshka/girt/actions/runs/36175961248) on all four hosts and is
+ready for coordinator acceptance. Git accepts overlapping replacement/deletion bitmaps; the final
+decoder matches its replacement-before-deletion behavior. No working files are materialized, shared
+files are not collected, and jj retains staging policy. Resource and publication limits,
+measurements and the unavailable visual Rustdoc check remain explicit. R35 retains final consumer
+integration; R31/R32, R40, R19/R20 and C02 retain their established owners. Next remains R40, then
+R17; no successor is dispatched.

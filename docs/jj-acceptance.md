@@ -198,6 +198,12 @@ both hash formats. R38 retains split shared-index and sparse-directory storage b
 retains workflow and operation-state semantics. Explicit refusal and opening acceptance are not
 claims of full split/sparse parity.
 
+R38's [implementation evidence](evidence/r38.md) supplies both-format split resolution, unchanged
+storage preservation, deliberate full-index publication after edits and explicit bounded sparse tree
+expansion through index/colocation guards. Git interoperability, resource, race/fault and four-host
+native evidence pass; coordinator acceptance remains pending. Consumer staging and materialization
+policy remain unchanged.
+
 R13's [implementation evidence](evidence/r13.md) records conditional index/HEAD composition,
 caller-controlled extended flags and recognized operation metadata cleanup with partial effects.
 After user-authorized public repository visibility, attempt 2 of the existing index/colocation,
