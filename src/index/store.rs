@@ -211,6 +211,15 @@ impl IndexEdit {
         self.index.replace_entries(entries, self.limits)
     }
 
+    /// Selects framing under the guard's extension and resource policy.
+    ///
+    /// # Errors
+    ///
+    /// See [`Index::set_version`]; failures leave the snapshot and storage unchanged.
+    pub fn set_version(&mut self, version: super::Version) -> Result<(), Error> {
+        self.index.set_version(version, self.limits)
+    }
+
     /// Encodes, rechecks the original bytes, writes the owned lock and renames it over `index`.
     ///
     /// Consumes the guard on success or failure. A final exact-byte/presence comparison detects

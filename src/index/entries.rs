@@ -19,6 +19,10 @@ pub struct Entry {
     pub stage: Stage,
     /// Git's assume-valid bit; consumers must explicitly choose how to honor it.
     pub assume_valid: bool,
+    /// Git's intent-to-add bit; the entry is a placeholder until content is staged.
+    pub intent_to_add: bool,
+    /// Git's skip-worktree bit; this codec does not apply sparse-checkout policy.
+    pub skip_worktree: bool,
     /// Cached, uninterpreted 32-bit stat words; not proof the worktree is unchanged.
     pub stat: Stat,
 }
@@ -34,6 +38,8 @@ impl Entry {
             id,
             stage: Stage::Normal,
             assume_valid: false,
+            intent_to_add: false,
+            skip_worktree: false,
             stat: Stat::default(),
         }
     }

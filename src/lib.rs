@@ -9,7 +9,7 @@
 //! traversal support both formats. Tree construction and all decoded payload parsing take an
 //! explicit format, including empty trees. Commit construction derives the format from its tree
 //! and requires matching parents; tag construction derives it from the target. References,
-//! reflogs and working-tree index v2 use the repository format. Transport negotiation remains
+//! reflogs and working-tree index v2/v3/v4 use the repository format. Transport negotiation remains
 //! SHA-1-only and refuses SHA-256 operations before mutation.
 //!
 //! # Reading a repository
@@ -39,12 +39,13 @@
 //!
 //! # Reading and replacing the index
 //!
-//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2 indexes with byte paths, stat words
-//! and conflict stages. [`Repository::read_index`] distinguishes missing storage from an empty
-//! index; [`Repository::edit_index`] holds `index.lock` while the caller derives and publishes
-//! changes. Optional extensions round-trip, but edits reject extensions other than the
-//! invalidatable `TREE` cache. Index operations never create working files or apply staging policy.
-//! Run `cargo run --example index` for a disposable repository example.
+//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2/v3/v4 indexes with byte paths, stat
+//! words and conflict stages. [`Repository::read_index`] distinguishes missing storage from an
+//! empty index; [`Repository::edit_index`] holds `index.lock` while the caller derives and
+//! publishes changes. Optional extensions round-trip; edits discard derived caches, retain
+//! resolve-undo records and refuse unknown optional extensions. Index operations never create
+//! working files or apply staging policy. Run `cargo run --example index` for a disposable
+//! repository example.
 //!
 //! # Observing working-tree status
 //!
@@ -179,9 +180,9 @@
 //! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio
 //! runtime; fetch pack validation remains an explicit synchronous step. Files references support
 //! enumeration, reads, symbolic resolution, and explicit no-reflog updates and deletion, plus
-//! conditional batches and caller-controlled reflog appends. SHA-1/SHA-256 working-tree index v2,
-//! raw status and conservative raw tree checkout are available. Attribute/filter/EOL conversion,
-//! branch switching, sparse checkout and submodules are deferred.
+//! conditional batches and caller-controlled reflog appends. SHA-1/SHA-256 working-tree index
+//! v2/v3/v4, raw status and conservative raw tree checkout are available. Attribute/filter/EOL
+//! conversion, branch switching, sparse checkout and submodules are deferred.
 
 pub mod checkout;
 pub mod clone;

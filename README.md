@@ -18,9 +18,9 @@ validates fields separately from parsing existing commits. Annotated tags preser
 and type, byte names, optional taggers, opaque extra headers, and message bytes, including embedded
 signatures. Storing a tag object does not create a tag reference. Explicit-path repository opening
 supports ordinary, bare, separate Git directories, and linked worktrees, deriving the object format
-from repository-local configuration. Packs, refs, reflogs and working-tree index v2 support both
-formats. Transport negotiation remains SHA-1-only. Explicit layered configuration resolves includes
-and conditional includes with provenance; unsupported repository extensions return errors.
+from repository-local configuration. Packs, refs, reflogs and working-tree index v2/v3/v4 support
+both formats. Transport negotiation remains SHA-1-only. Explicit layered configuration resolves
+includes and conditional includes with provenance; unsupported repository extensions return errors.
 Files-backend references support byte-preserving names, loose/packed enumeration and reads, symbolic
 resolution, and conditional batches with explicit reflog policy, plus single-ref operations without
 reflogs. HEAD and per-worktree refs use the detected layout. Repository object reads combine live
@@ -58,7 +58,7 @@ edits. `BlobContent::read` loads the blob sides of a tree change separately. Run
 `cargo run --example content_diff` for a tree-to-content comparison; see
 [content diff scope](docs/compatibility.md#content-diff).
 
-SHA-1/SHA-256 working-tree index v2 entries can be parsed, constructed and encoded with
+SHA-1/SHA-256 working-tree index v2/v3/v4 entries can be parsed, constructed and encoded with
 `index::Index`. `Repository::edit_index` holds `index.lock` from read through replacement, with
 bounded input, byte paths, conflict stages and explicit extension restrictions. No working files are
 created. Run `cargo run --example index`; see

@@ -295,3 +295,42 @@ fn explicit_abort_does_not_remove_replaced_lock(#[case] format: crate::ObjectFor
         b"foreign"
     );
 }
+
+#[rstest]
+#[case::v3_sha1(crate::ObjectFormat::Sha1, crate::index::Version::V3)]
+#[case::v3_sha256(crate::ObjectFormat::Sha256, crate::index::Version::V3)]
+#[case::v4_sha1(crate::ObjectFormat::Sha1, crate::index::Version::V4)]
+#[case::v4_sha256(crate::ObjectFormat::Sha256, crate::index::Version::V4)]
+fn versioned_publication_fault_and_race_preserve_bytes(
+    #[case] format: crate::ObjectFormat,
+    #[case] version: crate::index::Version,
+) {
+    let (_root, repo) = repository(format);
+    populated(&repo);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let mut entries = edit.index().entries().to_vec();
+    entries[0].intent_to_add = true;
+    edit.replace_entries(entries).unwrap();
+    edit.set_version(version).unwrap();
+    edit.commit().unwrap();
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.replace_entries(vec![]).unwrap();
+    assert!(
+        edit.publish_with_rename(|_, _| Err(io::Error::other("injected")))
+            .is_err()
+    );
+    edit.abort().unwrap();
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.replace_entries(vec![]).unwrap();
+    fs::write(repo.git_dir().join("index"), b"independent writer").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(_))));
+    assert_eq!(
+        fs::read(repo.git_dir().join("index")).unwrap(),
+        b"independent writer"
+    );
+    assert!(!repo.git_dir().join("index.lock").exists());
+}

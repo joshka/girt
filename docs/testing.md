@@ -132,9 +132,9 @@ The Windows integration selection follows implemented operations, not just file 
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.
-- `index`: SHA-1/SHA-256 v2 parsing/encoding, held-lock replacement, Git stat/flag observations,
-  byte paths, and linked/separate-gitdir routing. No checkout or reference-backend operation is
-  required.
+- `index`: SHA-1/SHA-256 v2/v3/v4 parsing/encoding, held-lock replacement, Git stat/flag
+  observations, byte paths, and linked/separate-gitdir routing. No checkout or reference-backend
+  operation is required.
 - `status_portable`: Cancellation before storage access and explicit unsupported-platform status
   rejection. The `status` suite requires macOS/Linux descriptor-relative traversal and is excluded
   on Windows; Linux byte filenames and macOS normalization restrictions have distinct local cases.

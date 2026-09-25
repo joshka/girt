@@ -119,6 +119,12 @@ impl<'a> Plan<'a> {
         }
         for entry in entries {
             check(cancel)?;
+            if entry.intent_to_add || entry.skip_worktree {
+                return Err(refused(
+                    &entry.path,
+                    "extended index flags require caller policy",
+                ));
+            }
             if entry.stage != index::Stage::Normal || old.get(&entry.path) != Some(&value(entry)) {
                 return Err(refused(&entry.path, "staged changes or conflict"));
             }

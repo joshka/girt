@@ -207,7 +207,7 @@ fn git_long_paths_need_no_filesystem_materialization(#[case] format: girt::Objec
 #[case::skip_worktree_sha256(girt::ObjectFormat::Sha256, &["update-index", "--skip-worktree", "file"], 3)]
 #[case::intent_to_add_sha1(girt::ObjectFormat::Sha1, &["add", "-N", "new"], 3)]
 #[case::intent_to_add_sha256(girt::ObjectFormat::Sha256, &["add", "-N", "new"], 3)]
-fn git_unsupported_flags_and_versions_fail_without_writing(
+fn git_flags_and_versions_roundtrip_without_changes(
     #[case] format: girt::ObjectFormat,
 
     #[case] args: &[&str],
@@ -219,9 +219,12 @@ fn git_unsupported_flags_and_versions_fail_without_writing(
     fs::write(root.join("new"), b"new").unwrap();
     git(root, args);
     let before = fs::read(repo.git_dir().join("index")).unwrap();
-    assert!(
-        matches!(repo.edit_index(Limits::default()), Err(StorageError::Format { source: Error::Version(v), .. }) if v == version)
-    );
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert_eq!(edit.index().version() as u32, version);
+    assert_eq!(edit.index().encode(Limits::default()).unwrap(), before);
+    let observed = git(root, &["ls-files", "--stage", "--debug"]);
+    edit.commit().unwrap();
+    assert_eq!(git(root, &["ls-files", "--stage", "--debug"]), observed);
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
@@ -391,7 +394,7 @@ fn git_empty_index_matches_pure_encoder(#[case] format: girt::ObjectFormat) {
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
-fn git_resolve_undo_information_blocks_destructive_edits(#[case] format: girt::ObjectFormat) {
+fn git_resolve_undo_information_survives_entry_edits(#[case] format: girt::ObjectFormat) {
     let (_root, repo) = repository(format);
     seed(&repo);
     let root = repo.worktree().unwrap();
@@ -402,7 +405,7 @@ fn git_resolve_undo_information_blocks_destructive_edits(#[case] format: girt::O
     );
     input(root, &["update-index", "--index-info"], records.as_bytes());
     git(root, &["add", "file"]);
-    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    let before = git(root, &["ls-files", "--resolve-undo"]);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     assert!(
         edit.index()
@@ -410,11 +413,208 @@ fn git_resolve_undo_information_blocks_destructive_edits(#[case] format: girt::O
             .iter()
             .any(|e| e.signature() == *b"REUC")
     );
-    assert_eq!(
-        edit.replace_entries(Vec::new()),
-        Err(Error::ExtensionPreventsEdit(*b"REUC"))
-    );
+    edit.replace_entries(Vec::new()).unwrap();
     edit.commit().unwrap();
-    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    assert_eq!(git(root, &["ls-files", "--resolve-undo"]), before);
     assert!(!git(root, &["ls-files", "--resolve-undo"]).is_empty());
+}
+
+#[rstest]
+#[case::v2_sha1(
+    girt::ObjectFormat::Sha1,
+    girt::index::Version::V2,
+    "--index-version=2"
+)]
+#[case::v2_sha256(
+    girt::ObjectFormat::Sha256,
+    girt::index::Version::V2,
+    "--index-version=2"
+)]
+#[case::v3_sha1(
+    girt::ObjectFormat::Sha1,
+    girt::index::Version::V3,
+    "--index-version=3"
+)]
+#[case::v3_sha256(
+    girt::ObjectFormat::Sha256,
+    girt::index::Version::V3,
+    "--index-version=3"
+)]
+#[case::v4_sha1(
+    girt::ObjectFormat::Sha1,
+    girt::index::Version::V4,
+    "--index-version=4"
+)]
+#[case::v4_sha256(
+    girt::ObjectFormat::Sha256,
+    girt::index::Version::V4,
+    "--index-version=4"
+)]
+fn versions_preserve_git_conflicts_and_long_byte_paths(
+    #[case] format: girt::ObjectFormat,
+    #[case] version: girt::index::Version,
+    #[case] option: &str,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    let id = ObjectId::for_blob(format, b"hello\n");
+    let mut records = format!(
+        "100755 {id} 1\tconflict\0\
+        100644 {id} 2\tconflict\0\
+        120000 {id} 3\tconflict\0\
+        100644 {id} 0\t"
+    )
+    .into_bytes();
+    records.extend_from_slice(&vec![b'x'; 5000]);
+    records.extend_from_slice(
+        format!(
+            "\0\
+        100644 {id} 0\t"
+        )
+        .as_bytes(),
+    );
+    records.extend_from_slice(b"\xff\0");
+    input(root, &["update-index", "-z", "--index-info"], &records);
+    git(root, &["update-index", option]);
+    let before = git(root, &["ls-files", "--stage", "-z"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    // Git may choose v2 for a requested v3 without extended flags. Explicit girt conversion
+    // tests all three output versions regardless of that optimization.
+    edit.set_version(version).unwrap();
+    let mut entries = edit.index().entries().to_vec();
+    entries
+        .iter_mut()
+        .find(|e| e.path == b"file")
+        .unwrap()
+        .assume_valid = true;
+    edit.replace_entries(entries).unwrap();
+    edit.commit().unwrap();
+    assert_eq!(git(root, &["ls-files", "--stage", "-z"]), before);
+    assert_eq!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .version(),
+        version
+    );
+}
+
+#[rstest]
+#[case::v3_sha1(girt::ObjectFormat::Sha1, girt::index::Version::V3)]
+#[case::v3_sha256(girt::ObjectFormat::Sha256, girt::index::Version::V3)]
+#[case::v4_sha1(girt::ObjectFormat::Sha1, girt::index::Version::V4)]
+#[case::v4_sha256(girt::ObjectFormat::Sha256, girt::index::Version::V4)]
+fn git_observes_girt_extended_flag_edits(
+    #[case] format: girt::ObjectFormat,
+    #[case] version: girt::index::Version,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    fs::write(root.join("new"), b"new").unwrap();
+    git(root, &["add", "-N", "new"]);
+    git(root, &["update-index", "--skip-worktree", "file"]);
+    let expected = git(root, &["ls-files", "--debug"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.index().entries()[0].skip_worktree);
+    assert!(edit.index().entries()[1].intent_to_add);
+    let original = edit.index().entries().to_vec();
+    let mut cleared = original.clone();
+    cleared[0].skip_worktree = false;
+    cleared[1].intent_to_add = false;
+    edit.replace_entries(cleared).unwrap();
+    edit.replace_entries(original).unwrap();
+    edit.set_version(version).unwrap();
+    edit.commit().unwrap();
+    assert_eq!(git(root, &["ls-files", "--debug"]), expected);
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn sparse_index_is_observed_and_refused_without_writing(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let root = repo.worktree().unwrap();
+    fs::create_dir(root.join("inside")).unwrap();
+    fs::create_dir(root.join("outside")).unwrap();
+    fs::write(root.join("inside/a"), b"a").unwrap();
+    fs::write(root.join("outside/b"), b"b").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "original sparse fixture"]);
+    git(
+        root,
+        &[
+            "sparse-checkout",
+            "set",
+            "--cone",
+            "--sparse-index",
+            "inside",
+        ],
+    );
+    let observed = git(root, &["ls-files", "--sparse", "--stage"]);
+    assert!(String::from_utf8_lossy(&observed).contains("040000"));
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    assert!(matches!(
+        repo.edit_index(Limits::default()),
+        Err(StorageError::Format {
+            source: Error::Entry { .. },
+            ..
+        })
+    ));
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+    git(root, &["sparse-checkout", "reapply", "--no-sparse-index"]);
+    let expanded = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert!(
+        expanded
+            .entries()
+            .iter()
+            .any(|e| e.path == b"outside/b" && e.skip_worktree)
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[rstest]
+#[case::intent_sha1(girt::ObjectFormat::Sha1, true, false)]
+#[case::intent_sha256(girt::ObjectFormat::Sha256, true, false)]
+#[case::skip_sha1(girt::ObjectFormat::Sha1, false, true)]
+#[case::skip_sha256(girt::ObjectFormat::Sha256, false, true)]
+fn raw_workflows_refuse_extended_flags_without_mutation(
+    #[case] format: girt::ObjectFormat,
+    #[case] intent: bool,
+    #[case] skip: bool,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    let tree = String::from_utf8(git(root, &["write-tree"])).unwrap();
+    let tree = ObjectId::from_hex(format, tree.trim()).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let mut entries = edit.index().entries().to_vec();
+    entries[0].intent_to_add = intent;
+    entries[0].skip_worktree = skip;
+    edit.replace_entries(entries).unwrap();
+    edit.commit().unwrap();
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    assert!(matches!(
+        repo.raw_status(
+            girt::status::Baseline::Tree(Some(tree)),
+            girt::status::Untracked::Omit,
+            girt::status::Limits::default(),
+            &cancel
+        ),
+        Err(girt::status::Error::Unsupported { .. })
+    ));
+    let failure = repo
+        .checkout_tree(Some(tree), None, girt::checkout::Limits::default(), &cancel)
+        .unwrap_err();
+    assert!(matches!(
+        *failure.cause,
+        girt::checkout::Error::Refused { .. }
+    ));
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    assert_eq!(fs::read(root.join("file")).unwrap(), b"hello\n");
+    assert!(!repo.git_dir().join("index.lock").exists());
 }

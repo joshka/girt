@@ -5,20 +5,48 @@ use thiserror::Error;
 use super::{Entry, Mode, Stage, Stat, Timestamp};
 use crate::ObjectId;
 
-/// Owned, structurally valid SHA-1/SHA-256 v2 index with immutable entry access.
+/// Owned, structurally valid SHA-1/SHA-256 v2/v3/v4 index with immutable entry access.
 ///
 /// Parsing verifies the checksum, canonical modes, flags, paths, padding, ordering and stage
 /// relationships. It does not verify object targets, cached stat data or opaque extension payloads.
-/// Accepted bytes round-trip exactly: encoding regenerates canonical name lengths and zero padding,
-/// which parsing already requires, and preserves extension order and payloads. Construction sorts
-/// entries; parsing never repairs their order. Editing may discard a `TREE` cache explicitly under
-/// the policy in [`Self::replace_entries`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Accepted bytes round-trip exactly while unchanged, including alternate v4 prefix compression.
+/// The original encoding is retained alongside decoded entries. Edits encode canonical name
+/// lengths, maximal shared prefixes and zero padding. Construction sorts entries; parsing never
+/// repairs their order. Equality compares version, entries and extensions, ignoring alternative
+/// byte encodings. Editing applies the extension policy in [`Self::replace_entries`].
+#[derive(Clone, Debug)]
 pub struct Index {
     format: crate::ObjectFormat,
+    version: Version,
+    // Retain alternate valid compression and flag framing until an actual edit.
+    original: Option<Vec<u8>>,
     entries: Vec<Entry>,
     extensions: Vec<Extension>,
 }
+
+/// On-disk entry framing. V3 adds extended flags; V4 also compresses adjacent paths.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u32)]
+pub enum Version {
+    /// Padded paths without extended flags.
+    #[default]
+    V2 = 2,
+    /// Padded paths with optional intent-to-add and skip-worktree flags.
+    V3 = 3,
+    /// Prefix-compressed paths without padding, with optional extended flags.
+    V4 = 4,
+}
+
+// Equality describes index information, not alternative encodings of that information.
+impl PartialEq for Index {
+    fn eq(&self, other: &Self) -> bool {
+        self.format == other.format
+            && self.version == other.version
+            && self.entries == other.entries
+            && self.extensions == other.extensions
+    }
+}
+impl Eq for Index {}
 
 /// Opaque optional extension preserved in its original position and byte representation.
 ///
@@ -44,7 +72,8 @@ impl Extension {
 /// Input/output bytes include the header, extensions and checksum. Entry and extension counts
 /// bound owned record overhead; path bytes are additionally bounded per entry. Allocations are
 /// proportional to these ceilings, not a precise resident-memory budget. Caller-owned drafts and
-/// input buffers are outside the budget. Storage can retain original, parsed and encoded buffers
+/// input buffers are outside the budget. Parsing retains original bytes to preserve framing.
+/// Storage can retain original, parsed and encoded buffers
 /// simultaneously and reads at most `max_bytes + 1` bytes to detect an oversized file.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -85,7 +114,7 @@ pub enum Error {
     /// Stored checksum does not match the bytes preceding it (zero checksums are not accepted).
     #[error("index checksum mismatch")]
     Checksum,
-    /// Only v2 is supported, including explicit rejection of recognized v3/v4.
+    /// The version is outside the supported v2/v3/v4 formats.
     #[error("unsupported index version {0}")]
     Version(u32),
     /// An entry is invalid or outside the supported baseline.
@@ -112,6 +141,8 @@ impl Index {
     pub fn empty(format: crate::ObjectFormat) -> Self {
         Self {
             format,
+            version: Version::V2,
+            original: None,
             entries: Vec::new(),
             extensions: Vec::new(),
         }
@@ -124,7 +155,8 @@ impl Index {
 
     /// Validates and sorts drafts by unsigned path bytes, then stage.
     ///
-    /// Creates an index in `format` without extensions; even an empty index retains its format.
+    /// Creates an index in `format` without extensions, using v3 when extended flags are present,
+    /// otherwise v2. Even an empty index retains its format.
     /// Prefix-related paths are allowed across different conflict stages (directory/file
     /// conflicts), but forbidden within the same stage or when either entry is normal. No
     /// staging policy, conflict resolution or object reads are performed.
@@ -144,11 +176,60 @@ impl Index {
         validate_entries(format, &entries, limits)?;
         let index = Self {
             format,
+            version: if entries.iter().any(extended) {
+                Version::V3
+            } else {
+                Version::V2
+            },
+            original: None,
             entries,
             extensions: Vec::new(),
         };
         index.encoded_len(limits)?;
         Ok(index)
+    }
+
+    /// Returns the retained or selected entry framing version.
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    /// Selects output framing, discarding derived caches when the version changes.
+    ///
+    /// Resolve-undo (`REUC`) is retained. Unknown optional extensions prevent conversion.
+    /// Unchanged versions preserve the exact original encoding.
+    ///
+    /// # Errors
+    ///
+    /// V2 refuses extended flags. Limit or extension errors leave the index unchanged.
+    pub fn set_version(&mut self, version: Version, limits: Limits) -> Result<(), Error> {
+        if version == Version::V2 && self.entries.iter().any(extended) {
+            return Err(entry_error(0, "extended flags require v3 or v4"));
+        }
+        if version == self.version {
+            self.encoded_len(limits)?;
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement.invalidate_extensions()?;
+        replacement.version = version;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
+    fn invalidate_extensions(&mut self) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|e| {
+            !matches!(
+                &e.signature,
+                b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        self.extensions.retain(|e| e.signature == *b"REUC");
+        self.original = None;
+        Ok(())
     }
 
     /// Borrows entries in validated byte-path/stage order.
@@ -163,29 +244,38 @@ impl Index {
     /// Replaces the complete entry set after validation and sorting, without staging policy.
     ///
     /// Clone the current entries to form drafts, then submit the complete desired set. A changed
-    /// set invalidates and removes all `TREE` extensions. Any other extension, including `REUC`
-    /// and unknown optional signatures, refuses the edit rather than lose semantic information
-    /// or retain a stale cache. An identical set preserves every extension unchanged.
+    /// set removes derived `TREE`, `UNTR`, `FSMN`, `EOIE` and `IEOT` caches. `REUC` resolve-undo
+    /// records retain their original bytes because they describe prior conflicts independently of
+    /// current entries. Unknown optional extensions refuse edits. An identical set preserves every
+    /// extension and the original encoding. The version is retained, upgrading v2 to v3 when
+    /// extended flags are introduced.
     ///
     /// # Errors
     ///
     /// Returns construction/limit errors or [`Error::ExtensionPreventsEdit`]. On every failure
     /// the original index, including its extensions, remains unchanged.
     pub fn replace_entries(&mut self, entries: Vec<Entry>, limits: Limits) -> Result<(), Error> {
-        let replacement = Self::new(self.format, entries, limits)?;
+        let mut replacement = Self::new(self.format, entries, limits)?;
         if replacement.entries == self.entries {
             self.encoded_len(limits)?;
             return Ok(());
         }
-        if let Some(extension) = self.extensions.iter().find(|e| e.signature != *b"TREE") {
-            return Err(Error::ExtensionPreventsEdit(extension.signature));
-        }
+        replacement.version =
+            if self.version == Version::V2 && replacement.entries.iter().any(extended) {
+                Version::V3
+            } else {
+                self.version
+            };
+        replacement.extensions = self.extensions.clone();
+        replacement.invalidate_extensions()?;
+        replacement.encoded_len(limits)?;
         *self = replacement;
         Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn discard_tree_cache(&mut self) {
+        self.original = None;
         self.extensions
             .retain(|extension| extension.signature != *b"TREE");
     }
@@ -199,28 +289,30 @@ impl Index {
     ///
     /// # Errors
     ///
-    /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes/extended
-    /// flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
+    /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes or unknown
+    /// extended flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
     pub fn parse(format: crate::ObjectFormat, bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         check_count(bytes.len(), limits.max_bytes, "bytes")?;
         if bytes.len() < 12 + format.digest_len() || &bytes[..4] != b"DIRC" {
             return Err(malformed(0, "missing header or checksum"));
         }
-        let version = word(bytes, 4);
-        if version != 2 {
-            return Err(Error::Version(version));
-        }
+        let version = match word(bytes, 4) {
+            2 => Version::V2,
+            3 => Version::V3,
+            4 => Version::V4,
+            other => return Err(Error::Version(other)),
+        };
         let end = bytes.len() - format.digest_len();
         if *format.checksum(&bytes[..end]).as_bytes() != bytes[end..] {
             return Err(Error::Checksum);
         }
         let count = word(bytes, 8) as usize;
         check_count(count, limits.max_entries, "entries")?;
-        if count > (end - 12) / entry_len(format, 0)? {
+        if count > (end - 12) / (43 + format.digest_len()) {
             return Err(malformed(8, "entry count exceeds available bytes"));
         }
         let mut cursor = 12;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries: Vec<Entry> = Vec::with_capacity(count);
         for position in 0..count {
             entries.push(parse_entry(
                 format,
@@ -228,6 +320,8 @@ impl Index {
                 &mut cursor,
                 position,
                 limits,
+                version,
+                entries.last().map_or(&[], |e| e.path.as_slice()),
             )?);
         }
         let mut extensions = Vec::new();
@@ -254,15 +348,16 @@ impl Index {
         validate_entries(format, &entries, limits)?;
         Ok(Self {
             format,
+            version,
+            original: Some(bytes.to_vec()),
             entries,
             extensions,
         })
     }
 
-    /// Encodes canonical v2 framing and the selected format's checksum, preserving all stored
-    /// information.
+    /// Encodes the selected version and hash format, preserving all stored information.
     ///
-    /// Parsing already requires canonical framing, so unedited parsed indexes round-trip exactly.
+    /// Unedited parsed indexes return their retained bytes, including nonmaximal v4 compression.
     /// New entries use derived name-length flags and zero padding. Stat words and opaque optional
     /// extensions are unchanged; no worktree or object database is accessed.
     ///
@@ -271,12 +366,17 @@ impl Index {
     /// Fails before output allocation when an encoded size/count/path exceeds the supplied limits.
     pub fn encode(&self, limits: Limits) -> Result<Vec<u8>, Error> {
         let length = self.encoded_len(limits)?;
+        if let Some(original) = &self.original {
+            return Ok(original.clone());
+        }
         let mut out = Vec::with_capacity(length);
         out.extend_from_slice(b"DIRC");
-        put_word(&mut out, 2);
+        put_word(&mut out, self.version as u32);
         put_word(&mut out, self.entries.len() as u32);
+        let mut previous: &[u8] = &[];
         for entry in &self.entries {
-            encode_entry(&mut out, entry);
+            encode_entry(&mut out, entry, self.version, previous);
+            previous = &entry.path;
         }
         for extension in &self.extensions {
             out.extend_from_slice(&extension.signature);
@@ -296,11 +396,13 @@ impl Index {
         )?;
         check_count(self.extensions.len(), limits.max_extensions, "extensions")?;
         let mut length = 12 + self.format.digest_len();
+        let mut previous: &[u8] = &[];
         for entry in &self.entries {
             check_count(entry.path.len(), limits.max_path_bytes, "path bytes")?;
             length = length
-                .checked_add(entry_len(self.format, entry.path.len())?)
+                .checked_add(encoded_entry_len(entry, self.version, previous)?)
                 .ok_or(Error::Limit("bytes"))?;
+            previous = &entry.path;
         }
         for extension in &self.extensions {
             check_count(extension.data.len(), u32::MAX as usize, "extension bytes")?;
@@ -309,6 +411,7 @@ impl Index {
                 .and_then(|n| n.checked_add(extension.data.len()))
                 .ok_or(Error::Limit("bytes"))?;
         }
+        let length = self.original.as_ref().map_or(length, Vec::len);
         check_count(length, limits.max_bytes, "bytes")?;
         Ok(length)
     }
@@ -320,6 +423,8 @@ fn parse_entry(
     cursor: &mut usize,
     position: usize,
     limits: Limits,
+    version: Version,
+    previous: &[u8],
 ) -> Result<Entry, Error> {
     let width = format.digest_len();
     let fixed_len = 42 + width;
@@ -340,16 +445,39 @@ fn parse_entry(
         }
     };
     let flags = u16::from_be_bytes(fixed[40 + width..fixed_len].try_into().unwrap());
-    if flags & 0x4000 != 0 {
-        return Err(entry_error(position, "extended flags unsupported in v2"));
-    }
-    let path_start = start + fixed_len;
+    let mut path_start = start + fixed_len;
+    let extended_flags = if flags & 0x4000 != 0 {
+        if version == Version::V2 {
+            return Err(entry_error(position, "extended flags unsupported in v2"));
+        }
+        let raw = bytes
+            .get(path_start..path_start + 2)
+            .ok_or(malformed(path_start, "truncated extended flags"))?;
+        path_start += 2;
+        let value = u16::from_be_bytes(raw.try_into().unwrap());
+        if value & !0x6000 != 0 {
+            return Err(entry_error(position, "unknown extended flags"));
+        }
+        value
+    } else {
+        0
+    };
+    let prefix = if version == Version::V4 {
+        let remove = read_varint(bytes, &mut path_start)?;
+        previous.len().checked_sub(remove).ok_or(malformed(
+            path_start,
+            "path prefix removes more than previous name",
+        ))?
+    } else {
+        0
+    };
+    check_count(prefix, limits.max_path_bytes, "path bytes")?;
     let search_end = bytes.len().min(
         path_start
-            .saturating_add(limits.max_path_bytes)
+            .saturating_add(limits.max_path_bytes - prefix)
             .saturating_add(1),
     );
-    let name_len = bytes[path_start..search_end]
+    let suffix_len = bytes[path_start..search_end]
         .iter()
         .position(|b| *b == 0)
         .ok_or_else(|| {
@@ -359,20 +487,28 @@ fn parse_entry(
                 malformed(path_start, "unterminated path")
             }
         })?;
+    let name_len = prefix + suffix_len;
     if (flags & 0xfff) as usize != name_len.min(0xfff) {
         return Err(entry_error(position, "name length flag mismatch"));
     }
-    let length = entry_len(format, name_len)?;
-    let end = start.checked_add(length).ok_or(Error::Limit("bytes"))?;
+    let terminated = path_start + suffix_len + 1;
+    let end = if version == Version::V4 {
+        terminated
+    } else {
+        start + ((terminated - start + 7) & !7)
+    };
     let padding = bytes
-        .get(path_start + name_len..end)
-        .ok_or(malformed(path_start, "truncated padding"))?;
+        .get(terminated..end)
+        .ok_or(malformed(terminated, "truncated padding"))?;
     if padding.iter().any(|b| *b != 0) {
-        return Err(malformed(path_start + name_len, "nonzero padding"));
+        return Err(malformed(terminated, "nonzero padding"));
     }
     *cursor = end;
+    let mut path = Vec::with_capacity(name_len);
+    path.extend_from_slice(&previous[..prefix]);
+    path.extend_from_slice(&bytes[path_start..path_start + suffix_len]);
     Ok(Entry {
-        path: bytes[path_start..path_start + name_len].to_vec(),
+        path,
         mode,
         id: ObjectId::from_bytes(format, &fixed[40..40 + width]).unwrap(),
         stage: match (flags >> 12) & 3 {
@@ -382,6 +518,8 @@ fn parse_entry(
             _ => Stage::Theirs,
         },
         assume_valid: flags & 0x8000 != 0,
+        intent_to_add: extended_flags & 0x2000 != 0,
+        skip_worktree: extended_flags & 0x4000 != 0,
         stat: Stat {
             ctime: Timestamp {
                 seconds: word(fixed, 0),
@@ -451,7 +589,7 @@ fn validate_entries(
     Ok(())
 }
 
-fn encode_entry(out: &mut Vec<u8>, entry: &Entry) {
+fn encode_entry(out: &mut Vec<u8>, entry: &Entry, version: Version, previous: &[u8]) {
     let start = out.len();
     let stat = entry.stat;
     for value in [
@@ -470,16 +608,84 @@ fn encode_entry(out: &mut Vec<u8>, entry: &Entry) {
     }
     out.extend_from_slice(entry.id.as_bytes());
     let flags = ((entry.assume_valid as u16) << 15)
+        | ((extended(entry) as u16) << 14)
         | ((entry.stage as u16) << 12)
         | entry.path.len().min(0xfff) as u16;
     out.extend_from_slice(&flags.to_be_bytes());
-    out.extend_from_slice(&entry.path);
-    // encoded_len has already checked this arithmetic.
-    out.resize(
-        start + entry_len(entry.id.format(), entry.path.len()).unwrap(),
-        0,
-    );
+    if extended(entry) {
+        let flags = ((entry.intent_to_add as u16) << 13) | ((entry.skip_worktree as u16) << 14);
+        out.extend_from_slice(&flags.to_be_bytes());
+    }
+    if version == Version::V4 {
+        let common = common_prefix(previous, &entry.path);
+        let (prefix, start) = varint(previous.len() - common);
+        out.extend_from_slice(&prefix[start..]);
+        out.extend_from_slice(&entry.path[common..]);
+        out.push(0);
+    } else {
+        out.extend_from_slice(&entry.path);
+        out.resize(
+            start + encoded_entry_len(entry, version, previous).unwrap(),
+            0,
+        );
+    }
 }
+fn extended(entry: &Entry) -> bool {
+    entry.intent_to_add || entry.skip_worktree
+}
+fn common_prefix(left: &[u8], right: &[u8]) -> usize {
+    left.iter().zip(right).take_while(|(a, b)| a == b).count()
+}
+fn encoded_entry_len(entry: &Entry, version: Version, previous: &[u8]) -> Result<usize, Error> {
+    let flags_len = if extended(entry) { 2 } else { 0 };
+    if version != Version::V4 {
+        return entry_len(
+            entry.id.format(),
+            entry
+                .path
+                .len()
+                .checked_add(flags_len)
+                .ok_or(Error::Limit("bytes"))?,
+        );
+    }
+    let common = common_prefix(previous, &entry.path);
+    (43 + entry.id.format().digest_len() + flags_len + (10 - varint(previous.len() - common).1))
+        .checked_add(entry.path.len() - common)
+        .ok_or(Error::Limit("bytes"))
+}
+// Git's offset encoding increments the accumulated high groups before shifting.
+fn read_varint(bytes: &[u8], cursor: &mut usize) -> Result<usize, Error> {
+    let mut value = 0usize;
+    loop {
+        let byte = *bytes
+            .get(*cursor)
+            .ok_or(malformed(*cursor, "truncated path prefix"))?;
+        *cursor += 1;
+        value = value
+            .checked_mul(128)
+            .and_then(|n| n.checked_add((byte & 127) as usize))
+            .ok_or(malformed(*cursor, "path prefix overflow"))?;
+        if byte & 128 == 0 {
+            return Ok(value);
+        }
+        value = value
+            .checked_add(1)
+            .ok_or(malformed(*cursor, "path prefix overflow"))?;
+    }
+}
+fn varint(mut value: usize) -> ([u8; 10], usize) {
+    // Ten seven-bit groups cover every usize on supported 32/64-bit hosts.
+    let mut bytes = [0; 10];
+    let mut start = 9;
+    bytes[start] = (value & 127) as u8;
+    while value >= 128 {
+        value = (value >> 7) - 1;
+        start -= 1;
+        bytes[start] = 128 | (value & 127) as u8;
+    }
+    (bytes, start)
+}
+
 fn entry_len(format: crate::ObjectFormat, path_len: usize) -> Result<usize, Error> {
     path_len
         .checked_add(50 + format.digest_len())

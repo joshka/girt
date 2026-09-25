@@ -1,5 +1,5 @@
 //! Construct and replace a disposable repository's index without creating working files.
-use girt::index::{Entry, Limits, Mode};
+use girt::index::{Entry, Limits, Mode, Version};
 use girt::{InitKind, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,10 +20,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut entries = edit.index().entries().to_vec();
     entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
     edit.replace_entries(entries)?;
+    edit.set_version(Version::V4)?;
     edit.commit()?;
 
     let index = repository.read_index(limits)?.expect("published index");
     assert_eq!(index.entries()[0].id, id);
+    assert_eq!(index.version(), Version::V4);
     assert!(!repository.worktree().unwrap().join("hello.txt").exists());
     println!(
         "Published {} index entry referencing {id}",

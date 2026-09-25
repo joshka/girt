@@ -217,8 +217,6 @@ fn rejects_resigned_corruption(#[case] offset: usize, #[case] value: u8) {
 }
 #[rstest]
 #[case::v1(1)]
-#[case::v3(3)]
-#[case::v4(4)]
 #[case::unknown(99)]
 fn rejects_versions(#[case] version: u32) {
     let mut bytes = encoded();
@@ -264,10 +262,7 @@ fn rejects_mandatory_extensions(#[case] signature: &[u8; 4]) {
     );
 }
 #[rstest]
-#[case::resolve_undo(b"REUC")]
 #[case::unknown(b"ABCD")]
-#[case::fsmonitor(b"FSMN")]
-#[case::offsets(b"EOIE")]
 fn opaque_extensions_roundtrip_and_block_edits(#[case] signature: &[u8; 4]) {
     let bytes = extension(signature, b"opaque\0\xff");
     let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
@@ -447,4 +442,114 @@ fn optional_extension_order_is_preserved() {
         [*b"TREE", *b"REUC"]
     );
     assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
+}
+
+#[rstest]
+#[case::tree(b"TREE", false)]
+#[case::untracked(b"UNTR", false)]
+#[case::fsmonitor(b"FSMN", false)]
+#[case::end_offsets(b"EOIE", false)]
+#[case::entry_offsets(b"IEOT", false)]
+#[case::resolve_undo(b"REUC", true)]
+fn edits_apply_known_extension_policy(#[case] signature: &[u8; 4], #[case] retain: bool) {
+    let bytes = extension(signature, b"opaque\0\xff");
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    index.replace_entries(vec![], Limits::default()).unwrap();
+    assert_eq!(index.extensions().len(), usize::from(retain));
+    let encoded = index.encode(Limits::default()).unwrap();
+    let parsed = Index::parse(crate::ObjectFormat::Sha1, &encoded, Limits::default()).unwrap();
+    assert_eq!(parsed, index);
+}
+
+#[rstest]
+#[case::v3_sha1(crate::ObjectFormat::Sha1, Version::V3)]
+#[case::v3_sha256(crate::ObjectFormat::Sha256, Version::V3)]
+#[case::v4_sha1(crate::ObjectFormat::Sha1, Version::V4)]
+#[case::v4_sha256(crate::ObjectFormat::Sha256, Version::V4)]
+fn extended_flags_conflicts_and_byte_paths(
+    #[case] format: crate::ObjectFormat,
+    #[case] version: Version,
+) {
+    let mut entry = Entry::new(
+        b"directory/\xff".to_vec(),
+        Mode::Executable,
+        ObjectId::null(format),
+    );
+    entry.intent_to_add = true;
+    entry.skip_worktree = true;
+    entry.assume_valid = true;
+    entry.stage = Stage::Theirs;
+    entry.stat.size = u32::MAX;
+    let mut index = Index::new(format, vec![entry.clone()], Limits::default()).unwrap();
+    index.set_version(version, Limits::default()).unwrap();
+    let bytes = index.encode(Limits::default()).unwrap();
+    let mut parsed = Index::parse(format, &bytes, Limits::default()).unwrap();
+    assert_eq!(parsed.entries(), &[entry]);
+    assert_eq!(parsed.version(), version);
+    assert_eq!(parsed.encode(Limits::default()).unwrap(), bytes);
+    assert!(parsed.set_version(Version::V2, Limits::default()).is_err());
+    assert_eq!(parsed.encode(Limits::default()).unwrap(), bytes);
+}
+
+#[rstest]
+#[case::v3(Version::V3)]
+#[case::v4(Version::V4)]
+fn rejects_unknown_extended_flag_bits(#[case] version: Version) {
+    let mut entry = entry(b"a", Stage::Normal);
+    entry.intent_to_add = true;
+    let mut index = Index::new(crate::ObjectFormat::Sha1, vec![entry], Limits::default()).unwrap();
+    index.set_version(version, Limits::default()).unwrap();
+    let mut bytes = index.encode(Limits::default()).unwrap();
+    bytes[74] |= 0x80;
+    resign(&mut bytes);
+    assert!(matches!(
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
+        Err(Error::Entry { .. })
+    ));
+}
+
+#[rstest]
+#[case::remove_too_much(&[1, b'a', 0])]
+#[case::truncated_integer(&[128])]
+#[case::overflow(&[255; 16])]
+#[case::unterminated_suffix(&[0, b'a'])]
+fn rejects_malformed_v4_paths(#[case] path: &[u8]) {
+    let mut bytes = encoded();
+    bytes[4..8].copy_from_slice(&4u32.to_be_bytes());
+    bytes.truncate(74);
+    bytes.extend_from_slice(path);
+    bytes.extend_from_slice(&[0; 20]);
+    resign(&mut bytes);
+    assert!(Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).is_err());
+}
+
+#[test]
+fn preserves_nonmaximal_v4_compression_until_edit() {
+    let mut bytes = encoded();
+    bytes[4..8].copy_from_slice(&4u32.to_be_bytes());
+    bytes[8..12].copy_from_slice(&2u32.to_be_bytes());
+    bytes.truncate(74);
+    bytes.extend_from_slice(&[0, b'a', 0]);
+    let fixed = bytes[12..74].to_vec();
+    bytes.extend_from_slice(&fixed);
+    // Remove the whole previous name rather than sharing its 'a'.
+    bytes[137..139].copy_from_slice(&2u16.to_be_bytes());
+    bytes.extend_from_slice(&[1, b'a', b'b', 0]);
+    bytes.extend_from_slice(&[0; 20]);
+    resign(&mut bytes);
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    assert_eq!(index.entries()[1].path, b"ab");
+    assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
+    index
+        .replace_entries(index.entries().to_vec(), Limits::default())
+        .unwrap();
+    assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
+    let short = Limits {
+        max_path_bytes: 1,
+        ..Limits::default()
+    };
+    assert_eq!(
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, short),
+        Err(Error::Limit("path bytes"))
+    );
 }

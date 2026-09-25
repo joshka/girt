@@ -5,8 +5,8 @@ R11 extends the files backend to portable conditional refs and reflogs; its curr
 Unix-only reference and strict imported-reflog restrictions below. Reftable is still required under
 R37 before full readiness. Historical validation records retain their original scope.
 
-SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-tree index v2 use
-the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and
+SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-tree index v2/v3/v4
+use the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and
 loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation, including Git
 interoperability and failure contracts. Transport negotiation remains SHA-1-only under R26/R29. No
 dual-hash conversion is provided.
@@ -44,7 +44,7 @@ The current API supports both-format loose objects and complete-history queries,
 pack/index v2, object-only fetch, conditional branch/tag push, reference enumeration, and
 conditional transactions with explicit reflog policy, named remote/refspec mapping, explicit fetch
 orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories, recursive
-tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index v2
+tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index v2/v3/v4
 read/replacement, and raw read-only working-tree status and conservative raw tree checkout on
 macOS/Linux. The single-reference no-reflog operations remain available. HTTP and SSH downloads
 share owned validation state. Installation takes explicit destination snapshot limits. Read and
@@ -1836,31 +1836,36 @@ results are uncollected; platform support has not expanded.
 
 ## Working-Tree Index
 
-`index::Index` provides pure bounded SHA-1 v2 parsing, construction, entry replacement and encoding.
-`Entry` drafts represent exact byte paths, canonical regular/executable/symlink/gitlink modes,
-object IDs, raw stat words, stages 0–3 and assume-valid. Successful construction sorts unsigned path
-bytes then stages. Parsing requires that order, canonical name-length flags and zero padding; it
-never repairs malformed input. Both reject duplicate stages, normal/conflict mixtures and
-file/directory collisions within a stage. Different conflict stages may represent a directory/file
-conflict. Object existence/type, stat correctness and checkout safety remain caller obligations.
-Paths reject empty components, NUL, `.`, `..` and `.git`; platform aliases and non-UTF-8 bytes are
-retained without filesystem materialization.
+`index::Index` provides bounded SHA-1/SHA-256 v2/v3/v4 parsing, construction, entry replacement and
+encoding. `Version` selects framing through `Index::set_version` or the locked editor's
+`set_version`. New indexes choose v3 when extended flags are present, otherwise v2. Entry edits
+retain the version, upgrading v2 to v3 when necessary. Explicit conversion to v2 refuses extended
+flags. V4 paths use checked prefix decompression and maximal shared prefixes when newly encoded.
 
-Input/output bytes, entry count, per-path bytes and extension count have explicit limits. Parsing
-checks the checksum and feasible entry count before allocation, bounds NUL searches, and checks
-extension lengths before copying. Owned memory is proportional to these limits, excluding caller
-buffers and allocator overhead; storage can retain original, parsed and encoded representations
-simultaneously. Zero/omitted checksums, v3/v4, extended flags (skip-worktree and intent-to-add),
-noncanonical modes, sparse directories and mandatory extensions, including `link` and `sdir`, are
-rejected. Assume-valid is retained as data, without implementing stat-skipping policy.
+`Entry` drafts preserve byte paths, canonical regular/executable/symlink/gitlink modes, object IDs,
+raw stat words, stages 0–3, assume-valid, intent-to-add and skip-worktree. Construction sorts
+unsigned path bytes then stages; parsing never repairs ordering. Both reject duplicate stages,
+normal/conflict mixtures and file/directory collisions within a stage. Paths reject empty
+components, NUL, `.`, `..` and `.git`; platform aliases and non-UTF-8 bytes remain data. Object
+targets, stat correctness and worktree policy remain caller obligations. Existing raw
+status/checkout workflows explicitly refuse intent-to-add and skip-worktree until consumer policy is
+supplied.
 
-Optional extension framing is checked but payload semantics are opaque. Unedited parsed indexes
-round-trip byte-for-byte, including extension order. Changed entries invalidate and discard only
-`TREE`, a derived cache; all other extensions block edits, including unknown optional signatures,
-`REUC`, `FSMN`, `UNTR`, `IEOT` and `EOIE`. An unchanged replacement retains them. This intentionally
-restricts editing indexes with information the library cannot update safely; there is no generic
-extension-discard escape hatch in the held-lock editor. Constructing a separate extension-free index
-is a pure operation and does not grant authority to overwrite repository storage.
+Input/output bytes, entry count, per-path bytes and extension count have limits. Parsing verifies
+the checksum before allocating entries and bounds decompressed path bytes and extension copies. It
+retains original encoded bytes alongside decoded information to preserve alternate valid v4
+compression and extended-flag framing. Storage may retain additional original/output buffers. These
+are proportional bounds, not a precise heap budget. Zero/omitted checksums, unknown flag bits,
+noncanonical modes, sparse directories and mandatory extensions (including `link` and `sdir`) are
+refused. R38 owns split shared-index storage and sparse-directory handling; no full split/sparse
+parity is claimed.
+
+Optional payloads remain opaque. Unchanged indexes round-trip exactly. Changed entries or version
+conversion discard derived `TREE`, `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. `REUC` bytes remain
+because resolve-undo describes prior conflicts independently of current entries. Unknown optional
+extensions block edits. Identical entry replacement retains every extension and original byte.
+Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split and
+sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
 
 `Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
 always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
@@ -1890,10 +1895,10 @@ with `add`, `update-index --index-info`, `read-tree`, `write-tree`, `ls-files --
 were used. Git-created stat/flag fields and byte paths are read independently; Git observes
 girt-written modes, stages, flags and stat words and writes compatible tree objects. Malformed
 framing, ordering, flags, extensions, resource boundaries and injected write/publication failures
-have focused unit coverage. The portable integration suite is explicitly selected for Windows;
-native execution on Windows/Linux remains pending for this increment. No new dependency was added.
-Status, staging policy, checkout, filters/attributes, merge resolution and filesystem scanning
-remain outside this slice.
+have focused unit coverage. The portable integration suite is explicitly selected for Windows; R12
+records the focused native execution separately. No new dependency was added. Status, staging
+policy, checkout, filters/attributes, merge resolution and filesystem scanning remain outside this
+slice.
 
 ## Raw Working-Tree Status
 

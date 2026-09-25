@@ -1,14 +1,14 @@
-//! SHA-1/SHA-256 Git index v2 entries and synchronous per-worktree storage.
+//! SHA-1/SHA-256 Git index v2/v3/v4 entries and synchronous per-worktree storage.
 //!
 //! An index records candidate tree entries and cached filesystem metadata. [`Index`] validates
 //! format structure without resolving objects or touching working files. Paths remain bytes;
 //! format validity does not establish checkout safety on any host filesystem.
 //!
-//! Versions 3/4, extended flags (intent-to-add and skip-worktree), sparse directory entries and
-//! mandatory extensions (including split/sparse indexes) are unsupported. Assume-valid is
-//! preserved as data; no stat-skipping policy is implemented. Optional extensions are opaque and
-//! round-trip unchanged. Editing discards only the derived `TREE` cache; other extensions block
-//! edits, including resolve-undo information. See [`Index::replace_entries`].
+//! Intent-to-add, skip-worktree and assume-valid are retained as data; no staging, sparse-checkout
+//! or stat-skipping policy is implemented. Sparse directory entries and mandatory extensions
+//! (including split/sparse indexes) are explicitly unsupported. Optional extensions are opaque and
+//! round-trip unchanged. Editing discards derived caches, retains resolve-undo records and refuses
+//! unknown optional extensions. See [`Index::replace_entries`].
 //!
 //! [`crate::Repository::read_index`] distinguishes absence from an empty index.
 //! [`crate::Repository::edit_index`] locks before reading; [`IndexEdit::commit`] publishes the
@@ -35,6 +35,6 @@ mod codec;
 mod entries;
 mod store;
 
-pub use codec::{Error, Extension, Index, Limits};
+pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
 pub use store::{IndexEdit, StorageError};

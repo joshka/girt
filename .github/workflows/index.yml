@@ -1,0 +1,57 @@
+name: Index validation
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/index.rs'
+      - '.github/workflows/index.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+      - name: Unix filesystem
+        if: runner.os != 'Windows'
+        run: |
+          uname -a
+          df . "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')"
+          if [ "$RUNNER_OS" = Linux ]; then
+            df -T . "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')"
+          else
+            sw_vers
+            diskutil info "$(df . | tail -1 | awk '{print $1}')"
+          fi
+      - name: Windows filesystem
+        if: runner.os == 'Windows'
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json -Compress
+          Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
+          Write-Output "Temporary directory: $env:TEMP"
+      - name: Core index and fault tests
+        run: "cargo +stable test --locked --no-default-features --lib index::"
+      - name: Both-format Git interoperability
+        run: cargo +stable test --locked --no-default-features --test index
+      - name: Index tests with tracing
+        run: "cargo +stable test --locked --no-default-features --features tracing --lib index::"
+      - name: Public workflow
+        run: cargo +stable run --locked --no-default-features --example index
+      - name: Clippy
+        run: cargo +stable clippy --locked --no-default-features --lib --test index --example index -- -D warnings

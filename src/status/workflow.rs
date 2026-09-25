@@ -12,6 +12,8 @@ impl Repository {
     /// leaves. Assume-valid and stat equality never skip verification. No filesystem writes or
     /// index refresh occur; ordinary reads may update access times according to the filesystem.
     ///
+    /// Intent-to-add and skip-worktree entries are refused pending explicit consumer policy.
+    ///
     /// macOS/Linux traversal opens components relative to directory descriptors with no-follow
     /// flags. It never follows symlink ancestors, enters `.git` components or descends into
     /// gitlinks/nested repositories. Exact directory names must match index bytes, including case.
@@ -122,6 +124,12 @@ mod supported {
         let entries = index.as_ref().map_or(&[][..], index::Index::entries);
         for entry in entries {
             check(cancel)?;
+            if entry.intent_to_add || entry.skip_worktree {
+                return Err(Error::Unsupported {
+                    path: entry.path.clone(),
+                    reason: "extended index flags require caller policy",
+                });
+            }
             super::super::worktree::validate_path(&entry.path)?;
             charge(&mut limits.max_path_bytes, entry.path.len(), "path bytes")?;
         }
