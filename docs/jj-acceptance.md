@@ -1,10 +1,11 @@
 # jj Git Acceptance Contracts
 
 This is a requirements matrix and corpus plan, not a passing-test report. IDs link the
-[roadmap](jj-roadmap.md) to concrete acceptance evidence. All capability evidence below is pending.
-The initial inventory follows jj `be5f5ebdc200593d8f1be06f11e27b485a97093d`; paths below are
-relative to that jj checkout. Requirements describe observed consumer boundaries without copying
-dependency implementation or tests. Girt's [testing contract](testing.md) applies to every row.
+[roadmap](jj-roadmap.md) to concrete acceptance evidence. Capability completion evidence is linked
+from the roadmap; uncompleted rows remain pending. The initial inventory follows jj
+`be5f5ebdc200593d8f1be06f11e27b485a97093d`; paths below are relative to that jj checkout.
+Requirements describe observed consumer boundaries without copying dependency implementation or
+tests. Girt's [testing contract](testing.md) applies to every row.
 
 ## Corpus and Evidence Format
 
@@ -41,6 +42,11 @@ timezone spelling, whitespace, missing/duplicate headers and truncation. Recover
 payload by removing only the selected signature header spans; cover repeated signatures and
 `gpgsig`/`gpgsig-sha256` deterministically. Opaque signatures and unchanged bytes go to the caller;
 jj owns placeholder identities, lossy display, collision policy and signing/verification providers.
+
+R01 supplies signed construction and structural byte access independently of interpretation. R07
+must resolve the retained [decoding follow-ups](evidence/r01.md#r07-follow-ups), including dates
+that Git reads but the decoded `Commit` API still rejects; structural retention does not close those
+requirements.
 
 ### A02 — Object format and identity foundations
 

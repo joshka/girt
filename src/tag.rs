@@ -437,8 +437,14 @@ mod tests {
         assert_eq!(tag.validate(), Err(TagError::InvalidHeader));
     }
 
+    #[test]
+    fn constructs_negative_tagger_seconds() {
+        let input = payload(b"tagger A <a> -1 +0000\n\n");
+        let tag = Tag::parse(&input).unwrap();
+        assert_eq!(Tag::new(tag.fields().clone()).unwrap().as_bytes(), input);
+    }
+
     #[rstest]
-    #[case::negative("A <a> -1 +0000", CommitError::InvalidDate)]
     #[case::empty(" <> 1 +0000", CommitError::InvalidSignature)]
     fn retains_tagger_rejected_by_validation(#[case] person: &str, #[case] error: CommitError) {
         let input = payload(format!("tagger {person}\n\n").as_bytes());

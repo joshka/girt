@@ -3,7 +3,10 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use girt::{Commit, CommitFields, CommitHeader, LooseObjects, ObjectFormat, ObjectId, Signature};
+use girt::{
+    Commit, CommitFields, CommitHeader, CommitPayload, LooseObjects, ObjectFormat, ObjectId,
+    Signature,
+};
 use tempfile::TempDir;
 
 fn fixture(size: usize) -> Commit {
@@ -20,7 +23,7 @@ fn fixture(size: usize) -> Commit {
         author: person.clone(),
         committer: person,
         extra_headers: vec![CommitHeader {
-            name: b"x-metadata".to_vec(),
+            name: b"gpgsig".to_vec(),
             value: b"first line\n continuation\nlast line".to_vec(),
         }],
         message: (0..size)
@@ -44,6 +47,13 @@ fn commits(criterion: &mut Criterion) {
         });
         group.bench_function(BenchmarkId::new("parse", size), |b| {
             b.iter(|| Commit::parse(black_box(payload)).unwrap())
+        });
+        group.bench_function(BenchmarkId::new("payload_view", size), |b| {
+            b.iter(|| CommitPayload::parse(black_box(payload)).unwrap())
+        });
+        let view = CommitPayload::parse(payload).unwrap();
+        group.bench_function(BenchmarkId::new("signature_payload", size), |b| {
+            b.iter(|| black_box(&view).without_headers(&[5]).unwrap())
         });
         group.bench_function(BenchmarkId::new("encode", size), |b| {
             b.iter(|| black_box(&commit).encode())

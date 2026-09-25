@@ -50,7 +50,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | ID  | Bounded deliverable                                         | Depends on                      | Status              | Acceptance / completion                                                                                                                                      |
 | --- | ----------------------------------------------------------- | ------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | This document; [matrix](jj-acceptance.md); [process](testing.md#roadmap-completion-and-coordination)                                                         |
-| R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Planned             | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)                                                                             |
+| R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Complete            | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads); [evidence](evidence/r01.md)                                                |
 | R02 | Format-bearing identity and hashing foundation              | R01                             | Planned             | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations)                                                                                          |
 | R03 | Optional tracing and operation failure visibility           | R02                             | Planned             | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling)                                                                                           |
 | R04 | SHA-256 object codecs and loose repository storage          | R02                             | Planned             | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation)              |
@@ -89,13 +89,16 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R34 | Full girt acceptance corpus and native readiness            | All earlier items               | Planned             | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads)–[A18](jj-acceptance.md#a18--architecture-checkpoints)                       |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                          |
 
-The first tranche is R01 → R02 → R03 → R04 → R05 → R06. Dispatch R01 next: construct signed negative
-timestamps, separate parsed identity bytes from construction policy, and expose exact signature
-payload extraction/removal. Exercise epoch collision, unusual dates and whitespace,
-folded/repeated/truncated headers, non-UTF-8 identities, and both signature header names through
-girt's public API. Preserve raw bytes and document deterministic repeated-header behavior based on
-independent observations. Keep jj collision handling and signing callbacks in jj. Run applicable
-checks from [testing](testing.md); do not build a jj adapter.
+The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
+separates parsed identity bytes from construction policy, and exposes exact signature payload
+extraction/removal. R02 is the next item after R01 acceptance. Exercise epoch collision, unusual
+dates and whitespace, folded/repeated/truncated headers, non-UTF-8 identities, and both signature
+header names through girt's public API. Preserve raw bytes and document deterministic
+repeated-header behavior based on independent observations. Keep jj collision handling and signing
+callbacks in jj. Run applicable checks from [testing](testing.md); do not build a jj adapter.
+
+R07 owns the concrete [R01 decoding follow-ups](evidence/r01.md#r07-follow-ups); byte retention
+alone does not close those interpretation requirements.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
 required format, helper, platform, or policy feature, append bounded dependent tasks before marking

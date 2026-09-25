@@ -33,7 +33,7 @@ pub enum Reflog {
     /// Deletion appends a zero new ID and retains the file. Environment, hooks and Git config are
     /// never consulted. Stored symbolic replacement/deletion with logging is unsupported.
     Append {
-        /// Validated using the same identity/date rules as commit construction.
+        /// Validated like commit construction, additionally requiring nonnegative seconds.
         committer: Signature,
         /// Exact bytes; NUL, CR and LF are rejected. No whitespace normalization is performed.
         message: Vec<u8>,
@@ -98,6 +98,10 @@ pub(super) fn validate(committer: &Signature, message: &[u8]) -> Result<(), Refe
     if committer.name.contains(&b'\t') || committer.email.contains(&b'\t') {
         return Err(ReferenceError::Unsupported("tab in reflog identity"));
     }
+    // Reflog policy is narrower than commit/tag timestamp construction.
+    if committer.seconds < 0 {
+        return Err(ReferenceError::Unsupported("negative reflog timestamp"));
+    }
     committer
         .validate()
         .map_err(|_| ReferenceError::Unsupported("invalid reflog identity or date"))?;
@@ -138,8 +142,16 @@ fn parse_line(line: &[u8], path: &std::path::Path) -> Result<ReflogEntry, Refere
     let new = parse_id(&line[41..81])?;
     let rest = &line[82..];
     let tab = rest.iter().position(|b| *b == b'\t').unwrap_or(rest.len());
-    let committer = Signature::parse(&rest[..tab])
+    let identity = &rest[..tab];
+    let mut committer = Signature::parse(identity)
         .map_err(|_| malformed(path, "invalid reflog identity or date"))?;
+    // Reflogs preserve and validate the raw name, including padding that commit interpretation
+    // treats as delimiter whitespace. Keep that existing policy at the reflog boundary.
+    let name_end = identity
+        .windows(2)
+        .position(|pair| pair == b" <")
+        .ok_or_else(|| malformed(path, "missing space before reflog email"))?;
+    committer.name = identity[..name_end].to_vec();
     let message = rest.get(tab + 1..).unwrap_or_default().to_vec();
     validate(&committer, &message)
         .map_err(|_| malformed(path, "invalid reflog identity, date or message"))?;
@@ -171,6 +183,9 @@ mod tests {
     #[rstest]
     #[case::truncated(b"A <a@b> 1 +0000\tmessage")]
     #[case::invalid_zone(b"A <a@b> 1 +2460\tmessage\n")]
+    #[case::padded_name(b"A  <a@b> 1 +0000\tmessage\n")]
+    #[case::cr_name(b"A\r <a@b> 1 +0000\tmessage\n")]
+    #[case::no_space(b"A<a@b> 1 +0000\tmessage\n")]
     #[case::negative_time(b"A <a@b> -1 +0000\tmessage\n")]
     #[case::empty_name(b" <a@b> 1 +0000\tmessage\n")]
     #[case::nul(b"A <a@b> 1 +0000\tx\0y\n")]

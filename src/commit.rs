@@ -1,3 +1,7 @@
+mod payload;
+
+pub use payload::{CommitHeaderRef, CommitPayload};
+
 use crate::ObjectId;
 
 /// An owned SHA-1 commit describing a tree, ordered parents, people, and a message.
@@ -17,6 +21,7 @@ use crate::ObjectId;
 /// SHA-1 digits. Dates fit signed 64-bit seconds and offsets use `+HHMM` or `-HHMM`, with hours
 /// below 24 and minutes below 60. Reordered or repeated required headers, continuations on required
 /// headers, SHA-256 IDs, missing separators, and other date grammars are rejected explicitly.
+/// Use [`CommitPayload`] to retain structurally framed bytes independently of these restrictions.
 ///
 /// This is not full `git fsck` validation. References (including zero and duplicate parent IDs) are
 /// not resolved, messages are unrestricted, and extra headers are opaque even when named `gpgsig`
@@ -153,10 +158,11 @@ impl Commit {
     /// # Errors
     ///
     /// Rejects empty names/emails, NUL, CR, LF, `<` or `>` in either identity component, and
-    /// leading/trailing ASCII whitespace. Seconds must be nonnegative and offset minutes must be
-    /// in `-1439..=1439`. Extra-header names must be nonempty printable ASCII without spaces and
-    /// cannot be `tree`, `parent`, `author`, or `committer`; values cannot contain NUL or CR.
-    /// No email syntax, message encoding, reference existence, or signature validity is checked.
+    /// leading/trailing ASCII whitespace. Seconds may span the full `i64` range; offset minutes
+    /// must be in `-1439..=1439`. Extra-header names must be nonempty printable ASCII without
+    /// spaces and cannot be `tree`, `parent`, `author`, or `committer`; values cannot contain
+    /// NUL or CR. No email syntax, message encoding, reference existence, or signature validity
+    /// is checked.
     pub fn validate(&self) -> Result<(), CommitError> {
         self.fields.validate()
     }
@@ -222,13 +228,15 @@ impl CommitFields {
 /// [`Commit::new`] or [`crate::Tag::new`]; see [`Commit::validate`] for construction rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Signature {
-    /// Person's name as bytes, without the separating space or angle brackets.
+    /// Person's name bytes, excluding framing whitespace before the opening email delimiter.
+    /// Parsed names may contain a closing angle bracket; construction rejects angle brackets.
     pub name: Vec<u8>,
 
-    /// Email address bytes, without angle brackets.
+    /// Email bytes between the first opening and following closing angle brackets.
+    /// Parsed email may contain another opening bracket; construction rejects angle brackets.
     pub email: Vec<u8>,
 
-    /// Seconds since the Unix epoch, independent of the timezone offset.
+    /// Signed seconds since the Unix epoch, including dates before it, independent of the offset.
     pub seconds: i64,
 
     /// Signed minutes east of UTC. Parsing maps both `+0000` and `-0000` to zero.
@@ -236,20 +244,35 @@ pub struct Signature {
 }
 
 impl Signature {
-    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, CommitError> {
+    /// Interprets identity bytes and a signed seconds/four-digit offset date.
+    ///
+    /// The first `<` and following `>` delimit email bytes. ASCII whitespace immediately before
+    /// `<` is framing; leading name whitespace and embedded angle brackets remain inspectable.
+    /// ASCII whitespace between `>` and seconds is skipped. The original representation belongs
+    /// to the caller; use [`CommitPayload`] to retain it independently of interpretation success.
+    /// Parsing does not enforce the stricter identity rules of [`Commit::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitError::InvalidSignature`] for missing brackets/date separation, or
+    /// [`CommitError::InvalidDate`] unless seconds fit `i64` and the offset has signed four-digit
+    /// `HHMM` spelling with hours below 24 and minutes below 60. No fallback date is invented.
+    pub fn parse(bytes: &[u8]) -> Result<Self, CommitError> {
         let open = bytes
-            .windows(2)
-            .position(|pair| pair == b" <")
+            .iter()
+            .position(|&byte| byte == b'<')
             .ok_or(CommitError::InvalidSignature)?;
-        let email_start = open + 2;
+        let email_start = open + 1;
         let close = bytes[email_start..]
             .iter()
             .position(|&byte| byte == b'>')
             .map(|index| email_start + index)
             .ok_or(CommitError::InvalidSignature)?;
-        let date = bytes[close + 1..]
-            .strip_prefix(b" ")
-            .ok_or(CommitError::InvalidSignature)?;
+        let suffix = &bytes[close + 1..];
+        if !suffix.first().is_some_and(u8::is_ascii_whitespace) {
+            return Err(CommitError::InvalidSignature);
+        }
+        let date = suffix.trim_ascii_start();
         let space = date
             .iter()
             .position(|&byte| byte == b' ')
@@ -272,7 +295,7 @@ impl Signature {
         }
         let offset = hours * 60 + minutes;
         Ok(Self {
-            name: bytes[..open].to_vec(),
+            name: bytes[..open].trim_ascii_end().to_vec(),
             email: bytes[email_start..close].to_vec(),
             seconds,
             offset_minutes: if zone[0] == b'-' { -offset } else { offset },
@@ -291,7 +314,7 @@ impl Signature {
                 return Err(CommitError::InvalidSignature);
             }
         }
-        if self.seconds < 0 || !(-1439..=1439).contains(&self.offset_minutes) {
+        if !(-1439..=1439).contains(&self.offset_minutes) {
             return Err(CommitError::InvalidDate);
         }
         Ok(())
@@ -342,7 +365,7 @@ pub enum CommitError {
     /// Identity framing is unreadable or name/email fails construction rules.
     #[error("invalid commit identity")]
     InvalidSignature,
-    /// A date is unreadable, out of range, or negative during construction validation.
+    /// A date is unreadable or outside the supported seconds/offset range.
     #[error("invalid or unsupported commit date")]
     InvalidDate,
     /// An extra header has invalid framing, a reserved key, or a disallowed value.
@@ -499,9 +522,8 @@ mod tests {
     #[case::empty_name(" <a@example.com> 1 +0000", CommitError::InvalidSignature)]
     #[case::empty_email("A <> 1 +0000", CommitError::InvalidSignature)]
     #[case::nul("A\0 <a@example.com> 1 +0000", CommitError::InvalidSignature)]
-    #[case::cr("A\r <a@example.com> 1 +0000", CommitError::InvalidSignature)]
+    #[case::cr("A\rB <a@example.com> 1 +0000", CommitError::InvalidSignature)]
     #[case::leading_space(" A <a@example.com> 1 +0000", CommitError::InvalidSignature)]
-    #[case::negative("A <a@example.com> -1 +0000", CommitError::InvalidDate)]
     fn preserves_readable_fields_that_fail_validation(
         #[case] author: &str,
         #[case] error: CommitError,
@@ -521,6 +543,26 @@ mod tests {
         let parsed = Commit::parse(&payload(author, b"", b"")).unwrap();
         assert_eq!(parsed.fields().author.seconds, seconds);
         assert_eq!(parsed.fields().author.offset_minutes, offset);
+        assert_eq!(
+            Commit::new(parsed.fields().clone()).unwrap().fields(),
+            parsed.fields()
+        );
+    }
+
+    #[rstest]
+    #[case::no_space(b"A<a> 1 +0000", b"A", b"a")]
+    #[case::overlap(b"A <B <a> 1 +0000", b"A", b"B <a")]
+    #[case::closing(b"A > B <a> 1 +0000", b"A > B", b"a")]
+    #[case::whitespace(b" A \t<a>\t1 +0000", b" A", b"a")]
+    fn interprets_identity_delimiters(
+        #[case] bytes: &[u8],
+        #[case] name: &[u8],
+        #[case] email: &[u8],
+    ) {
+        let parsed = Signature::parse(bytes).unwrap();
+        assert_eq!(parsed.name, name);
+        assert_eq!(parsed.email, email);
+        assert_eq!(parsed.seconds, 1);
     }
 
     #[rstest]

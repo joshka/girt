@@ -181,7 +181,9 @@ pub mod transport;
 mod tree;
 mod tree_compare;
 
-pub use commit::{Commit, CommitError, CommitFields, CommitHeader, Signature};
+pub use commit::{
+    Commit, CommitError, CommitFields, CommitHeader, CommitHeaderRef, CommitPayload, Signature,
+};
 pub use config::{Config, ConfigError};
 pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};

@@ -118,6 +118,7 @@ fn remove_object(directory: &Path, id: ObjectId) {
 #[case::root(&[])]
 #[case::single_parent(&[b"parent\n".as_slice()])]
 #[case::merge(&[b"first parent\n".as_slice(), b"second parent\n".as_slice()])]
+#[case::octopus(&[b"first\n".as_slice(), b"second\n".as_slice(), b"third\n".as_slice(), b"fourth\n".as_slice()])]
 fn agrees_with_git_commit_tree_in_both_directions(#[case] messages: &[&[u8]]) {
     let root = tempfile::tempdir().unwrap();
     let (objects, tree) = init(root.path());
@@ -266,4 +267,186 @@ fn fixed_unit_identity_agrees_with_git() {
         Commit::parse(payload).unwrap().fields().tree,
         Tree::new(vec![]).unwrap().id()
     );
+}
+
+#[rstest]
+#[case::before_epoch(-1)]
+#[case::minimum(i64::MIN)]
+#[case::maximum(i64::MAX)]
+fn constructs_signed_seconds_without_rewriting_identity(#[case] seconds: i64) {
+    let root = tempfile::tempdir().unwrap();
+    let (objects, tree) = init(root.path());
+    let mut fields = fields(tree, vec![], b"raw\xff\0message");
+    fields.author.seconds = seconds;
+    fields.committer.seconds = seconds;
+    let commit = Commit::new(fields).unwrap();
+    let id = objects.write_commit(&commit).unwrap();
+    assert_eq!(
+        objects.read_commit(id, commit.as_bytes().len()).unwrap(),
+        commit
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "commit", &id.to_string()], b""),
+        commit.as_bytes()
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &["hash-object", "--literally", "-t", "commit", "--stdin"],
+            commit.as_bytes()
+        ),
+        format!("{id}\n").as_bytes()
+    );
+}
+
+#[test]
+fn caller_can_resolve_collision_by_decrementing_across_epoch() {
+    let mut initial = fields(Tree::new(vec![]).unwrap().id(), vec![], b"same content");
+    initial.author.seconds = 0;
+    initial.committer.seconds = 0;
+    let first = Commit::new(initial.clone()).unwrap();
+    let duplicate = Commit::new(initial.clone()).unwrap();
+    initial.committer.seconds -= 1;
+    let decremented = Commit::new(initial).unwrap();
+    assert_eq!(first.id(), duplicate.id());
+    assert_ne!(first.id(), decremented.id());
+    assert_eq!(
+        Commit::parse(decremented.as_bytes())
+            .unwrap()
+            .fields()
+            .committer
+            .seconds,
+        -1
+    );
+    assert_eq!(decremented.fields().author.seconds, 0);
+}
+
+#[rstest]
+#[case::no_space(b"A<a> 1 +0000", b"A", b"a", 1)]
+#[case::overlapping(b"A <B <a> 1 +0000", b"A", b"B <a", 1)]
+#[case::closing_in_name(b"A > B <a> 1 +0000", b"A > B", b"a", 1)]
+#[case::raw(b" A\xff \t<a\xfe>\t1 +0000", b" A\xff", b"a\xfe", 1)]
+#[case::empty(b" <> 1 +0000", b"", b"", 1)]
+#[case::padded(b"A <a>  +00042 -0000", b"A", b"a", 42)]
+fn interprets_identity_without_losing_original_bytes(
+    #[case] identity: &[u8],
+    #[case] name: &[u8],
+    #[case] email: &[u8],
+    #[case] seconds: i64,
+) {
+    let bytes = [b"author ".as_slice(), identity, b"\n\n\xff\0"].concat();
+    let payload = girt::CommitPayload::parse(&bytes).unwrap();
+    let author = payload.headers().next().unwrap();
+    let decoded = Signature::parse(author.value).unwrap();
+    assert_eq!(author.value, identity);
+    assert_eq!(decoded.name, name);
+    assert_eq!(decoded.email, email);
+    assert_eq!(decoded.seconds, seconds);
+    assert_eq!(payload.as_bytes(), bytes);
+}
+
+#[rstest]
+#[case::malformed(b"now +0000")]
+#[case::overflow(b"9223372036854775808 +0000")]
+#[case::missing(b"")]
+#[case::hours(b"1 +2400")]
+#[case::minutes(b"1 -0060")]
+#[case::short_zone(b"1 +000")]
+fn retains_uninterpretable_dates_for_caller_policy(#[case] date: &[u8]) {
+    let bytes = [
+        b"author A <a> ".as_slice(),
+        date,
+        b"\ngpgsig opaque\n\nbody",
+    ]
+    .concat();
+    let payload = girt::CommitPayload::parse(&bytes).unwrap();
+    let author = payload.headers().next().unwrap();
+    assert!(Signature::parse(author.value).is_err());
+    assert_eq!(
+        payload.without_headers(&[1]).unwrap(),
+        [b"author A <a> ".as_slice(), date, b"\n\nbody"].concat()
+    );
+    assert_eq!(payload.as_bytes(), bytes);
+}
+
+#[rstest]
+#[case::first(
+    3,
+    b"gpgsig",
+    b"first\n\n leading\n",
+    b"gpgsig-sha256 second\ngpgsig last\n"
+)]
+#[case::other_format(
+    4,
+    b"gpgsig-sha256",
+    b"second",
+    b"gpgsig first\n \n  leading\n \ngpgsig last\n"
+)]
+#[case::repeated(
+    5,
+    b"gpgsig",
+    b"last",
+    b"gpgsig first\n \n  leading\n \ngpgsig-sha256 second\n"
+)]
+fn extracts_selected_signature_without_reencoding(
+    #[case] index: usize,
+    #[case] name: &[u8],
+    #[case] signature: &[u8],
+    #[case] remaining: &[u8],
+) {
+    let root = tempfile::tempdir().unwrap();
+    let (_, tree) = init(root.path());
+    let prefix = format!(
+        "tree {}\nauthor A <a> +00042 -0000\ncommitter C <c> -1 +0000\n",
+        tree.to_string().to_uppercase()
+    );
+    let bytes = [prefix.as_bytes(), b"gpgsig first\n \n  leading\n \ngpgsig-sha256 second\ngpgsig last\n\nraw\xff\0\ngpgsig message"].concat();
+    let stored = git(
+        root.path(),
+        &[
+            "hash-object",
+            "-w",
+            "--literally",
+            "-t",
+            "commit",
+            "--stdin",
+        ],
+        &bytes,
+    );
+    let id = std::str::from_utf8(&stored).unwrap().trim();
+    let read = git(root.path(), &["cat-file", "commit", id], b"");
+    let payload = girt::CommitPayload::parse(&read).unwrap();
+    let selected = payload.headers().nth(index).unwrap();
+    assert_eq!(selected.name, name);
+    assert_eq!(selected.unfolded_value(), signature);
+    assert_eq!(
+        payload.without_headers(&[index]).unwrap(),
+        [prefix.as_bytes(), remaining, b"\nraw\xff\0\ngpgsig message"].concat()
+    );
+    assert_eq!(payload.as_bytes(), bytes);
+}
+
+// The original Python probe captured stdin to Git's configured verification process. This checks
+// the public operation against those retained bytes without requiring a signing key or provider.
+#[rstest]
+#[case::single("single", &[3])]
+#[case::repeated("repeated", &[3, 4])]
+#[case::both_spellings("both", &[3, 4])]
+fn matches_git_verification_payload_capture(#[case] case: &str, #[case] indices: &[usize]) {
+    let observations: serde_json::Value =
+        serde_json::from_str(include_str!("../docs/evidence/r01-git-observations.json")).unwrap();
+    let probe = &observations["signature_probes"][case];
+    let bytes = decode_hex(probe["payload"].as_str().unwrap());
+    let expected = decode_hex(probe["captured"]["payload"].as_str().unwrap());
+    let payload = girt::CommitPayload::parse(&bytes).unwrap();
+    assert_eq!(payload.without_headers(indices).unwrap(), expected);
+}
+
+fn decode_hex(hex: &str) -> Vec<u8> {
+    let (pairs, remainder) = hex.as_bytes().as_chunks::<2>();
+    assert!(remainder.is_empty());
+    pairs
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
 }

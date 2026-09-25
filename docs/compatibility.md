@@ -403,10 +403,20 @@ Parsing retains the entire payload and decoded fields. Encoding and hashing pres
 signed or padded seconds, `-0000`, unknown/repeated extra headers, continuation spaces, non-UTF-8
 bytes, and messages without a final newline. Continuation values remove exactly one framing space
 per line. Construction writes canonical IDs and dates and validates nonempty identity components
-without NUL, CR, LF, angle brackets, or surrounding ASCII whitespace. New seconds must be
-nonnegative. Extra-header names must be printable non-space ASCII and cannot reuse required keys;
-new values reject NUL and CR. `validate` applies these field rules without modifying parsed bytes.
-Explicit reconstruction may change identity by normalizing lexical details.
+without NUL, CR, LF, angle brackets, or surrounding ASCII whitespace. New seconds span the full
+signed `i64` range, including pre-epoch dates. Extra-header names must be printable non-space ASCII
+and cannot reuse required keys; new values reject NUL and CR. `validate` applies these field rules
+without modifying parsed bytes. Explicit reconstruction may change identity by normalizing lexical
+details.
+
+`CommitPayload` borrows structurally framed headers and message bytes without requiring decoded
+identities, dates, IDs, or required-header ordering. Header occurrences retain their exact folded
+values; `without_headers` copies every byte except explicitly selected complete header spans. Both
+`gpgsig` spellings and repeated headers can be selected independently. `Signature::parse` optionally
+interprets identity bytes using the first opening and following closing email delimiter, trimming
+framing whitespace before the opening delimiter and before seconds. Raw bytes remain available when
+interpretation or construction policy fails. See [R01 evidence](evidence/r01.md) for independent Git
+observations, signature selection semantics, and the concrete R07 decoding follow-ups.
 
 Construction is not full `git fsck`: messages can contain NUL (which Git's default `hash-object`
 rejects), parent IDs can repeat or be zero, and referenced objects are not checked. Encoding and
