@@ -74,10 +74,32 @@ fn imports_server_deltas_and_all_object_kinds(#[case] ofs: bool) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, ofs, 16);
     let (root, repo) = destination();
     assert!(fixture.index_path.exists());
+    let mut before = repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        before
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap(),
+        None
+    );
     let received = fetch(fixture.root.path());
     let installed = received
         .install(&repo, girt::PackLimits::default(), &AtomicBool::new(false))
         .unwrap();
+    assert_eq!(
+        before
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap(),
+        None
+    );
+    before
+        .refresh(PackLimits::default(), girt::AlternateLimits::default())
+        .unwrap();
+    assert!(
+        before
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
     let index = repo
         .object_dir()
         .join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));

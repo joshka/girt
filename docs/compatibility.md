@@ -801,7 +801,7 @@ upstream fixtures. They do not establish arbitrary crash recovery or reader snap
 
 ## Pack Reading
 
-`Repository::objects(PackLimits)` returns a synchronous reader with live loose-object access and an
+`Repository::objects(PackLimits)` returns a synchronous reader with live loose-object access and a
 pinned set of pack/index files. `Objects::read(id, ReadLimits)` returns a verified kind and exact
 payload, or `None` for absence. Blob, tree, commit, and tag payloads share this boundary; structured
 parsing remains separate. Existing loose typed reads and writes retain their contracts. A corrupt
@@ -834,13 +834,13 @@ performed by callers; they are not a total process-memory quota.
 Pack/index files remain open for the reader's lifetime; index identities stay on disk and bounded
 offset tables stay in memory. Pack bytes and decoded objects are not cached. Files must remain
 immutable while pinned; in-place mutation is outside the consistency contract. Opening is not an
-atomic topology/pair snapshot. R16 owns refresh and concurrent publication behavior. Loose reads
-remain live. Trusted paths and ancestors are required; this API does not secure hostile concurrent
-filesystem mutation. [R15](#r15-file-backed-storage) records resource and cancellation policy.
-Multi-pack indexes and bitmap/reverse indexes are ignored. Local alternate stores and complete
-partial-clone stores are supported without network retrieval; [R39 evidence](evidence/r39.md)
-records their bounds and topology contract. Thin packs still require transport import; raw
-stored-pack reads do not resolve external bases.
+atomic topology/pair snapshot. [R16](#r16-object-store-refresh) defines refresh and publication.
+Loose reads remain live. Trusted paths and ancestors are required; this API does not secure hostile
+concurrent filesystem mutation. [R15](#r15-file-backed-storage) records resource and cancellation
+policy. Multi-pack indexes and bitmap/reverse indexes are ignored. Local alternate stores and
+complete partial-clone stores are supported without network retrieval;
+[R39 evidence](evidence/r39.md) records their bounds and topology contract. Thin packs still require
+transport import; raw stored-pack reads do not resolve external bases.
 
 ### Independent Evidence
 
@@ -2152,5 +2152,42 @@ measurements and native coverage.
 
 `Repository::objects_controlled` and `Objects::read_controlled` add cooperative cancellation.
 Filesystem calls remain blocking. Pinned files must remain immutable; in-place writes are outside
-the consistency contract. R16 retains refresh, pair/topology publication races and retained-reader
-consistency work. Earlier reports of owned pack bytes describe the historical implementation.
+the consistency contract. [R16](#r16-object-store-refresh) supplies explicit refresh and
+retained-reader consistency contracts. Earlier reports of owned pack bytes describe the historical
+implementation.
+
+## R16 Object-Store Refresh
+
+`Objects::refresh(PackLimits, AlternateLimits)` rediscovers the alternate graph from the original
+canonical primary directory and validates every indexed pair. `refresh_controlled` adds cooperative
+cancellation. Success replaces this reader's pack/topology view; failure releases the candidate view
+and preserves the existing one. No files are changed. Shallow boundaries remain inherited from the
+repository handle; refreshing objects does not refresh references or shallow metadata.
+
+Cloned readers keep their previous topology and Arc-shared pinned artifacts. Rename, unlink and path
+replacement preserve access to those artifacts where the OS permits the operation. Writers must keep
+the opened files immutable: truncation and in-place rewriting are unsupported. Loose objects remain
+live at stored canonical paths, so old readers can observe new loose objects or lose loose-only
+objects after GC. Removing an alternate record affects refreshed readers; retained readers still
+search that alternate. Removing or replacing the directory itself can change its live loose
+contents, while its pinned packs retain the old files. There is no GC lease or repository-wide
+point-in-time snapshot.
+
+Publish complete immutable packs before their complete indexes, using atomic final-path publication.
+An unindexed pack is ignored. An index without its pack, a mismatched pair, or corrupt bytes is an
+error. A successfully pinned pair may have been removed from the directory by the time refresh
+returns. Concurrent new publication may require another refresh to become visible. Readers never
+refresh on a miss and keep no negative cache; concurrent loose publication needs no refresh.
+
+Every refresh makes exactly one discovery/validation attempt, with no automatic retries or sleeps.
+Missing-path races, corruption, resource exhaustion and cancellation remain distinct errors. After
+publication finishes, or after repairing/removing broken artifacts, callers may retry explicitly
+under their own finite attempt budget. A failed refresh can continue serving its previous pinned
+packs; it cannot promise that live loose objects remain available. Exclude publishers when a single
+consistent topology is required.
+
+Refresh revalidates every pair, including unchanged names. Its cost is a full opening scan. During
+refresh, current and candidate views coexist: aggregate handles and tables may reach the sum of both
+generations' limits. Further retained generations multiply that cost; clones within one generation
+share handles and tables. R15's bounded per-generation accounting and per-read work limits still
+apply. [R16 evidence](evidence/r16.md) records publication, recovery and native cases.

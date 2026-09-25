@@ -206,9 +206,12 @@ jobs:
           git --version
           python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
       - name: Storage behavior and original decoder corpus
-        run: cargo +stable test --locked --all-features --lib --test packs --test alternates --test repositories
+        run: cargo +stable test --locked --all-features --lib --test packs --test alternates --test repositories --test refresh
       - name: Scoped Clippy
-        run: cargo +stable clippy --locked --all-features --lib --test packs --test alternates --test repositories --example storage_resources --bench packs -- -D warnings
+        run: cargo +stable clippy --locked --all-features --lib --test packs --test alternates --test repositories --test refresh --example storage_resources --bench packs -- -D warnings
+      - name: Refresh after received-pack installation
+        if: runner.os != 'Windows'
+        run: cargo +stable test --locked --all-features --test fetch imports_server_deltas_and_all_object_kinds
       - name: Large original Git fixture
         run: python tests/fixtures/file-storage/generate.py large-store sha1
       - name: Build isolated resource probe

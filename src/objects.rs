@@ -140,12 +140,14 @@ impl Default for ReadLimits {
 ///
 /// Within each store, loose objects take precedence and are read fresh on each call. Corruption
 /// never falls through to a duplicate packed copy. Packs remain readable after Git repacks/deletes
-/// the original files where the OS permits unlinking open files; reopen to discover new packs.
+/// the original files where the OS permits unlinking open files; refresh to discover new packs.
 /// Artifacts must remain immutable while readers use them: pinned handles do not defend against
-/// in-place writes. Opening is not an atomic pair or topology snapshot. Exclude writers when a
-/// consistent view is required. Refresh and concurrent publication contracts remain deferred. The
-/// object directory and its ancestors must be trusted, as with [`LooseObjects`]. This is not a
-/// snapshot of loose files or repository references.
+/// in-place writes (including truncation). Atomic path replacement leaves pinned artifacts intact.
+/// Opening and refresh validate each pinned pair, but do not capture an atomic directory or
+/// topology snapshot. Exclude writers when a point-in-time view is required. [`Self::refresh`]
+/// makes one bounded attempt and leaves this reader unchanged on failure. Reads never refresh
+/// implicitly. The object directory and its ancestors must be trusted, as with [`LooseObjects`].
+/// This is not a snapshot of loose files or repository references.
 ///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
@@ -182,6 +184,7 @@ impl Default for ReadLimits {
 pub struct Objects {
     format: ObjectFormat,
     stores: Vec<Store>,
+    directory: PathBuf,
     pub(crate) shallow: crate::ShallowRoots,
 }
 
@@ -238,6 +241,7 @@ impl Objects {
             check_cancelled(cancelled)?;
             let directories = alternates::discover(directory, alternates)?;
             check_cancelled(cancelled)?;
+            let directory = directories[0].clone();
             let mut budget = limits;
             let mut stores = Vec::new();
             for directory in directories {
@@ -246,6 +250,7 @@ impl Objects {
             Ok(Self {
                 format,
                 stores,
+                directory,
                 shallow: crate::ShallowRoots::empty(format),
             })
         };
@@ -257,6 +262,58 @@ impl Objects {
         crate::trace::finish(&span, &result, crate::trace::object);
 
         result
+    }
+
+    /// Replaces this reader's pack and alternate view after one successful bounded scan.
+    ///
+    /// Rediscover from the original canonical primary directory using the supplied aggregate
+    /// limits. Newly installed indexed packs and alternate topology become visible; removed packs
+    /// disappear from this reader. Clones retain their previous pinned pairs and topology until
+    /// they refresh or drop. Loose paths remain live in every reader, so an old reader can lose
+    /// loose-only objects after GC or observe new loose objects without refresh. Shallow roots
+    /// remain unchanged; refresh the repository's shallow snapshot separately when needed.
+    ///
+    /// Every pair is reopened and revalidated, even if its filename is unchanged. The old and new
+    /// views coexist until success: peak handles and tables can reach their combined limits,
+    /// multiplied by independently retained generations. Clone shares handles within a generation.
+    /// Opening cost is the same full validation scan as [`crate::Repository::objects`].
+    ///
+    /// # Errors
+    ///
+    /// Returns opening errors without changing this reader or its clones. An index whose pack is
+    /// absent, a mismatched pair, malformed alternate metadata or corrupt artifact is an error,
+    /// never absence. There are no automatic retries, sleeps or filesystem changes. After a
+    /// publisher finishes or a broken pair is repaired/removed, the caller may explicitly retry
+    /// with its own finite attempt budget. Continuing publication may require another refresh even
+    /// after success: directory enumeration and alternate discovery are not atomic snapshots.
+    pub fn refresh(
+        &mut self,
+        packs: PackLimits,
+        alternates: AlternateLimits,
+    ) -> Result<(), ObjectReadError> {
+        self.refresh_controlled(packs, alternates, &AtomicBool::new(false))
+    }
+
+    /// Refreshes with the same cooperative cancellation checkpoints as opening.
+    ///
+    /// Cancellation before replacing the view releases all candidate handles and preserves the
+    /// current view. Blocking OS calls cannot be interrupted. See [`Self::refresh`] for resource,
+    /// publication, retained-reader and explicit retry contracts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors from [`Self::refresh`] or [`ObjectReadError::Cancelled`].
+    pub fn refresh_controlled(
+        &mut self,
+        packs: PackLimits,
+        alternates: AlternateLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<(), ObjectReadError> {
+        let candidate =
+            Self::open_controlled(self.format, &self.directory, packs, alternates, cancelled)?;
+        check_cancelled(cancelled)?;
+        self.stores = candidate.stores;
+        Ok(())
     }
 
     /// Reads an exact object by full identity in this store's format; returns `None` only when

@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let cancelled = AtomicBool::new(false);
     let start = Instant::now();
-    let objects = repository.objects_controlled(
+    let mut objects = repository.objects_controlled(
         PackLimits::default(),
         AlternateLimits::default(),
         &cancelled,
@@ -70,6 +70,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let retained = handles();
     let clone = objects.clone();
     let cloned = handles();
+    let failed = objects.refresh(
+        PackLimits {
+            max_index_bytes: 0,
+            ..PackLimits::default()
+        },
+        AlternateLimits::default(),
+    );
+    assert!(matches!(
+        failed,
+        Err(girt::ObjectReadError::Limit("pack index bytes"))
+    ));
+    assert_eq!(handles(), cloned);
+    let start = Instant::now();
+    objects.refresh(PackLimits::default(), AlternateLimits::default())?;
+    let refreshed = start.elapsed();
+    let generations = handles();
+    assert_eq!(
+        generations,
+        baseline
+            .zip(retained)
+            .map(|(base, open)| base + 2 * (open - base))
+    );
+    println!(
+        "refresh_us={} handles_two_generations={generations:?}",
+        refreshed.as_micros()
+    );
     let start = Instant::now();
     let object = clone
         .read_controlled(id, ReadLimits::default(), &cancelled)?
@@ -94,6 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(objects);
     drop(clone);
     println!("handles_after_drop={:?}", handles());
+    assert_eq!(handles(), baseline);
     // Optional sampling interval is outside measured operations and retains no reader.
     if args.get(3).is_some_and(|arg| arg == "hold") {
         std::thread::sleep(Duration::from_secs(1));

@@ -399,10 +399,11 @@ impl Repository {
     /// Uses primary-first, depth-first alternates-file order; each store searches loose objects
     /// before filename-ordered packs. Canonical aliases/cycles are visited once. Missing alternate
     /// directories are skipped. Metadata and packs form a fixed snapshot; loose files remain live.
-    /// Reopen to observe topology changes. Concurrent edits can yield an I/O or metadata error;
-    /// callers needing a consistent graph must exclude writers. No borrowed store is modified.
-    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_OBJECT_DIRECTORY` are ignored, as with opening.
-    /// HTTP alternates metadata is inert. Missing promised objects return absence without fetching.
+    /// Call [`crate::Objects::refresh`] to observe topology changes. Concurrent edits can yield an
+    /// I/O or metadata error; callers needing a consistent graph must exclude writers. No
+    /// borrowed store is modified. `GIT_ALTERNATE_OBJECT_DIRECTORIES` and
+    /// `GIT_OBJECT_DIRECTORY` are ignored, as with opening. HTTP alternates metadata is inert.
+    /// Missing promised objects return absence without fetching.
     ///
     /// # Errors
     ///

@@ -73,8 +73,21 @@ impl FilePack {
         budget: &mut crate::PackLimits,
         cancelled: &AtomicBool,
     ) -> Result<Self, Error> {
+        Self::open_after_index(format, path, budget, cancelled, || {})
+    }
+
+    // The checkpoint permits deterministic publication interleavings without sleeps or global
+    // hooks. Production has no callback work between the two artifact opens.
+    fn open_after_index(
+        format: ObjectFormat,
+        path: &Path,
+        budget: &mut crate::PackLimits,
+        cancelled: &AtomicBool,
+        after_index: impl FnOnce(),
+    ) -> Result<Self, Error> {
         check_cancelled(cancelled)?;
         let index_file = Artifact::open(path)?;
+        after_index();
         let pack = Artifact::open(&path.with_extension("pack"))?;
         let bytes = index_file
             .len
@@ -299,5 +312,118 @@ impl Read for Range<'_> {
         file.read_exact(&mut output[..count])?;
         self.position += count;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use std::fs;
+
+    use rstest::rstest;
+
+    use super::*;
+    use crate::{ObjectKind, PackLimits, PackObject, PackWriteLimits};
+
+    fn pair(root: &Path, name: &str, format: ObjectFormat, data: &[u8]) -> PathBuf {
+        let object = PackObject {
+            id: ObjectId::for_blob(format, data),
+            kind: ObjectKind::Blob,
+            data,
+        };
+        let (mut pack, mut index) = (Vec::new(), Vec::new());
+        crate::write_pack(
+            format,
+            &[object],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+        )
+        .unwrap();
+        let path = root.join(name).with_extension("idx");
+        fs::write(&path, index).unwrap();
+        fs::write(path.with_extension("pack"), pack).unwrap();
+        path
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn removal_between_opens_is_path_error(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "a", format, b"first");
+        let result = FilePack::open_after_index(
+            format,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+            || {
+                fs::remove_file(path.with_extension("pack")).unwrap();
+            },
+        );
+        assert!(
+            matches!(result, Err(Error::Path { source, .. }) if source.kind() == io::ErrorKind::NotFound)
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn different_valid_pair_between_opens_is_rejected(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "a", format, b"first");
+        let replacement = pair(root.path(), "b", format, b"other");
+        let result = FilePack::open_after_index(
+            format,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+            || {
+                fs::remove_file(path.with_extension("pack")).unwrap();
+                fs::rename(
+                    replacement.with_extension("pack"),
+                    path.with_extension("pack"),
+                )
+                .unwrap();
+            },
+        );
+        assert!(matches!(result, Err(Error::Corrupt(_))));
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn index_path_replacement_keeps_pinned_index(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "a", format, b"first");
+        let replacement = pair(root.path(), "b", format, b"other");
+        let reader = FilePack::open_after_index(
+            format,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+            || {
+                fs::rename(&path, path.with_extension("old")).unwrap();
+                fs::rename(replacement, &path).unwrap();
+            },
+        )
+        .unwrap();
+        let id = ObjectId::for_blob(format, b"first");
+        let value = reader
+            .read(
+                reader.find(id).unwrap().unwrap(),
+                ReadLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(value.data(), b"first");
+        assert!(matches!(
+            FilePack::open(
+                format,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(Error::Corrupt(_))
+        ));
     }
 }

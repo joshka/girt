@@ -46,6 +46,14 @@ fn packs(c: &mut Criterion) {
                     .unwrap()
             })
         });
+        let mut refreshed = objects.clone();
+        c.bench_function(&format!("packs/refresh-warm-{count}"), |b| {
+            b.iter(|| {
+                refreshed
+                    .refresh(PackLimits::default(), girt::AlternateLimits::default())
+                    .unwrap()
+            })
+        });
         c.bench_function(&format!("packs/indexed-miss-{count}"), |b| {
             let absent =
                 girt::ObjectId::for_blob(girt::ObjectFormat::Sha1, b"absent benchmark object");

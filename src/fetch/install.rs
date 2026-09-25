@@ -119,10 +119,10 @@ impl ReceivedFetch {
     /// Writes temporary files in the destination pack directory, completes and syncs their
     /// contents, then publishes the pack before its index using no-clobber persistence. The
     /// index is the visibility marker for both Git and girt. Concurrent girt readers see an
-    /// older snapshot or the completed pair; reopen to discover new objects. Identical existing
-    /// artifacts are reused; different bytes at either final path fail. Concurrent
-    /// deletion/repacking by other tools can still make opening fail and requires retry. The
-    /// object directory and ancestors must be trusted.
+    /// older view or the completed pair; call [`crate::Objects::refresh`] to discover new objects.
+    /// Identical existing artifacts are reused; different bytes at either final path fail.
+    /// Concurrent deletion/repacking by other tools can still make opening fail and requires
+    /// retry. The object directory and ancestors must be trusted.
     ///
     /// Before creating artifacts, reopens the destination under `snapshot_limits` and
     /// identity-checks every local object used for connectivity, under the receive call's local
@@ -131,7 +131,7 @@ impl ReceivedFetch {
     /// remains the caller's responsibility. Installing into a different repository works only if
     /// its verified local objects satisfy those same dependencies.
     ///
-    /// No references or reflogs change. After success, callers can reopen objects and perform
+    /// No references or reflogs change. After success, callers can refresh objects and perform
     /// individual conditional updates through [`crate::refs::References::update_without_reflog`],
     /// explicitly with no reflog. Multiple updates are separate operations: a later failure
     /// leaves earlier updates intact. Callers own those outcomes and any retry policy.
