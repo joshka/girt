@@ -106,7 +106,7 @@ consumer or native-platform evidence.
 | R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Scoped accepted     | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r23.md)                                                                   |
 | R24 | SSH command/agent/key configuration and cleanup             | R22                             | Scoped accepted     | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r24.md)                                                                   |
 | R25 | Native local transport and explicit helper protocols        | R21, R16                        | Review ready        | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r25.md)                                                                   |
-| R26 | Remote advertisement, default HEAD and protocol negotiation | R23–R25                         | Planned             | L    | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
+| R26 | Remote advertisement, default HEAD and protocol negotiation | R23–R25                         | Review ready        | L    | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r26.md)                                                                           |
 | R27 | Fetch negotiation, shallow/depth and pack receipt           | R26, R16                        | Planned             | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
 | R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Planned             | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
 | R29 | Push command model, deletes, leases and options             | R26, R16                        | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
@@ -562,6 +562,18 @@ delta chains. Revisit when R35 measures a representative jj operation dominated 
 at R34's final corpus assessment, whichever comes first. Preserve full intermediate identity checks
 and per-read resource limits. Profile the actual consumer distribution before choosing a cache or a
 different validation strategy; do not infer a safe cache size from R41's small repeated fixture.
+
+### B06 — Credential Helper Early Exit
+
+**Size:** S. **Status:** Open investigation. **Owner:** R22 credential transport follow-up.
+**Evidence:** [R26 platform run](evidence/r26.md#validation-and-remaining-scope).
+
+The Ubuntu 22.04 R26 run observed `Broken pipe` when a synthetic failed credential helper exited
+before reading its input. Reproduce the race with an early-exiting helper and verify whether the
+next configured helper is still tried. If fallback stops on the write error, fix the production
+helper sequence and escalate this ahead of dependent HTTP work; if fallback succeeds, make the
+fixture deterministic without weakening the fallback assertion. Retain both the initial failure and
+passing retry as platform evidence until the cause is established.
 
 ## C02 Storage and Layout Review
 
