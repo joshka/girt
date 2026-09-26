@@ -47,6 +47,14 @@ race, platform, and benchmark evidence; and remaining limitations. Mark inapplic
 reason. Link retained artifacts and independently generated fixture provenance. Never describe a
 finite corpus as exhaustive parity proof.
 
+Make task updates easy to scan without losing the decision trail. Open with the concrete problem,
+intended capability and central uncertainty. During work, report findings and why they change the
+next investigation or decision. Lead completion with the outcome and material blocker, if any;
+summarize the major design choices, enabled behavior and limits in a few substantive points. Keep
+revision lists, test counts and CI chronology in linked evidence, while naming the exact tested
+revision in the completion callback. Separate the original delivery from later corrections when
+summarizing history.
+
 The coordinator presents that concise summary, updates the roadmap status and completion links, adds
 discovered follow-ups and dependency changes, and dispatches the next ready item after acceptance or
 an explicit deferral under the
