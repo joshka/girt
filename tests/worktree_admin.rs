@@ -136,6 +136,196 @@ fn moved_checkout_keeps_private_roots_until_explicit_retirement() {
     git(&moved, &["symbolic-ref", "HEAD"]);
 }
 
+#[cfg(windows)]
+struct DeniedAcl {
+    path: std::path::PathBuf,
+    sid: String,
+}
+
+#[cfg(windows)]
+impl DeniedAcl {
+    fn apply(path: &Path, permission: &str) -> Self {
+        let output = Command::new("whoami")
+            .args(["/user", "/fo", "csv", "/nh"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let identity = String::from_utf8_lossy(&output.stdout);
+        let sid = identity
+            .split('"')
+            .find(|field| field.starts_with("S-1-"))
+            .expect("whoami must report the runner's SID")
+            .to_owned();
+        let output = Command::new("icacls")
+            .arg(path)
+            .args(["/deny", &format!("*{sid}:{permission}")])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "icacls deny failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Self {
+            path: path.to_owned(),
+            sid,
+        }
+    }
+
+    fn restore(mut self) {
+        let output = self.remove().unwrap();
+        assert!(
+            output.status.success(),
+            "icacls restore failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn remove(&mut self) -> std::io::Result<std::process::Output> {
+        let output = Command::new("icacls")
+            .arg(&self.path)
+            .args(["/remove:d", &format!("*{}", self.sid)])
+            .output()?;
+        if output.status.success() {
+            self.sid.clear();
+        }
+        Ok(output)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for DeniedAcl {
+    fn drop(&mut self) {
+        if !self.sid.is_empty() {
+            let _ = self.remove();
+        }
+    }
+}
+
+#[cfg(windows)]
+fn denied_registration_refusal(result: &Result<(), WorktreeAdminError>) -> bool {
+    match result {
+        Err(WorktreeAdminError::Uncertain(path)) => path.ends_with("topic"),
+        Err(WorktreeAdminError::Io {
+            path,
+            written,
+            source,
+        }) => {
+            path.ends_with("girt-admin.lock")
+                && written.is_empty()
+                && source.kind() == std::io::ErrorKind::PermissionDenied
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn denied_gitfile_is_uncertain_and_preserves_private_roots() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("main"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo.create_orphan_worktree(&checkout, &branch, 2).unwrap();
+    let registration = linked.git_dir().to_owned();
+    let gitfile = checkout.join(".git");
+    let head = fs::read(registration.join("HEAD")).unwrap();
+    let index = fs::read(registration.join("index")).unwrap();
+    let backlink = fs::read(registration.join("gitdir")).unwrap();
+    let private_log = registration.join("logs/HEAD");
+    fs::create_dir_all(private_log.parent().unwrap()).unwrap();
+    fs::write(&private_log, b"retained log\n").unwrap();
+
+    let denied = DeniedAcl::apply(&gitfile, "R");
+    assert_eq!(
+        fs::read(&gitfile).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "the runner must actually deny link reads"
+    );
+    let future = SystemTime::now() + Duration::from_secs(60);
+    let prune_result = repo.prune_worktree(&registration, future, WorktreeRetirement::Confirmed);
+    assert!(
+        matches!(
+            &prune_result,
+            Err(WorktreeAdminError::Protected(path) | WorktreeAdminError::Uncertain(path))
+                if path.ends_with(".git")
+        ),
+        "{prune_result:?}"
+    );
+    let repair_result = repo.repair_worktree(&registration, &checkout);
+    assert!(
+        matches!(
+            &repair_result,
+            Err(WorktreeAdminError::Uncertain(path)) if path.ends_with(".git")
+        ),
+        "{repair_result:?}"
+    );
+    assert_eq!(fs::read(registration.join("HEAD")).unwrap(), head);
+    assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+    assert_eq!(fs::read(registration.join("gitdir")).unwrap(), backlink);
+    assert_eq!(fs::read(&private_log).unwrap(), b"retained log\n");
+    assert!(!registration.join("girt-admin.lock").exists());
+
+    denied.restore();
+    git(&checkout, &["symbolic-ref", "HEAD"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn denied_registration_write_refuses_prune_and_repair() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("main"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo.create_orphan_worktree(&checkout, &branch, 2).unwrap();
+    let registration = linked.git_dir().to_owned();
+    let head = fs::read(registration.join("HEAD")).unwrap();
+    let index = fs::read(registration.join("index")).unwrap();
+    let backlink = fs::read(registration.join("gitdir")).unwrap();
+
+    let denied = DeniedAcl::apply(&registration, "W");
+    let probe = registration.join("denial-probe");
+    assert_eq!(
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "the runner must actually deny registration writes"
+    );
+    let future = SystemTime::now() + Duration::from_secs(60);
+    let prune_result = repo.prune_worktree(&registration, future, WorktreeRetirement::Confirmed);
+    assert!(
+        denied_registration_refusal(&prune_result),
+        "{prune_result:?}"
+    );
+    let repair_result = repo.repair_worktree(&registration, &checkout);
+    assert!(
+        denied_registration_refusal(&repair_result),
+        "{repair_result:?}"
+    );
+    assert_eq!(fs::read(registration.join("HEAD")).unwrap(), head);
+    assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+    assert_eq!(fs::read(registration.join("gitdir")).unwrap(), backlink);
+    assert!(!probe.exists());
+    assert!(!registration.join("girt-admin.lock").exists());
+
+    denied.restore();
+    git(&checkout, &["symbolic-ref", "HEAD"]);
+}
+
 #[test]
 fn repair_rewrites_relative_links_after_checkout_move() {
     let root = tempfile::tempdir().unwrap();
