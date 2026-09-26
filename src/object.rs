@@ -1,8 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
 
-use sha1::{Digest, Sha1};
-
 /// The hash format used by a Git object database.
 ///
 /// Object codecs, loose/packed storage, references and index v2 support both formats.
@@ -146,10 +144,10 @@ impl ObjectFormat {
         match self {
             Self::Sha1 => hash_sha1(kind.as_str(), bytes),
             Self::Sha256 => {
-                let mut hash = sha2::Sha256::new();
-                hash.update(object_header(kind.as_str(), bytes.len()));
+                let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+                hash.update(object_header(kind.as_str(), bytes.len()).as_bytes());
                 hash.update(bytes);
-                ObjectId::Sha256(hash.finalize().into())
+                ObjectId::Sha256(hash.finish().as_ref().try_into().unwrap())
             }
         }
     }
@@ -158,15 +156,19 @@ impl ObjectFormat {
 /// Incremental checksum in the repository's selected storage format.
 #[derive(Clone)]
 pub(crate) enum Hasher {
-    Sha1(Sha1),
-    Sha256(sha2::Sha256),
+    Sha1(aws_lc_rs::digest::Context),
+    Sha256(aws_lc_rs::digest::Context),
 }
 
 impl Hasher {
     pub(crate) fn new(format: ObjectFormat) -> Self {
         match format {
-            ObjectFormat::Sha1 => Self::Sha1(Sha1::new()),
-            ObjectFormat::Sha256 => Self::Sha256(sha2::Sha256::new()),
+            ObjectFormat::Sha1 => Self::Sha1(aws_lc_rs::digest::Context::new(
+                &aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY,
+            )),
+            ObjectFormat::Sha256 => {
+                Self::Sha256(aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256))
+            }
         }
     }
 
@@ -179,8 +181,8 @@ impl Hasher {
 
     pub(crate) fn finalize(self) -> ObjectId {
         match self {
-            Self::Sha1(hash) => ObjectId::Sha1(hash.finalize().into()),
-            Self::Sha256(hash) => ObjectId::Sha256(hash.finalize().into()),
+            Self::Sha1(hash) => ObjectId::Sha1(hash.finish().as_ref().try_into().unwrap()),
+            Self::Sha256(hash) => ObjectId::Sha256(hash.finish().as_ref().try_into().unwrap()),
         }
     }
 }
@@ -194,10 +196,10 @@ impl ObjectFormat {
 }
 
 fn hash_sha1(kind: &str, bytes: &[u8]) -> ObjectId {
-    let mut hash = Sha1::new();
-    hash.update(object_header(kind, bytes.len()));
+    let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY);
+    hash.update(object_header(kind, bytes.len()).as_bytes());
     hash.update(bytes);
-    ObjectId::Sha1(hash.finalize().into())
+    ObjectId::Sha1(hash.finish().as_ref().try_into().unwrap())
 }
 
 impl fmt::Display for ObjectId {

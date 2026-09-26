@@ -24,7 +24,7 @@ tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] 
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 sha1 = "0.10"
-sha2 = "0.10"
+aws-lc-rs = { version = "1.18", features = ["prebuilt-nasm"] }
 tempfile = "3"
 thiserror = "2"
 
@@ -32,6 +32,7 @@ thiserror = "2"
 rustix = { version = "1", features = ["fs", "event", "process"] }
 
 [dev-dependencies]
+sha2 = "0.10"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 serde_json = "1"
 tokio = { version = "1.4", features = ["sync"] }
