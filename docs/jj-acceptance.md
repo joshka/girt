@@ -388,6 +388,11 @@ performs final representative acceptance. The target is girt throughput divided 
 roughly 0.9–1.1x for normal supported functionality. Faster than 1.1x is welcome, not failure. Do
 not silently average a substantial workload regression into a passing aggregate.
 
+R41 is an early checkpoint for capabilities already present. It may recommend scoped acceptance with
+measured progress and explicit residual workloads when the roadmap's latency policy permits a
+bounded deferral. Name the owner and restart trigger for each residual gap. This does not lower the
+parity target or substitute for R34's final assessment across the complete representative corpus.
+
 Establish reproducible matched operations and input distributions across ordinary supported object
 reads/writes, traversal, references/reflogs, index and repository/worktree operations. Include both
 hash formats, common object sizes, loose and packed stores, delta depths, repeated and varied

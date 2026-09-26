@@ -93,7 +93,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
-| R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
+| R41 | Representative Git-parity performance                       | C02                             | Review ready        | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -403,6 +403,14 @@ reads at 0.20–0.25x Git throughput and selected deep deltas at 0.017–0.026x.
 investigation, not an all-function or cross-platform baseline. No performance implementation is
 included in R40.
 
+The [R41 report](evidence/r41.md) rebaselines the current code and records bounded index retention,
+`zlib-rs` inflation, direct result-buffer decoding and accelerated identity hashing. Warm buffered
+ordinary packed reads reach roughly 0.43–0.48x Git; selected deep deltas reach 0.038–0.053x. A small
+SHA-1/SHA-256 cross-section adds packed trees and varied loose blobs. R41 is review ready for scoped
+acceptance, with [B05](#b05--residual-packed-read-performance) carrying the measured gaps and R34
+retaining the full A20 target. The origin native validation result belongs with R41 evidence; the
+existing C02 broad Windows tracing failure remains separate.
+
 ## R40 Completion
 
 [R40 evidence](evidence/r40.md) records bounded files/reftable history, exact raw data, wide numeric
@@ -525,6 +533,18 @@ its Git-oracle assertion before girt reads the index. Passing retries do not clo
 Reproduce with complete captured spans or raw main/shared index bytes and Git output, respectively;
 then fix the demonstrated lifetime, codec or fixture defect without weakening the assertions.
 Promote any production correctness finding ahead of dependent work.
+
+### B05 — Residual Packed-Read Performance
+
+**Status:** Measured performance backlog under the latency policy. **Owner:** R34 performance
+assessment, with an earlier R35 consumer follow-up if an ordinary jj workflow is read-bound.
+**Evidence:** [R41 report](evidence/r41.md).
+
+R41 improves ordinary packed reads but does not reach the A20 Git-parity target, especially for deep
+delta chains. Revisit when R35 measures a representative jj operation dominated by packed reads, or
+at R34's final corpus assessment, whichever comes first. Preserve full intermediate identity checks
+and per-read resource limits. Profile the actual consumer distribution before choosing a cache or a
+different validation strategy; do not infer a safe cache size from R41's small repeated fixture.
 
 ## C02 Storage and Layout Review
 
