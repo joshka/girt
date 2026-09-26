@@ -136,28 +136,26 @@ impl ConfigInputs {
         let home = get("HOME").map(PathBuf::from);
         inputs.context.home = home.clone();
         let no_system = get("GIT_CONFIG_NOSYSTEM");
-        let no_system = match no_system
-            .as_ref()
-            .and_then(|s| s.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            None if no_system.is_none() => false,
-            Some("" | "false" | "no" | "off" | "0") => false,
-            Some("true" | "yes" | "on" | "1") => true,
+        let no_system = match no_system {
+            None => false,
             Some(value) => {
-                super::integer(value.as_bytes())
-                    .map(|n| n != 0)
+                #[cfg(unix)]
+                let bytes = {
+                    use std::os::unix::ffi::OsStrExt;
+                    value.as_bytes()
+                };
+                #[cfg(not(unix))]
+                let bytes = value
+                    .to_str()
                     .ok_or(super::ConfigError {
                         line: 1,
                         reason: "invalid GIT_CONFIG_NOSYSTEM",
                     })?
-            }
-            None => {
-                return Err(super::ConfigError {
+                    .as_bytes();
+                super::boolean(Some(bytes)).ok_or(super::ConfigError {
                     line: 1,
                     reason: "invalid GIT_CONFIG_NOSYSTEM",
-                });
+                })?
             }
         };
         let system = get("GIT_CONFIG_SYSTEM").map(PathBuf::from).or(system);

@@ -30,3 +30,15 @@ pub(crate) fn integer(value: &[u8]) -> Option<i64> {
         .checked_mul(sign)?
         .checked_mul(multiplier)
 }
+
+/// Decode Git's scalar boolean spelling; `None` is an implicit true value.
+pub(crate) fn boolean(value: Option<&[u8]>) -> Option<bool> {
+    let Some(value) = value else {
+        return Some(true);
+    };
+    match value.to_ascii_lowercase().as_slice() {
+        b"true" | b"yes" | b"on" => Some(true),
+        b"false" | b"no" | b"off" | b"" => Some(false),
+        _ => integer(value).map(|number| number != 0),
+    }
+}

@@ -20,7 +20,9 @@ pub use worktree_admin::{WorktreeAdminError, WorktreeRetirement};
 pub use worktree_create::CreateWorktreeError;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 
-use crate::config::{ConfigFile, ConfigInputs, ConfigScope, ResolveError, integer};
+use crate::config::{
+    ConfigFile, ConfigInputs, ConfigScope, ResolveError, boolean as config_boolean, integer,
+};
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
 /// An opened repository's metadata paths, checkout location and resolved snapshots.
@@ -605,14 +607,9 @@ fn validate_config(config: &Config, path: &Path) -> Result<(u32, ObjectFormat), 
 fn extension_boolean(config: &Config, path: &Path, name: &str) -> Result<bool, OpenError> {
     match config.value("extensions", None, name) {
         None => Ok(false),
-        Some(None) => Ok(true),
-        Some(Some(value)) => match value.to_ascii_lowercase().as_slice() {
-            b"true" | b"yes" | b"on" => Ok(true),
-            b"false" | b"no" | b"off" | b"" => Ok(false),
-            _ => integer(value)
-                .map(|n| n != 0)
-                .ok_or_else(|| malformed(path, "invalid extension boolean")),
-        },
+        Some(value) => {
+            config_boolean(value).ok_or_else(|| malformed(path, "invalid extension boolean"))
+        }
     }
 }
 
@@ -623,20 +620,9 @@ fn parse_version(value: &[u8]) -> Option<u32> {
 fn boolean(config: &Config, path: &Path, name: &str) -> Result<Option<bool>, OpenError> {
     match config.value("core", None, name) {
         None => Ok(None),
-        Some(None) => Ok(Some(true)),
-        Some(Some(bytes)) => {
-            let value = bytes.to_ascii_lowercase();
-            match value.as_slice() {
-                b"true" | b"yes" | b"on" => Ok(Some(true)),
-                b"" | b"false" | b"no" | b"off" => Ok(Some(false)),
-                _ => {
-                    let number = integer(bytes);
-                    number
-                        .map(|value| Some(value != 0))
-                        .ok_or_else(|| malformed(path, &format!("invalid core.{name} boolean")))
-                }
-            }
-        }
+        Some(value) => config_boolean(value)
+            .map(Some)
+            .ok_or_else(|| malformed(path, &format!("invalid core.{name} boolean"))),
     }
 }
 

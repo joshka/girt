@@ -94,7 +94,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
 | R41 | Representative Git-parity performance                       | C02                             | Accepted (scoped)   | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
-| R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
+| R21 | URL, environment and transport configuration                | R41, R09                        | Review ready        | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r21.md)                                                                   |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R24 | SSH command/agent/key configuration and cleanup             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -244,6 +244,9 @@ refresh and remaining exclusions; C02's milestone remains open.
   decoding in the configuration owner and exercise repository bootstrap, file selection and typed
   lookup together. Preserve implicit values and source-specific diagnostics. Existing duplication is
   nonblocking; no scalar semantics changed during C01 remediation.
+
+  R21 shares one decoder across repository bootstrap and environment file selection, retaining
+  source-specific diagnostics. Its [evidence](evidence/r21.md) records the focused and broad checks.
 - **D4 — R19, with R20 repair follow-through:** Measure large linked-worktree inventory against the
   R10 baseline and characterize repeated common config/shallow reads. If needed, share only coherent
   layout inspection while preserving per-registration errors and explicit snapshot boundaries. No

@@ -11,10 +11,12 @@
 
 mod config;
 mod edit;
+mod endpoint;
 pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
 mod refspec;
 
 pub use config::{Remote, RemoteError};
+pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment};
 pub use refspec::{
     Direction, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs, RefspecsError,
 };

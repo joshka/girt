@@ -21,4 +21,4 @@ pub use resolution::{ResolveError, ResolveFailure};
 pub use sources::{
     ConfigFile, ConfigInputs, ConfigScope, IncludeContext, Origin, ResolveLimits, SourceLocation,
 };
-pub(crate) use values::integer;
+pub(crate) use values::{boolean, integer};
