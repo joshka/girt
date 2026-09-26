@@ -92,6 +92,16 @@ fn retention(c: &mut Criterion) {
                 )
             })
         });
+        c.bench_function("maintenance/idempotent-packed-linear-256", |bench| {
+            bench.iter(|| {
+                repository.run_maintenance(
+                    &mut IsolatedFixture,
+                    black_box(&policy),
+                    RepackLimits::default(),
+                    black_box(&cancel),
+                )
+            })
+        });
     }
 }
 

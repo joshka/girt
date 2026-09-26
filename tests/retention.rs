@@ -106,6 +106,167 @@ impl MaintenanceIsolation for RefusingIsolation {
     }
 }
 
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn composed_maintenance_expires_replaces_and_prunes(#[case] format: &str) {
+    let (root, repo, first, _second) = fixture_format(format);
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let orphan: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n")
+        .parse()
+        .unwrap();
+    let orphan_hex = orphan.to_string();
+    let orphan_path = root
+        .path()
+        .join("objects")
+        .join(&orphan_hex[..2])
+        .join(&orphan_hex[2..]);
+    assert!(orphan_path.exists());
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_before: Some(4_000_000_000),
+        reflog_expire_unreachable_before: Some(4_000_000_000),
+        ..Default::default()
+    };
+    let result = repo
+        .run_maintenance(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(result.expired.unwrap().changed.len(), 1);
+    assert!(result.retired.unwrap().durable);
+    assert!(result.pruned.unwrap().deleted.contains(&orphan));
+    assert!(!orphan_path.exists());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn composed_reftable_maintenance_preserves_live_git_objects(#[case] format: &str) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--ref-format=reftable",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &["config", "core.logAllRefUpdates", "true"],
+        b"",
+    );
+    let tree = git(root.path(), &["mktree"], b"");
+    let live: ObjectId = git(root.path(), &["commit-tree", &tree], b"live\n")
+        .parse()
+        .unwrap();
+    let expired: ObjectId = git(root.path(), &["commit-tree", &tree], b"expired\n")
+        .parse()
+        .unwrap();
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "live",
+            "refs/heads/live",
+            &live.to_string(),
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "old",
+            "refs/heads/old",
+            &expired.to_string(),
+        ],
+        b"",
+    );
+    let repository = Repository::open(root.path()).unwrap();
+    let old_name = girt::refs::RefName::new(b"refs/heads/old").unwrap();
+    repository
+        .references()
+        .unwrap()
+        .delete_without_reflog(
+            &old_name,
+            girt::refs::Expected::Value(girt::refs::Target::Direct(expired)),
+        )
+        .unwrap();
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_unreachable_before: Some(4_000_000_000),
+        ..Default::default()
+    };
+    let report = repository
+        .run_maintenance(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(report.expired.unwrap().changed.len(), 1);
+    assert!(report.retired.unwrap().durable);
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &live.to_string()], b""),
+        "commit"
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn composed_maintenance_refuses_before_mutation() {
+    let (root, repo, _, _) = fixture();
+    let log = root.path().join("logs/refs/heads/deleted");
+    let before = fs::read(&log).unwrap();
+    let error = repo
+        .run_maintenance(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::UnsupportedPlatform
+    ));
+    assert!(error.report.expired.is_none());
+    assert_eq!(fs::read(log).unwrap(), before);
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
 #[rstest::rstest]
 #[case::sha1("sha1")]
 #[case::sha256("sha256")]

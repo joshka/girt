@@ -104,7 +104,7 @@ impl Repository {
         self.prune_unreachable_loose_exclusive(policy, cancel)
     }
 
-    fn prune_unreachable_loose_exclusive(
+    pub(super) fn prune_unreachable_loose_exclusive(
         &self,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,

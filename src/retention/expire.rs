@@ -17,13 +17,11 @@ use super::{MaintenanceIsolation, ReflogSource, RetentionPolicy};
 #[cfg(unix)]
 use super::{RetentionOutcome, RetentionPlan};
 use crate::Repository;
-use crate::refs::Backend;
 #[cfg(unix)]
 use crate::refs::ImportedRecord;
 #[cfg(unix)]
-use crate::refs::ReferenceError;
-#[cfg(unix)]
 use crate::refs::reftable::{ExpireStackError, RecordName, Snapshot, expire_logs};
+use crate::refs::{Backend, ReferenceError};
 
 /// Histories whose expiry rewrite was durably published.
 #[derive(Clone, Debug, Default)]
@@ -130,7 +128,7 @@ impl Repository {
     }
 
     #[cfg(unix)]
-    fn expire_reflogs_exclusive(
+    pub(super) fn expire_reflogs_exclusive(
         &self,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
@@ -235,7 +233,7 @@ impl Repository {
     }
 
     #[cfg(not(unix))]
-    fn expire_reflogs_exclusive(
+    pub(super) fn expire_reflogs_exclusive(
         &self,
         _policy: &RetentionPolicy,
         cancel: &AtomicBool,

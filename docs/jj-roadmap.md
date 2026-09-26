@@ -470,11 +470,10 @@ crash-durable replacement for old storage.
 ## R33 Destructive Maintenance Safety
 
 The [R33 evidence](evidence/r33.md) identifies prerequisites for full maintenance. A bounded loose
-prune, Unix files and reftable reflog expiry, and Unix pack retirement now operate under
-caller-owned repository isolation. The loose prune retains every observed reflog root; pack
-retirement preserves all histories, protected packs and alternate stores. Non-Unix durable
-publication and full maintenance composition remain open. The additive R32 API and complete R31
-plans do not authorize deletion.
+prune, Unix files and reftable reflog expiry, Unix pack retirement, and their Unix composition now
+operate under caller-owned repository isolation. The loose prune retains every observed reflog root;
+pack retirement preserves all histories, protected packs and alternate stores. Non-Unix durable
+publication remains open. The additive R32 API and complete R31 plans do not authorize deletion.
 
 ## R40 Completion
 

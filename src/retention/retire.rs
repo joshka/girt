@@ -129,7 +129,7 @@ impl Repository {
     }
 
     #[cfg(unix)]
-    fn retire_old_packs_exclusive(
+    pub(super) fn retire_old_packs_exclusive(
         &self,
         policy: &RetentionPolicy,
         limits: RepackLimits,

@@ -17,6 +17,8 @@ mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
+mod compose;
+pub use compose::{MaintenanceCause, MaintenanceFailure, MaintenanceReport};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedLog {
