@@ -59,6 +59,25 @@ fn runtime() -> tokio::runtime::Runtime {
         .build()
         .unwrap()
 }
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn discovery_reports_ssh_head_without_fetching_objects(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), "none");
+    let remote = server.remote("config");
+    let cancel = AtomicBool::new(false);
+    let result = runtime()
+        .block_on(fetch::discover_ssh(
+            &remote,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    assert!(matches!(result.head, fetch::RemoteHead::Symbolic { .. }));
+    assert_eq!(result.object_format, format);
+}
 fn all(a: &Advertisement) -> Vec<ObjectId> {
     a.refs.iter().filter(|r| !r.peeled).map(|r| r.id).collect()
 }

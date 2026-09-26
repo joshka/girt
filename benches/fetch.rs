@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use girt::fetch::{FetchLimits, receive};
+use girt::fetch::{FetchLimits, discover, receive};
 use girt::transport::TransportControl;
 use girt::{PackLimits, ReadLimits};
 
@@ -230,6 +230,16 @@ fn fetch(c: &mut Criterion) {
                 FetchLimits::default(),
                 &cancel,
                 |_| ControlFlow::Continue(()),
+            )
+            .unwrap()
+        })
+    });
+    group.bench_function("discover-v0-10000", |b| {
+        b.iter(|| {
+            discover(
+                &mut black_box(advertisement.as_slice()),
+                FetchLimits::default(),
+                &cancel,
             )
             .unwrap()
         })

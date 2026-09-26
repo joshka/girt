@@ -99,6 +99,27 @@ fn fetch_hierarchy_counts_and_sensitive_data_absence() {
     assert!(capture.events().is_empty());
 }
 
+#[test]
+fn discovery_span_redacts_advertised_ref_bytes() {
+    let id = ObjectId::Sha1([1; 20]);
+    let mut bytes = pkt(format!("{id} HEAD\0symref=HEAD:refs/heads/R03_SECRET_ref\n").as_bytes());
+    bytes.extend(pkt(format!("{id} refs/heads/R03_SECRET_ref\n").as_bytes()));
+    bytes.extend_from_slice(b"0000");
+    let capture = Capture::default();
+    let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
+        girt::fetch::discover(
+            &mut bytes.as_slice(),
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+    });
+    assert!(result.is_ok());
+    let span = capture.named("fetch.discover");
+    assert_eq!(span.fields["endpoint"], "stream");
+    assert_eq!(span.fields["outcome"], "success");
+    assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
+}
+
 #[rstest]
 #[case::cancelled(true, usize::MAX, "cancelled", "cancelled")]
 #[case::limit(false, 0, "failure", "limit")]

@@ -9,8 +9,9 @@
 //! traversal support both formats. Tree construction and all decoded payload parsing take an
 //! explicit format, including empty trees. Commit construction derives the format from its tree
 //! and requires matching parents; tag construction derives it from the target. References,
-//! reflogs and working-tree index v2/v3/v4 use the repository format. Transport negotiation remains
-//! SHA-1-only and refuses SHA-256 operations before mutation.
+//! reflogs and working-tree index v2/v3/v4 use the repository format. Remote discovery identifies
+//! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push remain SHA-1-only and refuse
+//! SHA-256 negotiation before mutation; native local transfer supports both formats.
 //!
 //! # Reading a repository
 //!

@@ -1,5 +1,5 @@
 use crate::ObjectId;
-use crate::fetch::Advertisement;
+use crate::fetch::{Advertisement, RemoteHead, interpret_head};
 use crate::refs::RefName;
 use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 
@@ -101,29 +101,17 @@ pub(super) fn plan(
             }
         }
         BranchSelection::Default => {
-            let symbolic: Vec<_> = ad
-                .capabilities
-                .iter()
-                .filter_map(|c| c.strip_prefix(b"symref=HEAD:"))
-                .collect();
-            match symbolic.as_slice() {
-                [] => match head {
-                    Some(r) => CloneHead::Detached(r.id),
-                    None if tips.is_empty() => {
-                        CloneHead::Unborn(crate::repository::initial_branch())
-                    }
-                    None => return Err(ClonePlanError::MissingHead),
-                },
-                [target] => {
-                    let name = RefName::new(target).map_err(|_| ClonePlanError::SymbolicHead)?;
-                    branch(&name).map_err(|_| ClonePlanError::SymbolicHead)?;
-                    match (head, tips.iter().find(|r| r.name == name)) {
-                        (Some(h), Some(r)) if h.id == r.id => CloneHead::Branch { name, id: r.id },
-                        (None, None) => CloneHead::Unborn(name),
-                        _ => return Err(ClonePlanError::SymbolicHead),
-                    }
+            match interpret_head(ad).map_err(|_| ClonePlanError::SymbolicHead)? {
+                RemoteHead::Symbolic { branch, id } => CloneHead::Branch { name: branch, id },
+                RemoteHead::Unborn { branch } if tips.is_empty() => CloneHead::Unborn(branch),
+                RemoteHead::Unborn { .. } => return Err(ClonePlanError::SymbolicHead),
+                RemoteHead::Inferred { id, .. }
+                | RemoteHead::Detached { id }
+                | RemoteHead::Ambiguous { id, .. } => CloneHead::Detached(id),
+                RemoteHead::Missing if tips.is_empty() => {
+                    CloneHead::Unborn(crate::repository::initial_branch())
                 }
-                _ => return Err(ClonePlanError::SymbolicHead),
+                RemoteHead::Missing => return Err(ClonePlanError::MissingHead),
             }
         }
     };

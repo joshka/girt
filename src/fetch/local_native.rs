@@ -23,79 +23,10 @@ pub(super) fn receive(
     if !source.shallow_roots().is_empty() {
         return Err(FetchError::Unsupported("shallow local source"));
     }
+    let advertisement = advertise(source, limits, control)?;
     let store = source
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
-    let refs = source
-        .references()
-        .map_err(|_| FetchError::Protocol("local references"))?;
-    let mut advertised = Vec::new();
-    let head = RefName::new(b"HEAD").expect("valid HEAD");
-    let head_target = refs
-        .read(&head)
-        .map_err(|_| FetchError::Protocol("local HEAD"))?;
-    let head_id = refs
-        .resolve(&head, 32)
-        .map_err(|_| FetchError::Protocol("local HEAD"))?
-        .id;
-    if let Some(id) = head_id {
-        advertised.push(AdvertisedRef {
-            name: head,
-            id,
-            peeled: false,
-        });
-    }
-    for reference in refs
-        .list()
-        .map_err(|_| FetchError::Protocol("local references"))?
-    {
-        check(control)?;
-        let id = match reference.target {
-            Target::Direct(id) => Some(id),
-            Target::Symbolic(_) => {
-                refs.resolve(&reference.name, 32)
-                    .map_err(|_| FetchError::Protocol("local symbolic reference"))?
-                    .id
-            }
-        };
-        if let Some(id) = id {
-            let tag_name = reference.name.as_bytes().starts_with(b"refs/tags/");
-            advertised.push(AdvertisedRef {
-                name: reference.name.clone(),
-                id,
-                peeled: false,
-            });
-            if tag_name {
-                let peeled = store
-                    .peel(id, Default::default(), control.cancel)
-                    .map_err(|error| FetchError::Peel(Box::new(error)))?;
-                if !peeled.tags.is_empty() {
-                    advertised.push(AdvertisedRef {
-                        name: reference.name,
-                        id: peeled.target,
-                        peeled: true,
-                    });
-                }
-            }
-        }
-        if advertised.len() > limits.max_refs {
-            return Err(FetchError::Limit("local references"));
-        }
-    }
-    let capabilities = match head_target {
-        Some(Target::Symbolic(name))
-            if head_id.is_some() && name.as_bytes().starts_with(b"refs/heads/") =>
-        {
-            let mut hint = b"symref=HEAD:".to_vec();
-            hint.extend_from_slice(name.as_bytes());
-            vec![hint]
-        }
-        _ => Vec::new(),
-    };
-    let advertisement = Advertisement {
-        refs: advertised,
-        capabilities,
-    };
     let wants = select(&advertisement);
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));
@@ -241,6 +172,119 @@ pub(super) fn receive(
             limits,
         },
     ))
+}
+
+pub(super) fn advertise(
+    source: &Repository,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<Advertisement, FetchError> {
+    check(control)?;
+    let store = source
+        .objects(Default::default())
+        .map_err(FetchError::Destination)?;
+    let refs = source
+        .references()
+        .map_err(|_| FetchError::Protocol("local references"))?;
+    let mut advertised = Vec::new();
+    let mut remaining = limits.max_advertisement_bytes;
+    let head = RefName::new(b"HEAD").expect("valid HEAD");
+    let head_target = refs
+        .read(&head)
+        .map_err(|_| FetchError::Protocol("local HEAD"))?;
+    let head_id = refs
+        .resolve(&head, 32)
+        .map_err(|_| FetchError::Protocol("local HEAD"))?
+        .id;
+    if let Some(id) = head_id {
+        add_ref(
+            &mut advertised,
+            &mut remaining,
+            limits.max_refs,
+            head,
+            id,
+            false,
+        )?;
+    }
+    for reference in refs
+        .list()
+        .map_err(|_| FetchError::Protocol("local references"))?
+    {
+        check(control)?;
+        let id = match reference.target {
+            Target::Direct(id) => Some(id),
+            Target::Symbolic(_) => {
+                refs.resolve(&reference.name, 32)
+                    .map_err(|_| FetchError::Protocol("local symbolic reference"))?
+                    .id
+            }
+        };
+        if let Some(id) = id {
+            let tag_name = reference.name.as_bytes().starts_with(b"refs/tags/");
+            add_ref(
+                &mut advertised,
+                &mut remaining,
+                limits.max_refs,
+                reference.name.clone(),
+                id,
+                false,
+            )?;
+            if tag_name {
+                let peeled = store
+                    .peel(id, Default::default(), control.cancel)
+                    .map_err(|error| FetchError::Peel(Box::new(error)))?;
+                if !peeled.tags.is_empty() {
+                    add_ref(
+                        &mut advertised,
+                        &mut remaining,
+                        limits.max_refs,
+                        reference.name,
+                        peeled.target,
+                        true,
+                    )?;
+                }
+            }
+        }
+    }
+    let mut capabilities = match head_target {
+        Some(Target::Symbolic(name)) if name.as_bytes().starts_with(b"refs/heads/") => {
+            let mut hint = b"symref=HEAD:".to_vec();
+            hint.extend_from_slice(name.as_bytes());
+            vec![hint]
+        }
+        _ => Vec::new(),
+    };
+    if source.object_format() == crate::ObjectFormat::Sha256 {
+        capabilities.push(b"object-format=sha256".to_vec());
+    }
+    for capability in &capabilities {
+        remaining = remaining
+            .checked_sub(capability.len() + 1)
+            .ok_or(FetchError::Limit("local advertisement bytes"))?;
+    }
+    Ok(Advertisement {
+        refs: advertised,
+        capabilities,
+    })
+}
+
+fn add_ref(
+    advertised: &mut Vec<AdvertisedRef>,
+    remaining: &mut usize,
+    max_refs: usize,
+    name: RefName,
+    id: ObjectId,
+    peeled: bool,
+) -> Result<(), FetchError> {
+    if advertised.len() == max_refs {
+        return Err(FetchError::Limit("local references"));
+    }
+    let bytes = name.as_bytes().len() + id.as_bytes().len() * 2 + 8;
+    *remaining = remaining
+        .checked_sub(bytes)
+        .ok_or(FetchError::Limit("local advertisement bytes"))?;
+    advertised.push(AdvertisedRef { name, id, peeled });
+    Ok(())
 }
 
 fn check(control: TransportControl<'_>) -> Result<(), FetchError> {

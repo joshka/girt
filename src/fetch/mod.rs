@@ -1,4 +1,4 @@
-//! Native local and upload-pack v0 object transfer with explicit fetch orchestration.
+//! Native local and upload-pack object discovery, plus v0 object transfer.
 //!
 //! [`FetchRequest`] combines supported refspecs with a destination snapshot and explicit update
 //! authorization. Its local/HTTP/SSH adapters plan from their actual advertisement, then use shared
@@ -17,7 +17,12 @@
 //! while selected-tip connectivity can depend on verified local objects. Installation rechecks
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
 //! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
-//! requests, automatic tags, pruning and protocol v1/v2 are outside the transfer boundary.
+//! requests, automatic tags, pruning and protocol v1/v2 transfer are outside the transfer boundary.
+//! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
+//! [`discover_session`]
+//! report references, object format and deterministic HEAD interpretation without transferring
+//! objects. The owned network endpoints currently request v0; caller-owned streams accept v0/v1
+//! and v2 `ls-refs`. A preview can become stale and never authorizes a later mutation.
 //! The `http` and `ssh` features add owned async network downloads with separate synchronous
 //! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
 //! a caller-managed blocking worker without borrowing its initiating scope.
@@ -65,6 +70,15 @@ pub use workflow::{
 };
 
 mod connectivity;
+mod discovery;
+#[cfg(feature = "http")]
+pub use discovery::discover_http;
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub use discovery::discover_ssh;
+pub(crate) use discovery::interpret_head;
+pub use discovery::{
+    ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
+};
 mod import;
 mod install;
 mod known;

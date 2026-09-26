@@ -128,7 +128,7 @@ implemented. Keep these distinctions visible in the completion report.
 
 The portable `decoding` integration suite exercises R07 in SHA-1 and SHA-256, including executable
 Git interpretation, loose/history reads, tag peeling and resource/corruption errors. Its transfer
-case is SHA-1-only because negotiation remains owned by R26/R29. Linux/macOS run it in the full
+case is SHA-1-only because wire transfer remains owned by R27/R29. Linux/macOS run it in the full
 suite; Windows explicitly selects it. Retained provider-capture comparisons need no installed key or
 signing provider.
 
@@ -150,7 +150,9 @@ The Windows integration selection follows implemented operations, not just file 
   explicitly scoped to macOS/Linux; files-reference rejection cases require Unix.
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `decoding`: Both-format tolerant tree/tag/commit interpretation, peeling and corruption/resource
-  boundaries. Its transfer case is SHA-1-only pending R26/R29.
+  boundaries. Its transfer case is SHA-1-only pending R27/R29.
+- `discovery`: Native local HEAD and both-format Git v0/v1/v2 advertisement observations, including
+  unborn v2 `ls-refs`; no network transfer is claimed by this portable suite.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
   structural tree comparison and byte-preserving content diff.
 - `index`: SHA-1/SHA-256 v2/v3/v4 parsing/encoding, held-lock replacement, Git stat/flag
@@ -194,9 +196,9 @@ remain unsupported, with refusal-only tests; C02 retains assessment and assignme
 native implementation before R34.
 
 HTTP fixtures use disposable loopback servers, Python and Git's public CGI backend. TLS fixtures
-also need OpenSSL. Protocol operations remain SHA-1-only pending R26/R29; two-format storage tests
-do not establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records exact native results
-and the C02/R19/R20 UNC, WSL, ACL and worktree-administration exclusions. Maintenance remains with
+also need OpenSSL. Wire transfer remains SHA-1-only pending R27/R29; two-format storage tests do not
+establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records exact native results and
+the C02/R19/R20 UNC, WSL, ACL and worktree-administration exclusions. Maintenance remains with
 R31–R33. A CI compile or explicit unsupported error does not close those capability gaps.
 
 For Git CLI fixtures, pass repository-relative path arguments under an explicit working directory

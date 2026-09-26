@@ -134,7 +134,7 @@ jobs:
       - name: Portable Git interoperability in both object formats
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
-          --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test tags --test packs
+          --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test discovery --test tags --test packs
           --test history --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test colocation --test status_portable --test checkout_portable --test references --test references_portable
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}

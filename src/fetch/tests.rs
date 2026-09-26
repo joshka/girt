@@ -110,8 +110,8 @@ fn rejects_bad_framing(#[case] bytes: &[u8]) {
 #[case::shallow(b"shallow abc\n", true)]
 #[case::missing_caps(b"1111111111111111111111111111111111111111 refs/heads/main", false)]
 #[case::sha256(
-    b"1111111111111111111111111111111111111111 refs/heads/main\0object-format=sha256",
-    true
+    b"1111111111111111111111111111111111111111111111111111111111111111 refs/heads/main\0object-format=sha256",
+    false
 )]
 #[case::zero(
     b"0000000000000000000000000000000000000000 refs/heads/main\0side-band-64k",
@@ -406,7 +406,10 @@ fn rejects_missing_wanted_identity() {
 
 #[test]
 fn refuses_sha256_advertisement_without_request_bytes() {
-    let bytes = advertised(ObjectId::Sha256([1; 32]), "side-band-64k");
+    let bytes = advertised(
+        ObjectId::Sha256([1; 32]),
+        "side-band-64k object-format=sha256",
+    );
     let mut sent = vec![];
     let result = receive(
         &mut &bytes[..],
@@ -416,7 +419,10 @@ fn refuses_sha256_advertisement_without_request_bytes() {
         &AtomicBool::new(false),
         |_| ControlFlow::Continue(()),
     );
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(FetchError::Unsupported("SHA-256 fetch negotiation"))
+    ));
     assert!(sent.is_empty());
 }
 

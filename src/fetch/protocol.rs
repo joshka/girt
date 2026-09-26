@@ -4,9 +4,9 @@ use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, KnownHistory, ReceivedFetch, check_cancelled};
-use crate::ObjectId;
 use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
+use crate::{ObjectFormat, ObjectId};
 
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
 #[derive(Debug, Clone)]
@@ -186,6 +186,9 @@ pub(super) fn request(
     cancel: &AtomicBool,
 ) -> Result<Negotiation, Error> {
     check_cancelled(cancel)?;
+    if advertisement.object_format()? != ObjectFormat::Sha1 {
+        return Err(Error::Unsupported("SHA-256 fetch negotiation"));
+    }
     if selected.len() > limits.max_wants {
         return Err(Error::Limit("wants"));
     }
@@ -339,8 +342,33 @@ fn read_ack(
 }
 
 impl Advertisement {
-    fn has(&self, capability: &[u8]) -> bool {
+    pub(crate) fn has(&self, capability: &[u8]) -> bool {
         self.capabilities.iter().any(|value| value == capability)
+    }
+
+    pub(crate) fn object_format(&self) -> Result<ObjectFormat, Error> {
+        let mut format = None;
+        for capability in &self.capabilities {
+            if let Some(value) = capability.strip_prefix(b"object-format=") {
+                let value = match value {
+                    b"sha1" => ObjectFormat::Sha1,
+                    b"sha256" => ObjectFormat::Sha256,
+                    _ => return Err(Error::Unsupported("object format")),
+                };
+                if format.replace(value).is_some() {
+                    return Err(Error::Protocol("duplicate object format"));
+                }
+            }
+        }
+        let format = format.unwrap_or(ObjectFormat::Sha1);
+        if self
+            .refs
+            .iter()
+            .any(|reference| reference.id.format() != format)
+        {
+            return Err(Error::Protocol("advertised object format"));
+        }
+        Ok(format)
     }
 }
 
@@ -348,6 +376,13 @@ pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     limits: FetchLimits,
 ) -> Result<Advertisement, Error> {
+    advertise_with_version(wire, limits).map(|(advertisement, _)| advertisement)
+}
+
+pub(super) fn advertise_with_version(
+    wire: &mut Wire<'_, impl Read>,
+    limits: FetchLimits,
+) -> Result<(Advertisement, super::ProtocolVersion), Error> {
     let mut advertisement = Advertisement {
         refs: vec![],
         capabilities: vec![],
@@ -361,8 +396,16 @@ pub(super) fn advertise(
         .remaining
         .saturating_sub(limits.max_advertisement_bytes);
     wire.remaining -= saved;
+    let mut version_checked = false;
+    let mut version = super::ProtocolVersion::V0;
     while let Some(bytes) = wire.packet()? {
         let bytes = line(&bytes);
+        if !version_checked && bytes == b"version 1" {
+            version_checked = true;
+            version = super::ProtocolVersion::V1;
+            continue;
+        }
+        version_checked = true;
         if bytes.starts_with(b"version ") {
             return Err(Error::Unsupported("protocol version"));
         }
@@ -380,11 +423,6 @@ pub(super) fn advertise(
                 .filter(|c| !c.is_empty())
                 .map(<[u8]>::to_vec)
                 .collect();
-            for cap in &advertisement.capabilities {
-                if cap.starts_with(b"object-format=") && cap != b"object-format=sha1" {
-                    return Err(Error::Unsupported("object format"));
-                }
-            }
             reference
         } else {
             bytes
@@ -394,9 +432,8 @@ pub(super) fn advertise(
         let id = std::str::from_utf8(raw_id)
             .ok()
             .and_then(|id| id.parse::<ObjectId>().ok())
-            .filter(|id| id.format() == crate::ObjectFormat::Sha1)
             .ok_or(Error::Protocol("advertised object ID"))?;
-        if id == ObjectId::Sha1([0; 20]) {
+        if id.is_null() {
             if !first || name != b"capabilities^{}" {
                 return Err(Error::Protocol("zero advertised ID"));
             }
@@ -430,7 +467,8 @@ pub(super) fn advertise(
     }
     wire.remaining += saved;
     debug_assert!(wire.remaining <= start);
-    Ok(advertisement)
+    advertisement.object_format()?;
+    Ok((advertisement, version))
 }
 
 // Parse arbitrary reference/capability bytes without UTF-8 conversion.

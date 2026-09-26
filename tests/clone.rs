@@ -322,7 +322,7 @@ fn detached_head_is_retained_even_when_equal_to_several_branches() {
 }
 
 #[rstest]
-#[case::default(BranchSelection::Default, "refs/heads/main")]
+#[case::default(BranchSelection::Default, "refs/heads/unadvertised")]
 #[case::selected(BranchSelection::Branch(name("refs/heads/topic")), "refs/heads/topic")]
 fn empty_repository_has_unborn_head_and_persistent_remote(
     #[case] selection: BranchSelection,
