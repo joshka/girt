@@ -92,7 +92,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
-| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Review ready        | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
+| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -555,8 +555,10 @@ explicit-retirement remedy at `70a8f81f957d20db1776643d88f127971eac89a7` passes 
 reference and index runs, so R20 has scoped acceptance. The final
 [Windows ACL run](https://github.com/joshka/girt/actions/runs/36215849842) verifies actual read and
 write denial, safe refusal and retained private roots at `75150864ed6e06f7ae2ca8540ae91f65be2fd114`.
-The C02 task recommends scoped acceptance under the latency policy while retaining B03/B04 and the
-broad platform failures; it does not claim those matrices or optional path forms are green.
+The coordinator accepts C02's scoped storage/layout and native worktree milestone under the latency
+policy, using executable `75150864ed6e06f7ae2ca8540ae91f65be2fd114`, evidence child
+`bd6d74cd8ee62c1308aba82ac86491709c517956`, and the passing ACL safety run. The broad Windows
+tracing matrix remains failed; this decision does not claim optional path forms are verified.
 
 The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
 index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate
