@@ -112,7 +112,7 @@ consumer or native-platform evidence.
 | R29 | Push command model, deletes, leases and options             | R26, R16                        | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r29.md)                                                                                         |
 | R30 | Push partial outcomes, progress and cancellation            | R29                             | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r30.md)                                                                                         |
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c03.md)                             |
-| R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Review ready        | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
+| R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Complete            | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
@@ -444,6 +444,10 @@ documented limit; `aws-lc-rs` adds native build cost, with prebuilt NASM coverin
 builders.
 
 ## R31 Retention Planning
+
+The coordinator accepts executable `af87e6fb049a7cc6ce2416fdff6e6c8205f46c42` for its bounded,
+read-only planning scope, with native evidence in the linked report. Acceptance does not make the
+observation atomic or authorize deletion; R32/R33 retain execution, publication and pruning work.
 
 [Implementation evidence](evidence/r31.md) records the read-only root inventory, conservative reflog
 expiry classification, bounded object closure and the execution boundary for R32/R33. The planner
