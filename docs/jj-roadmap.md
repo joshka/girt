@@ -91,7 +91,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
-| R20 | Worktree repair, locks and pruning                          | R19                             | Complete            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md)                                                                                            |
+| R20 | Worktree repair, locks and pruning                          | R19                             | Scoped; prune open  | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](#c02-storage-and-layout-review)                                              |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -503,3 +503,47 @@ replacement or pruning so callers can inspect them. Automatic discovery of reloc
 recovery of private administration locks, and durable multi-file repair would add filesystem scans
 or persistent coordination. Revisit when a concrete jj workflow needs them; do not use a missing old
 backlink as proof that a moved checkout and its private roots are disposable.
+
+## C02 Storage and Layout Review
+
+The C02 task reviewed executable `f8aaa936ab877243faf9c8a94d106e595fe06b75` and evidence child
+`15acb57ad141` under [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage) and
+[A18](jj-acceptance.md#a18--architecture-checkpoints). The R20 reference and index matrices passed
+on four native hosts. The broad macOS run first failed to capture `fetch.http` spans and passed only
+on retry. R19's macOS split-index and Windows tracing failures also remain original observations;
+their successful retries do not establish deterministic behavior. The sixth R20 Unix permission
+fixture ran locally after publication and has no native-matrix result.
+
+The coordinator accepts R20's explicit-checkout repair, lock management, and refusal/partial-write
+reports for their scoped contract. Repair validates the forward link before replacing metadata and
+leaves private HEAD, index and refs intact. An I/O failure identifies completed replacements. The
+remaining replacement steps and temporary files are not crash-atomic. The inventory improvement
+removes repeated common-repository opens and has only warm local timing evidence.
+
+Pruning remains open. The public fixture moves a live checkout, then successfully prunes its stale
+registration. That removes private HEAD, index, refs and reflogs while the checkout still exists. An
+absent old backlink cannot establish retirement or safe loss of those roots. Before any jj
+integration uses pruning, require an explicit caller-authoritative retirement decision and a focused
+regression that retains a moved checkout's private roots unless it is deliberately retired. Keep the
+existing expiry, lock, inaccessible-target and partial-removal checks. R31 must not treat the
+current prune predicate as a complete live-root inventory. Automatic move discovery and durable
+multi-file recovery remain B02; their absence alone does not require a broad scanner now.
+
+The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
+index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate
+backend and object format through their public operations; R39 fixes alternate traversal and
+duplicate order, while R15/R16 own bounded file resources and explicit reader refresh. Documented
+partial effects and fixed-reader lifetimes should remain local to those owners rather than acquire a
+new shared storage framework. No other layering blocker was found in this scoped review; this is not
+a line-by-line revalidation of every accepted capability.
+
+Remaining C02 checks are bounded. Reproduce the tracing and split-index failures with targeted
+instrumentation before changing code or weakening assertions. Review malformed alternate records
+against consumer-produced metadata; explicit rejection is acceptable unless it blocks a required
+repository, while permissive recovery remains a compatibility backlog candidate. Run native Windows
+UNC/drive-alias, denied ACL and WSL backlink cases where environments exist; retain an unavailable
+case as an open A16 gate, not a cross-build success. The R14 jj call-site inventory found no
+required girt raw status/checkout path; verify this again at R35 rather than implementing a Windows
+adapter solely to make refusal tests pass. R18/B01 remains deferred. R41 stays immediately after C02
+and before R21; its early corpus targets existing normal operations, with later capabilities
+extending A20 rather than delaying first integration for unmeasured edge cases.
