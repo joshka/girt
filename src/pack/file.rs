@@ -270,8 +270,9 @@ impl Source for FilePack {
         };
         let mut input = BufReader::with_capacity(64 * 1024, input);
         let mut decoder = flate2::Decompress::new(true);
-        let mut output = [0; 8192];
-        let mut data = Vec::new();
+        let mut data = vec![0; expected];
+        let mut written = 0;
+        let mut overflow = [0; 1];
         loop {
             check_cancelled(cancelled)?;
             let bytes = input
@@ -279,18 +280,25 @@ impl Source for FilePack {
                 .map_err(|source| path_error(&self.pack.path, source))?;
             let before_in = decoder.total_in();
             let before_out = decoder.total_out();
+            // Keep the old 8 KiB cancellation cadence without copying each decoded chunk.
+            let available = expected - written;
+            let output = if available == 0 {
+                &mut overflow[..]
+            } else {
+                &mut data[written..written + available.min(8192)]
+            };
             let status = decoder
-                .decompress(bytes, &mut output, flate2::FlushDecompress::None)
+                .decompress(bytes, output, flate2::FlushDecompress::None)
                 .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
             let consumed = (decoder.total_in() - before_in) as usize;
             let count = (decoder.total_out() - before_out) as usize;
             input.consume(consumed);
-            if count > expected.saturating_sub(data.len()) {
+            if count > available {
                 return Err(Error::Corrupt("inflated entry exceeds declared size"));
             }
-            data.extend_from_slice(&output[..count]);
+            written += count;
             if status == flate2::Status::StreamEnd {
-                if data.len() != expected || decoder.total_in() != (end - start) as u64 {
+                if written != expected || decoder.total_in() != (end - start) as u64 {
                     return Err(Error::Corrupt("packed entry length or trailing data"));
                 }
                 break;
