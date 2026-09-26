@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Write};
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -34,8 +36,14 @@ use crate::{ObjectId, Repository};
 /// `refs/heads/*` (or be detached), so rejecting branch destinations also protects checked-out
 /// references. Unusual HEAD chains and inaccessible worktree metadata fail closed, even for
 /// source-only fetches.
+/// Verified known history must include exactly the destination's captured shallow roots, so a
+/// depth response cannot silently drop boundaries belonging to other local references.
 ///
-/// This workflow does not write `FETCH_HEAD`, infer tags, prune, clone, check out, edit
+/// Exact selectors missing from the advertisement are reported while other valid selections
+/// continue. [`Self::with_prune`] permits scoped remote-tracking deletion. Shallow depth changes
+/// use a conditional metadata lock and are reported separately from object/ref effects.
+///
+/// This workflow does not write `FETCH_HEAD`, infer tags, clone, check out, edit
 /// configuration, discover credentials, or implement the full Git CLI. See
 /// `examples/fetch_remote.rs`.
 #[derive(Debug)]
@@ -45,6 +53,9 @@ pub struct FetchRequest {
     snapshot: BTreeMap<RefName, Target>,
     authorized_force: BTreeSet<RefName>,
     reflog: Reflog,
+    prune: bool,
+    pub(super) depth: Option<NonZeroU32>,
+    shallow_before: Vec<ObjectId>,
 }
 
 impl FetchRequest {
@@ -66,11 +77,6 @@ impl FetchRequest {
         authorized_force: BTreeSet<RefName>,
         reflog: Reflog,
     ) -> Result<Self, FetchPlanError> {
-        if !repository.shallow_roots().is_empty()
-            || repository.common_dir().join("shallow").try_exists()?
-        {
-            return Err(FetchPlanError::Shallow);
-        }
         if specs.direction() != Direction::Fetch {
             return Err(FetchPlanError::Mapping(MappingError::Direction));
         }
@@ -81,13 +87,31 @@ impl FetchRequest {
             .into_iter()
             .map(|reference| (reference.name, reference.target))
             .collect();
+        let shallow_before = repository.shallow_roots().iter().collect();
         Ok(Self {
             repository,
             specs,
             snapshot,
             authorized_force,
             reflog,
+            prune: false,
+            depth: None,
+            shallow_before,
         })
+    }
+
+    /// Requests a positive commit depth on HTTP/SSH upload-pack and permits a resulting
+    /// shallow-boundary change during coordinated publication.
+    pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Enables deletion of stale direct remote-tracking destinations owned by these refspecs.
+    /// Exact snapshot values are required at publication. Tags and excluded sources are retained.
+    pub fn with_prune(mut self) -> Self {
+        self.prune = true;
+        self
     }
 
     /// Maps an advertisement against the captured destination values, without I/O or mutation.
@@ -101,8 +125,10 @@ impl FetchRequest {
     /// values, and tag replacements lacking both force intent and authorization. No objects are
     /// requested.
     pub fn plan(&self, advertisement: &Advertisement) -> Result<Vec<FetchUpdate>, FetchPlanError> {
-        self.specs
-            .map_advertisement(advertisement)?
+        let mut updates: Vec<FetchUpdate> = self
+            .specs
+            .map_advertisement_with_missing(advertisement)?
+            .0
             .into_iter()
             .map(|mapping| {
                 let Some(name) = &mapping.destination else {
@@ -141,7 +167,43 @@ impl FetchRequest {
                     kind,
                 })
             })
-            .collect()
+            .collect::<Result<_, _>>()?;
+        if self.prune {
+            let advertised: BTreeSet<_> = advertisement
+                .refs
+                .iter()
+                .filter(|reference| !reference.peeled)
+                .map(|reference| reference.name.as_bytes().to_vec())
+                .collect();
+            let selected: BTreeSet<_> = updates
+                .iter()
+                .filter_map(|update| update.mapping.destination.as_ref())
+                .cloned()
+                .collect();
+            for (name, target) in &self.snapshot {
+                if !name.as_bytes().starts_with(b"refs/remotes/") || selected.contains(name) {
+                    continue;
+                }
+                let sources = self.specs.prune_sources(name);
+                if sources.is_empty() || sources.iter().any(|source| advertised.contains(source)) {
+                    continue;
+                }
+                let Target::Direct(previous) = target else {
+                    // Remote HEAD aliases are local symbolic policy, not stale remote tips.
+                    continue;
+                };
+                updates.push(FetchUpdate {
+                    mapping: Mapping {
+                        source: None,
+                        destination: Some(name.clone()),
+                        force: false,
+                    },
+                    previous: Some(*previous),
+                    kind: FetchUpdateKind::Prune,
+                });
+            }
+        }
+        Ok(updates)
     }
 
     /// Transfers and validates synchronously using a caller-selected local upload-pack endpoint.
@@ -161,6 +223,10 @@ impl FetchRequest {
         control: TransportControl<'_>,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<FetchReady, FetchWorkflowError> {
+        self.check_known(known)?;
+        if self.depth.is_some() {
+            return Err(FetchError::Unsupported("native local depth").into());
+        }
         let mut plan = None;
         let received = super::receive_local_with_known(
             source,
@@ -176,6 +242,52 @@ impl FetchRequest {
             updates,
             received: received?,
         })
+    }
+
+    /// Transfers from a caller-owned v0/v1 upload-pack stream using this request's depth policy.
+    /// The caller owns process/network lifetime and must close and reap it on every outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns planning or wire/pack validation errors without destination changes.
+    pub fn receive_session(
+        self,
+        reader: &mut impl Read,
+        writer: &mut impl Write,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    ) -> Result<FetchReady, FetchWorkflowError> {
+        self.check_known(known)?;
+        let mut plan = None;
+        let received = super::receive_with_known_depth(
+            reader,
+            writer,
+            |advertisement| select(self.plan(advertisement), &mut plan),
+            known,
+            super::FetchOptions {
+                limits,
+                depth: self.depth,
+            },
+            cancel,
+            progress,
+        );
+        let updates = selected(plan, &received)?;
+        Ok(FetchReady {
+            request: self,
+            updates,
+            received: received?,
+        })
+    }
+
+    pub(super) fn check_known(&self, known: &KnownHistory) -> Result<(), FetchError> {
+        if known.shallow != self.shallow_before {
+            return Err(FetchError::Unsupported(
+                "known shallow boundaries differ from destination",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -263,14 +375,15 @@ impl FetchReady {
         &self.received
     }
 
-    /// Installs validated objects, then conditionally publishes changed destinations.
+    /// Installs validated objects and shallow metadata, then publishes changed destinations.
     ///
     /// Rechecks known-local dependencies during installation, installed selected-tip readability,
     /// update ancestry and supported HEAD
     /// layout before publication. All changed destinations use the exact values captured by
     /// preparation, including absence. Source-only and unchanged entries produce no reference
     /// edits or reflog entries. Object installation can succeed even when later checks or
-    /// reference publication fail. Cancellation is checked before installation and before the
+    /// reference publication fail. A shallow metadata change can also remain after a later
+    /// reference failure. Cancellation is checked before installation and before the
     /// transaction, but does not interrupt a started reference transaction. Observe completion
     /// before releasing worker resources.
     ///
@@ -306,6 +419,13 @@ impl FetchReady {
                 objects: self.received.object_count(),
                 installed: None,
                 references: Vec::new(),
+                shallow_published: false,
+                missing: self
+                    .request
+                    .specs
+                    .map_advertisement_with_missing(self.received.advertisement())
+                    .expect("validated fetch mapping")
+                    .1,
             };
             let result = self.install_publish(limits, cancel, &mut report);
             match result {
@@ -334,14 +454,38 @@ impl FetchReady {
         cancel: &AtomicBool,
         report: &mut FetchReport,
     ) -> Result<(), Box<FetchFinishFailure>> {
+        let resulting_roots = self.received.shallow_roots();
+        if self.received.wants().is_empty() && self.request.shallow_before != resulting_roots {
+            return Err(FetchFinishFailure::Safety(FetchPlanError::Shallow).into());
+        }
+        if self.request.depth.is_none() && self.request.shallow_before != resulting_roots {
+            return Err(FetchFinishFailure::Safety(FetchPlanError::Shallow).into());
+        }
+        let mut shallow_lock =
+            if !self.request.shallow_before.is_empty() || !resulting_roots.is_empty() {
+                Some(
+                    super::shallow::Lock::acquire(
+                        self.request.repository.common_dir(),
+                        self.request.repository.object_format(),
+                        &self.request.shallow_before,
+                        cancel,
+                    )
+                    .map_err(FetchFinishFailure::Shallow)?,
+                )
+            } else {
+                None
+            };
         report.installed = Some(
             self.received
-                .install(&self.request.repository, limits.snapshot, cancel)
+                .install_for_workflow(
+                    &self.request.repository,
+                    limits.snapshot,
+                    cancel,
+                    shallow_lock.is_some(),
+                )
                 .map_err(FetchFinishFailure::Installation)?,
         );
-        super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
-        super::worktree::check(&self.request.repository).map_err(FetchFinishFailure::Safety)?;
-        if !self.received.wants().is_empty() {
+        if !self.received.wants().is_empty() && self.request.shallow_before != resulting_roots {
             let objects = self
                 .request
                 .repository
@@ -349,9 +493,44 @@ impl FetchReady {
                 .map_err(|error| {
                     FetchFinishFailure::BeforePublication(FetchError::Destination(error))
                 })?;
+            let mut verify_roots = self.received.wants().to_vec();
+            verify_roots.extend(self.request.shallow_before.iter().copied());
+            let verified = KnownHistory::new_with_boundaries(
+                &objects,
+                &verify_roots,
+                resulting_roots,
+                limits.verification,
+                cancel,
+            )
+            .map_err(FetchFinishFailure::BeforePublication)?;
+            if resulting_roots
+                .iter()
+                .any(|root| !verified.objects.contains_key(root))
+            {
+                return Err(FetchFinishFailure::BeforePublication(FetchError::Protocol(
+                    "unrelated shallow boundary",
+                ))
+                .into());
+            }
+        }
+        if let Some(lock) = &mut shallow_lock {
+            report.shallow_published = lock
+                .publish(resulting_roots)
+                .map_err(FetchFinishFailure::Shallow)?;
+        }
+        super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
+        super::worktree::check(&self.request.repository).map_err(FetchFinishFailure::Safety)?;
+        if !self.received.wants().is_empty() {
+            let reopened = Repository::open(self.request.repository.git_dir())
+                .map_err(FetchFinishFailure::Reopen)?;
+            let objects = reopened.objects(limits.snapshot).map_err(|error| {
+                FetchFinishFailure::BeforePublication(FetchError::Destination(error))
+            })?;
             // Installation does not repair corrupt loose objects shadowing the pack. Read through
             // the destination's actual lookup precedence before any ref can name this graph.
-            KnownHistory::new(&objects, self.received.wants(), limits.verification, cancel)
+            let mut verify_roots = self.received.wants().to_vec();
+            verify_roots.extend(self.request.shallow_before.iter().copied());
+            KnownHistory::new(&objects, &verify_roots, limits.verification, cancel)
                 .map_err(FetchFinishFailure::BeforePublication)?;
             let validation = super::update::validate(
                 &mut report.updates,
@@ -374,9 +553,11 @@ impl FetchReady {
                     .clone()
                     .expect("changed destination"),
                 dereference: false,
-                target: Some(Target::Direct(
-                    update.mapping.source.as_ref().expect("fetch source").id,
-                )),
+                target: update
+                    .mapping
+                    .source
+                    .as_ref()
+                    .map(|source| Target::Direct(source.id)),
                 expected: update
                     .previous
                     .map(|id| Expected::Value(Target::Direct(id)))
@@ -426,6 +607,8 @@ pub enum FetchUpdateKind {
     ForcedTracking,
     /// Explicitly authorized replacement of a tag with a forced refspec.
     ForcedTag,
+    /// Delete a stale direct remote-tracking reference in the requested prune scope.
+    Prune,
 }
 impl FetchUpdateKind {
     fn changes_ref(self) -> bool {
@@ -436,6 +619,7 @@ impl FetchUpdateKind {
                 | Self::FastForward
                 | Self::ForcedTracking
                 | Self::ForcedTag
+                | Self::Prune
         )
     }
 }
@@ -452,16 +636,20 @@ pub struct FetchReport {
     /// Successful installation/reuse, including known-only installation with no pack.
     /// `None` on failure does not exclude an unindexed residual pack.
     pub installed: Option<FetchInstalled>,
+    /// Shallow metadata was replaced after object installation, before reference publication.
+    pub shallow_published: bool,
     /// Successful transaction effects for changed entries only. On transaction failure, consult
     /// [`FetchFinishFailure::Publication`] for partial effects instead.
     pub references: Vec<RefEditOutcome>,
+    /// Exact positive sources absent from the advertisement; other valid selections continue.
+    pub missing: Vec<Vec<u8>>,
 }
 
 /// Planning failed without changing repository contents.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchPlanError {
-    /// Shallow negotiation and destination updates are not implemented.
-    #[error("shallow fetch destination is unsupported")]
+    /// Received boundaries differ without an explicit depth request.
+    #[error("shallow boundary change requires explicit depth request")]
     Shallow,
     /// Invalid or ambiguous advertisement/refspec mapping.
     #[error(transparent)]
@@ -518,6 +706,12 @@ pub enum FetchFinishFailure {
     /// Installation failed; refs unchanged, possibly leaving an unindexed pack.
     #[error("fetch installation: {0}")]
     Installation(#[source] FetchError),
+    /// Shallow lock, snapshot comparison, or metadata publication failed.
+    #[error("fetch shallow publication: {0}")]
+    Shallow(#[from] super::FetchShallowError),
+    /// Repository could not be reopened with freshly published shallow boundaries.
+    #[error("fetch repository reopen: {0}")]
+    Reopen(#[from] crate::OpenError),
     /// Cancellation or installed-object verification failed before the reference transaction.
     #[error("before fetch publication: {0}")]
     BeforePublication(#[source] FetchError),

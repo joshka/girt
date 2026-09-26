@@ -240,6 +240,12 @@ pub(crate) fn fetch_finish(
         Installation(e) | BeforePublication(e) => fetch(e),
         Publication(e) => transaction(e, span),
         Safety(_) => "precondition",
+        Shallow(e) => match e {
+            crate::fetch::FetchShallowError::Changed => "precondition",
+            crate::fetch::FetchShallowError::Read(_) => "corrupt",
+            crate::fetch::FetchShallowError::Io(error) => io(error),
+        },
+        Reopen(_) => "io",
         Update(e) => match e {
             crate::fetch::FetchUpdateError::Object(e) => fetch(e),
             crate::fetch::FetchUpdateError::History(e) => history(e),

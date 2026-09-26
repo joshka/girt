@@ -1,5 +1,6 @@
 //! Original disposable Git repositories establish observable advertisement formats.
 
+use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -7,9 +8,12 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 
 use girt::fetch::{
-    FetchError, FetchLimits, FetchOptions, KnownHistory, ProtocolVersion, RemoteHead, discover,
-    discover_local, discover_session, receive, receive_with_known_depth,
+    FetchError, FetchLimits, FetchOptions, FetchRequest, FetchUpdateLimits, KnownHistory,
+    ProtocolVersion, RemoteHead, discover, discover_local, discover_session, receive,
+    receive_with_known_depth,
 };
+use girt::refs::{RefName, Reflog, Target};
+use girt::remote::{Direction, Refspecs};
 use girt::transport::TransportControl;
 use girt::{ObjectFormat, ObjectId, PackLimits, ReadLimits, Repository};
 use rstest::rstest;
@@ -114,6 +118,165 @@ fn child_commit(directory: &tempfile::TempDir, parent: ObjectId) -> ObjectId {
         None,
     );
     id
+}
+
+fn publish_depth(
+    source: &tempfile::TempDir,
+    destination: &Repository,
+    known: &KnownHistory,
+    depth: u32,
+) -> girt::fetch::FetchReport {
+    receive_depth(source, destination, known, depth)
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+}
+
+fn receive_depth(
+    source: &tempfile::TempDir,
+    destination: &Repository,
+    known: &KnownHistory,
+    depth: u32,
+) -> girt::fetch::FetchReady {
+    let request = FetchRequest::prepare(
+        Repository::open(destination.git_dir()).unwrap(),
+        Refspecs::parse(
+            Direction::Fetch,
+            [b"refs/heads/main:refs/remotes/origin/main"],
+        )
+        .unwrap(),
+        BTreeSet::new(),
+        Reflog::Preserve,
+    )
+    .unwrap()
+    .with_depth(NonZeroU32::new(depth).unwrap());
+    let mut child = Command::new("git")
+        .current_dir(source.path())
+        .args(["upload-pack", "."])
+        .env("GIT_PROTOCOL", "version=0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = child.stdout.take().unwrap();
+    let mut writer = child.stdin.take().unwrap();
+    let ready = request.receive_session(
+        &mut reader,
+        &mut writer,
+        known,
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    );
+    drop(writer);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ready.unwrap()
+}
+
+#[test]
+fn shallow_boundary_survives_reference_lock_failure_and_can_recover() {
+    let source = repository(ObjectFormat::Sha1);
+    let first = commit(&source);
+    let tip = child_commit(&source, first);
+    let destination = repository(ObjectFormat::Sha1);
+    let repo = Repository::open(destination.path()).unwrap();
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let lock = destination.path().join("refs/remotes/origin/main.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"foreign").unwrap();
+    let failure = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(failure.report.installed.is_some());
+    assert!(failure.report.shallow_published);
+    assert!(matches!(
+        *failure.source,
+        girt::fetch::FetchFinishFailure::Publication(_)
+    ));
+    let opened = Repository::open(destination.path()).unwrap();
+    assert_eq!(opened.shallow_roots().iter().collect::<Vec<_>>(), vec![tip]);
+    assert_eq!(
+        opened
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/remotes/origin/main").unwrap())
+            .unwrap(),
+        None
+    );
+    assert!(
+        opened
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(tip, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    std::fs::remove_file(&lock).unwrap();
+    let known = KnownHistory::new(
+        &opened.objects(PackLimits::default()).unwrap(),
+        &[tip],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let recovered = publish_depth(&source, &opened, &known, 1);
+    assert_eq!(recovered.references.len(), 1);
+    assert!(!recovered.shallow_published);
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn workflow_publishes_initial_and_deepened_shallow_history(#[case] format: ObjectFormat) {
+    let source = repository(format);
+    let first = commit(&source);
+    let second = child_commit(&source, first);
+    let destination = repository(format);
+    let repo = Repository::open(destination.path()).unwrap();
+    let initial = publish_depth(&source, &repo, &KnownHistory::default(), 1);
+    assert!(initial.shallow_published);
+    assert_eq!(initial.references.len(), 1);
+    let opened = Repository::open(destination.path()).unwrap();
+    assert_eq!(
+        opened.shallow_roots().iter().collect::<Vec<_>>(),
+        vec![second]
+    );
+    assert_eq!(
+        opened
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/remotes/origin/main").unwrap())
+            .unwrap(),
+        Some(Target::Direct(second))
+    );
+    let known = KnownHistory::new(
+        &opened.objects(PackLimits::default()).unwrap(),
+        &[second],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let deepened = publish_depth(&source, &opened, &known, 2);
+    assert!(deepened.shallow_published);
+    let opened = Repository::open(destination.path()).unwrap();
+    assert_eq!(
+        opened.shallow_roots().iter().collect::<Vec<_>>(),
+        vec![first]
+    );
+    assert!(
+        opened
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(first, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    git(destination.path(), &["fsck", "--full"], b"", None);
 }
 
 #[rstest]

@@ -117,8 +117,8 @@ pub fn receive_with_known(
 /// Receives a depth-limited history or deepens verified shallow history.
 ///
 /// `depth` counts commits from selected tips. The result reports the server's resulting shallow
-/// boundaries; it does not install them. A shallow result cannot be installed through
-/// [`ReceivedFetch::install`] until boundary publication is provided by the caller's workflow.
+/// boundaries; it does not install them. Direct [`ReceivedFetch::install`] refuses shallow
+/// results; [`super::FetchRequest::with_depth`] coordinates boundary publication.
 ///
 /// # Errors
 ///

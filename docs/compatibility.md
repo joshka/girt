@@ -1652,10 +1652,24 @@ the owned download to a caller-owned blocking worker before validation and publi
 
 Preparation captures stored destination values before network work. Mapping uses the advertisement
 from the actual transfer session/discovery; a preview is not reusable authority for a later
-advertisement. Missing sources and mapping/policy errors request no objects. HTTP discovery and RPC
-can observe a changing server: the request retains discovered IDs and either receives their valid
-objects or fails, without silently remapping to new IDs. Publication uses conditional transactions
-for changed refs, including expected absence; no-op destinations are not locked or rewritten.
+advertisement. Missing exact sources are reported while other valid selections continue; mapping
+collisions and destination-policy errors request no objects. HTTP discovery and RPC can observe a
+changing server: the request retains discovered IDs and either receives their valid objects or
+fails, without silently remapping to new IDs. Git 2.55.0 aborts a CLI fetch containing a missing
+exact source before publishing the otherwise valid mapping; girt leaves that decision with the
+caller through `FetchReport::missing`. Publication uses conditional transactions for changed refs,
+including expected absence; no-op destinations are not locked or rewritten. Optional pruning deletes
+only direct `refs/remotes/*` destinations owned by a positive fetch mapping when its source is
+absent; negative selectors protect matching destinations. Every delete uses the captured exact old
+value. Symbolic remote aliases, tags and other remotes remain outside that prune scope.
+
+`with_depth` sends a positive depth over HTTP, SSH or a caller-owned v0/v1 upload-pack stream. The
+workflow locks and compares the shared shallow file against its prepared snapshot, installs the
+verified pack, replaces shallow boundaries, then reopens the repository for selected-tip checks
+before changing refs. Git may retain a root commit as shallow at a finite depth. The lower-level
+`ReceivedFetch::install` continues to refuse shallow input. Callers must exclude other depth writers
+for the complete operation; ordinary ref writers may race under exact expectations. Known history
+must carry every captured destination boundary. Empty selections cannot change shallow metadata.
 
 Supported destination rules are deliberately narrower than full CLI fetch:
 
@@ -1691,17 +1705,18 @@ lock worktree metadata. Ordinary destination writers remain supported through ex
 Validation precedes installation, and installation precedes every ref edit. After installation,
 selected-tip graphs are reread through the destination object store under explicit verification
 budgets. This catches corrupt loose objects hiding valid installed pack objects, including corrupt
-descendants, before publication. `FetchReport` separates transfer statistics, completed object
-installation and successful transaction outcomes. `FetchFinishError` retains the report and the
-original transaction error with partial ref/log effects. Installed objects remain after update
-rejection, cancellation after installation or publication failure. Installation itself can leave an
-unindexed pack on failure. No whole-fetch rollback, atomic visibility or power-loss durability is
-promised. Callers must coordinate pruning/GC until publication completes. Reflog identities/messages
-are explicit and unchanged/source-only entries do not append logs.
+descendants, before publication. `FetchReport` separates transfer statistics, missing exact sources,
+object and shallow installation, and successful transaction outcomes. `FetchFinishError` retains the
+report and the original transaction error with partial ref/log effects. Installed objects and
+published shallow metadata remain after update rejection, cancellation after installation or
+publication failure. Installation itself can leave an unindexed pack on failure. No whole-fetch
+rollback, atomic visibility or power-loss durability is promised. Callers must coordinate pruning/GC
+until publication completes. Reflog identities/messages are explicit and unchanged/source-only
+entries do not append logs.
 
-`FETCH_HEAD`, clone, checkout, pruning, implicit tag following, credential discovery, global config
-policy, config editing and push orchestration are deferred. Existing protocol/storage limitations
-still apply. Preparation and reference metadata operations retain their existing unbounded metadata
+`FETCH_HEAD`, clone, checkout, implicit tag following, credential discovery, global config policy,
+config editing and push orchestration are deferred. Existing protocol/storage limitations still
+apply. Preparation and reference metadata operations retain their existing unbounded metadata
 allocation contracts; this layer introduces no runtime or backend framework.
 
 Original fixtures in `tests/fetch_workflow.rs` generate blobs, trees, commits and annotated tags

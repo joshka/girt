@@ -159,8 +159,9 @@ impl ReceivedFetch {
 
     /// Publishes the validated pack and index without replacing any existing artifact.
     ///
-    /// Shallow results and destinations (including a live shallow file created after opening) are
-    /// refused. Callers must exclude concurrent depth changes for the complete installation.
+    /// Direct installation refuses shallow results and destinations. Use [`super::FetchRequest`]
+    /// to coordinate object and boundary publication. Callers must exclude concurrent depth
+    /// changes for the complete installation.
     /// The destination format must match the received pack. Complete SHA-1 and SHA-256 wire and
     /// native-local transfers may be installed.
     ///
@@ -201,7 +202,31 @@ impl ReceivedFetch {
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchInstalled, FetchError> {
-        self.install_bytes(repository, snapshot_limits, cancel, &self.pack, &self.index)
+        self.install_bytes(
+            repository,
+            snapshot_limits,
+            cancel,
+            &self.pack,
+            &self.index,
+            false,
+        )
+    }
+
+    pub(super) fn install_for_workflow(
+        &self,
+        repository: &Repository,
+        snapshot_limits: crate::PackLimits,
+        cancel: &AtomicBool,
+        shallow_locked: bool,
+    ) -> Result<FetchInstalled, FetchError> {
+        self.install_bytes(
+            repository,
+            snapshot_limits,
+            cancel,
+            &self.pack,
+            &self.index,
+            shallow_locked,
+        )
     }
 
     pub(crate) fn install_bytes(
@@ -211,6 +236,7 @@ impl ReceivedFetch {
         cancel: &AtomicBool,
         pack_bytes: &[u8],
         index_bytes: &[u8],
+        allow_shallow: bool,
     ) -> Result<FetchInstalled, FetchError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -228,13 +254,14 @@ impl ReceivedFetch {
                 return Err(FetchError::Unsupported("destination object format differs"));
             }
             check_cancelled(cancel)?;
-            if !self.shallow.is_empty() {
+            if !allow_shallow && !self.shallow.is_empty() {
                 return Err(FetchError::Unsupported(
                     "shallow installation requires boundary publication",
                 ));
             }
-            if !repository.shallow_roots().is_empty()
-                || repository.common_dir().join("shallow").try_exists()?
+            if !allow_shallow
+                && (!repository.shallow_roots().is_empty()
+                    || repository.common_dir().join("shallow").try_exists()?)
             {
                 return Err(FetchError::Unsupported("shallow pack installation"));
             }

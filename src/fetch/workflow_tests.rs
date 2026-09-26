@@ -158,3 +158,16 @@ fn empty_refspec_list_is_a_noop_plan() {
     let (_root, request) = request(&[]);
     assert!(request.plan(&advertisement()).unwrap().is_empty());
 }
+
+#[test]
+fn mismatched_known_shallow_roots_fail_before_transfer() {
+    let (_root, request) = request(&["refs/heads/main:refs/remotes/origin/main"]);
+    let mut known = KnownHistory::default();
+    known.shallow.push(id(3));
+    assert!(matches!(
+        request.check_known(&known),
+        Err(FetchError::Unsupported(
+            "known shallow boundaries differ from destination"
+        ))
+    ));
+}

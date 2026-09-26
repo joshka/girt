@@ -159,6 +159,54 @@ fn ssh_depth_fetch_reports_boundary(#[case] format: girt::ObjectFormat) {
         .unwrap();
     assert!(!received.shallow_roots().is_empty());
 }
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn ssh_workflow_publishes_depth_and_tracking_ref(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), "none");
+    let remote = server.remote("config");
+    let (_root, destination) = destination_for(format);
+    let path = destination.git_dir().to_path_buf();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        ["refs/heads/main:refs/remotes/origin/main"],
+    )
+    .unwrap();
+    let request = fetch::FetchRequest::prepare(
+        destination,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap()
+    .with_depth(NonZeroU32::new(1).unwrap());
+    let cancel = AtomicBool::new(false);
+    let download = runtime()
+        .block_on(request.receive_ssh(
+            &remote,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let report = download
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap()
+        .finish(fetch::FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let opened = Repository::open(path).unwrap();
+    assert!(report.shallow_published);
+    assert_eq!(
+        opened.shallow_roots().iter().collect::<Vec<_>>(),
+        vec![tip(&fixture.repo, "refs/heads/main")]
+    );
+    assert_eq!(
+        tip(&opened, "refs/remotes/origin/main"),
+        tip(&fixture.repo, "refs/heads/main")
+    );
+}
 fn tip(repo: &Repository, name: &str) -> ObjectId {
     repo.references()
         .unwrap()

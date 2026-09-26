@@ -4,7 +4,7 @@
 //! authorization. Its local/HTTP/SSH adapters plan from their actual advertisement, then use shared
 //! validation, installation and conditional publication through [`FetchReady::finish`]. Only
 //! remote-tracking and tag destinations are supported; see [`FetchRequest`] for worktree safety
-//! and caller coordination. `FETCH_HEAD`, implicit tags and pruning remain deferred.
+//! and caller coordination. `FETCH_HEAD` and implicit tags remain caller policy.
 //!
 //! The lower-level [`receive`] and [`receive_local`] return a validated [`ReceivedFetch`] without
 //! touching a repository. Install explicitly and choose reference policy yourself, or use
@@ -16,10 +16,11 @@
 //! bounded [`KnownHistory`] to negotiate incremental transfers. Verified external delta bases in a
 //! thin pack are resolved and rewritten as a self-contained pack before installation. Selected-tip
 //! connectivity can depend on verified local objects; installation rechecks those dependencies.
-//! [`receive_with_known_depth`] and the owned network depth variants report shallow boundaries,
-//! but ordinary installation refuses them until boundary publication is implemented. Transfer
+//! [`receive_with_known_depth`] and the owned network depth variants report shallow boundaries;
+//! [`FetchRequest::with_depth`] coordinates their publication. Direct installation still refuses
+//! shallow results. Transfer
 //! requests `side-band-64k` and available `ofs-delta`, `thin-pack`, `multi_ack`, `shallow`, and
-//! SHA-256 object-format capabilities as needed. Filtering, automatic tags, pruning and protocol
+//! SHA-256 object-format capabilities as needed. Filtering, automatic tags and protocol
 //! v2 transfer remain outside this boundary.
 //! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
 //! [`discover_session`]
@@ -85,6 +86,8 @@ pub use discovery::{
 };
 mod import;
 mod install;
+mod shallow;
+pub use shallow::FetchShallowError;
 mod known;
 mod local;
 mod local_native;

@@ -158,6 +158,7 @@ pub(super) fn send(
             control.cancel,
             &prepared.pack,
             &prepared.index,
+            false,
         )
         .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
     report.unpack = Some(Status::Ok);

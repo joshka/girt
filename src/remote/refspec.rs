@@ -163,6 +163,30 @@ impl Refspec {
         let name = RefName::new(bytes).map_err(|_| MappingError::InvalidDestination)?;
         Ok(Some(name))
     }
+
+    /// Source name corresponding to a destination owned by this positive fetch mapping.
+    /// Source-only and negative specifications do not own destinations.
+    pub(crate) fn source_for_destination(&self, destination: &RefName) -> Option<Vec<u8>> {
+        if self.negative {
+            return None;
+        }
+        let pattern = self.destination.as_ref()?;
+        let capture = if let Some(star) = pattern.iter().position(|byte| *byte == b'*') {
+            destination
+                .as_bytes()
+                .strip_prefix(&pattern[..star])?
+                .strip_suffix(&pattern[star + 1..])?
+        } else if pattern == destination.as_bytes() {
+            b""
+        } else {
+            return None;
+        };
+        if let Some(star) = self.source.iter().position(|byte| *byte == b'*') {
+            Some([&self.source[..star], capture, &self.source[star + 1..]].concat())
+        } else {
+            Some(self.source.clone())
+        }
+    }
 }
 
 fn validate_pattern(bytes: &[u8], source: bool) -> Result<(), RefspecError> {
@@ -271,6 +295,21 @@ impl Refspecs {
         &self.specs
     }
 
+    /// Source names whose positive mappings own a tracking destination for pruning.
+    /// Negative selectors protect their matching destinations from deletion.
+    pub(crate) fn prune_sources(&self, destination: &RefName) -> Vec<Vec<u8>> {
+        self.specs
+            .iter()
+            .filter_map(|spec| spec.source_for_destination(destination))
+            .filter(|source| {
+                !self
+                    .specs
+                    .iter()
+                    .any(|spec| spec.negative && spec.capture(source).is_some())
+            })
+            .collect()
+    }
+
     /// Maps explicit source tips without consulting objects, references or the environment.
     ///
     /// Results follow positive-spec order, then input order. All negative specs apply globally,
@@ -288,6 +327,27 @@ impl Refspecs {
     /// Rejects duplicate input names, zero IDs, missing explicit sources, invalid substituted
     /// destinations and conflicting destination mappings. Even unused input entries are checked.
     pub fn map(&self, sources: &[RefSource]) -> Result<Vec<Mapping>, MappingError> {
+        self.map_with_missing(sources).map(|(mappings, missing)| {
+            if let Some(source) = missing.into_iter().next() {
+                Err(MappingError::UnmatchedSource(source))
+            } else {
+                Ok(mappings)
+            }
+        })?
+    }
+
+    /// Maps valid sources while reporting absent exact positive selectors separately.
+    ///
+    /// This permits fetch callers to install and publish other advertised selections while
+    /// showing each missing explicit source. Wildcards with no match are harmless.
+    ///
+    /// # Errors
+    ///
+    /// Rejects duplicate input names, zero IDs, invalid destinations and collisions.
+    pub fn map_with_missing(
+        &self,
+        sources: &[RefSource],
+    ) -> Result<(Vec<Mapping>, Vec<Vec<u8>>), MappingError> {
         let mut names = HashSet::new();
         for source in sources {
             if !names.insert(&source.name) {
@@ -298,6 +358,7 @@ impl Refspecs {
             }
         }
         let mut plan = Plan::default();
+        let mut missing = Vec::new();
         for spec in self.specs.iter().filter(|spec| !spec.negative) {
             if spec.source.is_empty() {
                 plan.add(Mapping {
@@ -325,10 +386,10 @@ impl Refspecs {
                 }
             }
             if !matched && !spec.wildcard {
-                return Err(MappingError::UnmatchedSource(spec.source.clone()));
+                missing.push(spec.source.clone());
             }
         }
-        Ok(plan.mappings)
+        Ok((plan.mappings, missing))
     }
 
     /// Maps fetch advertisement tips, omitting peeled hints before duplicate-name checks.
@@ -357,6 +418,26 @@ impl Refspecs {
             })
             .collect();
         self.map(&sources)
+    }
+
+    /// Advertisement mapping with missing exact selectors retained as reportable outcomes.
+    pub fn map_advertisement_with_missing(
+        &self,
+        advertisement: &Advertisement,
+    ) -> Result<(Vec<Mapping>, Vec<Vec<u8>>), MappingError> {
+        if self.direction != Direction::Fetch {
+            return Err(MappingError::Direction);
+        }
+        let sources: Vec<_> = advertisement
+            .refs
+            .iter()
+            .filter(|reference| !reference.peeled)
+            .map(|reference| RefSource {
+                name: reference.name.clone(),
+                id: reference.id,
+            })
+            .collect();
+        self.map_with_missing(&sources)
     }
 }
 

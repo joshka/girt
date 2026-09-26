@@ -278,6 +278,130 @@ fn source_only_and_empty_selection_report_no_reference_edits() {
 }
 
 #[test]
+fn missing_exact_source_does_not_discard_valid_update() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let (_git_root, git_repository) = destination();
+    let report = fetch(
+        &repository,
+        &source,
+        &[
+            "refs/heads/missing:refs/remotes/origin/missing",
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
+    assert_eq!(report.missing, vec![b"refs/heads/missing".to_vec()]);
+    assert_eq!(report.references.len(), 1);
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/main"),
+        Some(Target::Direct(source.first))
+    );
+    assert_eq!(stored(&repository, "refs/remotes/origin/missing"), None);
+    let git_result = command(
+        git_repository.git_dir(),
+        &[
+            "fetch",
+            "--no-tags",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/missing:refs/remotes/origin/missing",
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        b"",
+    );
+    assert!(!git_result.status.success());
+    // Git 2.55.0 aborts this CLI fetch before publishing either mapping. Girt exposes the
+    // missing selection alongside the successful explicit mapping for caller policy.
+    assert_eq!(stored(&git_repository, "refs/remotes/origin/main"), None);
+    assert_eq!(stored(&git_repository, "refs/remotes/origin/missing"), None);
+}
+
+#[test]
+fn prune_deletes_only_owned_missing_remote_tracking_refs() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let stale = name("refs/remotes/origin/gone");
+    let excluded = name("refs/remotes/origin/private");
+    let unrelated = name("refs/remotes/other/gone");
+    let tag = name("refs/tags/gone");
+    let alias = name("refs/remotes/origin/HEAD");
+    let refs = repository.references().unwrap();
+    for name in [&stale, &excluded, &unrelated, &tag] {
+        refs.update_without_reflog(name, Target::Direct(source.first), Expected::Absent)
+            .unwrap();
+    }
+    refs.update_without_reflog(
+        &alias,
+        Target::Symbolic(name("refs/remotes/origin/main")),
+        Expected::Absent,
+    )
+    .unwrap();
+    let specs = ["refs/heads/*:refs/remotes/origin/*", "^refs/heads/private"];
+    let ready = receive(
+        request(&repository, &specs, &[], Reflog::Preserve).with_prune(),
+        &source,
+        &KnownHistory::default(),
+    );
+    let report = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert!(
+        report
+            .updates
+            .iter()
+            .any(|update| update.kind == FetchUpdateKind::Prune
+                && update.mapping.destination.as_ref() == Some(&stale))
+    );
+    assert_eq!(stored(&repository, "refs/remotes/origin/gone"), None);
+    assert!(stored(&repository, "refs/remotes/origin/private").is_some());
+    assert!(stored(&repository, "refs/remotes/other/gone").is_some());
+    assert!(stored(&repository, "refs/tags/gone").is_some());
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/HEAD"),
+        Some(Target::Symbolic(name("refs/remotes/origin/main")))
+    );
+}
+
+#[test]
+fn prune_refuses_a_concurrent_destination_change() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let stale = name("refs/remotes/origin/gone");
+    let refs = repository.references().unwrap();
+    refs.update_without_reflog(&stale, Target::Direct(source.first), Expected::Absent)
+        .unwrap();
+    let ready = receive(
+        request(
+            &repository,
+            &["refs/heads/*:refs/remotes/origin/*"],
+            &[],
+            Reflog::Preserve,
+        )
+        .with_prune(),
+        &source,
+        &KnownHistory::default(),
+    );
+    refs.update_without_reflog(
+        &stale,
+        Target::Direct(source.second),
+        Expected::Value(Target::Direct(source.first)),
+    )
+    .unwrap();
+    let failure = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(failure.report.installed.is_some());
+    assert!(matches!(
+        *failure.source,
+        FetchFinishFailure::Publication(TransactionError::Prepare { .. })
+    ));
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/gone"),
+        Some(Target::Direct(source.second))
+    );
+    assert_available(&repository, source.first);
+}
+
+#[test]
 fn known_only_unchanged_fetch_does_not_write_refs_or_logs() {
     let source = Source::new();
     let (_root, repository) = destination();

@@ -63,11 +63,13 @@ impl FetchRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<FetchDownload, FetchWorkflowError> {
+        self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
-        let downloaded = super::receive_http(
+        let downloaded = super::receive_http_with_depth(
             remote,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
+            self.depth,
             limits,
             control,
         )
@@ -101,11 +103,13 @@ impl FetchRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<FetchDownload, FetchWorkflowError> {
+        self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
-        let downloaded = super::receive_ssh(
+        let downloaded = super::receive_ssh_with_depth(
             remote,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
+            self.depth,
             limits,
             control,
         )

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, check_cancelled};
@@ -53,17 +53,29 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        let shallow: Vec<_> = store.shallow_roots().iter().collect();
+        Self::new_with_boundaries(store, roots, &shallow, limits, cancel)
+    }
+
+    pub(super) fn new_with_boundaries(
+        store: &Objects,
+        roots: &[ObjectId],
+        shallow: &[ObjectId],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
         check_cancelled(cancel)?;
         if roots.len() > limits.max_wants {
             return Err(Error::Limit("known roots"));
         }
         let mut result = Self {
-            shallow: store.shallow_roots().iter().collect(),
+            shallow: shallow.to_vec(),
             ..Self::default()
         };
         if result.shallow.len() > limits.max_shallow_roots {
             return Err(Error::Limit("shallow roots"));
         }
+        let shallow_set: HashSet<_> = shallow.iter().copied().collect();
         let mut pending = VecDeque::new();
         let mut expected = HashMap::new();
         for &id in roots {
@@ -79,7 +91,7 @@ impl KnownHistory {
                 .read(id, read)
                 .map_err(|source| Error::LocalRead { id, source })?
                 .ok_or(Error::Missing(id))?;
-            if store.shallow_roots().contains(id) && object.kind() != ObjectKind::Commit {
+            if shallow_set.contains(&id) && object.kind() != ObjectKind::Commit {
                 return Err(Error::Kind(id));
             }
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
@@ -88,8 +100,7 @@ impl KnownHistory {
             bytes = bytes
                 .checked_sub(object.data().len())
                 .ok_or(Error::Limit("known bytes"))?;
-            let shallow_commit =
-                object.kind() == ObjectKind::Commit && store.shallow_roots().contains(id);
+            let shallow_commit = object.kind() == ObjectKind::Commit && shallow_set.contains(&id);
             let edge = |target, kind| {
                 if shallow_commit && kind == ObjectKind::Commit {
                     return Ok(());
