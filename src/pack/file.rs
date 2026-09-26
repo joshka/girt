@@ -46,6 +46,18 @@ impl Artifact {
         self.read_at(start, &mut bytes)?;
         Ok(bytes)
     }
+
+    fn check_not_truncated(&self) -> Result<(), Error> {
+        let file = self.file.lock().unwrap_or_else(|error| error.into_inner());
+        let current = file
+            .metadata()
+            .map_err(|source| path_error(&self.path, source))?
+            .len();
+        if current < self.len as u64 {
+            return Err(path_error(&self.path, io::ErrorKind::UnexpectedEof.into()));
+        }
+        Ok(())
+    }
 }
 
 fn path_error(path: &Path, source: io::Error) -> Error {
@@ -55,10 +67,11 @@ fn path_error(path: &Path, source: io::Error) -> Error {
     }
 }
 
-/// Identity and CRC tables stay on disk; only entry ranges and offset order remain in memory.
+/// Validated index bytes and bounded entry tables remain in memory; the original file stays pinned.
 #[derive(Debug)]
 pub(crate) struct FilePack {
     index: Artifact,
+    index_bytes: Vec<u8>,
     pack: Artifact,
     format: ObjectFormat,
     legacy: bool,
@@ -123,7 +136,6 @@ impl FilePack {
             return Err(Error::Corrupt("pack object count"));
         }
         let legacy = !index_bytes.starts_with(b"\xfftOc");
-        drop(index_bytes);
         validate_pack(&pack, &index, cancelled)?;
         let ranges = index
             .entries
@@ -132,6 +144,7 @@ impl FilePack {
             .collect();
         Ok(Self {
             index: index_file,
+            index_bytes,
             pack,
             format,
             legacy,
@@ -144,6 +157,8 @@ impl FilePack {
         if id.format() != self.format {
             return Ok(None);
         }
+        // Retained identities cannot turn a truncated pinned index into a successful lookup.
+        self.index.check_not_truncated()?;
         let mut low = 0;
         let mut high = self.ranges.len();
         while low < high {
@@ -164,9 +179,7 @@ impl FilePack {
         } else {
             1032 + position * width
         };
-        let mut bytes = [0; 32];
-        self.index.read_at(start, &mut bytes[..width])?;
-        Ok(ObjectId::from_bytes(self.format, &bytes[..width]).unwrap())
+        Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
     }
 
     pub(crate) fn read(

@@ -60,7 +60,7 @@ pub struct PackLimits {
     pub max_bytes: usize,
     /// Maximum aggregate index input bytes (default 64 MiB).
     ///
-    /// Opening temporarily parses one bounded index. Input and derived allocations together
+    /// Opening parses and retains bounded index bytes. Input and derived allocations together
     /// are bounded by four times this value, excluding allocator overhead and path storage.
     pub max_index_bytes: usize,
     /// Maximum retained file handles (default 512); each pair needs two.
@@ -129,8 +129,9 @@ impl Default for ReadLimits {
 /// identities are checked on reads, including every base and intermediate delta; opening is not a
 /// full pack fsck.
 ///
-/// Pack bytes are never retained in full. Index identities are read from disk; bounded offset
-/// tables stay in memory. Each pair pins two handles, shared internally through `Arc`. Short
+/// Pack bytes are never retained in full. Bounded index bytes and offset tables stay in memory
+/// so identity lookups avoid repeated file seeks. Each pair pins two handles, shared internally
+/// through `Arc`. Short
 /// seek/read operations serialize on each artifact; simultaneous reads have independent cursors.
 /// Cloning shares pack handles and offset tables, while copying the bounded store topology.
 /// No decoded-object or negative cache is retained. [`PackLimits`] bounds aggregate opening
