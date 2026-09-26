@@ -8,7 +8,7 @@ use girt::refs::{Backend, RefName};
 use girt::{InitKind, ObjectFormat, Repository, WorktreeAdminError};
 use rstest::rstest;
 
-fn git(root: &Path, args: &[&str]) {
+fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     let output = Command::new("git")
         .current_dir(root)
         .args(args)
@@ -21,6 +21,7 @@ fn git(root: &Path, args: &[&str]) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    output.stdout
 }
 
 #[rstest]
@@ -86,6 +87,11 @@ fn prune_requires_expiry_absence_and_no_lock() {
     repo.prune_worktree(&registration, future).unwrap();
     assert!(!registration.exists());
     assert!(root.path().join("moved").exists());
+    let listed = git(
+        &root.path().join("main"),
+        &["worktree", "list", "--porcelain"],
+    );
+    assert!(!String::from_utf8_lossy(&listed).contains("topic"));
 }
 
 #[test]
@@ -137,4 +143,30 @@ fn stale_admin_lock_and_foreign_gitfile_refuse_mutation() {
         Err(WorktreeAdminError::Protected(_))
     ));
     assert_eq!(fs::read(&gitfile).unwrap(), b"gitdir: /unrelated/live\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn repair_permission_failure_preserves_existing_links() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("main"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo.create_orphan_worktree(&checkout, &branch, 2).unwrap();
+    let registration = linked.git_dir();
+    let forward = fs::read(checkout.join(".git")).unwrap();
+    let backlink = fs::read(registration.join("gitdir")).unwrap();
+    fs::set_permissions(registration, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = repo.repair_worktree(registration, &checkout);
+    fs::set_permissions(registration, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(result, Err(WorktreeAdminError::Io { .. })));
+    assert_eq!(fs::read(checkout.join(".git")).unwrap(), forward);
+    assert_eq!(fs::read(registration.join("gitdir")).unwrap(), backlink);
 }

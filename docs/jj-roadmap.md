@@ -91,7 +91,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
-| R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
+| R20 | Worktree repair, locks and pruning                          | R19                             | Complete            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md)                                                                                            |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -491,3 +491,15 @@ implementation provenance, resource bounds, cancellation and structured errors. 
 compatibility and native checks and assess ordinary-case impact before changing acceptance claims.
 Until then, no further scoring investigation is required for unrelated work or automatically before
 first integration; R35 must report its assessment and this deferred item's disposition.
+
+### B02 — Automatic Worktree Move and Crash Recovery
+
+**Status:** Deferred under the prioritization policy. **Owner:** Worktree administration follow-up
+after consumer integration evidence. **Evidence:** [R20 report](evidence/r20.md).
+
+R20 requires an explicit checkout path to repair a moved worktree and caller exclusion from
+noncooperating moves and Git maintenance. It retains crash leftovers and reports partial link
+replacement or pruning so callers can inspect them. Automatic discovery of relocated checkouts,
+recovery of private administration locks, and durable multi-file repair would add filesystem scans
+or persistent coordination. Revisit when a concrete jj workflow needs them; do not use a missing old
+backlink as proof that a moved checkout and its private roots are disposable.
