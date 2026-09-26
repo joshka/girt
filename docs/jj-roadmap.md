@@ -90,7 +90,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
-| R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
+| R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
@@ -453,6 +453,16 @@ R18 heuristic parity. C02, R41 and later work retain their other prerequisites a
 backlog item below is not an automatic gate before first jj integration. Final integration assesses
 the draft's actual consumer behavior and reports remaining differences explicitly. The coordinator
 owns subsequent dispatch; this documentation change dispatches nothing.
+
+## R19 Coordinator Acceptance
+
+The coordinator accepts R19's documented creation scope at executable
+`37b21cc0292227155d480af5e2cc77a63fc8bdf2`, with evidence child `b3497e0d` and the
+[native results](evidence/r19.md#native-ci). Creation still requires caller exclusion and retains
+partial registration state for inspection; R20 owns repair and pruning. The successful retries of
+the failed macOS split-index and Windows tracing jobs do not erase their original failures. C02
+assesses split-index intermittency alongside its tracing owner. R18/B01 remains deferred and
+unaccepted.
 
 ## Comeback Backlog
 
