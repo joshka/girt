@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::store::{io_error, malformed, parse_loose, read_optional};
+use super::store::{check_path, io_error, malformed, parse_loose, read_optional};
 use super::{RefName, ReferenceError, References, Target};
 
 /// A full reference name and its stored target, without symbolic resolution or tag peeling.
@@ -15,6 +17,33 @@ pub struct Reference {
 }
 
 impl References<'_> {
+    pub(crate) fn head_controlled(
+        &self,
+        max_bytes: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Target>, ReferenceError> {
+        let name = RefName::new(b"HEAD").expect("HEAD is a valid name");
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(ReferenceError::Cancelled);
+            }
+            let target = self.read(&name)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(ReferenceError::Cancelled);
+            }
+            return Ok(target);
+        }
+        let mut budget = ScanBudget {
+            entries: 1,
+            bytes: max_bytes,
+            cancel,
+        };
+        let path = self.path(&name)?;
+        read_limited(&path, &mut budget)?
+            .map(|bytes| parse_loose(self.repository.object_format(), &bytes, &path))
+            .transpose()
+    }
+
     /// Lists all `refs/` names in bytewise name order, without resolving symbolic refs.
     ///
     /// Reftable merges bounded common/private stack snapshots using [`References`]'s contract.
@@ -40,6 +69,32 @@ impl References<'_> {
     /// list on error and does not modify storage.
     pub fn list(&self) -> Result<Vec<Reference>, ReferenceError> {
         self.enumerate(None)
+    }
+
+    /// Lists references with aggregate files-backend byte and traversal limits.
+    ///
+    /// The entry limit covers packed names and loose directory entries before they are retained;
+    /// the byte limit covers packed-refs and loose file contents. Reftable uses this handle's
+    /// [`super::reftable::StackLimits`] for encoded/decoded data and applies the entry limit to
+    /// its bounded merged output. Cancellation is checked between files and directory entries.
+    /// A failed inventory returns no partial list and must not justify removing objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReferenceError::Limit`] or [`ReferenceError::Cancelled`] at those boundaries,
+    /// alongside the malformed, unsupported and I/O failures of [`Self::list`].
+    pub fn list_controlled(
+        &self,
+        max_entries: usize,
+        max_bytes: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<Reference>, ReferenceError> {
+        let mut budget = ScanBudget {
+            entries: max_entries,
+            bytes: max_bytes,
+            cancel,
+        };
+        self.enumerate_with_budget(None, Some(&mut budget))
     }
 
     /// Lists a full name and its descendants, using `/` as the namespace boundary.
@@ -83,11 +138,38 @@ impl References<'_> {
     }
 
     fn enumerate(&self, namespace: Option<&RefName>) -> Result<Vec<Reference>, ReferenceError> {
-        if self.repository.reference_backend() == super::Backend::Reftable {
-            return super::reftable::backend::list(self, namespace);
+        self.enumerate_with_budget(namespace, None)
+    }
+
+    fn enumerate_with_budget(
+        &self,
+        namespace: Option<&RefName>,
+        mut budget: Option<&mut ScanBudget<'_>>,
+    ) -> Result<Vec<Reference>, ReferenceError> {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.check()?;
         }
-        let mut entries: BTreeMap<_, _> = self
-            .packed()?
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            let result = super::reftable::backend::list(self, namespace)?;
+            if let Some(budget) = budget.as_deref_mut() {
+                budget.check()?;
+                if result.len() > budget.entries {
+                    return Err(ReferenceError::Limit("reference entries"));
+                }
+            }
+            return Ok(result);
+        }
+        let packed = if let Some(budget) = budget.as_deref_mut() {
+            let path = self.repository.common_dir().join("packed-refs");
+            let bytes = read_limited(&path, budget)?.unwrap_or_default();
+            super::packed::parse(self.repository.object_format(), &bytes, &path)?
+        } else {
+            self.packed()?
+        };
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.charge(packed.len())?;
+        }
+        let mut entries: BTreeMap<_, _> = packed
             .into_iter()
             .filter(|(name, _)| selected(name.as_bytes(), namespace))
             .map(|(name, id)| (name, Target::Direct(id)))
@@ -103,6 +185,7 @@ impl References<'_> {
                 LooseScope::All
             },
             &mut entries,
+            budget.as_deref_mut(),
         )?;
         if separate {
             collect_loose(
@@ -111,6 +194,7 @@ impl References<'_> {
                 namespace,
                 LooseScope::Private,
                 &mut entries,
+                budget,
             )?;
         }
         // Prefix conflicts are not necessarily adjacent in byte order (a, a.b, a/c).
@@ -164,9 +248,13 @@ fn collect_loose(
     namespace: Option<&RefName>,
     scope: LooseScope,
     entries: &mut BTreeMap<RefName, Target>,
+    mut budget: Option<&mut ScanBudget<'_>>,
 ) -> Result<(), ReferenceError> {
     let mut pending = vec![(root.join("refs"), b"refs".to_vec())];
     while let Some((path, bytes)) = pending.pop() {
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.check()?;
+        }
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -197,6 +285,10 @@ fn collect_loose(
                 Err(source) => return Err(io_error(&path, source)),
             };
             for child in children {
+                if let Some(budget) = budget.as_deref_mut() {
+                    budget.check()?;
+                    budget.charge(1)?;
+                }
                 let child = child.map_err(|source| io_error(&path, source))?;
                 let component = child.file_name();
                 // Preserve Unix filename bytes; other hosts require Unicode filesystem names.
@@ -226,12 +318,64 @@ fn collect_loose(
         } else if selected(&bytes, namespace) {
             let name = RefName::new(bytes)
                 .map_err(|_| malformed(&path, "invalid loose reference name"))?;
-            if let Some(bytes) = read_optional(&path)? {
+            let value = if let Some(budget) = budget.as_deref_mut() {
+                read_limited(&path, budget)?
+            } else {
+                read_optional(&path)?
+            };
+            if let Some(bytes) = value {
                 entries.insert(name, parse_loose(format, &bytes, &path)?);
             }
         }
     }
     Ok(())
+}
+
+struct ScanBudget<'a> {
+    entries: usize,
+    bytes: usize,
+    cancel: &'a AtomicBool,
+}
+
+impl ScanBudget<'_> {
+    fn check(&self) -> Result<(), ReferenceError> {
+        if self.cancel.load(Ordering::Relaxed) {
+            Err(ReferenceError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn charge(&mut self, entries: usize) -> Result<(), ReferenceError> {
+        self.entries = self
+            .entries
+            .checked_sub(entries)
+            .ok_or(ReferenceError::Limit("reference entries"))?;
+        Ok(())
+    }
+}
+
+fn read_limited(
+    path: &Path,
+    budget: &mut ScanBudget<'_>,
+) -> Result<Option<Vec<u8>>, ReferenceError> {
+    budget.check()?;
+    check_path(path)?;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io_error(path, source)),
+    };
+    let mut bytes = Vec::new();
+    file.take(budget.bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|source| io_error(path, source))?;
+    if bytes.len() > budget.bytes {
+        return Err(ReferenceError::Limit("reference bytes"));
+    }
+    budget.bytes -= bytes.len();
+    budget.check()?;
+    Ok(Some(bytes))
 }
 
 #[cfg(test)]
@@ -276,6 +420,30 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn controlled_inventory_rejects_limits_and_cancellation() {
+        let (_root, repo) = fixture();
+        let refs = repo.references().unwrap();
+        let active = AtomicBool::new(false);
+        assert_eq!(
+            refs.list_controlled(10, 1024, &active).unwrap(),
+            refs.list().unwrap()
+        );
+        assert!(matches!(
+            refs.list_controlled(0, 1024, &active),
+            Err(ReferenceError::Limit("reference entries"))
+        ));
+        assert!(matches!(
+            refs.list_controlled(10, 0, &active),
+            Err(ReferenceError::Limit("reference bytes"))
+        ));
+        let cancelled = AtomicBool::new(true);
+        assert!(matches!(
+            refs.list_controlled(10, 1024, &cancelled),
+            Err(ReferenceError::Cancelled)
+        ));
     }
 
     #[rstest]
@@ -363,7 +531,8 @@ mod tests {
                 repo.git_dir(),
                 None,
                 LooseScope::Private,
-                &mut entries
+                &mut entries,
+                None,
             ),
             Err(ReferenceError::Unsupported(_))
         ));

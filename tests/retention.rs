@@ -109,6 +109,15 @@ fn deleted_reflog_and_git_closure_are_retained(#[case] format: &str) {
     .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
     .collect();
     assert_eq!(plan.reachable, expected);
+    let git_gc_roots: std::collections::BTreeSet<ObjectId> = git(
+        root.path(),
+        &["rev-list", "--objects", "--all", "--reflog"],
+        b"",
+    )
+    .lines()
+    .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
+    .collect();
+    assert_eq!(plan.reachable, git_gc_roots);
     assert_eq!(
         git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
         "commit"
@@ -426,4 +435,69 @@ fn declared_shallow_boundary_does_not_require_missing_parent() {
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.reachable.contains(&second));
     assert!(!plan.reachable.contains(&first));
+}
+
+#[test]
+fn reference_inventory_budget_blocks_completion() {
+    let (_root, repo, _first, _second) = fixture();
+    let policy = RetentionPolicy {
+        max_reference_bytes: 0,
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(!plan.is_complete());
+}
+
+#[test]
+fn symbolic_reference_through_head_retains_target() {
+    let (root, repo, first, _second) = fixture();
+    fs::write(root.path().join("refs/heads/alias"), b"ref: HEAD\n").unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.strong_roots.contains(&first));
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn git_gc_preserves_planned_history_and_repository_use(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    git(root.path(), &["config", "gc.reflogExpire", "never"], b"");
+    git(
+        root.path(),
+        &["config", "gc.reflogExpireUnreachable", "never"],
+        b"",
+    );
+    git(root.path(), &["gc", "--prune=now"], b"");
+    let retained: std::collections::BTreeSet<ObjectId> = git(
+        root.path(),
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objectname)",
+        ],
+        b"",
+    )
+    .lines()
+    .map(|line| line.parse().unwrap())
+    .collect();
+    assert_eq!(plan.required, retained);
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
 }

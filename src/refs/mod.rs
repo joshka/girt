@@ -4,6 +4,8 @@
 //! object lookup. [`References::transaction`] checks a batch before sequential publication and
 //! exposes partial results. [`Reflog`] selects explicit history policy; the separately named
 //! no-reflog methods remain available for callers that deliberately omit recovery records.
+//! [`References::list_controlled`] bounds files enumeration before a GC inventory retains names;
+//! reftable uses its separate stack budgets.
 //!
 //! [`References::imported_reflog`] reads bounded imported history. [`ImportedRecord`] preserves raw
 //! data and separates [`ImportedRecord::fields`] from canonical append validation. Always inspect

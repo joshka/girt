@@ -37,6 +37,10 @@ pub struct RetentionPolicy {
     pub max_bytes: u64,
     /// Bound for each imported history.
     pub reflog: ReflogLimits,
+    /// Bound for each shared or private reftable stack snapshot.
+    pub reftable: crate::refs::reftable::StackLimits,
+    /// Maximum packed/loose reference bytes per files inventory; HEAD has the same bound.
+    pub max_reference_bytes: usize,
     /// Aggregate retained bytes from all discovered histories.
     pub max_reflog_bytes: u64,
     /// Bound for each index decode.
@@ -58,6 +62,8 @@ impl Default for RetentionPolicy {
             max_edges: 4_000_000,
             max_bytes: 4 * 1024 * 1024 * 1024,
             reflog: ReflogLimits::default(),
+            reftable: crate::refs::reftable::StackLimits::default(),
+            max_reference_bytes: 64 * 1024 * 1024,
             max_reflog_bytes: 64 * 1024 * 1024,
             index: index::Limits::default(),
             packs: PackLimits::default(),
@@ -287,32 +293,28 @@ fn collect_roots(
         {
             return Err("gc.recentObjectsHook is unsupported by retention planning".into());
         }
-        let refs = repo.references().map_err(|e| e.to_string())?;
-        let references = refs.list().map_err(|e| e.to_string())?;
-        if references.len() > policy.max_entries {
-            return Err("reference count limit".into());
+        let refs = repo
+            .references()
+            .map_err(|e| e.to_string())?
+            .with_reftable_limits(policy.reftable);
+        let references = refs
+            .list_controlled(policy.max_entries, policy.max_reference_bytes, cancel)
+            .map_err(|e| e.to_string())?;
+        let mut values: BTreeMap<_, _> = references
+            .into_iter()
+            .map(|reference| (reference.name, reference.target))
+            .collect();
+        if let Some(head) = refs
+            .head_controlled(policy.max_reference_bytes, cancel)
+            .map_err(|e| e.to_string())?
+        {
+            values.insert(RefName::new(b"HEAD").unwrap(), head);
         }
-        for reference in references {
-            let id = match reference.target {
-                Target::Direct(id) => Some(id),
-                Target::Symbolic(_) => {
-                    refs.resolve(&reference.name, 32)
-                        .map_err(|e| e.to_string())?
-                        .id
-                }
-            };
-            if let Some(id) = id {
+        for target in values.values() {
+            if let Some(id) = resolve_target(target, &values)? {
                 plan.roots.insert(id);
                 plan.strong_roots.insert(id);
             }
-        }
-        if let Some(id) = refs
-            .resolve(&RefName::new(b"HEAD").unwrap(), 32)
-            .map_err(|e| e.to_string())?
-            .id
-        {
-            plan.roots.insert(id);
-            plan.strong_roots.insert(id);
         }
         for name in refs
             .imported_reflog_names(policy.max_entries, cancel)
@@ -373,6 +375,29 @@ fn collect_roots(
     }
     recent_objects(repository, policy, cancel, plan)?;
     Ok(())
+}
+
+fn resolve_target(
+    target: &Target,
+    values: &BTreeMap<RefName, Target>,
+) -> Result<Option<ObjectId>, String> {
+    let mut target = target;
+    let mut visited = BTreeSet::new();
+    for _ in 0..=32 {
+        match target {
+            Target::Direct(id) => return Ok(Some(*id)),
+            Target::Symbolic(name) => {
+                if !visited.insert(name) {
+                    return Err("symbolic reference cycle".into());
+                }
+                let Some(next) = values.get(name) else {
+                    return Ok(None);
+                };
+                target = next;
+            }
+        }
+    }
+    Err("symbolic reference depth limit".into())
 }
 
 fn collect_pseudorefs(
