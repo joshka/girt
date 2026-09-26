@@ -306,5 +306,6 @@ jobs:
       - name: Maintenance fault and race cases
         run: |
           cargo +stable test --locked --no-default-features --lib 'retention::'
+          cargo +stable test --locked --no-default-features --lib 'refs::reftable::stack_tests::expiry_'
       - name: Retention API and benchmark lint
         run: cargo +stable clippy --locked --no-default-features --lib --test retention --bench retention -- -D warnings

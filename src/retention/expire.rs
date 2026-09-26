@@ -1,10 +1,13 @@
 #[cfg(unix)]
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(unix)]
 use std::fs::File;
 use std::io;
 #[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(unix)]
@@ -17,12 +20,18 @@ use crate::Repository;
 use crate::refs::Backend;
 #[cfg(unix)]
 use crate::refs::ImportedRecord;
+#[cfg(unix)]
+use crate::refs::ReferenceError;
+#[cfg(unix)]
+use crate::refs::reftable::{ExpireStackError, RecordName, Snapshot, expire_logs};
 
-/// Files-backend histories whose expiry rewrite was published.
+/// Histories whose expiry rewrite was durably published.
 #[derive(Clone, Debug, Default)]
 pub struct ExpireReport {
     /// Known published histories, in source order.
     pub changed: Vec<ReflogSource>,
+    /// Old unlisted reftable files whose cleanup failed after durable publication.
+    pub retained_tables: Vec<PathBuf>,
 }
 
 /// Why expiry stopped.
@@ -37,8 +46,8 @@ pub enum ExpireCause {
     /// Stored history or the retention observation changed before publication.
     #[error("reflog generation changed")]
     Changed,
-    /// The reference backend has no conditional expiry writer.
-    #[error("reflog expiry requires the files reference backend")]
+    /// The reference backend has no conditional expiry writer on this platform.
+    #[error("reflog expiry is unsupported for this reference backend")]
     UnsupportedBackend,
     /// The platform has no verified directory synchronization for destructive expiry.
     #[error("durable reflog expiry is unsupported on this platform")]
@@ -49,6 +58,9 @@ pub enum ExpireCause {
     /// An artifact operation failed; inspect the partial report.
     #[error("reflog expiry I/O: {0}")]
     Io(#[source] io::Error),
+    /// A conditional reftable stack publication or cleanup failed.
+    #[error("reftable expiry: {0}")]
+    Reference(#[source] Box<ReferenceError>),
 }
 
 /// Expiry failure with known publications and a possible uncertain replacement.
@@ -59,9 +71,11 @@ pub struct ExpireFailure {
     #[source]
     pub cause: ExpireCause,
     /// Histories whose replacement reported success.
-    pub report: ExpireReport,
+    pub report: Box<ExpireReport>,
     /// History at a failed replacement boundary, if its effect is uncertain.
     pub uncertain: Option<ReflogSource>,
+    /// Reftable stack whose replacement list may be visible at a failed boundary.
+    pub uncertain_stack: Option<PathBuf>,
 }
 
 #[cfg(unix)]
@@ -72,25 +86,32 @@ struct PreparedLog {
     retained: Vec<u8>,
 }
 
+#[cfg(unix)]
+struct PreparedStack {
+    snapshot: Snapshot,
+    keys: BTreeSet<(RecordName, u64)>,
+    sources: Vec<ReflogSource>,
+}
+
 impl Repository {
-    /// Expires eligible files-backend reflog records under caller-owned isolation.
+    /// Expires eligible reflog records under caller-owned isolation.
     ///
     /// The guard must exclude external Git and girt writers, readers depending on old history,
     /// and alternate-store dependents for the whole action. A fresh complete retention plan
     /// classifies records using the policy's live and unreachable cutoffs. The operation prepares
-    /// every changed log's exact retained bytes, rescans roots and expiry positions, compares
-    /// source bytes again, then atomically replaces one file at a time. Retained records preserve
-    /// their original bytes and order. Empty histories remain as empty files. Reftable refuses
-    /// before mutation. Object storage is not pruned. On Unix, each replacement file and its
-    /// containing directory are synchronized before reporting that history as changed, assuming
-    /// a local filesystem that honors those synchronization calls. Other platforms refuse files
-    /// expiry until the same publication contract is established there. A fresh rescan remains
-    /// necessary before any later object pruning.
+    /// every changed files log's exact retained bytes or reftable stack's merged records, rescans
+    /// roots and expiry positions, and conditionally publishes each replacement. Files preserve
+    /// the original bytes and order of retained records; empty histories remain empty files.
+    /// Reftable preserves retained binary records and reference update indexes in a compacted
+    /// replacement stack. Object storage is not pruned. On Unix, replacement files and containing
+    /// directories are synchronized before a change is reported as durable, assuming a local
+    /// filesystem that honors those calls. Other platforms refuse until the same publication
+    /// contract is established. A fresh rescan remains necessary before later object pruning.
     ///
     /// Cancellation, I/O and interruption can leave a published prefix. An error from the
     /// replacement call names the uncertain history. Retry only after a fresh scan; do not reuse
     /// an older [`RetentionPlan`]. A directory synchronization error after replacement identifies
-    /// the uncertain history; callers must inspect it before relying on the expired roots.
+    /// the uncertain history or stack; callers must inspect it before relying on expired roots.
     ///
     /// # Errors
     ///
@@ -114,6 +135,9 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<ExpireReport, ExpireFailure> {
+        if self.reference_backend() == Backend::Reftable {
+            return self.expire_reftable_logs(policy, cancel);
+        }
         self.expire_reflogs_at(
             policy,
             cancel,
@@ -122,6 +146,92 @@ impl Repository {
             |temp, path| temp.persist(path).map(|_| ()).map_err(|error| error.error),
             |parent| File::open(parent).and_then(|directory| directory.sync_all()),
         )
+    }
+
+    #[cfg(unix)]
+    fn expire_reftable_logs(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+    ) -> Result<ExpireReport, ExpireFailure> {
+        let mut report = ExpireReport::default();
+        check(cancel, &report)?;
+        let current = Repository::open(self.git_dir())
+            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        if current.object_dir() != self.object_dir()
+            || current.object_format() != self.object_format()
+            || current.reference_backend() != Backend::Reftable
+        {
+            return Err(failed(ExpireCause::Changed, report));
+        }
+        let first = complete_plan(&current, policy, cancel)
+            .map_err(|cause| failed(cause, report.clone()))?;
+        let prepared = prepare_reftable(&first, policy, cancel)
+            .map_err(|cause| failed(cause, report.clone()))?;
+        let refreshed = Repository::open(self.git_dir())
+            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        if refreshed.object_dir() != current.object_dir()
+            || refreshed.object_format() != current.object_format()
+            || refreshed.reference_backend() != Backend::Reftable
+            || !refreshed
+                .shallow_roots()
+                .iter()
+                .eq(current.shallow_roots().iter())
+        {
+            return Err(failed(ExpireCause::Changed, report));
+        }
+        let second = complete_plan(&refreshed, policy, cancel)
+            .map_err(|cause| failed(cause, report.clone()))?;
+        if first.roots != second.roots
+            || first.reachable != second.reachable
+            || first.required != second.required
+            || first.observed_logs != second.observed_logs
+            || first.reflog_expiry_candidates != second.reflog_expiry_candidates
+            || first.protected_packs != second.protected_packs
+            || first.alternate_stores != second.alternate_stores
+        {
+            return Err(failed(ExpireCause::Changed, report));
+        }
+        for (directory, stack) in prepared {
+            check(cancel, &report)?;
+            match expire_logs(
+                &directory,
+                self.object_format(),
+                policy.reftable,
+                &stack.snapshot,
+                &stack.keys,
+                cancel,
+            ) {
+                Ok(outcome) => {
+                    report.changed.extend(stack.sources);
+                    report
+                        .retained_tables
+                        .extend(outcome.retained.into_iter().map(|(path, _)| path));
+                }
+                Err(ExpireStackError::Changed) => {
+                    return Err(failed(ExpireCause::Changed, report));
+                }
+                Err(ExpireStackError::Failed {
+                    source,
+                    publication_uncertain,
+                    durable,
+                }) => {
+                    if durable {
+                        report.changed.extend(stack.sources);
+                    }
+                    return Err(ExpireFailure {
+                        cause: match source {
+                            ReferenceError::Cancelled => ExpireCause::Cancelled,
+                            other => ExpireCause::Reference(Box::new(other)),
+                        },
+                        report: Box::new(report),
+                        uncertain: None,
+                        uncertain_stack: publication_uncertain.then_some(directory),
+                    });
+                }
+            }
+        }
+        Ok(report)
     }
 
     #[cfg(not(unix))]
@@ -190,6 +300,7 @@ impl Repository {
         if first.roots != second.roots
             || first.reachable != second.reachable
             || first.required != second.required
+            || first.observed_logs != second.observed_logs
             || first.reflog_expiry_candidates != second.reflog_expiry_candidates
             || first.protected_packs != second.protected_packs
             || first.alternate_stores != second.alternate_stores
@@ -223,13 +334,15 @@ impl Repository {
                 .map_err(|error| failed(ExpireCause::Io(error), report.clone()))?;
             replace(temp, &log.path).map_err(|error| ExpireFailure {
                 cause: ExpireCause::Io(error),
-                report: report.clone(),
+                report: Box::new(report.clone()),
                 uncertain: Some(log.source.clone()),
+                uncertain_stack: None,
             })?;
             sync_directory(parent).map_err(|error| ExpireFailure {
                 cause: ExpireCause::Io(error),
-                report: report.clone(),
+                report: Box::new(report.clone()),
                 uncertain: Some(log.source.clone()),
+                uncertain_stack: None,
             })?;
             report.changed.push(log.source);
             after_publish();
@@ -318,6 +431,74 @@ fn prepare(
 }
 
 #[cfg(unix)]
+fn prepare_reftable(
+    plan: &RetentionPlan,
+    policy: &RetentionPolicy,
+    cancel: &AtomicBool,
+) -> Result<BTreeMap<PathBuf, PreparedStack>, ExpireCause> {
+    let mut stacks = BTreeMap::new();
+    for (source, positions) in &plan.reflog_expiry_candidates {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(ExpireCause::Cancelled);
+        }
+        let repository = Repository::open(source.root())
+            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+        if repository.reference_backend() != Backend::Reftable {
+            return Err(ExpireCause::Changed);
+        }
+        let log = repository
+            .references()
+            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?
+            .with_reftable_limits(policy.reftable)
+            .imported_reflog(source.name(), policy.reflog, cancel)
+            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?
+            .ok_or(ExpireCause::Changed)?;
+        if !log.is_complete() {
+            return Err(ExpireCause::Incomplete(format!(
+                "incomplete reflog: {:?}",
+                log.end()
+            )));
+        }
+        let directory = source.root().join("reftable");
+        if !stacks.contains_key(&directory) {
+            let snapshot = Snapshot::read(
+                &directory,
+                repository.object_format(),
+                policy.reftable,
+                cancel,
+            )
+            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            stacks.insert(
+                directory.clone(),
+                PreparedStack {
+                    snapshot,
+                    keys: BTreeSet::new(),
+                    sources: Vec::new(),
+                },
+            );
+        }
+        let stack = stacks.get_mut(&directory).expect("stack inserted above");
+        stack.sources.push(source.clone());
+        let name = RecordName::from(source.name().clone());
+        for position in positions {
+            let Some(record) = position
+                .checked_sub(1)
+                .and_then(|index| log.records().get(index))
+            else {
+                return Err(ExpireCause::Changed);
+            };
+            let ImportedRecord::Reftable { update_index, .. } = record else {
+                return Err(ExpireCause::Changed);
+            };
+            if !stack.keys.insert((name.clone(), *update_index)) {
+                return Err(ExpireCause::Changed);
+            }
+        }
+    }
+    Ok(stacks)
+}
+
+#[cfg(unix)]
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ExpireCause> {
     let mut bytes = Vec::new();
     File::open(path)
@@ -343,8 +524,9 @@ fn check(cancel: &AtomicBool, report: &ExpireReport) -> Result<(), ExpireFailure
 fn failed(cause: ExpireCause, report: ExpireReport) -> ExpireFailure {
     ExpireFailure {
         cause,
-        report,
+        report: Box::new(report),
         uncertain: None,
+        uncertain_stack: None,
     }
 }
 

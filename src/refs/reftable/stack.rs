@@ -165,6 +165,176 @@ pub struct Compaction {
     pub retained: Vec<(PathBuf, std::io::Error)>,
 }
 
+/// Effects of a conditional, durable reflog-expiry stack rewrite.
+#[cfg(unix)]
+pub(crate) struct ExpiredStack {
+    pub(crate) retained: Vec<(PathBuf, std::io::Error)>,
+}
+
+/// A rejected or interrupted expiry rewrite.
+#[cfg(unix)]
+pub(crate) enum ExpireStackError {
+    Changed,
+    Failed {
+        source: ReferenceError,
+        /// The replacement list may be visible. Old tables remain listed or unlisted but intact.
+        publication_uncertain: bool,
+        /// The replacement list was visible and both it and the directory were synchronized.
+        durable: bool,
+    },
+}
+
+/// Replaces one stack with its live records minus selected reflog transaction keys.
+///
+/// The caller excludes noncooperating writers and old readers. This function acquires the stack
+/// and table locks, compares the merged generation with `expected`, and leaves old tables intact
+/// until the replacement table and `tables.list` have been synchronized. On a failed publication,
+/// the caller must rescan before retrying.
+#[cfg(unix)]
+pub(crate) fn expire_logs(
+    directory: &Path,
+    format: ObjectFormat,
+    limits: StackLimits,
+    expected: &Snapshot,
+    keys: &BTreeSet<(super::RecordName, u64)>,
+    cancel: &AtomicBool,
+) -> Result<ExpiredStack, ExpireStackError> {
+    expire_logs_with_sync(
+        directory,
+        format,
+        limits,
+        expected,
+        keys,
+        cancel,
+        sync_directory,
+    )
+}
+
+#[cfg(unix)]
+pub(super) fn expire_logs_with_sync(
+    directory: &Path,
+    format: ObjectFormat,
+    limits: StackLimits,
+    expected: &Snapshot,
+    keys: &BTreeSet<(super::RecordName, u64)>,
+    cancel: &AtomicBool,
+    mut sync: impl FnMut(&Path) -> Result<(), ReferenceError>,
+) -> Result<ExpiredStack, ExpireStackError> {
+    let fail = |source| ExpireStackError::Failed {
+        source,
+        publication_uncertain: false,
+        durable: false,
+    };
+    cancelled(cancel).map_err(fail)?;
+    let directory =
+        fs::canonicalize(directory).map_err(|error| fail(io_error(directory, error)))?;
+    let lock = Lock::acquire(directory.join("tables.list")).map_err(fail)?;
+    let mut snapshot = Snapshot::read(&directory, format, limits, cancel).map_err(fail)?;
+    if snapshot.names != expected.names || snapshot.table != expected.table {
+        return Err(ExpireStackError::Changed);
+    }
+    let mut table_locks = Vec::new();
+    for name in &snapshot.names {
+        table_locks.push(Lock::acquire(directory.join(name)).map_err(fail)?);
+    }
+    cancelled(cancel).map_err(fail)?;
+    let original_count = snapshot
+        .table
+        .logs
+        .iter()
+        .filter(|record| record.value.is_some())
+        .count();
+    snapshot
+        .table
+        .references
+        .retain(|record| record.target.is_some());
+    snapshot.table.logs.retain(|record| {
+        record.value.is_some() && !keys.contains(&(record.name.clone(), record.update_index))
+    });
+    if original_count - snapshot.table.logs.len() != keys.len() {
+        return Err(ExpireStackError::Changed);
+    }
+    let bytes = snapshot
+        .table
+        .encode(limits.records)
+        .map_err(|error| fail(error.into()))?;
+    cancelled(cancel).map_err(fail)?;
+    let prefix = format!(
+        "0x{:012x}-0x{:012x}-",
+        snapshot.table.min_update_index, snapshot.table.max_update_index
+    );
+    let mut temporary = tempfile::Builder::new()
+        .prefix(&prefix)
+        .suffix(".ref")
+        .tempfile_in(&directory)
+        .map_err(|error| fail(io_error(&directory, error)))?;
+    let permissions = fs::metadata(directory.join("tables.list"))
+        .map_err(|error| fail(io_error(&directory, error)))?
+        .permissions();
+    temporary
+        .as_file()
+        .set_permissions(permissions)
+        .map_err(|error| fail(io_error(temporary.path(), error)))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|error| fail(io_error(temporary.path(), error)))?;
+    let name = temporary
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let (_file, _path) = temporary
+        .keep()
+        .map_err(|error| fail(io_error(&directory, error.error)))?;
+    sync(&directory).map_err(fail)?;
+    cancelled(cancel).map_err(fail)?;
+    let list = format!("{name}\n");
+    if list.len() > limits.list_bytes {
+        return Err(fail(Error::Limit("stack list bytes").into()));
+    }
+    lock.publish_retaining_lock(list.as_bytes())
+        .map_err(|source| ExpireStackError::Failed {
+            source,
+            publication_uncertain: true,
+            durable: false,
+        })?;
+    File::open(directory.join("tables.list"))
+        .and_then(|file| file.sync_all())
+        .map_err(|error| ExpireStackError::Failed {
+            source: io_error(&directory, error),
+            publication_uncertain: true,
+            durable: false,
+        })?;
+    sync(&directory).map_err(|source| ExpireStackError::Failed {
+        source,
+        publication_uncertain: true,
+        durable: false,
+    })?;
+    let mut retained = Vec::new();
+    for name in &expected.names {
+        let path = directory.join(name);
+        if let Err(error) = fs::remove_file(&path) {
+            retained.push((path, error));
+        }
+    }
+    sync(&directory).map_err(|source| ExpireStackError::Failed {
+        source,
+        publication_uncertain: true,
+        durable: true,
+    })?;
+    Ok(ExpiredStack { retained })
+}
+
+#[cfg(unix)]
+fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
+    File::open(directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| io_error(directory, error))
+}
+
 /// Compacts a complete stack while excluding cooperating writers and compactors.
 ///
 /// Preserves all live reflog records and reference update indexes. Full-stack tombstones can be

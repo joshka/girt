@@ -1,12 +1,113 @@
+#[cfg(unix)]
+use std::collections::BTreeSet;
 use std::fs;
+#[cfg(unix)]
+use std::io;
 use std::sync::atomic::AtomicBool;
 
 use rstest::rstest;
 
 use super::decode_tests::{fixture, git};
+#[cfg(unix)]
+use super::stack::{ExpireStackError, expire_logs, expire_logs_with_sync};
 use super::{Snapshot, StackLimits, compact};
 use crate::ObjectFormat;
 use crate::refs::ReferenceError;
+
+#[cfg(unix)]
+#[test]
+fn expiry_directory_sync_failure_keeps_old_tables_after_visible_list() {
+    let root = fixture("sha1");
+    let directory = root.path().join(".git/reftable");
+    let before = Snapshot::read(
+        &directory,
+        ObjectFormat::Sha1,
+        StackLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let old_list = fs::read(directory.join("tables.list")).unwrap();
+    let log = before
+        .table
+        .logs
+        .iter()
+        .find(|record| record.value.is_some())
+        .unwrap();
+    let keys = BTreeSet::from([(log.name.clone(), log.update_index)]);
+    let refs = git(root.path(), &["show-ref", "--head"]);
+    let mut syncs = 0;
+    let error = expire_logs_with_sync(
+        &directory,
+        ObjectFormat::Sha1,
+        StackLimits::default(),
+        &before,
+        &keys,
+        &AtomicBool::new(false),
+        |path| {
+            syncs += 1;
+            if syncs == 2 {
+                return Err(ReferenceError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::from_raw_os_error(28),
+                });
+            }
+            fs::File::open(path)
+                .and_then(|file| file.sync_all())
+                .map_err(|source| ReferenceError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })
+        },
+    );
+    assert!(matches!(
+        error,
+        Err(ExpireStackError::Failed {
+            publication_uncertain: true,
+            durable: false,
+            ..
+        })
+    ));
+    assert_ne!(fs::read(directory.join("tables.list")).unwrap(), old_list);
+    for name in &before.names {
+        assert!(directory.join(name).exists());
+    }
+    assert_eq!(git(root.path(), &["show-ref", "--head"]), refs);
+}
+
+#[cfg(unix)]
+#[test]
+fn expiry_rejects_changed_stack_before_publication() {
+    let root = fixture("sha1");
+    let directory = root.path().join(".git/reftable");
+    let before = Snapshot::read(
+        &directory,
+        ObjectFormat::Sha1,
+        StackLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let log = before
+        .table
+        .logs
+        .iter()
+        .find(|record| record.value.is_some())
+        .unwrap();
+    let keys = BTreeSet::from([(log.name.clone(), log.update_index)]);
+    git(root.path(), &["commit", "--allow-empty", "-m", "next"]);
+    let list = fs::read(directory.join("tables.list")).unwrap();
+    assert!(matches!(
+        expire_logs(
+            &directory,
+            ObjectFormat::Sha1,
+            StackLimits::default(),
+            &before,
+            &keys,
+            &AtomicBool::new(false),
+        ),
+        Err(ExpireStackError::Changed)
+    ));
+    assert_eq!(fs::read(directory.join("tables.list")).unwrap(), list);
+}
 
 #[rstest]
 #[case::sha1("sha1", ObjectFormat::Sha1)]

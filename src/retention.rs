@@ -18,7 +18,7 @@ pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedLog {
     source: ReflogSource,
     position: usize,

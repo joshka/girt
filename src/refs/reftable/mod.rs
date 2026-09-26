@@ -11,6 +11,8 @@ mod records;
 mod stack;
 pub use records::{Error, Limits, LogRecord, LogValue, RecordName, RefRecord, Table};
 pub use stack::{Compaction, Snapshot, StackLimits, compact};
+#[cfg(unix)]
+pub(crate) use stack::{ExpireStackError, expire_logs};
 
 #[cfg(test)]
 mod codec_tests;

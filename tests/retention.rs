@@ -278,7 +278,7 @@ fn reflog_expiry_refuses_without_isolation() {
 }
 
 #[test]
-fn reftable_expiry_refuses_before_mutation() {
+fn reftable_expiry_without_candidates_preserves_stack() {
     let root = tempfile::tempdir().unwrap();
     git(
         root.path(),
@@ -293,18 +293,115 @@ fn reftable_expiry_refuses_before_mutation() {
     );
     let repo = Repository::open(root.path()).unwrap();
     let before = fs::read(root.path().join("reftable/tables.list")).unwrap();
-    let error = repo
-        .expire_reflogs(
-            &mut FixtureIsolation,
-            &RetentionPolicy::default(),
-            &AtomicBool::new(false),
-        )
-        .unwrap_err();
-    assert!(matches!(error.cause, ExpireCause::UnsupportedBackend));
-    assert!(error.report.changed.is_empty());
+    let result = repo.expire_reflogs(
+        &mut FixtureIsolation,
+        &RetentionPolicy::default(),
+        &AtomicBool::new(false),
+    );
+    #[cfg(unix)]
+    assert!(result.unwrap().changed.is_empty());
+    #[cfg(not(unix))]
+    assert!(matches!(
+        result.unwrap_err().cause,
+        ExpireCause::UnsupportedBackend
+    ));
     assert_eq!(
         fs::read(root.path().join("reftable/tables.list")).unwrap(),
         before
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--ref-format=reftable",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &["config", "core.logAllRefUpdates", "true"],
+        b"",
+    );
+    let tree = git(root.path(), &["mktree"], b"");
+    let tip: ObjectId = git(root.path(), &["commit-tree", &tree], b"topic\n")
+        .parse()
+        .unwrap();
+    let live: ObjectId = git(root.path(), &["commit-tree", &tree], b"live\n")
+        .parse()
+        .unwrap();
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "create",
+            "refs/heads/live",
+            &live.to_string(),
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "create",
+            "refs/heads/topic",
+            &tip.to_string(),
+        ],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let name = girt::refs::RefName::new(b"refs/heads/topic").unwrap();
+    repo.references()
+        .unwrap()
+        .delete_without_reflog(
+            &name,
+            girt::refs::Expected::Value(girt::refs::Target::Direct(tip)),
+        )
+        .unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_unreachable_before: Some(4_000_000_000),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(!plan.reflog_expiry_candidates.is_empty());
+    let report = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(report.changed.len(), 1);
+    assert!(
+        repo.references()
+            .unwrap()
+            .imported_reflog(&name, policy.reflog, &AtomicBool::new(false))
+            .unwrap()
+            .is_none()
+    );
+    let live_name = girt::refs::RefName::new(b"refs/heads/live").unwrap();
+    assert!(
+        repo.references()
+            .unwrap()
+            .imported_reflog(&live_name, policy.reflog, &AtomicBool::new(false))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &tip.to_string()], b""),
+        "commit"
     );
 }
 
