@@ -12,8 +12,8 @@
 //! commands can partially succeed. The `http` feature adds async smart-HTTP sending with
 //! explicit caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
 //! Both require a caller-owned Tokio runtime. [`crate::remote`] maps configured refspecs
-//! separately; callers must authorize force and supply exact expected values. Credential discovery,
-//! pruning and automatic force are deferred. [`crate::remote::CredentialSession`] is a separate
+//! separately; callers must authorize force and supply exact expected values. Pruning and
+//! automatic force are deferred. [`crate::remote::CredentialSession`] is a separate
 //! application-approved helper lifecycle; callers attach resulting credentials to their chosen
 //! transport and keep authentication approval or rejection under application control.
 

@@ -111,7 +111,7 @@ consumer or native-platform evidence.
 | R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Scoped accepted     | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r28.md)                                                                           |
 | R29 | Push command model, deletes, leases and options             | R26, R16                        | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r29.md)                                                                                         |
 | R30 | Push partial outcomes, progress and cancellation            | R29                             | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r30.md)                                                                                         |
-| C03 | Transport coherence and native CI milestone                 | R21–R30                         | Review in progress  | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [review](evidence/c03.md)                               |
+| C03 | Transport coherence and native CI milestone                 | R21–R30                         | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c03.md)                             |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
@@ -560,10 +560,10 @@ run the affected native fixture. These omissions do not establish compatibility 
 
 ### B04 — Intermittent Tracing and Split-Index Assertions
 
-**Size:** M. **Status:** Open investigation; no production defect established. **Owner:** C03
-transport tracing follow-up for the abandoned-download case; the split-index case remains a C02
-fixture follow-up. **Evidence:** [C02 review](evidence/c02.md), [C03 review](evidence/c03.md) and
-original failed CI attempts.
+**Size:** M. **Status:** Open investigation; no production defect established. **Owner:** R35
+pre-integration observability assessment for the abandoned-download case; the split-index case
+remains a C02 fixture follow-up. **Evidence:** [C02 review](evidence/c02.md),
+[C03 review](evidence/c03.md) and original failed CI attempts.
 
 The tracing test sometimes captures zero `fetch.http` spans. The split-index test occasionally fails
 its Git-oracle assertion before girt reads the index. Passing retries do not close either finding.
@@ -585,7 +585,7 @@ different validation strategy; do not infer a safe cache size from R41's small r
 
 ### B06 — Credential Helper Early Exit
 
-**Size:** S. **Status:** Resolved in C03, pending native acceptance. **Owner:** C03. **Evidence:**
+**Size:** S. **Status:** Resolved in C03. **Owner:** C03. **Evidence:**
 [R26 platform run](evidence/r26.md#validation-and-remaining-scope) and
 [C03 review](evidence/c03.md).
 
@@ -593,7 +593,7 @@ The Ubuntu 22.04 R26 run observed `Broken pipe` in the two-helper fallback fixtu
 successful helper exits without reading stdin. C03 treats a closed stdin pipe after a successful
 helper exit as compatible with its response, while retaining other I/O failures and nonzero helper
 exits. A large-input fixture makes early closure observable. Retain the original failure and passing
-retry as evidence; C03 native validation must confirm the fix across applicable hosts.
+retry as evidence. C03 native validation passes on all four hosts.
 
 ### B07 — Additional Fetch Negotiation Rounds
 
