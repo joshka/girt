@@ -92,7 +92,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
-| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Review; ACL gate    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
+| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Review ready        | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -552,8 +552,11 @@ separate test. The caller must establish that these roots are disposable. R31 mu
 live roots independently; this confirmation is not a GC inventory. Automatic move discovery and
 durable multi-file recovery remain B02 rather than a broad scanner prerequisite. The
 explicit-retirement remedy at `70a8f81f957d20db1776643d88f127971eac89a7` passes the four-host
-reference and index runs, so R20 has scoped acceptance. The broad platform run retains Windows
-tracing and macOS transport-fixture failures; C02's ACL safety evidence gate remains open.
+reference and index runs, so R20 has scoped acceptance. The final
+[Windows ACL run](https://github.com/joshka/girt/actions/runs/36215849842) verifies actual read and
+write denial, safe refusal and retained private roots at `75150864ed6e06f7ae2ca8540ae91f65be2fd114`.
+The C02 task recommends scoped acceptance under the latency policy while retaining B03/B04 and the
+broad platform failures; it does not claim those matrices or optional path forms are green.
 
 The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
 index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate
@@ -563,13 +566,11 @@ partial effects and fixed-reader lifetimes should remain local to those owners r
 new shared storage framework. No other layering blocker was found in this scoped review; this is not
 a line-by-line revalidation of every accepted capability.
 
-Remaining C02 checks are bounded. Reproduce the tracing and split-index failures with targeted
+Remaining investigations are bounded. Reproduce the tracing and split-index failures with targeted
 instrumentation before changing code or weakening assertions. Review malformed alternate records
 against consumer-produced metadata; explicit rejection is acceptable unless it blocks a required
-repository, while permissive recovery remains a compatibility backlog candidate. Run native Windows
-UNC/drive-alias, denied ACL and WSL backlink cases where environments exist; retain an unavailable
-case as an open A16 gate, not a cross-build success. The R14 jj call-site inventory found no
-required girt raw status/checkout path; verify this again at R35 rather than implementing a Windows
-adapter solely to make refusal tests pass. R18/B01 remains deferred. R41 stays immediately after C02
-and before R21; its early corpus targets existing normal operations, with later capabilities
-extending A20 rather than delaying first integration for unmeasured edge cases.
+repository. Native UNC/drive-alias and WSL backlink cases retain B03 ownership where environments
+are unavailable; ordinary paths and cross-builds do not establish their behavior. The R14 jj
+call-site inventory found no required girt raw status/checkout path; R35 repeats it against its
+target revision. R18/B01 remains deferred. R41 stays immediately after C02 and before R21; its early
+corpus targets existing normal operations, with later capabilities extending A20.
