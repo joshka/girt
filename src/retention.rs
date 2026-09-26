@@ -16,11 +16,41 @@ pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 
 #[derive(Debug)]
 struct ObservedLog {
-    name: RefName,
+    source: ReflogSource,
     position: usize,
     seconds: i128,
     old: ObjectId,
     new: ObjectId,
+}
+
+/// One stored history's name and shared or per-worktree storage root.
+///
+/// Identical names in different worktrees denote different histories. The root is the canonical
+/// Git directory that owns this history, not the `logs` or `reftable` directory itself.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ReflogSource {
+    root: PathBuf,
+    name: RefName,
+}
+
+impl ReflogSource {
+    /// Identifies a history under its owning Git directory.
+    pub fn new(root: impl Into<PathBuf>, name: RefName) -> Self {
+        Self {
+            root: root.into(),
+            name,
+        }
+    }
+
+    /// Shared common directory or private worktree Git directory.
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    /// Exact byte-preserving history name.
+    pub fn name(&self) -> &RefName {
+        &self.name
+    }
 }
 
 /// Caller policy and aggregate work bounds for one observation.
@@ -94,7 +124,7 @@ pub struct RetentionPlan {
     /// Objects required after applying the caller's reflog expiry cutoffs.
     pub required: BTreeSet<ObjectId>,
     /// One-based record positions eligible for expiry in each stored log.
-    pub reflog_expiry_candidates: BTreeMap<RefName, Vec<usize>>,
+    pub reflog_expiry_candidates: BTreeMap<ReflogSource, Vec<usize>>,
     observed_logs: Vec<ObservedLog>,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
@@ -223,7 +253,7 @@ impl Repository {
             };
             if cutoff.is_some_and(|cutoff| record.seconds < cutoff) {
                 plan.reflog_expiry_candidates
-                    .entry(record.name.clone())
+                    .entry(record.source.clone())
                     .or_default()
                     .push(record.position);
             } else {
@@ -259,6 +289,7 @@ fn collect_roots(
     }
     let mut directories = vec![repository.common_dir().to_path_buf()];
     let mut reflog_bytes = 0u64;
+    let mut seen_logs = BTreeSet::new();
     let linked = repository
         .worktrees(policy.max_entries, cancel)
         .map_err(|e| e.to_string())?;
@@ -325,6 +356,15 @@ fn collect_roots(
             .imported_reflog_names(policy.max_entries, cancel)
             .map_err(|e| e.to_string())?
         {
+            let root = if name.per_worktree() {
+                repo.git_dir()
+            } else {
+                repo.common_dir()
+            };
+            let source = ReflogSource::new(root, name.clone());
+            if !seen_logs.insert(source.clone()) {
+                continue;
+            }
             let log = refs
                 .imported_reflog(&name, policy.reflog, cancel)
                 .map_err(|e| e.to_string())?
@@ -349,7 +389,7 @@ fn collect_roots(
                 }
                 if let Ok(fields) = record.fields() {
                     plan.observed_logs.push(ObservedLog {
-                        name: name.clone(),
+                        source: source.clone(),
                         position: position + 1,
                         seconds: fields.seconds,
                         old: fields.old,

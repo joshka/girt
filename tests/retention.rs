@@ -428,7 +428,51 @@ fn expiry_candidates_do_not_remove_live_or_reflog_observation() {
     assert!(plan.required.contains(&first));
     assert!(!plan.required.contains(&second));
     let name = girt::refs::RefName::new(b"refs/heads/deleted").unwrap();
-    assert_eq!(plan.reflog_expiry_candidates[&name], [1]);
+    let source = girt::retention::ReflogSource::new(repo.common_dir(), name);
+    assert_eq!(plan.reflog_expiry_candidates[&source], [1]);
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn expiry_positions_distinguish_private_heads_and_dedupe_shared_logs(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    let checkout = root.path().join("linked");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &second.to_string(),
+        ],
+        b"",
+    );
+    let linked = Repository::open(&checkout).unwrap();
+    let record = format!("{first} {second} A <a@example.com> 1700000000 +0000\tprivate\n");
+    fs::create_dir_all(repo.git_dir().join("logs")).unwrap();
+    fs::create_dir_all(linked.git_dir().join("logs")).unwrap();
+    fs::write(repo.git_dir().join("logs/HEAD"), &record).unwrap();
+    fs::write(linked.git_dir().join("logs/HEAD"), &record).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_before: Some(1700000001),
+        reflog_expire_unreachable_before: Some(1700000001),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    let head = girt::refs::RefName::new(b"HEAD").unwrap();
+    let main = girt::retention::ReflogSource::new(repo.git_dir(), head.clone());
+    let private = girt::retention::ReflogSource::new(linked.git_dir(), head);
+    let deleted = girt::retention::ReflogSource::new(
+        repo.common_dir(),
+        girt::refs::RefName::new(b"refs/heads/deleted").unwrap(),
+    );
+    assert_eq!(plan.reflog_expiry_candidates[&main], [1]);
+    assert_eq!(plan.reflog_expiry_candidates[&private], [1]);
+    assert_eq!(plan.reflog_expiry_candidates[&deleted], [1]);
 }
 
 #[test]

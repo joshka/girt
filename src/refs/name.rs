@@ -46,7 +46,7 @@ impl RefName {
         &self.0
     }
 
-    pub(super) fn per_worktree(&self) -> bool {
+    pub(crate) fn per_worktree(&self) -> bool {
         self.0 == b"HEAD"
             || [
                 b"refs/bisect/".as_slice(),
