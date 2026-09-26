@@ -114,7 +114,7 @@ consumer or native-platform evidence.
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c03.md)                             |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Complete            | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Complete            | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r32.md)                                                                                               |
-| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | In progress         | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r33.md)                                                                                               |
+| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Scoped accepted     | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r33.md); Windows destructive maintenance [B08](#b08--nonadmin-windows-destructive-maintenance)        |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
@@ -469,11 +469,13 @@ crash-durable replacement for old storage.
 
 ## R33 Destructive Maintenance Safety
 
-The [R33 evidence](evidence/r33.md) identifies prerequisites for full maintenance. A bounded loose
-prune, Unix files and reftable reflog expiry, Unix pack retirement, and their Unix composition now
-operate under caller-owned repository isolation. The loose prune retains every observed reflog root;
-pack retirement preserves all histories, protected packs and alternate stores. Non-Unix durable
-publication remains open. The additive R32 API and complete R31 plans do not authorize deletion.
+The [R33 evidence](evidence/r33.md) supports scoped Unix maintenance under caller-owned repository
+isolation: bounded loose pruning, files and reftable reflog expiry, pack retirement and their
+composition. The loose prune retains every observed reflog root; pack retirement preserves all
+histories, protected packs and alternate stores. Destructive expiry, pack retirement and composition
+refuse before mutation on Windows. [B08](#b08--nonadmin-windows-destructive-maintenance) owns
+ordinary nonadmin Windows durability and retirement before Windows jj parity can be claimed. The
+additive R32 API and complete R31 plans do not independently authorize deletion.
 
 ## R40 Completion
 
@@ -638,6 +640,30 @@ and dependency to validate. Measure a representative jj fetch before adding furt
 and stateless HTTP requests. Reopen if transfer size or latency materially affects an ordinary
 consumer workflow. This deferral does not cover a required v2-only endpoint or any missing/corrupt
 object acceptance; R35 must resolve those before integration.
+
+### B08 — Nonadmin Windows Destructive Maintenance
+
+**Size:** XL. **Status:** Deferred for Unix jj integration under the prioritization policy.
+**Owner:** Windows maintenance follow-up before claiming Windows jj parity. **Evidence:**
+[R33 report](evidence/r33.md#windows-volume-flush-probe).
+
+Windows files and reftable reflog expiry, old-pack retirement and composed destructive maintenance
+currently refuse before mutation. A Windows 2022 CI runner could flush its volume handle, but
+Microsoft documents volume flush as requiring administrator privileges. This cannot serve ordinary
+nonadmin jj use. Loose-object pruning has separate bounded safety behavior; the deferral does not
+weaken its root and ownership checks or permit unsafe deletion on any supported platform.
+
+Restart before a Windows jj workflow requires destructive maintenance or before claiming full
+Windows replacement. Establish a nonadmin publication protocol with filesystem-specific durability
+guarantees for pack/index pairs and files/reftable replacements. Preserve caller exclusion of
+external writers, pinned readers and alternate dependents; verify retained objects in durable owned
+storage before removing an old copy. Exercise native SHA-1 and SHA-256 fixtures with interrupted
+publication, directory or metadata flush failures, disk-full and permission failures, cancellation
+and open old-pack readers. Require recoverable partial reports, fresh retry scans, Git usability and
+bounded temporary disk, descriptor and memory evidence. Refuse before destructive mutation on any
+Windows filesystem where these guarantees cannot be established. A17 and R35 must report this
+limitation explicitly until the follow-up passes; data loss, corruption or unsafe mutation in the
+supported Unix scope remain blockers.
 
 ## C02 Storage and Layout Review
 

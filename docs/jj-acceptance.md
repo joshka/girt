@@ -346,6 +346,12 @@ names and private worktree stacks. Preserve recovered candidates and refuse dest
 corrupt, limited, cancelled or failed scans; a complete per-name live read is not repository-wide GC
 coordination. Policy and execution ownership remain unchanged.
 
+R33's scoped Unix maintenance can be assessed independently of ordinary nonadmin Windows destructive
+maintenance. Windows expiry, pack retirement and composition must refuse before mutation until
+[B08](jj-roadmap.md#b08--nonadmin-windows-destructive-maintenance) meets its durability,
+reader-isolation and native fault criteria. A scoped Unix acceptance does not establish Windows jj
+parity or excuse unsafe mutation within the supported scope.
+
 ### A18 — Architecture checkpoints
 
 **Tasks:** C01–C03 and earlier reviews if debt accumulates. Review layering, cohesive Git concepts,
