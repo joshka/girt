@@ -555,10 +555,16 @@ fn process(
     if !status.success() {
         return Err(CredentialError::Exit(action.unwrap_or("askpass")));
     }
-    written.map_err(|source| CredentialError::Io {
-        stage: "stdin",
-        source,
-    })?;
+    // A successful helper may answer without consuming every input field. Its closed stdin then
+    // yields BrokenPipe even though the response is valid and the process exited successfully.
+    if let Err(source) = written
+        && source.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(CredentialError::Io {
+            stage: "stdin",
+            source,
+        });
+    }
     read.map_err(|source| CredentialError::Io {
         stage: "stdout",
         source,
@@ -815,6 +821,19 @@ mod tests {
             session.helper_failures(),
             [(0, CredentialError::Exit("get"))]
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_helper_may_close_stdin_before_reading() {
+        let (_directory, helper) = helper("printf 'username=sample\\npassword=secret\\n\\n'");
+        let config = Config::parse(b"[credential]\nhelper = synthetic\n").unwrap();
+        let mut context = context(false);
+        context.host = vec![b'h'; 1024 * 1024];
+        let cancel = AtomicBool::new(false);
+        let session =
+            CredentialSession::fill(&config, context, &[helper], None, &cancel, None).unwrap();
+        assert!(session.credential().complete());
     }
 
     #[cfg(unix)]

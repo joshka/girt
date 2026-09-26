@@ -13,7 +13,9 @@
 //! explicit caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
 //! Both require a caller-owned Tokio runtime. [`crate::remote`] maps configured refspecs
 //! separately; callers must authorize force and supply exact expected values. Credential discovery,
-//! pruning and automatic force are deferred.
+//! pruning and automatic force are deferred. [`crate::remote::CredentialSession`] is a separate
+//! application-approved helper lifecycle; callers attach resulting credentials to their chosen
+//! transport and keep authentication approval or rejection under application control.
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
