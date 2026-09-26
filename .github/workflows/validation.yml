@@ -303,5 +303,7 @@ jobs:
           python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
       - name: Retention and repack cases
         run: cargo +stable test --locked --no-default-features --test retention
+      - name: Destructive maintenance fault and race cases
+        run: cargo +stable test --locked --no-default-features --lib retention::prune::tests
       - name: Retention API and benchmark lint
         run: cargo +stable clippy --locked --no-default-features --lib --test retention --bench retention -- -D warnings

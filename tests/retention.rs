@@ -6,7 +6,9 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
-use girt::retention::{RepackError, RepackLimits, RetentionOutcome, RetentionPolicy};
+use girt::retention::{
+    MaintenanceIsolation, PruneCause, RepackError, RepackLimits, RetentionOutcome, RetentionPolicy,
+};
 use girt::{ObjectId, PackLimits, ReadLimits, Repository};
 
 fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
@@ -80,6 +82,135 @@ fn fixture_format(format: &str) -> (tempfile::TempDir, Repository, ObjectId, Obj
 
 fn fixture() -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
     fixture_format("sha1")
+}
+
+struct FixtureIsolation;
+
+impl MaintenanceIsolation for FixtureIsolation {
+    type Guard = ();
+
+    fn acquire(&mut self, _: &Repository) -> std::io::Result<Self::Guard> {
+        // The disposable fixture has no independent writers, readers or alternate dependents.
+        Ok(())
+    }
+}
+
+struct RefusingIsolation;
+
+impl MaintenanceIsolation for RefusingIsolation {
+    type Guard = ();
+
+    fn acquire(&mut self, _: &Repository) -> std::io::Result<Self::Guard> {
+        Err(std::io::ErrorKind::WouldBlock.into())
+    }
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn isolated_loose_prune_keeps_git_roots_and_reflog_history(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
+    let orphan: ObjectId = orphan.parse().unwrap();
+    let path = root
+        .path()
+        .join("objects")
+        .join(&orphan.to_string()[..2])
+        .join(&orphan.to_string()[2..]);
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let result = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(result.deleted, [orphan]);
+    assert!(!path.exists());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+}
+
+#[test]
+fn loose_prune_refuses_without_isolation() {
+    let (root, repo, _, _) = fixture();
+    let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let error = repo
+        .prune_unreachable_loose(&mut RefusingIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(error.cause, PruneCause::Isolation(_)));
+    assert!(error.report.deleted.is_empty());
+    assert_eq!(git(root.path(), &["cat-file", "-t", &orphan], b""), "blob");
+}
+
+#[test]
+fn loose_prune_keeps_recent_unreachable_object() {
+    let (root, repo, _, _) = fixture();
+    let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"recent\n");
+    let result = repo
+        .prune_unreachable_loose(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(result.deleted.is_empty());
+    assert_eq!(git(root.path(), &["cat-file", "-t", &orphan], b""), "blob");
+}
+
+#[test]
+fn incomplete_scan_refuses_loose_deletion() {
+    let (root, repo, _, _) = fixture();
+    let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
+    fs::write(root.path().join("refs/heads/broken"), b"invalid\n").unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let error = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(error.cause, PruneCause::Incomplete(_)));
+    assert!(error.report.deleted.is_empty());
+    assert_eq!(git(root.path(), &["cat-file", "-t", &orphan], b""), "blob");
+}
+
+#[test]
+fn loose_prune_refreshes_shallow_state_before_scanning() {
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--bare", "--template=", "."], b"");
+    let tree = git(root.path(), &["mktree"], b"");
+    let parent = git(root.path(), &["commit-tree", &tree], b"parent\n");
+    let child = git(
+        root.path(),
+        &["commit-tree", &tree, "-p", &parent],
+        b"child\n",
+    );
+    git(root.path(), &["update-ref", "refs/heads/main", &child], b"");
+    fs::write(root.path().join("shallow"), format!("{child}\n")).unwrap();
+    let stale = Repository::open(root.path()).unwrap();
+    fs::remove_file(root.path().join("shallow")).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = stale
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.deleted.is_empty());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &parent], b""),
+        "commit"
+    );
 }
 
 #[rstest::rstest]

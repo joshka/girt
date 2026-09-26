@@ -5,9 +5,20 @@ use std::time::{Duration, SystemTime};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use girt::Repository;
-use girt::retention::{RepackLimits, RetentionPolicy};
+use girt::retention::{MaintenanceIsolation, RepackLimits, RetentionPolicy};
 #[path = "../tests/support/history_git.rs"]
 mod history_git;
+
+struct IsolatedFixture;
+
+impl MaintenanceIsolation for IsolatedFixture {
+    type Guard = ();
+
+    fn acquire(&mut self, _: &Repository) -> std::io::Result<Self::Guard> {
+        // This disposable fixture has no independent writers, readers or alternate dependents.
+        Ok(())
+    }
+}
 
 fn retention(c: &mut Criterion) {
     let mut parents = vec![vec![]];
@@ -43,6 +54,15 @@ fn retention(c: &mut Criterion) {
             repository.repack_retained(
                 black_box(&policy),
                 RepackLimits::default(),
+                black_box(&cancel),
+            )
+        })
+    });
+    c.bench_function("prune/idempotent-packed-linear-256", |bench| {
+        bench.iter(|| {
+            repository.prune_unreachable_loose(
+                &mut IsolatedFixture,
+                black_box(&policy),
                 black_box(&cancel),
             )
         })

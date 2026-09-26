@@ -11,6 +11,8 @@ use crate::{Commit, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Ta
 
 mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
+mod prune;
+pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 
 #[derive(Debug)]
 struct ObservedLog {

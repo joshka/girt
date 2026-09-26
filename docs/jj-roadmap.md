@@ -114,7 +114,7 @@ consumer or native-platform evidence.
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c03.md)                             |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Complete            | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Complete            | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r32.md)                                                                                               |
-| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Blocked             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [safety audit](evidence/r33.md)                                                                                           |
+| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | In progress         | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r33.md)                                                                                               |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
@@ -469,10 +469,12 @@ crash-durable replacement for old storage.
 
 ## R33 Destructive Maintenance Safety
 
-The [safety audit](evidence/r33.md) identifies prerequisites for deletion and reflog expiry. R33
-remains blocked until publication durability, exclusive writer coordination, old-reader retirement
-and complete owned-storage generation checks have an executable contract and fault evidence. The
-additive R32 API and complete R31 plans do not authorize deletion.
+The [R33 evidence](evidence/r33.md) identifies prerequisites for full maintenance. A bounded loose
+prune now operates under caller-owned repository isolation; it retains every observed reflog root
+and does not depend on R32 publication. Reflog expiry, pack retirement and composed maintenance
+remain open until publication durability, writer coordination, old-reader retirement and generation
+checks have an executable contract and fault evidence. The additive R32 API and complete R31 plans
+do not authorize deletion.
 
 ## R40 Completion
 
