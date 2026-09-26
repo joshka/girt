@@ -2,8 +2,9 @@
 
 This is a requirements matrix and corpus plan, not a passing-test report. IDs link the
 [roadmap](jj-roadmap.md) to concrete acceptance evidence. Capability completion evidence is linked
-from the roadmap; uncompleted rows remain pending. The initial inventory follows jj
-`be5f5ebdc200593d8f1be06f11e27b485a97093d`; paths below are relative to that jj checkout.
+from the roadmap; uncompleted rows remain pending or explicitly deferred under the
+[prioritization policy](jj-roadmap.md#prioritization-and-deferral-policy). The initial inventory
+follows jj `be5f5ebdc200593d8f1be06f11e27b485a97093d`; paths below are relative to that jj checkout.
 Requirements describe observed consumer boundaries without copying dependency implementation or
 tests. Girt's [testing contract](testing.md) applies to every row.
 
@@ -241,9 +242,13 @@ Git where semantics match; record any consumer-specific policy explicitly. Probe
 attributes/filter setup actually used rather than infer requirements from enabled gix features.
 Benchmark candidate explosion and cancellation. jj retains merge and copy-history algorithms.
 
-[R18 investigation](evidence/r18.md) retains the draft and both-format original observations. R18
-remains unaccepted: repeated-byte scoring and basename preselection differ from Git. Resolve the
-explicit scoring/pairing substep before accepting inference; passing draft checks do not close A11.
+[R18 investigation](evidence/r18.md) retains the usable draft and both-format original observations.
+The user defers known scoring and pairing differences to
+[B01](jj-roadmap.md#b01--r18-inferred-copy-scoring-and-pairing-parity). R18 remains a draft, not
+accepted or exact-compatible; passing checks do not close full A11 parity. This deferred
+investigation does not block R19/R20 or automatically precede first jj integration. R35 must assess
+and report actual user-visible differences and backlog disposition. Data loss, corruption, unsafe
+mutation and core required interoperability failures remain blockers under the roadmap policy.
 
 ### A12 — Worktree administration
 
@@ -351,11 +356,15 @@ are minimums. R34 includes a final coherence review after maintenance.
 
 ### A19 — Final replacement gate
 
-**Task:** R35 only. Start after all required girt capabilities, discovered follow-ups and R34 native
-acceptance are complete. Re-inventory jj call sites, exposed gix types, manifests and transitive
-components against the target revision. Integrate once, removing scoped gix/gix-ignore use and Git
-executable production endpoints, including GC/worktrees/local transfer. Audit subprocess execution
-and explicit extension programs so no fallback hides a missing capability.
+**Task:** R35 only. Start after required, non-deferred girt capabilities and follow-ups and R34
+native acceptance are complete. Explicitly deferred heuristic work, including
+[B01](jj-roadmap.md#b01--r18-inferred-copy-scoring-and-pairing-parity), is not automatically
+required before first integration; apply the
+[prioritization policy](jj-roadmap.md#prioritization-and-deferral-policy). Re-inventory jj call
+sites, exposed gix types, manifests and transitive components against the target revision. Integrate
+once, removing scoped gix/gix-ignore use and Git executable production endpoints, including
+GC/worktrees/local transfer. Audit subprocess execution and explicit extension programs so no
+fallback hides a missing capability.
 
 Run jj core/lib/CLI Git, Gerrit, workspace, colocation, ignore, signing and GC suites in both
 formats on native platforms. Exercise init/clone/import, binary snapshot, conflict/rewrite,
@@ -365,8 +374,11 @@ Compare baseline import/log/rewrite resources and inspect failures and leaked lo
 execution in production-path tests while allowing separate oracle invocations; controlled remote
 servers may use Git. Inventory remaining dependencies and extension programs with reasons. Publish
 no claim of universal edge-case parity: link tested cases, differences, limitations and exact
-revisions. The final gate cannot close with a required Git CLI fallback or unresolved
-supported-behavior regression.
+revisions. Assess deferred heuristics against actual consumer behavior and explicitly report
+user-visible differences, impact and backlog disposition; do not silently claim parity. The final
+gate cannot close with a required Git CLI fallback, data loss, corruption, unsafe mutation or
+unresolved core required interoperability failure. Deferral does not waive these blockers or other
+non-deferred requirements.
 
 ### A20 — Representative Git-parity performance
 

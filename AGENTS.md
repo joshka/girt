@@ -9,6 +9,11 @@
   behavior or another library's API is not the goal.
 - Report unsupported cases explicitly.
 - Build narrow, usable increments; avoid speculative abstractions or configuration complexity.
+- Prioritize lower-latency paths to working jj integration. Defer subtle heuristic or edge-case
+  differences that would materially delay it, recording limitations and restart criteria under the
+  [roadmap prioritization policy](docs/jj-roadmap.md#prioritization-and-deferral-policy). Data loss,
+  corruption, unsafe mutation and core required interoperability remain blockers; deferral never
+  establishes compatibility or acceptance.
 - Design cohesive Git APIs from first principles; consumer call sites establish requirements, not
   method names or architecture to copy. See [Rust Conventions](docs/rust-conventions.md).
 - Track full jj coverage in the [roadmap](docs/jj-roadmap.md); use its acceptance contracts and

@@ -48,10 +48,15 @@ reason. Link retained artifacts and independently generated fixture provenance. 
 finite corpus as exhaustive parity proof.
 
 The coordinator presents that concise summary, updates the roadmap status and completion links, adds
-discovered follow-ups and dependency changes, and dispatches the next ready item only after
-acceptance. Use completion callbacks instead of polling. A blocked acceptance criterion remains
-open; unit-test success or a platform cross-build does not close it. Newly discovered required
-behavior must be queued before final integration rather than silently excluded.
+discovered follow-ups and dependency changes, and dispatches the next ready item after acceptance or
+an explicit deferral under the
+[roadmap prioritization policy](jj-roadmap.md#prioritization-and-deferral-policy). Use completion
+callbacks instead of polling. A blocked acceptance criterion remains open; unit-test success or a
+platform cross-build does not close it. Deferred heuristic work stays visibly unaccepted in the
+comeback backlog without automatically gating unrelated work or first integration. Final integration
+must assess and report its user-visible impact. Newly discovered core required behavior must be
+queued and resolved before final integration rather than silently excluded; data loss, corruption
+and unsafe mutation remain blockers.
 
 Review architecture, layering, cohesion, and abstraction debt after approximately ten completed
 items, and earlier when cross-cutting issues accumulate. Record concrete findings and bounded

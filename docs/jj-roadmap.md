@@ -39,6 +39,27 @@ implements the identity foundation; R04/R05 propagate it through storage before 
 Both signature header spellings need byte-preserving treatment, even before SHA-256 storage works.
 No Rust implementation is part of this roadmap change.
 
+## Prioritization and Deferral Policy
+
+Prioritize lower-latency approaches toward working jj integration. When resolving subtle heuristic
+or edge-case differences would materially lengthen that path, retain usable work and record a named
+backlog item with evidence, user-visible limitations and restart criteria. Deferral changes
+scheduling, not the correctness claim: do not label a draft accepted or exact-compatible, remove
+functionality silently, weaken expected observations or hide differences behind a Git production
+fallback.
+
+Data loss, corruption, unsafe mutation and failures of core required interoperability remain
+blockers. A heuristic difference may be deferred only while it stays outside those categories; if
+consumer evidence shows otherwise, promote the affected behavior back to required work.
+
+Explicitly deferred items do not block unrelated queue entries or automatically become prerequisites
+for first jj integration. This rule applies to ranged dependencies and completion gates at C02, R34
+and R35 as well as the default serial order. Those gates still assess the available implementation,
+required native coverage and safety evidence. Final integration must evaluate and explicitly report
+user-visible differences against the target jj revision, their impact and the retained backlog
+ownership. It must not silently claim parity or treat passing draft tests as acceptance. Preserve
+all non-deferred requirements.
+
 ## Ordered Queue
 
 IDs are stable; append follow-ups rather than renumbering. Dependencies are minimum prerequisites;
@@ -68,7 +89,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
 | R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
-| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Blocked             | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
+| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Planned             | [A12](jj-acceptance.md#a12--worktree-administration)                                                                                                                         |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
@@ -415,18 +436,48 @@ adapter/test revision `6fa1d9142309ae22ec7574a06abc374b179f86fe` and evidence ch
 evidence. Source loading, OS conversion and traversal remain caller-owned; the 20 Windows
 terminal-backslash adapter differences remain recorded. Process-batch ratios do not establish
 overall matcher or library parity. R41 retains A20 performance acceptance after C02 and before R21;
-existing C02 owners remain unchanged. R18 is next.
+existing C02 owners remain unchanged. R18 subsequently reached the deferred draft state below.
 
-## R18 Compatibility Investigation
+## R18 Deferred Draft
 
-[R18 draft and investigation evidence](evidence/r18.md) records the proposed API, caller policies,
-validation, exploratory measurements and the scoring blocker. R18 remains unaccepted. Draft
-`d84f351d12abb9f35b7075e6a3e46cea60f07bf7` is separate from the independent investigation change.
-Both-format executable controls retain 168 cases each: 38 differences include plausible repeated
-separator lines and Git's documented basename preselection. Span equality is not accepted as Git
-parity. The full original inputs and outputs are retained with the evidence.
+The user defers the unresolved R18 scoring and pairing investigation under the
+[prioritization policy](#prioritization-and-deferral-policy). The draft is neither accepted nor
+exact-compatible. Preserve its usable API, implementation and tests at
+`d84f351d12abb9f35b7075e6a3e46cea60f07bf7`; investigation revision
+`285e27e79d3e6264760b179e97aac4536827dda1` retains the original observations and measurements.
+[R18 evidence](evidence/r18.md) records 168 cases per format, including 38 differences involving
+repeated-byte scoring and basename selection.
 
-The scoring/pairing compatibility substep remains explicitly open, pending a user decision about a
-broader independent investigation or a lawful sufficiently precise behavioral specification. Do not
-special-case observed examples, weaken required semantics, inspect prohibited implementation/test
-source or dispatch a successor. R19, R20, C02 and R41 retain their established order and scope.
+R19 is ready based on its R10–R13 prerequisites; R20 continues to depend on R19. Neither waits for
+R18 heuristic parity. C02, R41 and later work retain their other prerequisites and owners. The
+backlog item below is not an automatic gate before first jj integration. Final integration assesses
+the draft's actual consumer behavior and reports remaining differences explicitly. The coordinator
+owns subsequent dispatch; this documentation change dispatches nothing.
+
+## Comeback Backlog
+
+### B01 — R18 Inferred-Copy Scoring and Pairing Parity
+
+**Status:** Deferred by user decision. **Owner:** R18 follow-up, coordinated through the roadmap.
+**Evidence:** [R18 report](evidence/r18.md), draft `d84f351d12abb9f35b7075e6a3e46cea60f07bf7`,
+investigation `285e27e79d3e6264760b179e97aac4536827dda1`, and
+[full original observations](../tests/fixtures/rewrites/observed.json).
+
+The draft can omit relationships or choose different sources/scores than Git for repeated spans and
+competing basenames. These may affect inferred copy/rename records and their consumer presentation;
+the final jj integration impact is not yet established. The unchanged jj baseline also uses
+different heuristics, so Git differences alone do not establish every jj-visible outcome. Retain
+exact failing observations and existing tests without claiming full A11 acceptance.
+
+Restart when concrete jj integration evidence makes an affected relationship materially necessary,
+when the user reprioritizes parity after a working integration, or when a lawful sufficiently
+precise behavioral specification enables a bounded implementation. If evidence establishes data
+loss, corruption, unsafe mutation or failure of core required interoperability, reclassify that
+behavior as a blocker immediately rather than leave it in this backlog.
+
+On restart, verify the retained revisions and target jj call sites, reproduce the relevant original
+cases, and define a bounded scoring/pairing experiment or implementation plan. Preserve independent
+implementation provenance, resource bounds, cancellation and structured errors. Run affected
+compatibility and native checks and assess ordinary-case impact before changing acceptance claims.
+Until then, no further scoring investigation is required for unrelated work or automatically before
+first integration; R35 must report its assessment and this deferred item's disposition.
