@@ -351,15 +351,14 @@ fn declarations_do_not_hide_missing_or_wrong_kind_boundary_objects(#[case] forma
     assert!(
         matches!(objects.walk(&[missing], HistoryLimits::default()), Err(HistoryError::Missing(id)) if id == missing)
     );
-    assert!(matches!(
-        girt::fetch::KnownHistory::new(
-            &objects,
-            &[],
-            girt::fetch::FetchLimits::default(),
-            &AtomicBool::new(false)
-        ),
-        Err(girt::fetch::FetchError::Unsupported(_))
-    ));
+    assert!(matches!(girt::fetch::KnownHistory::new(&objects, &[blob],
+        girt::fetch::FetchLimits::default(), &AtomicBool::new(false)),
+        Err(girt::fetch::FetchError::Kind(id)) if id == blob));
+    assert!(
+        matches!(girt::fetch::KnownHistory::new(&objects, &[missing],
+        girt::fetch::FetchLimits::default(), &AtomicBool::new(false)),
+        Err(girt::fetch::FetchError::Missing(id)) if id == missing)
+    );
 }
 
 #[cfg(unix)]

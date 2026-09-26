@@ -7,7 +7,7 @@ use super::import::Imported;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::{ObjectId, Repository};
 
-/// A validated protocol response with internal delta bases and selected-tip connectivity.
+/// A validated protocol response with resolved delta bases and selected-tip connectivity.
 ///
 /// Owns the original pack and generated index, but no repository files. Drop it to discard a
 /// transfer. Payloads used during validation are released before this result is returned.
@@ -22,6 +22,7 @@ pub struct ReceivedFetch {
     checksum: Option<ObjectId>,
     objects: usize,
     dependencies: Vec<ObjectId>,
+    shallow: Vec<ObjectId>,
     limits: FetchLimits,
 }
 
@@ -46,6 +47,7 @@ impl ReceivedFetch {
             checksum: None,
             objects: 0,
             dependencies: vec![],
+            shallow: vec![],
             limits: FetchLimits::default(),
         }
     }
@@ -64,6 +66,7 @@ impl ReceivedFetch {
             checksum: contents.checksum,
             objects: contents.objects,
             dependencies: contents.dependencies,
+            shallow: vec![],
             limits: contents.limits,
         }
     }
@@ -75,15 +78,19 @@ impl ReceivedFetch {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
-        let dependencies = connectivity::validate_with_known(
+        let dependencies = connectivity::validate_with_boundaries(
             &Default::default(),
             &known.objects,
             &wants,
+            &known.shallow,
             limits,
             cancel,
         )?;
+        let format = advertisement.object_format()?;
         let mut result = Self::empty(advertisement);
+        result.format = format;
         result.dependencies = dependencies;
+        result.shallow = known.shallow.clone();
         result.wants = wants;
         result.limits = limits;
         Ok(result)
@@ -94,27 +101,31 @@ impl ReceivedFetch {
         wants: Vec<ObjectId>,
         pack: Vec<u8>,
         known: &KnownHistory,
+        shallow: Vec<ObjectId>,
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
-        let imported = Imported::read(crate::ObjectFormat::Sha1, &pack, limits, cancel)?;
-        let dependencies = connectivity::validate_with_known(
+        let format = advertisement.object_format()?;
+        let imported = Imported::read_with_known(format, &pack, &known.objects, limits, cancel)?;
+        let dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
             &known.objects,
             &wants,
+            &shallow,
             limits,
             cancel,
         )?;
         check_cancelled(cancel)?;
         Ok(Self {
-            format: crate::ObjectFormat::Sha1,
+            format,
             advertisement,
             wants,
-            pack,
+            pack: imported.complete_pack.unwrap_or(pack),
             index: imported.index,
             checksum: Some(imported.checksum),
             objects: imported.objects.len(),
             dependencies,
+            shallow,
             limits,
         })
     }
@@ -134,18 +145,24 @@ impl ReceivedFetch {
         self.objects
     }
 
-    /// Original pack size, including pack header/checksum; zero for an empty or known-only
-    /// selection.
+    /// Installable pack size, including header/checksum; zero for an empty or known-only
+    /// selection. A received thin pack is rewritten, so this can differ from wire size.
     pub fn pack_bytes(&self) -> usize {
         self.pack.len()
     }
 
+    /// Resulting shallow commit boundaries reported by upload-pack. These require coordinated
+    /// metadata publication with the pack before a depth-limited result can be installed.
+    pub fn shallow_roots(&self) -> &[ObjectId] {
+        &self.shallow
+    }
+
     /// Publishes the validated pack and index without replacing any existing artifact.
     ///
-    /// Shallow destinations (including a live shallow file created after opening) are refused.
-    /// Callers must exclude concurrent depth changes for the complete installation.
-    /// The destination format must match the received pack. Wire-protocol SHA-256 negotiation
-    /// remains unsupported; native local transfers may install SHA-256 packs.
+    /// Shallow results and destinations (including a live shallow file created after opening) are
+    /// refused. Callers must exclude concurrent depth changes for the complete installation.
+    /// The destination format must match the received pack. Complete SHA-1 and SHA-256 wire and
+    /// native-local transfers may be installed.
     ///
     /// Writes temporary files in the destination pack directory, completes and syncs their
     /// contents, then publishes the pack before its index using no-clobber persistence. The
@@ -211,6 +228,11 @@ impl ReceivedFetch {
                 return Err(FetchError::Unsupported("destination object format differs"));
             }
             check_cancelled(cancel)?;
+            if !self.shallow.is_empty() {
+                return Err(FetchError::Unsupported(
+                    "shallow installation requires boundary publication",
+                ));
+            }
             if !repository.shallow_roots().is_empty()
                 || repository.common_dir().join("shallow").try_exists()?
             {

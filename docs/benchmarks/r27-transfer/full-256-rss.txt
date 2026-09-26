@@ -1,0 +1,37 @@
+fetch-workload,16,3697,574362,3804
+fetch-incremental,16,19,39662,1,192
+fetch-workload,256,19631,9185238,19738
+fetch-incremental,256,259,629089,1,193
+Benchmarking fetch/transfer-full-256
+Benchmarking fetch/transfer-full-256: Warming up for 1.0000 s
+
+Warning: Unable to complete 10 samples in 1.0s. You may wish to increase target time to 1.9s or enable flat sampling.
+Benchmarking fetch/transfer-full-256: Collecting 10 samples in estimated 1.8828 s (55 iterations)
+Benchmarking fetch/transfer-full-256: Analyzing
+fetch/transfer-full-256 time:   [35.511 ms 35.969 ms 36.650 ms]
+                        thrpt:  [239.01 MiB/s 243.53 MiB/s 246.67 MiB/s]
+                 change:
+                        time:   [−1.8972% +0.7439% +3.6368%] (p = 0.66 > 0.05)
+                        thrpt:  [−3.5092% −0.7384% +1.9339%]
+                        No change in performance detected.
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high severe
+
+        5.11 real         4.06 user         0.91 sys
+            64946176  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              203075  page reclaims
+                2435  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  32  voluntary context switches
+                5512  involuntary context switches
+         43875007276  instructions retired
+         11414898728  cycles elapsed
+            62488960  peak memory footprint

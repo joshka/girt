@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use super::{Advertisement, DownloadedFetch, FetchError, FetchLimits, KnownHistory, protocol};
@@ -34,6 +35,23 @@ pub async fn receive_http(
     remote: &HttpRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: Option<Arc<KnownHistory>>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<DownloadedFetch, FetchError> {
+    receive_http_with_depth(remote, select, known, None, limits, control).await
+}
+
+/// Downloads a depth-limited upload-pack response. Validation reports resulting boundaries;
+/// installation requires coordinated shallow metadata publication by the caller's workflow.
+///
+/// # Errors
+///
+/// Returns [`receive_http`]'s errors and rejects peers without shallow support.
+pub async fn receive_http_with_depth(
+    remote: &HttpRemote,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: Option<Arc<KnownHistory>>,
+    depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<DownloadedFetch, FetchError> {
@@ -76,6 +94,7 @@ pub async fn receive_http(
             &advertisement,
             select(&advertisement),
             history,
+            depth,
             limits,
             control.cancel,
         )?;

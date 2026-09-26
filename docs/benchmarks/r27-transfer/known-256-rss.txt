@@ -1,0 +1,34 @@
+fetch-workload,16,3697,574362,3804
+fetch-incremental,16,19,39662,1,192
+fetch-workload,256,19631,9185238,19738
+fetch-incremental,256,259,629089,1,193
+Benchmarking fetch/transfer-known-256
+Benchmarking fetch/transfer-known-256: Warming up for 1.0000 s
+Benchmarking fetch/transfer-known-256: Collecting 10 samples in estimated 1.6101 s (110 iterations)
+Benchmarking fetch/transfer-known-256: Analyzing
+fetch/transfer-known-256
+                        time:   [13.932 ms 14.090 ms 14.384 ms]
+                        thrpt:  [609.00 MiB/s 621.69 MiB/s 628.77 MiB/s]
+                 change:
+                        time:   [−5.3162% −3.1455% −1.0052%] (p = 0.01 < 0.05)
+                        thrpt:  [+1.0155% +3.2476% +5.6147%]
+                        Performance has improved.
+
+        5.55 real         4.19 user         1.20 sys
+            53084160  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              202672  page reclaims
+                2435  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  32  voluntary context switches
+                6027  involuntary context switches
+         32190762646  instructions retired
+         12842041466  cycles elapsed
+            50610560  peak memory footprint

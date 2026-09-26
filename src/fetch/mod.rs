@@ -13,16 +13,20 @@
 //!
 //! Wants must be advertised IDs. Native local receive reads girt storage directly. [`receive`]
 //! requests full histories over a caller-owned stream; [`receive_with_known`] uses
-//! bounded [`KnownHistory`] to negotiate incremental transfers. Received delta bases stay internal,
-//! while selected-tip connectivity can depend on verified local objects. Installation rechecks
-//! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
-//! `multi_ack` are the only requested capabilities. Thin packs, shallow/filter
-//! requests, automatic tags, pruning and protocol v1/v2 transfer are outside the transfer boundary.
+//! bounded [`KnownHistory`] to negotiate incremental transfers. Verified external delta bases in a
+//! thin pack are resolved and rewritten as a self-contained pack before installation. Selected-tip
+//! connectivity can depend on verified local objects; installation rechecks those dependencies.
+//! [`receive_with_known_depth`] and the owned network depth variants report shallow boundaries,
+//! but ordinary installation refuses them until boundary publication is implemented. Transfer
+//! requests `side-band-64k` and available `ofs-delta`, `thin-pack`, `multi_ack`, `shallow`, and
+//! SHA-256 object-format capabilities as needed. Filtering, automatic tags, pruning and protocol
+//! v2 transfer remain outside this boundary.
 //! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
 //! [`discover_session`]
 //! report references, object format and deterministic HEAD interpretation without transferring
 //! objects. The owned network endpoints currently request v0; caller-owned streams accept v0/v1
-//! and v2 `ls-refs`. A preview can become stale and never authorizes a later mutation.
+//! and v2 `ls-refs`. V0/v1 wire transfer supports both object formats. A preview can become stale
+//! and never authorizes a later mutation.
 //! The `http` and `ssh` features add owned async network downloads with separate synchronous
 //! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
 //! a caller-managed blocking worker without borrowing its initiating scope.
@@ -32,12 +36,12 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::receive_ssh;
+pub use ssh::{receive_ssh, receive_ssh_with_depth};
 
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
-pub use http::receive_http;
+pub use http::{receive_http, receive_http_with_depth};
 
 #[cfg(any(
     feature = "http",
@@ -86,20 +90,37 @@ mod local;
 mod local_native;
 mod protocol;
 
+use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) use install::NativeContents;
 pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
 pub use local::{receive_local, receive_local_with_control, receive_local_with_known};
-pub use protocol::{AdvertisedRef, Advertisement, receive, receive_with_known};
+pub use protocol::{
+    AdvertisedRef, Advertisement, receive, receive_with_known, receive_with_known_depth,
+};
+
+/// Resource bounds and optional positive commit depth for one wire fetch.
+///
+/// `depth` counts commits from each selected tip. `None` requests no depth change. A positive
+/// depth can return shallow boundaries; ordinary installation rejects such a result until
+/// coordinated boundary publication is available.
+#[derive(Debug, Clone, Copy)]
+pub struct FetchOptions {
+    /// Wire, decoding, and graph budgets.
+    pub limits: FetchLimits,
+    /// Requested commit depth, or no depth change.
+    pub depth: Option<NonZeroU32>,
+}
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
 ///
 /// Retained buffers are O(`max_wire_bytes` + `max_decode_bytes` + `max_objects` +
 /// `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads bounded by
-/// `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs at most 36
-/// bytes per object plus 1072 bytes. Graph parsing can temporarily copy a structured payload and
+/// `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs at most 44
+/// bytes per object plus 1072 bytes. Thin-pack completion can retain a second pack bounded by
+/// `max_pack_bytes`. Graph parsing can temporarily copy a structured payload and
 /// its fields. These input/work bounds exclude allocator overhead, stream-owned buffers, fixed zlib
 /// scratch space, and server memory; they are not a hard process heap or wall-clock limit. Zero
 /// bounds allow only the corresponding empty operation. Counters include duplicate input
@@ -118,6 +139,8 @@ pub struct FetchLimits {
     /// with multi-ACK, or one without it.
     /// Additional verified commits are retained for connectivity but not offered as haves.
     pub max_haves: usize,
+    /// Shallow boundary IDs retained and sent in one negotiation (default 100,000).
+    pub max_shallow_roots: usize,
     /// Objects retained while verifying local history (default one million).
     pub max_known_objects: usize,
     /// Aggregate local payload bytes retained (default 256 MiB).
@@ -153,6 +176,7 @@ impl Default for FetchLimits {
             max_refs: 100_000,
             max_wants: 100_000,
             max_haves: 256,
+            max_shallow_roots: 100_000,
             max_known_objects: 1_000_000,
             max_known_bytes: 256 * 1024 * 1024,
             max_known_edges: 4_000_000,
@@ -172,7 +196,7 @@ impl Default for FetchLimits {
 /// Transfer, validation, or installation failed. No references have been changed.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A supplied identity uses a different object format from this operation.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
@@ -228,8 +252,8 @@ pub enum FetchError {
         #[source]
         source: crate::ObjectReadError,
     },
-    /// Index encoding failed.
-    #[error("received index: {0}")]
+    /// Received index encoding or thin-pack completion failed before installation.
+    #[error("received pack/index construction: {0}")]
     Index(#[from] crate::PackWriteError),
     /// A selected tip or reachable object is absent from both received and verified local objects.
     #[error("missing reachable object {0}")]

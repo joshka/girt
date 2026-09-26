@@ -4,10 +4,11 @@ use std::sync::atomic::AtomicBool;
 use super::{FetchError as Error, FetchLimits, check_cancelled};
 use crate::{Object, ObjectId, ObjectKind, Objects};
 
-/// Verified local history offered to upload-pack as knowledge of complete commit ancestry.
+/// Verified local history offered to upload-pack, including declared shallow boundaries.
 ///
-/// Construction reads and validates the entire reachable graph from explicit roots, including
-/// trees and typed tag targets, skipping external gitlinks. Missing or corrupt local objects fail
+/// Construction reads and validates the reachable graph from explicit roots to any declared
+/// shallow boundaries, including trees and typed tag targets, skipping external gitlinks. Missing
+/// or corrupt local objects fail
 /// before any have is sent. Roots may be any supported kind; only commits become have lines.
 /// Commit discovery is breadth-first in caller root and payload edge order, capped by
 /// [`FetchLimits::max_haves`]. A small cap can reduce negotiation effectiveness, never correctness.
@@ -17,6 +18,7 @@ use crate::{Object, ObjectId, ObjectKind, Objects};
 pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
     pub(super) haves: Vec<ObjectId>,
+    pub(super) shallow: Vec<ObjectId>,
 }
 
 impl KnownHistory {
@@ -30,25 +32,21 @@ impl KnownHistory {
     /// # Errors
     ///
     /// Fails on missing/corrupt objects, malformed payloads, mistyped edges, cancellation or
-    /// bounds. SHA-256 stores are refused because fetch negotiation is currently SHA-1-only.
-    /// Shallow snapshots are refused until boundary negotiation is implemented. To request a
-    /// full transfer into a complete destination, explicitly use [`KnownHistory::default`].
+    /// bounds. Declared shallow commits stop parent traversal and are sent to the peer. To request
+    /// a full transfer into a complete destination, explicitly use [`KnownHistory::default`].
     pub fn new(
         store: &Objects,
         roots: &[ObjectId],
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        if store.object_format() != crate::ObjectFormat::Sha1 {
-            return Err(Error::Unsupported("SHA-256 fetch negotiation"));
-        }
         Self::new_local(store, roots, limits, cancel)
     }
 
-    /// Validates complete local history in either object format for native transfer decisions.
+    /// Validates local history in either object format for native transfer decisions.
     ///
-    /// Uses [`Self::new`]'s graph, resource and cancellation contract without the wire protocol's
-    /// SHA-1 restriction. The caller must keep verified roots available through publication.
+    /// Uses [`Self::new`]'s graph, resource and cancellation contract. The caller must keep
+    /// verified roots available through publication.
     pub fn new_local(
         store: &Objects,
         roots: &[ObjectId],
@@ -56,13 +54,16 @@ impl KnownHistory {
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         check_cancelled(cancel)?;
-        if !store.shallow_roots().is_empty() {
-            return Err(Error::Unsupported("shallow fetch negotiation"));
-        }
         if roots.len() > limits.max_wants {
             return Err(Error::Limit("known roots"));
         }
-        let mut result = Self::default();
+        let mut result = Self {
+            shallow: store.shallow_roots().iter().collect(),
+            ..Self::default()
+        };
+        if result.shallow.len() > limits.max_shallow_roots {
+            return Err(Error::Limit("shallow roots"));
+        }
         let mut pending = VecDeque::new();
         let mut expected = HashMap::new();
         for &id in roots {
@@ -78,13 +79,21 @@ impl KnownHistory {
                 .read(id, read)
                 .map_err(|source| Error::LocalRead { id, source })?
                 .ok_or(Error::Missing(id))?;
+            if store.shallow_roots().contains(id) && object.kind() != ObjectKind::Commit {
+                return Err(Error::Kind(id));
+            }
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));
             }
             bytes = bytes
                 .checked_sub(object.data().len())
                 .ok_or(Error::Limit("known bytes"))?;
+            let shallow_commit =
+                object.kind() == ObjectKind::Commit && store.shallow_roots().contains(id);
             let edge = |target, kind| {
+                if shallow_commit && kind == ObjectKind::Commit {
+                    return Ok(());
+                }
                 check_cancelled(cancel)?;
                 edges = edges.checked_sub(1).ok_or(Error::Limit("known edges"))?;
                 if result
@@ -105,6 +114,7 @@ impl KnownHistory {
             }
             result.objects.insert(id, object);
         }
+        result.shallow.retain(|id| result.objects.contains_key(id));
         Ok(result)
     }
 

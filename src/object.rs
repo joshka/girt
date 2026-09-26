@@ -102,10 +102,6 @@ impl ObjectId {
         self.as_bytes().iter().all(|&b| b == 0)
     }
 
-    pub(crate) fn require_sha1(self) -> Result<(), ObjectFormatError> {
-        self.require_format(ObjectFormat::Sha1)
-    }
-
     pub(crate) fn require_format(self, expected: ObjectFormat) -> Result<(), ObjectFormatError> {
         if self.format() == expected {
             Ok(())

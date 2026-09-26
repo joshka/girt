@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use super::{Advertisement, DownloadedFetch, FetchError, FetchLimits, KnownHistory, protocol};
@@ -33,6 +34,23 @@ pub async fn receive_ssh(
     remote: &SshRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: Option<Arc<KnownHistory>>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<DownloadedFetch, FetchError> {
+    receive_ssh_with_depth(remote, select, known, None, limits, control).await
+}
+
+/// Downloads a depth-limited upload-pack response from one SSH session. Validation reports
+/// resulting boundaries; installation requires coordinated shallow metadata publication.
+///
+/// # Errors
+///
+/// Returns [`receive_ssh`]'s errors and rejects peers without shallow support.
+pub async fn receive_ssh_with_depth(
+    remote: &SshRemote,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: Option<Arc<KnownHistory>>,
+    depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<DownloadedFetch, FetchError> {
@@ -74,6 +92,7 @@ pub async fn receive_ssh(
             &advertisement,
             select(&advertisement),
             history,
+            depth,
             limits,
             control.cancel,
         )?;

@@ -17,12 +17,24 @@ pub(crate) struct Imported {
     pub objects: HashMap<ObjectId, Object>,
     pub index: Vec<u8>,
     pub checksum: ObjectId,
+    pub complete_pack: Option<Vec<u8>>,
 }
 
 impl Imported {
+    #[cfg(test)]
     pub fn read(
         format: crate::ObjectFormat,
         data: &[u8],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, FetchError> {
+        Self::read_with_known(format, data, &HashMap::new(), limits, cancel)
+    }
+
+    pub fn read_with_known(
+        format: crate::ObjectFormat,
+        data: &[u8],
+        known: &HashMap<ObjectId, Object>,
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
@@ -91,10 +103,48 @@ impl Imported {
             if !input.is_empty() {
                 return Err(Error::Corrupt("trailing pack entries").into());
             }
-            let objects = resolve(format, &mut entries, limits, &mut remaining, cancel)?;
+            let (objects, external) =
+                resolve(format, &mut entries, known, limits, &mut remaining, cancel)?;
             #[cfg(feature = "tracing")]
             span.record("decoded_bytes", limits.max_decode_bytes - remaining)
                 .record("objects", objects.len());
+            if external {
+                check_cancelled(cancel)?;
+                let inputs: Vec<_> = entries
+                    .iter()
+                    .map(|entry| {
+                        let id = entry.resolved.unwrap().0;
+                        let object = &objects[&id];
+                        crate::PackObject {
+                            id,
+                            kind: object.kind(),
+                            data: object.data(),
+                        }
+                    })
+                    .collect();
+                let mut pack = Vec::new();
+                let mut index = Vec::new();
+                let written = crate::write_pack(
+                    format,
+                    &inputs,
+                    &mut pack,
+                    &mut index,
+                    crate::PackWriteLimits {
+                        max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
+                        max_object_bytes: limits.max_object_bytes as u64,
+                        max_input_bytes: limits.max_decode_bytes as u64,
+                        max_pack_bytes: limits.max_pack_bytes as u64,
+                        ..Default::default()
+                    },
+                )?;
+                check_cancelled(cancel)?;
+                return Ok(Self {
+                    objects,
+                    index,
+                    checksum: written.checksum,
+                    complete_pack: Some(pack),
+                });
+            }
             let mut index_entries: Vec<_> = entries
                 .iter()
                 .map(|entry| Entry {
@@ -109,6 +159,7 @@ impl Imported {
                 objects,
                 index,
                 checksum,
+                complete_pack: None,
             })
         };
         #[cfg(feature = "tracing")]
@@ -183,10 +234,11 @@ fn base(
 fn resolve(
     format: crate::ObjectFormat,
     entries: &mut [ReceivedEntry],
+    known: &HashMap<ObjectId, Object>,
     limits: FetchLimits,
     remaining: &mut usize,
     cancel: &AtomicBool,
-) -> Result<HashMap<ObjectId, Object>, FetchError> {
+) -> Result<(HashMap<ObjectId, Object>, bool), FetchError> {
     let offsets: HashMap<_, _> = entries
         .iter()
         .enumerate()
@@ -195,6 +247,7 @@ fn resolve(
     let mut identities = HashMap::new();
     let mut objects: HashMap<ObjectId, Object> = HashMap::new();
     let mut work = limits.max_resolution_steps;
+    let mut external = false;
     while objects.len() < entries.len() {
         let before = objects.len();
         for i in 0..entries.len() {
@@ -217,9 +270,19 @@ fn resolve(
                     Some(base)
                 }
                 Base::Id(id) => {
-                    let Some(&depth) = identities.get(&id) else {
+                    let Some(depth) = identities
+                        .get(&id)
+                        .copied()
+                        .or_else(|| known.contains_key(&id).then_some(0))
+                    else {
                         continue;
                     };
+                    if !identities.contains_key(&id) {
+                        if known[&id].id() != id {
+                            return Err(Error::Corrupt("external delta base identity").into());
+                        }
+                        external = true;
+                    }
                     Some((id, depth))
                 }
             };
@@ -227,7 +290,7 @@ fn resolve(
                 if depth >= limits.max_delta_depth {
                     return Err(FetchError::Limit("delta depth"));
                 }
-                let base = &objects[&id];
+                let base = objects.get(&id).or_else(|| known.get(&id)).unwrap();
                 let data = apply(
                     &base.data,
                     &entries[i].payload,
@@ -271,7 +334,7 @@ fn resolve(
             return Err(missing.map_or(Error::DeltaCycle, Error::MissingBase).into());
         }
     }
-    Ok(objects)
+    Ok((objects, external))
 }
 
 #[cfg(test)]
@@ -400,6 +463,64 @@ mod tests {
         assert!(
             matches!(read(format, &bytes, FetchLimits::default()), Err(FetchError::Pack(Error::MissingBase(actual))) if actual == id)
         );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn verified_external_base_becomes_self_contained_pack(#[case] format: ObjectFormat) {
+        let base = Object {
+            format,
+            kind: ObjectKind::Blob,
+            data: b"one".to_vec(),
+        };
+        let base_id = base.id();
+        let thin = pack(format, &[entry(7, base_id.as_bytes(), b"\x03\x03\x03two")]);
+        let known = HashMap::from([(base_id, base)]);
+        let imported = Imported::read_with_known(
+            format,
+            &thin,
+            &known,
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let complete = imported.complete_pack.unwrap();
+        let reader = crate::pack::Pack::open(format, &imported.index, complete).unwrap();
+        let id = ObjectId::for_blob(format, b"two");
+        assert_eq!(
+            reader
+                .read(reader.find(id).unwrap(), crate::ReadLimits::default())
+                .unwrap()
+                .data(),
+            b"two"
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn rejects_corrupt_external_base(#[case] format: ObjectFormat) {
+        let id = ObjectId::for_blob(format, b"one");
+        let thin = pack(format, &[entry(7, id.as_bytes(), b"\x03\x03\x03two")]);
+        let corrupt = Object {
+            format,
+            kind: ObjectKind::Blob,
+            data: b"bad".to_vec(),
+        };
+        let known = HashMap::from([(id, corrupt)]);
+        assert!(matches!(
+            Imported::read_with_known(
+                format,
+                &thin,
+                &known,
+                FetchLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(FetchError::Pack(Error::Corrupt(
+                "external delta base identity"
+            )))
+        ));
     }
 
     #[rstest]
@@ -544,6 +665,119 @@ mod git_format_tests {
 
     use super::*;
     use crate::{InitKind, ObjectFormat, Repository};
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn imports_git_thin_delta_with_verified_external_base(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+        let mut state = 123456789u64;
+        let base: Vec<u8> = (0..16384)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        let mut changed = base.clone();
+        changed[100] ^= 1;
+        let old: ObjectId = std::str::from_utf8(&git(
+            repo.git_dir(),
+            &["hash-object", "-w", "--stdin"],
+            &base,
+        ))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+        let new: ObjectId = std::str::from_utf8(&git(
+            repo.git_dir(),
+            &["hash-object", "-w", "--stdin"],
+            &changed,
+        ))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+        let old_tree = git(
+            repo.git_dir(),
+            &["mktree"],
+            format!("100644 blob {old}\tfile\n").as_bytes(),
+        );
+        let new_tree = git(
+            repo.git_dir(),
+            &["mktree"],
+            format!("100644 blob {new}\tfile\n").as_bytes(),
+        );
+        let old_tree = std::str::from_utf8(&old_tree).unwrap().trim();
+        let new_tree = std::str::from_utf8(&new_tree).unwrap().trim();
+        git(repo.git_dir(), &["config", "user.name", "Fixture"], b"");
+        git(
+            repo.git_dir(),
+            &["config", "user.email", "f@example.test"],
+            b"",
+        );
+        let old_commit = git(repo.git_dir(), &["commit-tree", old_tree], b"old\n");
+        let old_commit = std::str::from_utf8(&old_commit).unwrap().trim();
+        let new_commit = git(
+            repo.git_dir(),
+            &["commit-tree", new_tree, "-p", old_commit],
+            b"new\n",
+        );
+        let new_commit = std::str::from_utf8(&new_commit).unwrap().trim();
+        let input = format!("{new_commit}\n^{old_commit}\n");
+        let pack = git(
+            repo.git_dir(),
+            &[
+                "pack-objects",
+                "--stdout",
+                "--thin",
+                "--revs",
+                "--window=50",
+                "--depth=50",
+            ],
+            input.as_bytes(),
+        );
+        assert!(
+            matches!(Imported::read(format, &pack, FetchLimits::default(), &AtomicBool::new(false)),
+            Err(FetchError::Pack(Error::MissingBase(actual))) if actual == old)
+        );
+        let known = HashMap::from([(
+            old,
+            Object {
+                format,
+                kind: ObjectKind::Blob,
+                data: base,
+            },
+        )]);
+        let imported = Imported::read_with_known(
+            format,
+            &pack,
+            &known,
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(imported.objects[&new].data(), changed);
+        let full = imported.complete_pack.unwrap();
+        assert!(full.len() > pack.len());
+        assert!(crate::pack::Pack::open(format, &imported.index, full).is_ok());
+        assert!(matches!(
+            Imported::read_with_known(
+                format,
+                &pack,
+                &known,
+                FetchLimits {
+                    max_pack_bytes: pack.len(),
+                    ..FetchLimits::default()
+                },
+                &AtomicBool::new(false)
+            ),
+            Err(FetchError::Index(crate::PackWriteError::Limit(_)))
+        ));
+    }
 
     /// Original CLI observations; no upstream implementation or test source is used.
     fn git(path: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {

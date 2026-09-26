@@ -15,10 +15,22 @@ pub(super) fn validate(
     validate_with_known(objects, &HashMap::new(), wants, limits, cancel).map(|_| ())
 }
 
+#[cfg(test)]
 pub(super) fn validate_with_known(
     objects: &HashMap<ObjectId, Object>,
     known: &HashMap<ObjectId, Object>,
     wants: &[ObjectId],
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<Vec<ObjectId>, FetchError> {
+    validate_with_boundaries(objects, known, wants, &[], limits, cancel)
+}
+
+pub(super) fn validate_with_boundaries(
+    objects: &HashMap<ObjectId, Object>,
+    known: &HashMap<ObjectId, Object>,
+    wants: &[ObjectId],
+    shallow: &[ObjectId],
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Vec<ObjectId>, FetchError> {
@@ -37,6 +49,16 @@ pub(super) fn validate_with_known(
     );
 
     let operation = || {
+        let shallow: HashSet<_> = shallow.iter().copied().collect();
+        for &id in &shallow {
+            let object = objects
+                .get(&id)
+                .or_else(|| known.get(&id))
+                .ok_or(FetchError::Missing(id))?;
+            if object.kind() != crate::ObjectKind::Commit {
+                return Err(FetchError::Kind(id));
+            }
+        }
         let mut dependencies = Vec::new();
         let mut pending = VecDeque::new();
         let mut seen = HashSet::new();
@@ -55,7 +77,12 @@ pub(super) fn validate_with_known(
             if !objects.contains_key(&id) {
                 dependencies.push(id);
             }
+            let shallow_commit =
+                shallow.contains(&id) && object.kind() == crate::ObjectKind::Commit;
             let edge = |id, kind| {
+                if shallow_commit && kind == crate::ObjectKind::Commit {
+                    return Ok(());
+                }
                 check_cancelled(cancel)?;
                 remaining = remaining
                     .checked_sub(1)

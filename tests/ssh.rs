@@ -5,6 +5,7 @@ mod pack_git;
 #[path = "support/ssh_git.rs"]
 mod ssh_git;
 
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,13 +83,17 @@ fn all(a: &Advertisement) -> Vec<ObjectId> {
     a.refs.iter().filter(|r| !r.peeled).map(|r| r.id).collect()
 }
 fn destination() -> (tempfile::TempDir, Repository) {
+    destination_for(girt::ObjectFormat::Sha1)
+}
+fn destination_for(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
+    let format = format!("--object-format={format}");
     git(
         root.path(),
         &[
             "init",
             "--bare",
-            "--object-format=sha1",
+            &format,
             "--template=",
             "--initial-branch=main",
             ".",
@@ -97,6 +102,62 @@ fn destination() -> (tempfile::TempDir, Repository) {
     );
     let repo = Repository::open(root.path()).unwrap();
     (root, repo)
+}
+
+#[test]
+fn real_git_sha256_ssh_fetch_installs_objects() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha256, true, 8);
+    let server = Server::new(fixture.root.path(), "none");
+    let remote = server.remote("config");
+    let cancel = AtomicBool::new(false);
+    let downloaded = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let received = downloaded
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap();
+    let (_root, destination) = destination_for(girt::ObjectFormat::Sha256);
+    received
+        .install(&destination, PackLimits::default(), &cancel)
+        .unwrap();
+    assert!(
+        destination
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn ssh_depth_fetch_reports_boundary(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), "none");
+    let remote = server.remote("config");
+    let cancel = AtomicBool::new(false);
+    let downloaded = runtime()
+        .block_on(fetch::receive_ssh_with_depth(
+            &remote,
+            all,
+            None,
+            NonZeroU32::new(1),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let received = downloaded
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap();
+    assert!(!received.shallow_roots().is_empty());
 }
 fn tip(repo: &Repository, name: &str) -> ObjectId {
     repo.references()

@@ -1,0 +1,75 @@
+   Compiling girt v0.1.0 (/Users/joshka/local/girt)
+    Finished `bench` profile [optimized] target(s) in 7.47s
+     Running benches/fetch.rs (target/release/deps/fetch-d25f06020cf232ba)
+fetch-workload,16,3697,574362,3804
+Benchmarking fetch/transfer-knowledge-16
+Benchmarking fetch/transfer-knowledge-16: Warming up for 1.0000 s
+Benchmarking fetch/transfer-knowledge-16: Collecting 10 samples in estimated 1.0069 s (1155 iterations)
+Benchmarking fetch/transfer-knowledge-16: Analyzing
+fetch/transfer-knowledge-16
+                        time:   [856.92 µs 862.24 µs 867.11 µs]
+                        thrpt:  [631.70 MiB/s 635.27 MiB/s 639.21 MiB/s]
+                 change:
+                        time:   [−50.720% −50.366% −50.017%] (p = 0.00 < 0.05)
+                        thrpt:  [+100.07% +101.48% +102.92%]
+                        Performance has improved.
+fetch-incremental,16,19,39662,1,192
+Benchmarking fetch/transfer-full-16
+Benchmarking fetch/transfer-full-16: Warming up for 1.0000 s
+Benchmarking fetch/transfer-full-16: Collecting 10 samples in estimated 1.0478 s (385 iterations)
+Benchmarking fetch/transfer-full-16: Analyzing
+fetch/transfer-full-16  time:   [2.6965 ms 2.7649 ms 2.8381 ms]
+                        thrpt:  [193.00 MiB/s 198.11 MiB/s 203.14 MiB/s]
+                 change:
+                        time:   [−88.857% −88.658% −88.458%] (p = 0.00 < 0.05)
+                        thrpt:  [+766.38% +781.65% +797.42%]
+                        Performance has improved.
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high mild
+Benchmarking fetch/transfer-known-16
+Benchmarking fetch/transfer-known-16: Warming up for 1.0000 s
+Benchmarking fetch/transfer-known-16: Collecting 10 samples in estimated 1.0481 s (715 iterations)
+Benchmarking fetch/transfer-known-16: Analyzing
+fetch/transfer-known-16 time:   [1.4077 ms 1.4272 ms 1.4471 ms]
+                        thrpt:  [378.51 MiB/s 383.81 MiB/s 389.11 MiB/s]
+                 change:
+                        time:   [−94.029% −93.913% −93.800%] (p = 0.00 < 0.05)
+                        thrpt:  [+1512.8% +1542.8% +1574.8%]
+                        Performance has improved.
+fetch-workload,256,19631,9185238,19738
+Benchmarking fetch/transfer-knowledge-256
+Benchmarking fetch/transfer-knowledge-256: Warming up for 1.0000 s
+Benchmarking fetch/transfer-knowledge-256: Collecting 10 samples in estimated 1.4594 s (110 iterations)
+Benchmarking fetch/transfer-knowledge-256: Analyzing
+fetch/transfer-knowledge-256
+                        time:   [13.279 ms 13.412 ms 13.563 ms]
+                        thrpt:  [645.83 MiB/s 653.12 MiB/s 659.65 MiB/s]
+                 change:
+                        time:   [−51.096% −50.468% −49.900%] (p = 0.00 < 0.05)
+                        thrpt:  [+99.600% +101.89% +104.48%]
+                        Performance has improved.
+fetch-incremental,256,259,629089,1,193
+Benchmarking fetch/transfer-full-256
+Benchmarking fetch/transfer-full-256: Warming up for 1.0000 s
+
+Warning: Unable to complete 10 samples in 1.0s. You may wish to increase target time to 1.9s or enable flat sampling.
+Benchmarking fetch/transfer-full-256: Collecting 10 samples in estimated 1.9365 s (55 iterations)
+Benchmarking fetch/transfer-full-256: Analyzing
+fetch/transfer-full-256 time:   [34.967 ms 35.586 ms 36.035 ms]
+                        thrpt:  [243.09 MiB/s 246.16 MiB/s 250.51 MiB/s]
+                 change:
+                        time:   [−7.4268% −6.1959% −4.8920%] (p = 0.00 < 0.05)
+                        thrpt:  [+5.1437% +6.6052% +8.0226%]
+                        Performance has improved.
+Benchmarking fetch/transfer-known-256
+Benchmarking fetch/transfer-known-256: Warming up for 1.0000 s
+Benchmarking fetch/transfer-known-256: Collecting 10 samples in estimated 1.6871 s (110 iterations)
+Benchmarking fetch/transfer-known-256: Analyzing
+fetch/transfer-known-256
+                        time:   [14.588 ms 14.740 ms 14.891 ms]
+                        thrpt:  [588.25 MiB/s 594.28 MiB/s 600.48 MiB/s]
+                 change:
+                        time:   [−40.743% −39.734% −38.579%] (p = 0.00 < 0.05)
+                        thrpt:  [+62.812% +65.931% +68.757%]
+                        Performance has improved.
+

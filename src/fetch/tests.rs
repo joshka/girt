@@ -405,11 +405,27 @@ fn rejects_missing_wanted_identity() {
 }
 
 #[test]
-fn refuses_sha256_advertisement_without_request_bytes() {
-    let bytes = advertised(
-        ObjectId::Sha256([1; 32]),
-        "side-band-64k object-format=sha256",
-    );
+fn requests_sha256_object_format() {
+    let id = ObjectId::for_blob(crate::ObjectFormat::Sha256, b"fetch fixture");
+    let mut pack = Vec::new();
+    write_pack(
+        crate::ObjectFormat::Sha256,
+        &[PackObject {
+            id,
+            kind: ObjectKind::Blob,
+            data: b"fetch fixture",
+        }],
+        &mut pack,
+        &mut Vec::new(),
+        PackWriteLimits::default(),
+    )
+    .unwrap();
+    let mut bytes = advertised(id, "side-band-64k object-format=sha256");
+    bytes.extend(pkt(b"NAK\n"));
+    let mut band = vec![1];
+    band.extend(pack);
+    bytes.extend(pkt(&band));
+    bytes.extend(b"0000");
     let mut sent = vec![];
     let result = receive(
         &mut &bytes[..],
@@ -419,11 +435,10 @@ fn refuses_sha256_advertisement_without_request_bytes() {
         &AtomicBool::new(false),
         |_| ControlFlow::Continue(()),
     );
-    assert!(matches!(
-        result,
-        Err(FetchError::Unsupported("SHA-256 fetch negotiation"))
-    ));
-    assert!(sent.is_empty());
+    assert_eq!(result.unwrap().object_count(), 1);
+    assert!(sent.starts_with(&pkt(
+        format!("want {id} side-band-64k object-format=sha256\n").as_bytes()
+    )));
 }
 
 #[test]

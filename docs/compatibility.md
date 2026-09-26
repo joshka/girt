@@ -10,8 +10,9 @@ SHA-1 and SHA-256 codecs, loose/packed storage, references, reflogs and working-
 use the repository's configured object format. The [R04 evidence](evidence/r04.md) covers codecs and
 loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation, including Git
 interoperability and failure contracts. [R26 discovery](evidence/r26.md) identifies both remote
-formats through native local, HTTP, SSH and caller-owned protocol streams. Wire object transfer
-remains SHA-1-only under R27/R29. No dual-hash conversion is provided.
+formats through native local, HTTP, SSH and caller-owned protocol streams. R27 adds SHA-256 v0/v1
+wire fetch with bounded receipt and verified thin-pack completion. Wire push remains SHA-1-only
+under R29/R30; native local push supports both formats. No dual-hash conversion is provided.
 
 Native local fetch and push use girt storage and references in both formats; see
 [R25 evidence](evidence/r25.md). The historical upload-pack, receive-pack and owned local-process
@@ -937,6 +938,11 @@ hosts. It does not allocate or validate an actual multi-gigabyte pack. Git 2.55.
 arm64 was exercised; other platforms and actual multi-gigabyte output remain untested.
 
 ## Upload-Pack Fetch
+
+This section records the original R16 upload-pack acceptance revision. R27 extends it with SHA-256
+wire transfer, verified external thin-pack bases, and explicit shallow/depth negotiation; see
+[R27 evidence](evidence/r27.md) for the current supported boundary. The original test and resource
+claims below describe that earlier revision.
 
 `fetch::receive` implements a single protocol v0 upload-pack session over blocking `Read`/`Write`
 streams. `fetch::receive_local` is the local transport adapter: it starts a trusted local

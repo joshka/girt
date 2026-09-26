@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 use std::io::{Read, Write};
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 
-use super::{FetchError as Error, FetchLimits, KnownHistory, ReceivedFetch, check_cancelled};
+use super::{
+    FetchError as Error, FetchLimits, FetchOptions, KnownHistory, ReceivedFetch, check_cancelled,
+};
 use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
 use crate::{ObjectFormat, ObjectId};
@@ -13,7 +16,7 @@ use crate::{ObjectFormat, ObjectId};
 pub struct AdvertisedRef {
     /// Full validated reference name (or HEAD); a peeled hint shares its tag's name.
     pub name: RefName,
-    /// Advertised SHA-1 tip or peeled target.
+    /// Advertised SHA-1 or SHA-256 tip or peeled target.
     pub id: ObjectId,
     /// True for the `^{}` hint following an annotated tag.
     pub peeled: bool,
@@ -30,8 +33,8 @@ pub struct Advertisement {
 
 /// Receives a complete, validated fetch without changing storage.
 ///
-/// Streams must already speak upload-pack v0 and terminate at EOF after the final flush. This is
-/// a single session, not stateless HTTP or a reusable connection. `select` runs once after a
+/// Streams must already speak upload-pack v0 or v1 and terminate at EOF after the final flush. This
+/// is a single session, not stateless HTTP or a reusable connection. `select` runs once after a
 /// complete advertisement and returns explicit advertised tip IDs. Empty selection writes only a
 /// flush and expects EOF. No haves are sent; a nonempty selection requests the complete reachable
 /// history. Progress channel bytes are passed to `progress`; returning `Break(())` cancels the
@@ -45,9 +48,9 @@ pub struct Advertisement {
 ///
 /// # Errors
 ///
-/// Rejects unsupported protocol/object formats, missing sideband capability, invalid
+/// Rejects unsupported protocol versions or object formats, missing sideband capability, invalid
 /// advertisements, unadvertised wants, unexpected ACKs, truncation, trailing bytes, peer errors,
-/// corruption, missing internal bases or reachable objects, and exceeded limits. No partial fetch
+/// corruption, missing delta bases or reachable objects, and exceeded limits. No partial fetch
 /// is returned. All received object identities are computed; selected tip connectivity and edge
 /// kinds are checked within the pack. Gitlinks are external submodule roots and are not followed.
 /// Payload checks use girt's supported parsers and tree validation, not a claim of complete `git
@@ -79,8 +82,10 @@ pub fn receive(
 /// duplicate continuation ACKs, unsupported states and excess replies fail. No extra rounds or
 /// unbounded ancestry walks occur. Selected IDs already verified locally are omitted from wire
 /// wants; an entirely known selection sends only a flush. Tags and blobs can therefore be no-ops
-/// too. Pack delta bases must remain internal; connectivity is checked across received and known
-/// objects. [`ReceivedFetch::install`] rechecks local dependencies in the destination.
+/// too. When advertised, `thin-pack` permits a REF_DELTA base in verified local history; such a
+/// pack is rewritten as a self-contained pack before installation. Missing or corrupt external
+/// bases fail validation. Connectivity is checked across received and known objects.
+/// [`ReceivedFetch::install`] rechecks local dependencies in the destination.
 ///
 /// # Errors
 ///
@@ -95,6 +100,39 @@ pub fn receive_with_known(
     cancel: &AtomicBool,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
+    receive_with_known_depth(
+        reader,
+        writer,
+        select,
+        known,
+        FetchOptions {
+            limits,
+            depth: None,
+        },
+        cancel,
+        progress,
+    )
+}
+
+/// Receives a depth-limited history or deepens verified shallow history.
+///
+/// `depth` counts commits from selected tips. The result reports the server's resulting shallow
+/// boundaries; it does not install them. A shallow result cannot be installed through
+/// [`ReceivedFetch::install`] until boundary publication is provided by the caller's workflow.
+///
+/// # Errors
+///
+/// Returns the ordinary receive errors and rejects peers without `shallow` support.
+pub fn receive_with_known_depth(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    options: FetchOptions,
+    cancel: &AtomicBool,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, Error> {
+    let FetchOptions { limits, depth } = options;
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -118,6 +156,7 @@ pub fn receive_with_known(
             &advertisement,
             select(&advertisement),
             known,
+            depth,
             limits,
             cancel,
         )?;
@@ -156,6 +195,8 @@ pub(super) struct Negotiation {
     haves: HashSet<ObjectId>,
     multi_ack: bool,
     pub(super) needs_pack: bool,
+    shallow: Vec<ObjectId>,
+    requested_depth: bool,
 }
 
 pub(super) fn validate_known(
@@ -166,6 +207,9 @@ pub(super) fn validate_known(
     check_cancelled(cancel)?;
     if known.objects.len() > limits.max_known_objects {
         return Err(Error::Limit("known objects"));
+    }
+    if known.shallow.len() > limits.max_shallow_roots {
+        return Err(Error::Limit("shallow roots"));
     }
     let mut remaining = limits.max_known_bytes;
     for object in known.objects.values() {
@@ -182,12 +226,20 @@ pub(super) fn request(
     advertisement: &Advertisement,
     selected: Vec<ObjectId>,
     known: &KnownHistory,
+    depth: Option<NonZeroU32>,
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<Negotiation, Error> {
     check_cancelled(cancel)?;
-    if advertisement.object_format()? != ObjectFormat::Sha1 {
-        return Err(Error::Unsupported("SHA-256 fetch negotiation"));
+    let format = advertisement.object_format()?;
+    if known.objects.keys().any(|id| id.format() != format)
+        || known.haves.iter().any(|id| id.format() != format)
+        || known.shallow.iter().any(|id| id.format() != format)
+    {
+        return Err(Error::Unsupported("known object format differs"));
+    }
+    if (!known.shallow.is_empty() || depth.is_some()) && !advertisement.has(b"shallow") {
+        return Err(Error::Unsupported("shallow negotiation"));
     }
     if selected.len() > limits.max_wants {
         return Err(Error::Limit("wants"));
@@ -201,7 +253,7 @@ pub(super) fn request(
     let mut wants = Vec::new();
     let mut seen = HashSet::new();
     for id in selected {
-        id.require_sha1()?;
+        id.require_format(format)?;
         if !advertised.contains(&id) {
             return Err(Error::Unadvertised(id));
         }
@@ -211,7 +263,7 @@ pub(super) fn request(
     }
     let wire_wants: Vec<_> = wants
         .iter()
-        .filter(|id| !known.objects.contains_key(id))
+        .filter(|id| depth.is_some() || !known.objects.contains_key(id))
         .copied()
         .collect();
     if wire_wants.is_empty() {
@@ -222,6 +274,8 @@ pub(super) fn request(
             haves: HashSet::new(),
             multi_ack: false,
             needs_pack: false,
+            shallow: known.shallow.clone(),
+            requested_depth: depth.is_some(),
         });
     }
     if !advertisement.has(b"side-band-64k") {
@@ -231,13 +285,19 @@ pub(super) fn request(
         !known.haves.is_empty() && limits.max_haves != 0 && advertisement.has(b"multi_ack");
     let have_count = limits.max_haves.min(if multi_ack { 32 } else { 1 });
     for (i, id) in wire_wants.iter().enumerate() {
-        let caps = if i != 0 {
-            ""
-        } else if advertisement.has(b"ofs-delta") {
-            " side-band-64k ofs-delta"
-        } else {
-            " side-band-64k"
-        };
+        let mut caps = String::new();
+        if i == 0 {
+            caps.push_str(" side-band-64k");
+            if advertisement.has(b"ofs-delta") {
+                caps.push_str(" ofs-delta");
+            }
+            if !known.haves.is_empty() && have_count > 0 && advertisement.has(b"thin-pack") {
+                caps.push_str(" thin-pack");
+            }
+            if format == ObjectFormat::Sha256 {
+                caps.push_str(" object-format=sha256");
+            }
+        }
         let ack_cap = if i == 0 && multi_ack {
             " multi_ack"
         } else {
@@ -248,6 +308,12 @@ pub(super) fn request(
             format!("want {id}{caps}{ack_cap}\n").as_bytes(),
             cancel,
         )?;
+    }
+    for id in &known.shallow {
+        packet(writer, format!("shallow {id}\n").as_bytes(), cancel)?;
+    }
+    if let Some(depth) = depth {
+        packet(writer, format!("deepen {depth}\n").as_bytes(), cancel)?;
     }
     put(writer, b"0000", cancel)?;
     let haves: HashSet<_> = known.haves.iter().take(have_count).copied().collect();
@@ -261,6 +327,8 @@ pub(super) fn request(
         haves,
         multi_ack,
         needs_pack: true,
+        shallow: known.shallow.clone(),
+        requested_depth: depth.is_some(),
     })
 }
 
@@ -273,6 +341,7 @@ pub(super) fn response(
     cancel: &AtomicBool,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
+    let shallow = read_shallow(wire, &negotiation, limits)?;
     read_ack(wire, &negotiation.haves, negotiation.multi_ack)?;
     let mut pack = Vec::new();
     while let Some(bytes) = wire.packet()? {
@@ -298,9 +367,54 @@ pub(super) fn response(
         negotiation.wants,
         pack,
         known,
+        shallow,
         limits,
         cancel,
     )
+}
+
+fn read_shallow(
+    wire: &mut Wire<'_, impl Read>,
+    negotiation: &Negotiation,
+    limits: FetchLimits,
+) -> Result<Vec<ObjectId>, Error> {
+    let mut roots: HashSet<_> = negotiation.shallow.iter().copied().collect();
+    if !negotiation.requested_depth {
+        let mut roots: Vec<_> = roots.into_iter().collect();
+        roots.sort_unstable();
+        return Ok(roots);
+    }
+    let format = negotiation.wants[0].format();
+    let mut count = 0;
+    while let Some(bytes) = wire.packet()? {
+        count += 1;
+        if count > limits.max_shallow_roots {
+            return Err(Error::Limit("shallow response"));
+        }
+        let bytes = line(&bytes);
+        let (add, raw) = if let Some(raw) = bytes.strip_prefix(b"shallow ") {
+            (true, raw)
+        } else if let Some(raw) = bytes.strip_prefix(b"unshallow ") {
+            (false, raw)
+        } else {
+            return Err(Error::Protocol("shallow response"));
+        };
+        let id = std::str::from_utf8(raw)
+            .ok()
+            .and_then(|raw| ObjectId::from_hex(format, raw).ok())
+            .ok_or(Error::Protocol("shallow object ID"))?;
+        if add {
+            roots.insert(id);
+        } else if !roots.remove(&id) {
+            return Err(Error::Protocol("unknown unshallow root"));
+        }
+    }
+    if roots.len() > limits.max_shallow_roots {
+        return Err(Error::Limit("shallow roots"));
+    }
+    let mut roots: Vec<_> = roots.into_iter().collect();
+    roots.sort_unstable();
+    Ok(roots)
 }
 
 // One batch of at most 32 haves keeps both directions below ordinary pipe capacity. Reading
@@ -328,7 +442,6 @@ fn read_ack(
             .strip_prefix(b"ACK ")
             .and_then(|id| std::str::from_utf8(id).ok())
             .and_then(|id| id.parse::<ObjectId>().ok())
-            .filter(|id| id.format() == crate::ObjectFormat::Sha1)
             .filter(|id| haves.contains(id))
             .ok_or(Error::Protocol("expected ACK of an offered have"))?;
         if !more {
@@ -486,6 +599,61 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    fn shallow_response(lines: &[&str], limits: FetchLimits) -> Result<Vec<ObjectId>, Error> {
+        let cancel = AtomicBool::new(false);
+        let mut bytes = Vec::new();
+        for line in lines {
+            packet(&mut bytes, line.as_bytes(), &cancel).unwrap();
+        }
+        bytes.extend_from_slice(b"0000");
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 1024,
+            cancel: &cancel,
+        };
+        let id = ObjectId::Sha1([1; 20]);
+        read_shallow(
+            &mut wire,
+            &Negotiation {
+                wants: vec![id],
+                haves: HashSet::new(),
+                multi_ack: false,
+                needs_pack: true,
+                shallow: vec![],
+                requested_depth: true,
+            },
+            limits,
+        )
+    }
+
+    #[test]
+    fn bounds_and_validates_shallow_response() {
+        let id = ObjectId::Sha1([1; 20]);
+        assert_eq!(
+            shallow_response(&[&format!("shallow {id}\n")], FetchLimits::default()).unwrap(),
+            vec![id]
+        );
+        assert!(matches!(
+            shallow_response(
+                &[&format!("shallow {id}\n")],
+                FetchLimits {
+                    max_shallow_roots: 0,
+                    ..FetchLimits::default()
+                }
+            ),
+            Err(Error::Limit(_))
+        ));
+        assert!(matches!(
+            shallow_response(&["shallow invalid\n"], FetchLimits::default()),
+            Err(Error::Protocol("shallow object ID"))
+        ));
+        assert!(matches!(
+            shallow_response(&[&format!("unshallow {id}\n")], FetchLimits::default()),
+            Err(Error::Protocol("unknown unshallow root"))
+        ));
+    }
 
     fn acknowledgements(lines: &[&str], multi: bool) -> Result<(), Error> {
         let cancel = AtomicBool::new(false);

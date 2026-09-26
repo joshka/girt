@@ -492,7 +492,7 @@ fn imported_noncanonical_hex_and_dates_retain_bytes(#[case] format: ObjectFormat
 }
 
 #[test]
-fn sha256_cannot_become_sha1_fetch_knowledge() {
+fn sha256_fetch_knowledge_cannot_cross_formats() {
     let root = tempfile::tempdir().unwrap();
     let repo = Repository::init(
         ObjectFormat::Sha256,
@@ -501,10 +501,36 @@ fn sha256_cannot_become_sha1_fetch_knowledge() {
     )
     .unwrap();
     let objects = repo.objects(PackLimits::default()).unwrap();
+    let blob = repo.loose_objects().write_blob(b"known").unwrap();
+    let known = girt::fetch::KnownHistory::new(
+        &objects,
+        &[blob],
+        Default::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(known.object_count(), 1);
+    let foreign = ObjectId::for_blob(ObjectFormat::Sha1, b"other");
+    let line = format!("{foreign} refs/heads/main\0side-band-64k\n");
+    let mut advertisement = format!("{:04x}", line.len() + 4).into_bytes();
+    advertisement.extend_from_slice(line.as_bytes());
+    advertisement.extend_from_slice(b"0000");
+    let mut sent = Vec::new();
     assert!(matches!(
-        girt::fetch::KnownHistory::new(&objects, &[], Default::default(), &AtomicBool::new(false)),
-        Err(girt::fetch::FetchError::Unsupported(_))
+        girt::fetch::receive_with_known(
+            &mut advertisement.as_slice(),
+            &mut sent,
+            |_| vec![],
+            &known,
+            Default::default(),
+            &AtomicBool::new(false),
+            |_| std::ops::ControlFlow::Continue(())
+        ),
+        Err(girt::fetch::FetchError::Unsupported(
+            "known object format differs"
+        ))
     ));
+    assert!(sent.is_empty());
 }
 
 /// Uses packed history as checkout input, then asks Git to interpret the resulting index.

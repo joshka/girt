@@ -575,6 +575,18 @@ helper sequence and escalate this ahead of dependent HTTP work; if fallback succ
 fixture deterministic without weakening the fallback assertion. Retain both the initial failure and
 passing retry as platform evidence until the cause is established.
 
+### B07 — Additional Fetch Negotiation Rounds
+
+**Size:** M. **Status:** Deferred under the prioritization policy. **Owner:** R35 consumer transfer
+assessment, then R27 follow-up if needed. **Evidence:** [R27 transfer](evidence/r27.md).
+
+R27 offers at most 32 verified commits in one wire batch before `done`. A peer that does not find a
+common commit in that batch sends a complete history; integrity still requires every received object
+and dependency to validate. Measure a representative jj fetch before adding further have/ACK rounds
+and stateless HTTP requests. Reopen if transfer size or latency materially affects an ordinary
+consumer workflow. This deferral does not cover a required v2-only endpoint or any missing/corrupt
+object acceptance; R35 must resolve those before integration.
+
 ## C02 Storage and Layout Review
 
 The [review evidence](evidence/c02.md) records the scoped decision and later native validation. The
