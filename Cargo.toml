@@ -21,7 +21,7 @@ tracing = { version = "0.1.40", optional = true, default-features = false, featu
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
 tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] }
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 sha1 = "0.10"
 sha2 = "0.10"
