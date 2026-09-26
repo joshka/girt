@@ -1,5 +1,7 @@
 //! Pure destination rewriting and protocol selection for configured remotes.
 
+use std::path::PathBuf;
+
 use super::Remote;
 use crate::Config;
 use crate::config::boolean;
@@ -30,9 +32,98 @@ impl Destination {
     pub fn protocol(&self) -> Protocol {
         self.protocol
     }
+
+    /// Converts a local path or `file://` URL to an OS path without shell interpretation.
+    ///
+    /// File URLs require an absolute path and an empty or `localhost` authority. Percent escapes
+    /// are decoded once; NUL and malformed escapes are rejected. Other schemes are refused.
+    pub fn local_path(&self) -> Result<PathBuf, EndpointError> {
+        let bytes = match self.protocol {
+            Protocol::Local => self.bytes.clone(),
+            Protocol::File => decode_file_url(&self.bytes)?,
+            _ => return Err(EndpointError::Syntax),
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            Ok(std::ffi::OsString::from_vec(bytes).into())
+        }
+        #[cfg(not(unix))]
+        {
+            let value = String::from_utf8(bytes).map_err(|_| EndpointError::Syntax)?;
+            #[cfg(windows)]
+            let value = if self.protocol == Protocol::File
+                && value.as_bytes().first() == Some(&b'/')
+                && value.as_bytes().get(2) == Some(&b':')
+            {
+                value[1..].to_owned()
+            } else {
+                value
+            };
+            Ok(PathBuf::from(value))
+        }
+    }
+
+    /// Exact custom scheme for a helper destination; never an executable name or authorization.
+    pub fn helper_scheme(&self) -> Option<&[u8]> {
+        (self.protocol == Protocol::Helper)
+            .then(|| helper_scheme(&self.bytes))
+            .flatten()
+    }
 }
 
-/// Recognized Git endpoint family; helpers and native local transport are later tasks.
+fn decode_file_url(url: &[u8]) -> Result<Vec<u8>, EndpointError> {
+    let rest = url.strip_prefix(b"file://").ok_or(EndpointError::Syntax)?;
+    let slash = rest
+        .iter()
+        .position(|byte| *byte == b'/')
+        .ok_or(EndpointError::Syntax)?;
+    let authority = &rest[..slash];
+    if !authority.is_empty() && authority != b"localhost" {
+        return Err(EndpointError::Syntax);
+    }
+    let mut path = Vec::with_capacity(rest.len() - slash);
+    let mut input = &rest[slash..];
+    while let Some((&first, tail)) = input.split_first() {
+        if first == b'%' {
+            let [a, b, ..] = tail else {
+                return Err(EndpointError::Syntax);
+            };
+            let high = hex(*a).ok_or(EndpointError::Syntax)?;
+            let low = hex(*b).ok_or(EndpointError::Syntax)?;
+            path.push((high << 4) | low);
+            input = &tail[2..];
+        } else {
+            path.push(first);
+            input = tail;
+        }
+    }
+    if path.contains(&0) {
+        return Err(EndpointError::Syntax);
+    }
+    Ok(path)
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn helper_scheme(raw: &[u8]) -> Option<&[u8]> {
+    let colon = raw.iter().position(|byte| *byte == b':')?;
+    let scheme = &raw[..colon];
+    (!scheme.is_empty()
+        && scheme
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"+.-".contains(byte)))
+    .then_some(scheme)
+}
+
+/// Recognized Git endpoint family. Helper recognition never authorizes an executable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     Local,
@@ -166,7 +257,7 @@ fn resolve(
         None => raw.to_vec(),
     };
     let protocol = classify(&bytes)?;
-    if !allowed(protocol, config, env, user)? {
+    if !allowed(protocol, &bytes, config, env, user)? {
         return Err(EndpointError::Refused);
     }
     Ok(Destination { bytes, protocol })
@@ -206,11 +297,22 @@ fn classify(raw: &[u8]) -> Result<Protocol, EndpointError> {
     if raw.is_empty() || raw.contains(&0) {
         return Err(EndpointError::Syntax);
     }
-    if raw.starts_with(b"/") || raw.starts_with(b"./") || raw.starts_with(b"../") {
+    if raw.starts_with(b"/")
+        || raw.starts_with(b"./")
+        || raw.starts_with(b"../")
+        || raw.starts_with(b"\\\\")
+        || (raw.len() >= 3
+            && raw[0].is_ascii_alphabetic()
+            && raw[1] == b':'
+            && matches!(raw[2], b'/' | b'\\'))
+    {
         return Ok(Protocol::Local);
     }
     if let Some(colon) = raw.iter().position(|b| *b == b':') {
         let scheme = &raw[..colon];
+        if raw.get(colon + 1) == Some(&b':') && helper_scheme(raw).is_some() {
+            return Ok(Protocol::Helper);
+        }
         if raw.get(colon + 1..colon + 3) == Some(b"//") {
             return match scheme {
                 b"file" => Ok(Protocol::File),
@@ -231,19 +333,20 @@ fn classify(raw: &[u8]) -> Result<Protocol, EndpointError> {
 
 fn allowed(
     protocol: Protocol,
+    raw: &[u8],
     config: &Config,
     env: &ProtocolEnvironment,
     user: bool,
 ) -> Result<bool, EndpointError> {
-    if let Some(list) = &env.allow_protocol {
-        return Ok(list
-            .split(|b| *b == b':')
-            .any(|name| name == protocol.name()));
-    }
-    let section = match protocol {
-        Protocol::Helper => b"ext".as_slice(),
-        _ => protocol.name(),
+    let name = if protocol == Protocol::Helper {
+        helper_scheme(raw).ok_or(EndpointError::Syntax)?
+    } else {
+        protocol.name()
     };
+    if let Some(list) = &env.allow_protocol {
+        return Ok(list.split(|b| *b == b':').any(|entry| entry == name));
+    }
+    let section = name;
     let policy = config
         .value("protocol", Some(section), "allow")
         .or_else(|| config.value("protocol", None, "allow"));
@@ -381,5 +484,70 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, EndpointError::Configuration("protocol user policy"));
         assert!(!format!("{error:?}").contains("secret"));
+    }
+
+    #[test]
+    fn local_paths_and_file_urls_preserve_paths_without_remote_authorities() {
+        let config =
+            Config::parse(b"[remote \"r\"]\nurl = file://localhost/tmp/a%20b.git\n").unwrap();
+        let remote = Remote::find(&config, b"r").unwrap().unwrap();
+        let destination = remote
+            .fetch_destination(&config, &ProtocolEnvironment::default())
+            .unwrap();
+        assert_eq!(
+            destination.local_path().unwrap(),
+            std::path::Path::new("/tmp/a b.git")
+        );
+        assert_eq!(
+            decode_file_url(b"file://host/tmp/repo"),
+            Err(EndpointError::Syntax)
+        );
+        assert_eq!(
+            decode_file_url(b"file:///tmp/%00"),
+            Err(EndpointError::Syntax)
+        );
+        assert_eq!(
+            decode_file_url(b"file:///tmp/%G0"),
+            Err(EndpointError::Syntax)
+        );
+    }
+
+    #[test]
+    fn explicit_helper_syntax_requires_scheme_policy() {
+        let config = Config::parse(
+            b"[remote \"r\"]\nurl = test::opaque-address\n[protocol \"test\"]\nallow = always\n",
+        )
+        .unwrap();
+        let remote = Remote::find(&config, b"r").unwrap().unwrap();
+        let destination = remote
+            .fetch_destination(&config, &ProtocolEnvironment::default())
+            .unwrap();
+        assert_eq!(destination.protocol(), Protocol::Helper);
+        assert_eq!(destination.helper_scheme(), Some(b"test".as_slice()));
+        assert_eq!(destination.local_path(), Err(EndpointError::Syntax));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_paths_are_local_and_file_urls_decode_to_drive_paths() {
+        let config = Config::parse(b"[remote \"r\"]\nurl = C:/repos/source.git\n").unwrap();
+        let remote = Remote::find(&config, b"r").unwrap().unwrap();
+        let destination = remote
+            .fetch_destination(&config, &ProtocolEnvironment::default())
+            .unwrap();
+        assert_eq!(destination.protocol(), Protocol::Local);
+        assert_eq!(
+            destination.local_path().unwrap(),
+            std::path::Path::new(r"C:\repos\source.git")
+        );
+        let config = Config::parse(b"[remote \"r\"]\nurl = file:///C:/repos/source.git\n").unwrap();
+        let remote = Remote::find(&config, b"r").unwrap().unwrap();
+        let destination = remote
+            .fetch_destination(&config, &ProtocolEnvironment::default())
+            .unwrap();
+        assert_eq!(
+            destination.local_path().unwrap(),
+            std::path::Path::new(r"C:\repos\source.git")
+        );
     }
 }

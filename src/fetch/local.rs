@@ -1,30 +1,33 @@
 use std::ops::ControlFlow;
 use std::path::Path;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use super::{
-    Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch, receive_with_known,
-};
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+use super::receive_with_known;
+use super::{Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch};
 use crate::ObjectId;
-use crate::transport::{Server, TransportControl};
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+use crate::transport::Server;
+use crate::transport::TransportControl;
 
-/// Receives from a local repository through `git upload-pack`, without invoking a Git client.
+/// Reads a local repository with girt and constructs a validated reachable pack.
 ///
-/// Canonicalizes the explicit repository path, starts `git` from PATH with an empty environment
-/// except PATH and system configuration disabled, forces v0, and uses binary stdin/stdout pipes.
-/// The caller must trust the executable and source repository/configuration. This adapter does
-/// not accept URLs or perform authentication. All client framing, pack decoding, indexing, and
-/// validation are implemented in girt.
+/// Opens the explicit path through [`crate::Repository::open`], lists its references, then reads
+/// selected reachable objects through girt's storage. No Git executable or helper is started.
+/// The path must identify a trusted local repository; use
+/// [`crate::remote::Destination::local_path`] to convert a resolved local or `file://` destination. The result owns a pack/index pair but
+/// touches no destination until [`ReceivedFetch::install`] is called.
 ///
-/// Uses interruptible owned pipes on macOS/Linux, with no deadline. See [`TransportControl`] for
-/// cancellation, diagnostic disposal, process-group cleanup, and platform requirements. Use
-/// [`receive_local_with_control`] to impose an absolute transport deadline.
+/// Supports SHA-1 and SHA-256 with files or reftable references on native local filesystems.
+/// Cancellation and deadlines are checked between synchronous operations; one filesystem read,
+/// graph parse, hash or compression call cannot be interrupted. Concurrent source updates may
+/// produce a mixed advertisement; missing or corrupt selected history fails before publication.
 ///
 /// # Errors
 ///
-/// Returns [`super::receive`]'s failures, path/spawn/pipe errors, or an unsuccessful server exit
-/// status. Waits for a successful exit before returning validated objects. No destination is
+/// Returns path, reference, object, graph, limit and interruption failures. No destination is
 /// touched.
 pub fn receive_local(
     source: impl AsRef<Path>,
@@ -42,10 +45,9 @@ pub fn receive_local(
     )
 }
 
-/// Receives objects from a local server with caller-controlled interruption.
+/// Receives objects from native local storage with caller-controlled interruption.
 ///
-/// Same protocol and trust contract as [`receive_local`]. See [`TransportControl`] for deadline
-/// scope, races, cleanup, and OS support. No destination is touched, even on interruption.
+/// Uses [`receive_local`]'s path and storage contract. No destination is touched on interruption.
 ///
 /// # Errors
 ///
@@ -67,15 +69,14 @@ pub fn receive_local_with_control(
     )
 }
 
-/// Negotiates a local fetch using verified local history and owned transport controls.
+/// Reads a local source while excluding explicitly verified destination history.
 ///
-/// Combines [`super::receive_with_known`]'s knowledge and validation contract with
-/// [`receive_local_with_control`]'s process, deadline and trust contract. Knowledge preparation
-/// is separate and is not covered by the transport deadline.
+/// Source history is fully checked even for objects present in `known`. Excluded objects become
+/// dependencies rechecked during installation. Knowledge preparation remains caller-owned.
 ///
 /// # Errors
 ///
-/// Returns protocol/knowledge validation, interruption, path, process and storage failures.
+/// Returns path, reference, object, graph, limit and interruption failures.
 pub fn receive_local_with_known(
     source: impl AsRef<Path>,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
@@ -95,21 +96,9 @@ pub fn receive_local_with_known(
 
     let operation = || {
         control.check()?;
-        let source = std::fs::canonicalize(source)?;
-        let mut command = Command::new("git");
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env(
-                "GIT_CONFIG_GLOBAL",
-                if cfg!(windows) { "NUL" } else { "/dev/null" },
-            )
-            .args(["-c", "protocol.version=0", "upload-pack", "--strict"])
-            .arg(source);
-        receive_server_with_known(&mut command, select, known, limits, control, progress)
+        let source = crate::Repository::open(source)
+            .map_err(|_| FetchError::Protocol("local repository"))?;
+        super::local_native::receive(&source, select, known, limits, control, progress)
     };
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);
@@ -139,6 +128,7 @@ fn receive_server(
     )
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 fn receive_server_with_known(
     command: &mut Command,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,

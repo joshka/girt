@@ -3,7 +3,7 @@ use std::io;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send};
 use girt::refs::RefName;
 use girt::{ObjectId, PackLimits, ReadLimits};
@@ -173,6 +173,25 @@ fn push(c: &mut Criterion) {
                 .all_succeeded()
         );
         assert!(fixture.root.path().exists());
+        group.bench_function(format!("native-local-publish-{count}"), |b| {
+            b.iter_batched(
+                || {
+                    let root = tempfile::tempdir().unwrap();
+                    girt::Repository::init(
+                        girt::ObjectFormat::Sha1,
+                        root.path().join("destination"),
+                        girt::InitKind::Bare,
+                    )
+                    .unwrap();
+                    root
+                },
+                |root| {
+                    girt::push::send_local(root.path().join("destination"), &prepared, &cancel)
+                        .unwrap()
+                },
+                BatchSize::SmallInput,
+            )
+        });
     }
     group.finish();
 }

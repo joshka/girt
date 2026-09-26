@@ -4,36 +4,27 @@ use std::time::Instant;
 
 /// Cancellation and an optional absolute deadline for an owned transport.
 ///
-/// The following process/pipe guarantees apply to local adapters. With the `http` feature, the
-/// HTTP adapter polls this same control during async network waits; `ssh` also uses it for async
-/// OpenSSH pipe and exit waits. Each adapter module documents the
-/// network-specific scope, runtime requirements and separate synchronous validation step.
+/// Native local adapters check this control between repository, graph, pack and publication steps.
+/// The HTTP adapter polls it during async network waits; SSH uses it for async OpenSSH pipe and
+/// exit waits. Each adapter documents its own scope and runtime requirements.
 ///
 /// Set `cancel` from another thread and leave it set until the operation returns. The deadline
-/// expires at the caller's chosen [`Instant`] and is never reset by traffic. Checks begin before
-/// path resolution/spawn and end when protocol completion and server exit have been observed.
-/// Pipe reads, writes, and exit waits check at most every 20 ms while waiting, subject to OS
-/// scheduling. This is not a hard real-time bound: path resolution, spawn, caller callbacks,
-/// hashing, decoding, and other synchronous computation cannot be forcibly interrupted.
+/// expires at the caller's chosen [`Instant`] and is never reset by traffic. This is not a hard
+/// real-time bound: path resolution, caller callbacks, filesystem calls, hashing, decoding and
+/// other synchronous computation cannot be forcibly interrupted. Network waits check at most
+/// every 20 ms, subject to OS scheduling.
 ///
 /// Cancellation wins when both controls are observed at one check. A completed protocol error or
 /// status is not replaced by a later interruption. While waiting for exit, an already observable
 /// exit takes precedence. A complete push report still needs EOF and successful server exit;
 /// interruption before then retains its acknowledgements in an uncertain error.
 ///
-/// On macOS/Linux, owned servers start in a new process group. Cleanup sends SIGKILL to that
-/// group **before** reaping the direct child, including on success or unwinding. The unreaped
-/// leader reserves the group ID. Callers must not reap girt's children through a global SIGCHLD
-/// handler or use automatic child reaping. Descendants that deliberately leave the group are
-/// outside this guarantee; this is lifecycle management for trusted servers, not a sandbox.
-/// Signalable descendants are killed; elevated-privilege processes are outside the contract.
-/// Only the direct child can be reaped by girt. Kernel-delayed exit
-/// and reaping can extend elapsed time beyond the deadline. No I/O workers are created.
+/// SSH's owned process starts in a new process group on macOS/Linux and is cleaned up by its
+/// adapter. Native local transfer starts no process or worker. No path is an execution sandbox.
 ///
 /// Server stderr is drained and discarded, rather than inherited: a blocked diagnostic sink
 /// must not stall the operation. Fetch sideband progress and push status messages remain available.
-/// Other OSes return an unsupported I/O error before starting a server. Generic protocol stream
-/// APIs cannot enforce these guarantees; their owners must arrange interruption themselves.
+/// Generic protocol stream APIs cannot enforce interruption of caller-owned I/O.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportControl<'a> {
     /// Cooperative flag, also used to interrupt owned pipe and server-exit waits.

@@ -51,6 +51,9 @@ pub fn send(
     );
 
     let operation = || {
+        if prepared.format != crate::ObjectFormat::Sha1 {
+            return Err(PushError::NotSent(Error::Unsupported("SHA-256 wire push")));
+        }
         let mut wire = Wire {
             reader,
             remaining: prepared.limits.max_advertisement_bytes,
@@ -110,6 +113,9 @@ pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
 ) -> Result<(), Error> {
+    if prepared.format != crate::ObjectFormat::Sha1 {
+        return Err(Error::Unsupported("SHA-256 wire push"));
+    }
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;

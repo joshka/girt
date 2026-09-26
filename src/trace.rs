@@ -125,7 +125,8 @@ pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
         Cancelled => "cancelled",
         Deadline => "deadline",
         Pack(e) | Destination(e) | LocalRead { source: e, .. } => object(e),
-        Index(e) => pack(e),
+        Index(e) | PackWrite(e) => pack(e),
+        Peel(_) => "corrupt",
         Missing(_) => "missing",
         Kind(_) => "wrong_kind",
         Commit { .. } | Tree { .. } | Tag { .. } => "corrupt",
@@ -150,6 +151,9 @@ pub(crate) fn push(error: &crate::push::PushError, span: &tracing::Span) -> &'st
 pub(crate) fn push_failure(error: &crate::push::PushFailure) -> &'static str {
     use crate::push::PushFailure::*;
     match error {
+        Destination(_) => "invalid_input",
+        Install(error) => fetch(error),
+        Reference(error) => reference(error),
         ObjectFormat(_) | Unsupported(_) => "unsupported",
         #[cfg(feature = "http")]
         Http(e) => http(e),

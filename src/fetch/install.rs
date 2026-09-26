@@ -14,6 +14,7 @@ use crate::{ObjectId, Repository};
 /// Incremental results retain IDs of known-local dependencies; installation rechecks them.
 #[derive(Debug)]
 pub struct ReceivedFetch {
+    format: crate::ObjectFormat,
     advertisement: Advertisement,
     wants: Vec<ObjectId>,
     pack: Vec<u8>,
@@ -24,9 +25,20 @@ pub struct ReceivedFetch {
     limits: FetchLimits,
 }
 
+pub(crate) struct NativeContents {
+    pub format: crate::ObjectFormat,
+    pub pack: Vec<u8>,
+    pub index: Vec<u8>,
+    pub checksum: Option<ObjectId>,
+    pub objects: usize,
+    pub dependencies: Vec<ObjectId>,
+    pub limits: FetchLimits,
+}
+
 impl ReceivedFetch {
     pub(super) fn empty(advertisement: Advertisement) -> Self {
         Self {
+            format: crate::ObjectFormat::Sha1,
             advertisement,
             wants: vec![],
             pack: vec![],
@@ -35,6 +47,24 @@ impl ReceivedFetch {
             objects: 0,
             dependencies: vec![],
             limits: FetchLimits::default(),
+        }
+    }
+
+    pub(crate) fn native(
+        advertisement: Advertisement,
+        wants: Vec<ObjectId>,
+        contents: NativeContents,
+    ) -> Self {
+        Self {
+            format: contents.format,
+            advertisement,
+            wants,
+            pack: contents.pack,
+            index: contents.index,
+            checksum: contents.checksum,
+            objects: contents.objects,
+            dependencies: contents.dependencies,
+            limits: contents.limits,
         }
     }
 
@@ -77,6 +107,7 @@ impl ReceivedFetch {
         )?;
         check_cancelled(cancel)?;
         Ok(Self {
+            format: crate::ObjectFormat::Sha1,
             advertisement,
             wants,
             pack,
@@ -109,12 +140,12 @@ impl ReceivedFetch {
         self.pack.len()
     }
 
-    /// Publishes the validated SHA-1 pack and index without replacing any existing artifact.
+    /// Publishes the validated pack and index without replacing any existing artifact.
     ///
     /// Shallow destinations (including a live shallow file created after opening) are refused.
     /// Callers must exclude concurrent depth changes for the complete installation.
-    /// SHA-256 destinations return [`FetchError::Unsupported`] before filesystem mutation, even
-    /// for empty transfers. Object-format negotiation and SHA-256 installation are not supported.
+    /// The destination format must match the received pack. Wire-protocol SHA-256 negotiation
+    /// remains unsupported; native local transfers may install SHA-256 packs.
     ///
     /// Writes temporary files in the destination pack directory, completes and syncs their
     /// contents, then publishes the pack before its index using no-clobber persistence. The
@@ -153,6 +184,17 @@ impl ReceivedFetch {
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
     ) -> Result<FetchInstalled, FetchError> {
+        self.install_bytes(repository, snapshot_limits, cancel, &self.pack, &self.index)
+    }
+
+    pub(crate) fn install_bytes(
+        &self,
+        repository: &Repository,
+        snapshot_limits: crate::PackLimits,
+        cancel: &AtomicBool,
+        pack_bytes: &[u8],
+        index_bytes: &[u8],
+    ) -> Result<FetchInstalled, FetchError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -161,12 +203,12 @@ impl ReceivedFetch {
             failure_class = tracing::field::Empty,
             effects = tracing::field::Empty,
             objects = self.objects,
-            pack_bytes = self.pack.len(),
+            pack_bytes = pack_bytes.len(),
         );
 
         let operation = || {
-            if repository.object_format() != crate::ObjectFormat::Sha1 {
-                return Err(FetchError::Unsupported("SHA-256 pack installation"));
+            if repository.object_format() != self.format {
+                return Err(FetchError::Unsupported("destination object format differs"));
             }
             check_cancelled(cancel)?;
             if !repository.shallow_roots().is_empty()
@@ -203,17 +245,17 @@ impl ReceivedFetch {
             fs::create_dir_all(&directory)?;
             let mut pack = tempfile::NamedTempFile::new_in(&directory)?;
             let mut index = tempfile::NamedTempFile::new_in(&directory)?;
-            pack.write_all(&self.pack)?;
+            pack.write_all(pack_bytes)?;
             pack.as_file().sync_all()?;
-            index.write_all(&self.index)?;
+            index.write_all(index_bytes)?;
             index.as_file().sync_all()?;
             let basename = directory.join(format!("pack-{checksum}"));
             check_cancelled(cancel)?;
-            publish(pack, &basename.with_extension("pack"), &self.pack, cancel)?;
+            publish(pack, &basename.with_extension("pack"), pack_bytes, cancel)?;
             #[cfg(feature = "tracing")]
             span.record("effects", "pack_visible");
             check_cancelled(cancel)?;
-            publish(index, &basename.with_extension("idx"), &self.index, cancel)?;
+            publish(index, &basename.with_extension("idx"), index_bytes, cancel)?;
             #[cfg(feature = "tracing")]
             span.record("effects", "pack_and_index_visible");
             Ok(result)

@@ -12,6 +12,10 @@ loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation
 interoperability and failure contracts. Transport negotiation remains SHA-1-only under R26/R29. No
 dual-hash conversion is provided.
 
+Native local fetch and push use girt storage and references in both formats; see
+[R25 evidence](evidence/r25.md). The historical upload-pack, receive-pack and owned local-process
+sections below describe their original validation revisions, not the current local adapter.
+
 Explicit format arguments select standalone pack/index/reflog codecs, including empty artifacts.
 Repository operations derive the format from common configuration, never from artifact lengths.
 Crate Rustdoc owns current examples and caller contracts. Earlier sections below retain their

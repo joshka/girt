@@ -39,10 +39,23 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        check_cancelled(cancel)?;
         if store.object_format() != crate::ObjectFormat::Sha1 {
             return Err(Error::Unsupported("SHA-256 fetch negotiation"));
         }
+        Self::new_local(store, roots, limits, cancel)
+    }
+
+    /// Validates complete local history in either object format for native transfer decisions.
+    ///
+    /// Uses [`Self::new`]'s graph, resource and cancellation contract without the wire protocol's
+    /// SHA-1 restriction. The caller must keep verified roots available through publication.
+    pub fn new_local(
+        store: &Objects,
+        roots: &[ObjectId],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
+        check_cancelled(cancel)?;
         if !store.shallow_roots().is_empty() {
             return Err(Error::Unsupported("shallow fetch negotiation"));
         }

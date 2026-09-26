@@ -175,8 +175,9 @@
 //!
 //! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1/SHA-256
 //! pack/index v2 reads, caller-owned pack/index v2 exports, object transfer and fetch
-//! orchestration, and conditional branch/tag push. Fetch and push remain SHA-1-only and accept v0
-//! streams or local Git server adapters. The optional `http` feature adds async smart-HTTP(S)
+//! orchestration, and conditional branch/tag push. Wire fetch and push remain SHA-1-only and accept
+//! v0 streams. Native local fetch and push support SHA-1 and SHA-256 without Git server processes.
+//! The optional `http` feature adds async smart-HTTP(S)
 //! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio
 //! runtime; fetch pack validation remains an explicit synchronous step. Files references support
 //! enumeration, reads, symbolic resolution, and explicit no-reflog updates and deletion, plus

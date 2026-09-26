@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
     let objects = source.loose_objects();
-    let blob = objects.write_blob(b"Fetched through a local upload-pack server\n")?;
+    let blob = objects.write_blob(b"Fetched through native local storage\n")?;
     let tree = objects.write_tree(&Tree::new(
         girt::ObjectFormat::Sha1,
         vec![TreeEntry {
@@ -85,10 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let restored = fetched
         .read(blob, ReadLimits::default())?
         .ok_or("missing fetched blob")?;
-    assert_eq!(
-        restored.data(),
-        b"Fetched through a local upload-pack server\n"
-    );
+    assert_eq!(restored.data(), b"Fetched through native local storage\n");
     println!(
         "Fetched {} objects ({} pack bytes); published {commit} without a reflog",
         result.objects,

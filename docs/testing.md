@@ -180,10 +180,11 @@ The Windows integration selection follows implemented operations, not just file 
 - `http`: SHA-1 fetch/push, TLS trust/hostname checks, authentication, limits, cancellation,
   uncertain/partial outcomes and HTTP-backed fetch/clone publication. Its shell-hook fixture is
   Unix-only; the remaining suite is selected on Windows with `http_portable`.
-- `fetch`, `push`, `fetch_workflow`, `clone`: Local-process integration fixtures remain excluded on
-  Windows because that adapter is unsupported (R25). Portable fetch planning and clone completion
-  units execute on Windows; HTTP exercises public fetch/clone publication. R27/R28/R30 retain the
-  broader transfer, publication and cancellation corpus as transport capabilities arrive.
+- `local_native`: Both-format files/reftable local fetch and push, with Git reading the destination,
+  execute on Windows. `fetch`, `push`, `fetch_workflow`, and `clone` still include Unix-only
+  process/hook fixtures and are excluded as complete suites on Windows. Portable planning and clone
+  completion units execute there; HTTP exercises public fetch/clone publication. R27/R28/R30 retain
+  the broader transfer, publication and cancellation corpus.
 - `ssh`: Excluded: the adapter and its process-lifetime implementation are macOS/Linux-only (R24).
 
 Git-managed refs inside fixtures do not by themselves establish girt reference-storage support; the

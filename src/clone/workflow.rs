@@ -29,7 +29,7 @@ use crate::{InitKind, ObjectKind, Repository};
 /// Direct refs use the supplied reflog policy; symbolic HEAD uses `Reflog::Preserve` because
 /// stored symbolic replacements cannot append logs. No `origin/HEAD` alias is created. No index,
 /// checkout, shallow/filter, alternates, hardlinks, mirror or submodule behavior is supported.
-/// Finish requires the existing Unix reference backend. Local process and optional SSH adapters
+/// Finish requires the existing reference backend. Native local and optional SSH adapters
 /// require macOS/Linux; HTTP is feature-gated and uses the caller's runtime.
 ///
 /// This example needs a local source repository and Git on PATH for upload-pack:

@@ -1,4 +1,4 @@
-//! Upload-pack v0 object transfer and explicit fetch orchestration.
+//! Native local and upload-pack v0 object transfer with explicit fetch orchestration.
 //!
 //! [`FetchRequest`] combines supported refspecs with a destination snapshot and explicit update
 //! authorization. Its local/HTTP/SSH adapters plan from their actual advertisement, then use shared
@@ -11,7 +11,8 @@
 //! [`FetchRequest`] for the supported workflow. These lower-level APIs do not write refs or
 //! reflogs.
 //!
-//! Wants must be advertised IDs. [`receive`] requests full histories; [`receive_with_known`] uses
+//! Wants must be advertised IDs. Native local receive reads girt storage directly. [`receive`]
+//! requests full histories over a caller-owned stream; [`receive_with_known`] uses
 //! bounded [`KnownHistory`] to negotiate incremental transfers. Received delta bases stay internal,
 //! while selected-tip connectivity can depend on verified local objects. Installation rechecks
 //! those dependencies before publication. `side-band-64k`, optional `ofs-delta` and optional
@@ -68,10 +69,12 @@ mod import;
 mod install;
 mod known;
 mod local;
+mod local_native;
 mod protocol;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub(crate) use install::NativeContents;
 pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
 pub use local::{receive_local, receive_local_with_control, receive_local_with_known};
@@ -193,6 +196,12 @@ pub enum FetchError {
     /// Pack framing, checksum, delta reconstruction, or storage validation failed.
     #[error("received pack: {0}")]
     Pack(#[from] crate::ObjectReadError),
+    /// Native local pack construction failed before destination publication.
+    #[error("local pack construction: {0}")]
+    PackWrite(#[source] crate::PackWriteError),
+    /// Local annotated-tag advertisement could not be verified.
+    #[error("local tag peeling: {0}")]
+    Peel(#[source] Box<crate::PeelError>),
     /// Reopening the destination failed before dependency checks or publication.
     #[error("destination object snapshot: {0}")]
     Destination(#[source] crate::ObjectReadError),

@@ -1,11 +1,12 @@
 //! Conditional reference publication over receive-pack protocol v0.
 //!
 //! Build a [`PreparedPush`] from explicit commands and a local object reader, then call [`send`]
-//! with caller-owned blocking streams or [`send_local`] with a trusted local Git repository.
+//! with caller-owned blocking streams or [`send_local`] with a trusted local repository.
 //! Preparation validates the complete reachable graph and buffers a non-thin pack before any
 //! commands can reach a server. Local refs, tracking refs, configuration and reflogs are untouched.
 //!
-//! Only SHA-1 branches and tags are supported. `report-status` is required; no atomic, sideband,
+//! Wire push is SHA-1-only; [`PreparedPush::new_local`] also supports SHA-256 native transfers.
+//! `report-status` is required by wire push; no atomic, sideband,
 //! deletion, push-options, signed-push or report-status-v2 features are requested. Multiple
 //! commands can partially succeed. The `http` feature adds async smart-HTTP sending with explicit
 //! caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
@@ -25,6 +26,7 @@ pub use http::send_http;
 
 mod graph;
 mod local;
+mod local_native;
 mod prepared;
 mod protocol;
 mod types;

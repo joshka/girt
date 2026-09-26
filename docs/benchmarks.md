@@ -485,6 +485,10 @@ separate work and memory evidence.
 
 ## Owned Transport Baseline
 
+This section records the original Git-server measurement. R25 replaced the local adapter and renamed
+the current benchmark to `native-local-read-pack`; see [R25 evidence](evidence/r25.md) for the new
+workload and samples. The command below applies to the original revision only.
+
 Run `cargo bench --locked --bench fetch -- local-process-import-connectivity --noplot`. The same
 19-/259-object fixtures as the fetch baseline above are created outside timing. Each iteration
 starts a real local Git upload-pack, reads its advertisement, selects the tag, transfers and

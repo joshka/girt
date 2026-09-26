@@ -97,7 +97,7 @@ jobs:
 
   windows:
     if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
-    # Portable integrations are explicit; process adapters remain unsupported.
+    # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -112,6 +112,8 @@ jobs:
           Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json -Compress
           Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
           Write-Output "Temporary directory: $env:TEMP"
+      - name: Native local transfer
+        run: cargo +stable test --locked --no-default-features --test local_native
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library

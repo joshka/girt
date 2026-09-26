@@ -75,7 +75,7 @@ fn fetch(c: &mut Criterion) {
                 })
             },
         );
-        // Exercise a real local upload-pack once outside sampling to retain transport provenance.
+        // Exercise native local transfer once outside sampling to retain fixture provenance.
         let received = girt::fetch::receive_local(
             fixture.root.path(),
             |_| vec![tag],
@@ -177,7 +177,7 @@ fn fetch(c: &mut Criterion) {
                 .unwrap()
             })
         });
-        group.bench_function(format!("local-process-import-connectivity-{count}"), |b| {
+        group.bench_function(format!("native-local-read-pack-{count}"), |b| {
             b.iter(|| {
                 girt::fetch::receive_local_with_control(
                     fixture.root.path(),

@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_source_root, source) = repository()?;
     let (_destination_root, destination) = repository()?;
     let loose = source.loose_objects();
-    let blob = loose.write_blob(b"Published by girt through local receive-pack\n")?;
+    let blob = loose.write_blob(b"Published by girt through native local storage\n")?;
     let tree = loose.write_tree(&Tree::new(
         girt::ObjectFormat::Sha1,
         vec![TreeEntry {
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     // A complete protocol exchange can still contain rejection or partial success.
     if !report.all_succeeded() {
-        return Err(format!("receive-pack rejected updates: {report:?}").into());
+        return Err(format!("native local push rejected updates: {report:?}").into());
     }
     let restored = destination
         .objects(PackLimits::default())?
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing pushed blob")?;
     assert_eq!(
         restored.data(),
-        b"Published by girt through local receive-pack\n"
+        b"Published by girt through native local storage\n"
     );
     println!(
         "Published branch and annotated tag: {} objects, {} pack bytes",

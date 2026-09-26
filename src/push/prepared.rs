@@ -7,18 +7,21 @@ use super::{PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects, PackObject};
 
-/// An immutable command list and non-thin SHA-1 pack ready for one receive-pack session.
+/// An immutable command list and non-thin pack ready for one push.
 ///
-/// Keeps exact caller expectations; remote advertisement checking occurs in [`super::send`].
+/// Keeps exact caller expectations; wire advertisement checking occurs in [`super::send`].
 /// [`Self::new`] sends complete histories; [`Self::new_excluding`] omits explicit receiver history
 /// after validating its selected closure. The source object reader can
 /// be dropped after preparation. Reuse is permitted but each session rechecks the same
 /// expectations.
 #[derive(Debug)]
 pub struct PreparedPush {
+    pub(super) format: crate::ObjectFormat,
     pub(super) commands: Vec<PushCommand>,
     pub(super) request: Vec<u8>,
     pub(super) pack: Vec<u8>,
+    pub(super) index: Vec<u8>,
+    pub(super) checksum: Option<ObjectId>,
     pub(super) limits: PushLimits,
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
@@ -81,6 +84,34 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        if objects.object_format() != crate::ObjectFormat::Sha1 {
+            return Err(Error::Unsupported("SHA-256 wire push"));
+        }
+        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+    }
+
+    /// Prepares a native local push in the source format, including SHA-256.
+    ///
+    /// This has the same complete-graph, force, exclusion and work bounds as
+    /// [`Self::new_excluding`]. The result can be passed to [`super::send_local`]; wire transports
+    /// refuse SHA-256 until their object-format negotiation is implemented.
+    pub fn new_local(
+        objects: &Objects,
+        commands: Vec<PushCommand>,
+        receiver_roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
+        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+    }
+
+    fn prepare(
+        objects: &Objects,
+        commands: Vec<PushCommand>,
+        receiver_roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -99,14 +130,17 @@ impl PreparedPush {
                 return Err(Error::Unsupported("shallow push preparation"));
             }
             for id in receiver_roots {
-                id.require_sha1()?;
+                id.require_format(objects.object_format())?;
             }
-            let request = encode_commands(&commands, limits, cancel)?;
+            let request = encode_commands(objects.object_format(), &commands, limits, cancel)?;
             if commands.is_empty() {
                 return Ok(Self {
+                    format: objects.object_format(),
                     commands,
                     request,
                     pack: vec![],
+                    index: vec![],
+                    checksum: None,
                     limits,
                     objects: 0,
                     receiver_roots: vec![],
@@ -127,11 +161,12 @@ impl PreparedPush {
                 bytes: vec![],
                 cancel,
             };
+            let mut index = Vec::new();
             let result = crate::pack::write_controlled(
-                crate::ObjectFormat::Sha1,
+                objects.object_format(),
                 &inputs,
                 &mut pack,
-                &mut io::sink(),
+                &mut index,
                 limits.pack,
                 limits.compression,
                 &mut || {
@@ -145,9 +180,12 @@ impl PreparedPush {
             check_cancelled(cancel)?;
             let written = result?;
             Ok(Self {
+                format: objects.object_format(),
                 commands,
                 request,
                 pack: pack.bytes,
+                index,
+                checksum: Some(written.checksum),
                 limits,
                 objects: written.objects,
                 receiver_roots,
@@ -185,6 +223,7 @@ impl PreparedPush {
 }
 
 fn encode_commands(
+    format: crate::ObjectFormat,
     commands: &[PushCommand],
     limits: PushLimits,
     cancel: &AtomicBool,
@@ -196,16 +235,15 @@ fn encode_commands(
     let mut request = Vec::new();
     for (i, command) in commands.iter().enumerate() {
         check_cancelled(cancel)?;
-        command.new.require_sha1()?;
+        command.new.require_format(format)?;
         if let Some(id) = command.expected {
-            id.require_sha1()?;
+            id.require_format(format)?;
         }
         let name = command.name.as_bytes();
         if !name.starts_with(b"refs/heads/") && !name.starts_with(b"refs/tags/") {
             return Err(Error::Unsupported("destination namespace"));
         }
-        if command.new == ObjectId::Sha1([0; 20])
-            || command.expected == Some(ObjectId::Sha1([0; 20]))
+        if command.new == ObjectId::null(format) || command.expected == Some(ObjectId::null(format))
         {
             return Err(Error::Command("zero object ID; deletion is unsupported"));
         }
@@ -217,14 +255,14 @@ fn encode_commands(
         } else {
             b""
         };
-        let length = 82usize
+        let length = (format.digest_len() * 4 + 2)
             .checked_add(name.len())
             .and_then(|n| n.checked_add(caps.len() + 4))
             .ok_or(Error::Limit("command bytes"))?;
         if length > 65520 || length > limits.max_command_bytes.saturating_sub(request.len()) {
             return Err(Error::Limit("command bytes"));
         }
-        let old = command.expected.unwrap_or(ObjectId::Sha1([0; 20]));
+        let old = command.expected.unwrap_or(ObjectId::null(format));
         let mut line = format!("{old} {} ", command.new).into_bytes();
         line.extend_from_slice(name);
         line.extend_from_slice(caps);

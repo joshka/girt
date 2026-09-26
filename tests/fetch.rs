@@ -70,7 +70,7 @@ fn verify_contents(fixture: &Fixture, repo: &Repository) {
 #[rstest]
 #[case::ofs_source(true)]
 #[case::ref_source(false)]
-fn imports_server_deltas_and_all_object_kinds(#[case] ofs: bool) {
+fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, ofs, 16);
     let (root, repo) = destination();
     assert!(fixture.index_path.exists());
@@ -111,8 +111,7 @@ fn imports_server_deltas_and_all_object_kinds(#[case] ofs: bool) {
     assert!(
         std::str::from_utf8(&report)
             .unwrap()
-            .lines()
-            .any(|line| line.split_whitespace().count() == 7)
+            .contains(&fixture.ordinary.to_string())
     );
     assert_eq!(installed.objects, fixture.records.len());
     assert!(received.advertisement().refs.iter().any(|r| r.peeled));
@@ -698,8 +697,8 @@ fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
         |_| ControlFlow::Continue(()),
     )
     .unwrap();
-    // Complete branch history plus its new commit; the already-known tag is still selected.
-    assert_eq!(received.object_count(), fixture.records.len());
+    // No knowledge is offered, so local transfer includes the new commit and the selected tag.
+    assert_eq!(received.object_count(), fixture.records.len() + 1);
     assert!(received.wants().contains(&tag));
     received
         .install(

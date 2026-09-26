@@ -1,32 +1,37 @@
 use std::path::Path;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use super::{PreparedPush, PushError, PushFailure, PushReport, protocol};
+use super::{PreparedPush, PushError, PushReport};
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+use super::{PushFailure, protocol};
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use crate::packet::Wire;
-use crate::transport::{Server, TransportControl};
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+use crate::transport::Server;
+use crate::transport::TransportControl;
 
-/// Sends to a trusted explicit local repository using Git receive-pack as the server.
+/// Installs a prepared pack and conditionally updates a trusted local repository with girt.
 ///
-/// Canonicalizes the destination path and starts `git` from PATH with an empty environment except
-/// PATH and system/global configuration disabled. Uses binary stdin/stdout pipes, drains and
-/// discards stderr, and forces v0. All client framing, policy, graph selection and pack writing are
-/// girt code. URLs, SSH, HTTP and credentials are not accepted. Trust both the executable and the
-/// destination configuration/hooks: the server may run hooks and update its refs/reflogs as usual.
+/// Opens an explicit path through [`crate::Repository::open`], checks expected ref values and
+/// receiver-history dependencies, installs the pack, then applies each command with a conditional
+/// reference transaction. It invokes no Git executable or hook. Existing receive hooks or a
+/// configured hooks path cause refusal before publication; checked-out branches are rejected.
+/// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
-/// Uses interruptible owned pipes on macOS/Linux, with no deadline. See [`TransportControl`] for
-/// cancellation, diagnostic disposal, process-group cleanup, and platform requirements. Use
-/// [`send_local_with_control`] to impose an absolute deadline. Killing the server cannot roll
-/// back committed updates. Upload drains status concurrently, retaining at most
-/// [`super::PushLimits::max_status_bytes`] for parsing after I/O completes or fails. A valid
-/// acknowledgement prefix survives interruption; a complete report survives child-wait failure.
+/// Supports either object format and files or reftable references when prepared by
+/// [`PreparedPush::new_local`]. [`PreparedPush::new`] remains SHA-1 wire preparation. Ref and
+/// worktree state may change between separate reads; conditional locks prevent stale overwrites,
+/// and callers must coordinate worktree registration and GC. No reflogs are appended. Object
+/// installation can leave an indexed pack when later refs reject or fail.
 ///
 /// # Errors
 ///
-/// Path/spawn/pipe failures are [`PushError::NotSent`]. After transmission, returns
-/// [`super::send`]'s classification and status evidence. Unsuccessful child exit or wait failure is
-/// uncertain, even with a complete report. Complete server rejections normally return `Ok` with
-/// rejected statuses.
+/// Preflight and object installation failures are [`PushError::NotSent`] for ref effects. A
+/// reference preparation failure is a per-ref rejection, allowing other refs to succeed. A
+/// publication failure or interruption after installation is [`PushError::Uncertain`] with
+/// completed status evidence; inspect the destination before retrying.
 pub fn send_local(
     destination: impl AsRef<Path>,
     prepared: &PreparedPush,
@@ -37,14 +42,15 @@ pub fn send_local(
 
 /// Sends a prepared push with caller-controlled transport interruption.
 ///
-/// Same protocol and trust contract as [`send_local`]. See [`TransportControl`] for deadline
-/// scope, races, cleanup, and OS support. The deadline does not cover push preparation.
+/// Uses [`send_local`]'s storage contract. The deadline does not cover push preparation or
+/// guarantee interruption during one synchronous filesystem or compression operation.
 ///
 /// # Errors
 ///
-/// Before transmission interruption is [`PushError::NotSent`]. Once commands are attempted it is
-/// [`PushError::Uncertain`], retaining valid acknowledgements; unknown refs may have changed.
-/// The cause distinguishes [`PushFailure::Cancelled`] and [`PushFailure::Deadline`] from rejection.
+/// Before installation interruption is [`PushError::NotSent`]. After installation it is
+/// [`PushError::Uncertain`], retaining completed per-ref results; unknown refs may have changed.
+/// The cause distinguishes [`super::PushFailure::Cancelled`] and
+/// [`super::PushFailure::Deadline`] from rejection.
 pub fn send_local_with_control(
     destination: impl AsRef<Path>,
     prepared: &PreparedPush,
@@ -63,25 +69,7 @@ pub fn send_local_with_control(
         unpack = tracing::field::Empty,
     );
 
-    let operation = || {
-        control.check().map_err(|e| PushError::NotSent(e.into()))?;
-        let destination =
-            std::fs::canonicalize(destination).map_err(|e| PushError::NotSent(e.into()))?;
-        let mut command = Command::new("git");
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env(
-                "GIT_CONFIG_GLOBAL",
-                if cfg!(windows) { "NUL" } else { "/dev/null" },
-            )
-            .args(["-c", "protocol.version=0", "receive-pack"])
-            .arg(destination);
-        send_server(&mut command, prepared, control)
-    };
+    let operation = || super::local_native::send(destination.as_ref(), prepared, control);
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);
     #[cfg(not(feature = "tracing"))]
@@ -96,6 +84,7 @@ pub fn send_local_with_control(
     result
 }
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 fn send_server(
     command: &mut Command,
     prepared: &PreparedPush,

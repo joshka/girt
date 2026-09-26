@@ -18,7 +18,7 @@ pub enum ForcePolicy {
 pub struct PushCommand {
     /// Validated name under `refs/heads/` or `refs/tags/`; other namespaces are rejected.
     pub name: RefName,
-    /// `None` requires absence. `Some` requires this nonzero SHA-1 value, even with force enabled.
+    /// `None` requires absence. `Some` requires this exact nonzero value, even with force enabled.
     pub expected: Option<ObjectId>,
     /// Nonzero desired tip. Deletion is not supported. Tags may point to any supported object
     /// kind.
@@ -151,6 +151,15 @@ pub enum PushError {
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
+    /// Native local destination could not be opened.
+    #[error("local destination: {0}")]
+    Destination(#[source] Box<crate::OpenError>),
+    /// Native object installation failed before reference publication.
+    #[error("local object installation: {0}")]
+    Install(#[source] Box<crate::fetch::FetchError>),
+    /// Native reference publication failed after mutation may have begun.
+    #[error("local reference publication: {0}")]
+    Reference(#[source] Box<crate::refs::ReferenceError>),
     /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
@@ -250,6 +259,19 @@ pub enum PushFailure {
     /// Local receive-pack exited unsuccessfully, even if some results were acknowledged.
     #[error("local receive-pack exited unsuccessfully: {0}")]
     Process(std::process::ExitStatus),
+}
+impl PushFailure {
+    pub(super) fn destination(error: crate::OpenError) -> Self {
+        Self::Destination(Box::new(error))
+    }
+
+    pub(super) fn install(error: crate::fetch::FetchError) -> Self {
+        Self::Install(Box::new(error))
+    }
+
+    pub(super) fn reference(error: crate::refs::ReferenceError) -> Self {
+        Self::Reference(Box::new(error))
+    }
 }
 impl From<crate::packet::Error> for PushFailure {
     fn from(error: crate::packet::Error) -> Self {
