@@ -1458,6 +1458,27 @@ Markdown lint with the repository's 100-column policy. This increment has not be
 or Windows; earlier platform results do not establish its runtime behavior there. Mount-point
 crossing follows the ancestor algorithm but was not exercised with a separately mounted filesystem.
 
+## Linked Worktree Creation
+
+`Repository::create_orphan_worktree` creates an absent checkout directory, a registration under the
+common Git directory, a private unborn HEAD and an empty v2 index. The branch argument is a full
+`refs/heads/` name. A stored branch is refused. Multiple worktrees may point at the same unborn
+branch, matching Git. The destination's last native component names the registration; numeric
+suffixes resolve name collisions within the caller's bound. Both object formats and files/reftable
+reference storage use their respective private HEAD representations.
+
+The common repository's `extensions.relativeWorktrees` setting selects relative forward and back
+links. Otherwise links are absolute; `commondir` is always relative. Git can read the result, report
+its status and create the first commit. The API does not materialize a tree, create jj workspace
+metadata, or switch the main checkout.
+
+The destination and its parent are trusted filesystem paths. The parent must exist; line breaks in
+paths are refused because Git's link files are line based. Creation uses exclusive file and
+directory operations. A later failure retains any completed registration and destination directory
+for inspection, identified in the structured error. There is no automatic rollback, repair, pruning,
+lock lifecycle, or crash-durability guarantee. The caller must exclude concurrent branch/worktree
+administration and destination replacement. R20 owns repair and pruning.
+
 ## Reference Transactions and Reflogs
 
 `References::transaction` accepts stored direct/symbolic edits and resolved direct updates/deletion.

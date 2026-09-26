@@ -4,6 +4,7 @@ mod discover;
 mod init;
 mod operation;
 mod shallow;
+mod worktree_create;
 mod worktrees;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -14,6 +15,7 @@ pub(crate) use init::{initial_branch, initial_config};
 pub use operation::{OperationCleanupError, OperationError, OperationLimits, OperationState};
 pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
+pub use worktree_create::CreateWorktreeError;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 
 use crate::config::{ConfigFile, ConfigInputs, ConfigScope, ResolveError, integer};

@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/references_portable.rs'
+      - 'tests/worktree_create.rs'
       - '.github/workflows/references.yml'
   workflow_dispatch:
     inputs:
@@ -58,13 +59,13 @@ jobs:
       - name: Core reference and fault tests
         run: "cargo +stable test --locked --no-default-features --lib refs::"
       - name: Both-format Git interoperability
-        run: cargo +stable test --locked --no-default-features --test references_portable
+        run: cargo +stable test --locked --no-default-features --test references_portable --test worktree_create
       - name: Reference tests with tracing
         run: "cargo +stable test --locked --no-default-features --features tracing --lib refs::"
       - name: Public workflow
         run: cargo +stable run --locked --no-default-features --example reference_transaction
       - name: Clippy
-        run: cargo +stable clippy --locked --no-default-features --lib --test references_portable --example reference_transaction -- -D warnings
+        run: cargo +stable clippy --locked --no-default-features --lib --test references_portable --test worktree_create --example reference_transaction -- -D warnings
 
   reftable:
     if: ${{ inputs.reftable_only }}

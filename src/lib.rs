@@ -226,9 +226,9 @@ pub use pack::{
 };
 pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repository::{
-    ColocationEdit, ColocationError, InitError, InitKind, OpenError, OperationCleanupError,
-    OperationError, OperationLimits, OperationState, Repository, ShallowError, ShallowRoots,
-    Worktree, WorktreeError, WorktreeState,
+    ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, OpenError,
+    OperationCleanupError, OperationError, OperationLimits, OperationState, Repository,
+    ShallowError, ShallowRoots, Worktree, WorktreeError, WorktreeState,
 };
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

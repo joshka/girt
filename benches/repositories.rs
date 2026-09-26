@@ -57,7 +57,7 @@ fn repositories(c: &mut Criterion) {
     c.bench_function("repository/open-bare-warm", |b| {
         b.iter(|| Repository::open(black_box(root.path())).unwrap())
     });
-    for count in [10, 100] {
+    for count in [10, 100, 1000] {
         let fixture = tempfile::tempdir().unwrap();
         let main = fixture.path().join("main");
         let repo =
