@@ -93,7 +93,7 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
 | R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
 | C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
-| R41 | Representative Git-parity performance                       | C02                             | Review ready        | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
+| R41 | Representative Git-parity performance                       | C02                             | Accepted (scoped)   | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -406,10 +406,14 @@ included in R40.
 The [R41 report](evidence/r41.md) rebaselines the current code and records bounded index retention,
 `zlib-rs` inflation, direct result-buffer decoding and accelerated identity hashing. Warm buffered
 ordinary packed reads reach roughly 0.43–0.48x Git; selected deep deltas reach 0.038–0.053x. A small
-SHA-1/SHA-256 cross-section adds packed trees and varied loose blobs. R41 is review ready for scoped
-acceptance, with [B05](#b05--residual-packed-read-performance) carrying the measured gaps and R34
-retaining the full A20 target. The origin native validation result belongs with R41 evidence; the
-existing C02 broad Windows tracing failure remains separate.
+SHA-1/SHA-256 cross-section adds packed trees and varied loose blobs. The coordinator accepts R41 as
+a measured improvement at `e9f69f92`, after native storage `36219234025` and reported platform,
+reference, and index runs `36219232166`, `36219232114`, and `36219232093` passed. This does not
+establish Git parity: [B05](#b05--residual-packed-read-performance) carries the ordinary and deep
+delta gaps, and R34 retains the full A20 assessment. Historical C02 failures remain recorded,
+including the broad Windows tracing failure. The bounded retained index raises memory use within the
+documented limit; `aws-lc-rs` adds native build cost, with prebuilt NASM covering tested Windows
+builders.
 
 ## R40 Completion
 
