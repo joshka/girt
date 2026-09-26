@@ -256,8 +256,9 @@ mutation and core required interoperability failures remain blockers under the r
 workspace workflows.
 
 Create/register an orphan worktree with its branch and private HEAD/index state, honoring relative
-path configuration. Repair links after repository/worktree moves. Prune missing registrations with
-expiry and lock safeguards, preserving live worktrees and per-worktree roots. Compare Git-observable
+path configuration. Repair links after repository/worktree moves. Prune only with an explicit
+caller-authoritative retirement decision, expiry and lock safeguards; preserve live worktrees and
+per-worktree roots when an old backlink is absent because the checkout moved. Compare Git-observable
 layout and subsequent Git operations. Inject failures between registration and directory creation,
 concurrent repair/prune, permissions and stale locks. Native paths and crash leftovers are required
 cases. No Git worktree subprocess remains; jj owns workspace metadata and ordinary checkout.

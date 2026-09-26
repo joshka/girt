@@ -520,14 +520,14 @@ leaves private HEAD, index and refs intact. An I/O failure identifies completed 
 remaining replacement steps and temporary files are not crash-atomic. The inventory improvement
 removes repeated common-repository opens and has only warm local timing evidence.
 
-Pruning remains open. The public fixture moves a live checkout, then successfully prunes its stale
-registration. That removes private HEAD, index, refs and reflogs while the checkout still exists. An
-absent old backlink cannot establish retirement or safe loss of those roots. Before any jj
-integration uses pruning, require an explicit caller-authoritative retirement decision and a focused
-regression that retains a moved checkout's private roots unless it is deliberately retired. Keep the
-existing expiry, lock, inaccessible-target and partial-removal checks. R31 must not treat the
-current prune predicate as a complete live-root inventory. Automatic move discovery and durable
-multi-file recovery remain B02; their absence alone does not require a broad scanner now.
+The original prune API allowed the public fixture to move a live checkout, then prune its stale
+registration and private roots. An absent old backlink could not establish retirement. The C02
+remedy requires `WorktreeRetirement::Confirmed` from the caller before pruning and retains the
+existing expiry, lock, inaccessible-target and partial-removal checks. A focused test preserves
+private HEAD, index, refs and logs through a move and repair; deliberate retirement remains a
+separate test. The caller must establish that these roots are disposable. R31 must still enumerate
+live roots independently; this confirmation is not a GC inventory. Automatic move discovery and
+durable multi-file recovery remain B02 rather than a broad scanner prerequisite.
 
 The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
 index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate

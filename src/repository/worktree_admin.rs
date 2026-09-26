@@ -38,6 +38,18 @@ pub enum WorktreeAdminError {
     },
 }
 
+/// Caller decision that a missing worktree's private metadata may be deleted.
+///
+/// A missing old checkout path does not prove that the checkout was retired: it may have moved.
+/// The caller must establish that no live checkout or jj workspace needs this registration's
+/// private HEAD, index, refs or reflogs before supplying this decision. Girt cannot verify that
+/// decision from the registration's stale backlink.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorktreeRetirement {
+    /// The caller has confirmed that the registration and its private roots may be removed.
+    Confirmed,
+}
+
 struct AdminLock(PathBuf);
 impl Drop for AdminLock {
     fn drop(&mut self) {
@@ -254,10 +266,13 @@ impl Repository {
         })
     }
 
-    /// Prunes one missing registration only when its gitdir link predates `expire_before`.
+    /// Prunes one retired registration when its missing gitdir link predates `expire_before`.
     ///
-    /// A live or locked registration is never removed. Inaccessible targets are uncertain and
-    /// require caller inspection. The caller must exclude noncooperating moves and Git maintenance.
+    /// [`WorktreeRetirement::Confirmed`] makes the caller's decision to delete the private HEAD,
+    /// index, refs and reflogs explicit. A missing old path alone is insufficient: a moved checkout
+    /// may still need those roots. A live or locked registration is never removed. Inaccessible
+    /// targets are uncertain and require caller inspection. The caller must exclude noncooperating
+    /// moves and Git maintenance.
     ///
     /// # Errors
     ///
@@ -266,6 +281,7 @@ impl Repository {
         &self,
         registration: impl AsRef<Path>,
         expire_before: SystemTime,
+        _retirement: WorktreeRetirement,
     ) -> Result<(), WorktreeAdminError> {
         let registration = checked_registration(self, registration.as_ref())?;
         let _guard = lock(&registration)?;

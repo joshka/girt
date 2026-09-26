@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use girt::refs::{Backend, RefName};
-use girt::{InitKind, ObjectFormat, Repository, WorktreeAdminError};
+use girt::{InitKind, ObjectFormat, Repository, WorktreeAdminError, WorktreeRetirement};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
@@ -70,21 +70,26 @@ fn prune_requires_expiry_absence_and_no_lock() {
     let registration = linked.git_dir().to_owned();
     let future = SystemTime::now() + Duration::from_secs(60);
     assert!(matches!(
-        repo.prune_worktree(&registration, future),
+        repo.prune_worktree(&registration, future, WorktreeRetirement::Confirmed),
         Err(WorktreeAdminError::Protected(_))
     ));
     repo.lock_worktree(&registration, "keep").unwrap();
     fs::rename(root.path().join("topic"), root.path().join("moved")).unwrap();
     assert!(matches!(
-        repo.prune_worktree(&registration, future),
+        repo.prune_worktree(&registration, future, WorktreeRetirement::Confirmed),
         Err(WorktreeAdminError::Protected(_))
     ));
     repo.unlock_worktree(&registration, "keep").unwrap();
     assert!(matches!(
-        repo.prune_worktree(&registration, SystemTime::UNIX_EPOCH),
+        repo.prune_worktree(
+            &registration,
+            SystemTime::UNIX_EPOCH,
+            WorktreeRetirement::Confirmed,
+        ),
         Err(WorktreeAdminError::Protected(_))
     ));
-    repo.prune_worktree(&registration, future).unwrap();
+    repo.prune_worktree(&registration, future, WorktreeRetirement::Confirmed)
+        .unwrap();
     assert!(!registration.exists());
     assert!(root.path().join("moved").exists());
     let listed = git(
@@ -92,6 +97,43 @@ fn prune_requires_expiry_absence_and_no_lock() {
         &["worktree", "list", "--porcelain"],
     );
     assert!(!String::from_utf8_lossy(&listed).contains("topic"));
+}
+
+#[test]
+fn moved_checkout_keeps_private_roots_until_explicit_retirement() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("main"),
+        InitKind::Worktree,
+    )
+    .unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo.create_orphan_worktree(&checkout, &branch, 2).unwrap();
+    let registration = linked.git_dir().to_owned();
+    let private_ref = registration.join("refs/worktree/keep");
+    let private_log = registration.join("logs/HEAD");
+    fs::create_dir_all(private_ref.parent().unwrap()).unwrap();
+    fs::create_dir_all(private_log.parent().unwrap()).unwrap();
+    fs::write(&private_ref, b"private ref\n").unwrap();
+    fs::write(&private_log, b"private log\n").unwrap();
+    let head = fs::read(registration.join("HEAD")).unwrap();
+    let index = fs::read(registration.join("index")).unwrap();
+
+    let moved = root.path().join("moved");
+    fs::rename(&checkout, &moved).unwrap();
+    assert!(!checkout.exists());
+    assert!(registration.exists());
+    assert_eq!(fs::read(registration.join("HEAD")).unwrap(), head);
+    assert_eq!(fs::read(registration.join("index")).unwrap(), index);
+    assert_eq!(fs::read(&private_ref).unwrap(), b"private ref\n");
+    assert_eq!(fs::read(&private_log).unwrap(), b"private log\n");
+
+    repo.repair_worktree(&registration, &moved).unwrap();
+    assert_eq!(fs::read(&private_ref).unwrap(), b"private ref\n");
+    assert_eq!(fs::read(&private_log).unwrap(), b"private log\n");
+    git(&moved, &["symbolic-ref", "HEAD"]);
 }
 
 #[test]
@@ -132,7 +174,11 @@ fn stale_admin_lock_and_foreign_gitfile_refuse_mutation() {
     let guard = registration.join("girt-admin.lock");
     fs::write(&guard, b"leftover").unwrap();
     assert!(matches!(
-        repo.prune_worktree(registration, SystemTime::now() + Duration::from_secs(60)),
+        repo.prune_worktree(
+            registration,
+            SystemTime::now() + Duration::from_secs(60),
+            WorktreeRetirement::Confirmed,
+        ),
         Err(WorktreeAdminError::Busy(_))
     ));
     fs::remove_file(&guard).unwrap();
