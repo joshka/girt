@@ -147,6 +147,37 @@ pub(crate) fn imported_reflog(
     )))
 }
 
+pub(crate) fn imported_reflog_names(
+    refs: &References<'_>,
+    max_entries: usize,
+    cancel: &AtomicBool,
+) -> Result<Vec<RefName>, ReferenceError> {
+    let mut names = BTreeSet::new();
+    for root in directories(refs) {
+        let snapshot = Snapshot::read(
+            &root,
+            refs.repository.object_format(),
+            refs.reftable_limits,
+            cancel,
+        )?;
+        for record in snapshot.table.logs {
+            if record.value.is_none() {
+                continue;
+            }
+            let Some(name) = record.name.reference_name() else {
+                return Err(ReferenceError::Unsupported("unrecognized reflog name"));
+            };
+            if directory(refs, &name) == root {
+                names.insert(name);
+                if names.len() > max_entries {
+                    return Err(ReferenceError::Limit("reflog discovery entries"));
+                }
+            }
+        }
+    }
+    Ok(names.into_iter().collect())
+}
+
 pub(crate) fn reflog(
     refs: &References<'_>,
     name: &RefName,

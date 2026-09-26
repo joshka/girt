@@ -141,6 +141,9 @@ pub enum ReferenceError {
     /// Recognized feature outside this implementation's supported boundary.
     #[error("unsupported reference feature: {0}")]
     Unsupported(&'static str),
+    /// A caller-supplied bound stopped a reference or history inventory.
+    #[error("reference resource limit: {0}")]
+    Limit(&'static str),
     /// Another writer owns a lock. No waiting, lock stealing, or automatic retry is performed.
     #[error("reference lock already exists: {0}")]
     Locked(PathBuf),

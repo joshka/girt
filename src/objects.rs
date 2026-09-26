@@ -191,11 +191,19 @@ pub struct Objects {
 
 #[derive(Debug, Clone)]
 struct Store {
+    directory: PathBuf,
     loose: LooseObjects,
     packs: Vec<Arc<FilePack>>,
 }
 
 impl Objects {
+    /// Returns canonical object directories in search order, primary first.
+    ///
+    /// Subsequent entries are alternates owned outside this repository. A maintenance planner
+    /// must never treat their contents as owned pruning candidates.
+    pub fn store_directories(&self) -> impl Iterator<Item = &Path> {
+        self.stores.iter().map(|store| store.directory.as_path())
+    }
     /// Fixed history boundaries inherited from the repository handle, unaffected by later refresh.
     pub fn shallow_roots(&self) -> &crate::ShallowRoots {
         &self.shallow
@@ -410,6 +418,7 @@ impl Store {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self {
+                    directory: directory.to_owned(),
                     loose,
                     packs: vec![],
                 });
@@ -464,7 +473,11 @@ impl Store {
                 )?,
             ));
         }
-        Ok(Self { loose, packs })
+        Ok(Self {
+            directory: directory.to_owned(),
+            loose,
+            packs,
+        })
     }
 }
 

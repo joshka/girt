@@ -25,13 +25,17 @@ on:
         description: Run only focused Windows HTTP regression checks
         type: boolean
         default: false
+      retention_only:
+        description: Run only read-only retention planning checks
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   unix:
-    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
+    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +64,7 @@ jobs:
       - name: Core-only runtime without tracing
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
-          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable
+          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable --test retention
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
@@ -96,7 +100,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only }}
+    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -135,7 +139,7 @@ jobs:
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
           --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test discovery --test tags --test packs
-          --test history --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test colocation --test status_portable --test checkout_portable --test references --test references_portable
+          --test history --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test colocation --test status_portable --test checkout_portable --test references --test references_portable --test retention
       - name: Portable HTTP runtime
         if: ${{ !cancelled() }}
         run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
@@ -278,3 +282,26 @@ jobs:
             ignore-observations.json
             ignore-resources.json
             target/criterion
+
+  retention:
+    if: ${{ inputs.retention_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain and Git
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc +stable -Vv
+          git --version
+          python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
+      - name: Read-only retention cases
+        run: cargo +stable test --locked --no-default-features --test retention
+      - name: Retention API and benchmark lint
+        run: cargo +stable clippy --locked --no-default-features --lib --test retention --bench retention -- -D warnings

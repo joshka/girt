@@ -265,3 +265,7 @@ harness = false
 [[bench]]
 name = "rewrites"
 harness = false
+
+[[bench]]
+name = "retention"
+harness = false

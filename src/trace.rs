@@ -183,7 +183,7 @@ pub(crate) fn reference(error: &crate::refs::ReferenceError) -> &'static str {
         Malformed { .. } | Cycle(_) => "corrupt",
         Locked(_) | Conflict(_) => "conflict",
         Mismatch { .. } => "precondition",
-        Depth(_) => "limit",
+        Depth(_) | Limit(_) => "limit",
         Cancelled => "cancelled",
         Reftable(error) => match error {
             crate::refs::reftable::Error::Malformed(_) => "corrupt",

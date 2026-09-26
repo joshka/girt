@@ -56,6 +56,15 @@
 //! avoids symlink ancestors and repository metadata. Reports are observations, not atomic
 //! snapshots or checkout preconditions. Run `cargo run --example status` for a disposable fixture.
 //!
+//! # Planning object retention
+//!
+//! [`Repository::plan_retention`] observes caller heads, references, imported reflogs, registered
+//! worktree HEADs and indexes, recent loose objects, shallow boundaries, and protected packs.
+//! [`retention::RetentionPolicy`] supplies resource limits and expiry cutoffs. Complete reports
+//! distinguish every observed reachable object from objects still required after reflog expiry.
+//! Incomplete reports retain recovered candidates and cannot justify deletion. A later maintenance
+//! executor must exclude writers and rescan before acting; this library operation changes no files.
+//!
 //! # Creating and finding a repository
 //!
 //! [`Repository::init`] creates a bare or ordinary SHA-1 or SHA-256 repository with unborn `main`
@@ -206,6 +215,7 @@ pub mod push;
 pub mod refs;
 pub mod remote;
 mod repository;
+pub mod retention;
 pub mod rewrites;
 pub mod status;
 mod tag;

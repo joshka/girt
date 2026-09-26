@@ -1,5 +1,6 @@
 //! Bounded imported history, independent of canonical append construction.
 
+mod names;
 mod read;
 mod record;
 
