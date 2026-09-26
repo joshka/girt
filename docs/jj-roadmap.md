@@ -91,8 +91,8 @@ in its task completion callback, avoiding a self-referential commit hash in this
 | R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
 | R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
 | R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
-| R20 | Worktree repair, locks and pruning                          | R19                             | Scoped; prune open  | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](#c02-storage-and-layout-review)                                              |
-| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
+| R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
+| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Review; ACL gate    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R41 | Representative Git-parity performance                       | C02                             | Planned             | [A20](jj-acceptance.md#a20--representative-git-parity-performance); immediately after C02 and before R21; required before R34.                                               |
 | R21 | URL, environment and transport configuration                | R41, R09                        | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
 | R22 | Credential helper and askpass lifecycle                     | R21                             | Planned             | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries)                                                                                                |
@@ -504,9 +504,32 @@ recovery of private administration locks, and durable multi-file repair would ad
 or persistent coordination. Revisit when a concrete jj workflow needs them; do not use a missing old
 backlink as proof that a moved checkout and its private roots are disposable.
 
+### B03 — Malformed Alternates and Optional Windows Paths
+
+**Status:** Deferred under the prioritization policy. **Owner:** R35 consumer inventory, then a
+bounded storage or platform follow-up if needed. **Evidence:** [C02 review](evidence/c02.md).
+
+Girt explicitly rejects malformed alternate records that Git may skip or truncate. Native UNC,
+drive-alias and WSL backlink behavior is unverified, and girt raw status/checkout remains
+unsupported on Windows. Reopen the affected case when a required jj repository or workflow supplies
+concrete bytes, paths or call sites. Retain the expected store selection or filesystem effect and
+run the affected native fixture. These omissions do not establish compatibility for those inputs.
+
+### B04 — Intermittent Tracing and Split-Index Assertions
+
+**Status:** Open investigation; no production defect established. **Owner:** C02 test follow-up.
+**Evidence:** [C02 review](evidence/c02.md) and original failed CI attempts.
+
+The tracing test sometimes captures zero `fetch.http` spans. The split-index test occasionally fails
+its Git-oracle assertion before girt reads the index. Passing retries do not close either finding.
+Reproduce with complete captured spans or raw main/shared index bytes and Git output, respectively;
+then fix the demonstrated lifetime, codec or fixture defect without weakening the assertions.
+Promote any production correctness finding ahead of dependent work.
+
 ## C02 Storage and Layout Review
 
-The C02 task reviewed executable `f8aaa936ab877243faf9c8a94d106e595fe06b75` and evidence child
+The [review evidence](evidence/c02.md) records the scoped decision and later native validation. The
+C02 task reviewed executable `f8aaa936ab877243faf9c8a94d106e595fe06b75` and evidence child
 `15acb57ad141` under [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage) and
 [A18](jj-acceptance.md#a18--architecture-checkpoints). The R20 reference and index matrices passed
 on four native hosts. The broad macOS run first failed to capture `fetch.http` spans and passed only
@@ -527,7 +550,10 @@ existing expiry, lock, inaccessible-target and partial-removal checks. A focused
 private HEAD, index, refs and logs through a move and repair; deliberate retirement remains a
 separate test. The caller must establish that these roots are disposable. R31 must still enumerate
 live roots independently; this confirmation is not a GC inventory. Automatic move discovery and
-durable multi-file recovery remain B02 rather than a broad scanner prerequisite.
+durable multi-file recovery remain B02 rather than a broad scanner prerequisite. The
+explicit-retirement remedy at `70a8f81f957d20db1776643d88f127971eac89a7` passes the four-host
+reference and index runs, so R20 has scoped acceptance. The broad platform run retains Windows
+tracing and macOS transport-fixture failures; C02's ACL safety evidence gate remains open.
 
 The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
 index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate
