@@ -68,53 +68,60 @@ unverified, including where useful primitives already exist. Each completion cel
 link a retained report containing the exact tested revision and evidence. R00's revision is recorded
 in its task completion callback, avoiding a self-referential commit hash in this file.
 
-| ID  | Bounded deliverable                                         | Depends on                      | Status              | Acceptance / completion                                                                                                                                                      |
-| --- | ----------------------------------------------------------- | ------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | This document; [matrix](jj-acceptance.md); [process](testing.md#roadmap-completion-and-coordination)                                                                         |
-| R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Complete            | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads); [evidence](evidence/r01.md)                                                                |
-| R02 | Format-bearing identity and hashing foundation              | R01                             | Complete            | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations); [evidence](evidence/r02.md)                                                                             |
-| R03 | Optional tracing and operation failure visibility           | R02                             | Complete            | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling); [evidence](evidence/r03.md)                                                                              |
-| R04 | SHA-256 object codecs and loose repository storage          | R02                             | Complete            | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation); [evidence](evidence/r04.md) |
-| R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Complete            | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r05.md)     |
-| R06 | Native CI foundation for both formats                       | R05                             | Complete            | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r06.md)                                                                                    |
-| R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Complete            | [A01/A04 evidence](evidence/r07.md)                                                                                                                                          |
-| R08 | Layered config resolution and provenance                    | R03                             | Complete            | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r08.md)                                                                                   |
-| R09 | Lossless config and remote mutation                         | R08                             | Complete            | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
-| R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Accepted            | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
-| C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted            | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
-| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted            | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
-| R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete            | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
-| R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted            | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
-| R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
-| R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
-| R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
-| R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
-| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
-| R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
-| R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
-| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
-| R41 | Representative Git-parity performance                       | C02                             | Accepted (scoped)   | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
-| R21 | URL, environment and transport configuration                | R41, R09                        | Review ready        | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r21.md)                                                                   |
-| R22 | Credential helper and askpass lifecycle                     | R21                             | Review ready        | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r22.md)                                                                   |
-| R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Scoped accepted     | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r23.md)                                                                   |
-| R24 | SSH command/agent/key configuration and cleanup             | R22                             | Scoped accepted     | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r24.md)                                                                   |
-| R25 | Native local transport and explicit helper protocols        | R21, R16                        | Review ready        | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r25.md)                                                                   |
-| R26 | Remote advertisement, default HEAD and protocol negotiation | R23–R25                         | Planned             | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
-| R27 | Fetch negotiation, shallow/depth and pack receipt           | R26, R16                        | Planned             | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
-| R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Planned             | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
-| R29 | Push command model, deletes, leases and options             | R26, R16                        | Planned             | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
-| R30 | Push partial outcomes, progress and cancellation            | R29                             | Planned             | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
-| C03 | Transport coherence and native CI milestone                 | R21–R30                         | Planned             | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
-| R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
-| R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
-| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
-| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
-| R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
-| R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
-| R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
-| R38 | Split and sparse index storage                              | R12, R14                        | Accepted            | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
-| R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
-| R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Complete            | [R40 evidence](evidence/r40.md); bounded bytes/fields/roots, explicit incomplete outcomes and native evidence; required before C02/R31/R34.                                  |
+Size is relative total implementation and validation effort for the bounded item, not remaining
+work, elapsed time or a calendar promise. XS is a small focused change; S is one narrow capability;
+M spans several related behaviors or platforms; L needs substantial integration and compatibility
+evidence; XL spans multiple complex surfaces or a broad acceptance gate. Completed items reflect
+their delivered scope. Planned and deferred sizes are estimates that may change with endpoint,
+consumer or native-platform evidence.
+
+| ID  | Bounded deliverable                                         | Depends on                      | Status              | Size | Acceptance / completion                                                                                                                                                      |
+| --- | ----------------------------------------------------------- | ------------------------------- | ------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | S    | This document; [matrix](jj-acceptance.md); [process](testing.md#roadmap-completion-and-coordination)                                                                         |
+| R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Complete            | M    | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads); [evidence](evidence/r01.md)                                                                |
+| R02 | Format-bearing identity and hashing foundation              | R01                             | Complete            | M    | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations); [evidence](evidence/r02.md)                                                                             |
+| R03 | Optional tracing and operation failure visibility           | R02                             | Complete            | M    | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling); [evidence](evidence/r03.md)                                                                              |
+| R04 | SHA-256 object codecs and loose repository storage          | R02                             | Complete            | L    | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A04](jj-acceptance.md#a04--object-representations-and-git-interpretation); [evidence](evidence/r04.md) |
+| R05 | SHA-256 packs, indexes, refs and index checksums            | R04                             | Complete            | L    | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations), [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r05.md)     |
+| R06 | Native CI foundation for both formats                       | R05                             | Complete            | M    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r06.md)                                                                                    |
+| R07 | Tolerant tree/tag/commit decoding and peeling               | R04                             | Complete            | L    | [A01/A04 evidence](evidence/r07.md)                                                                                                                                          |
+| R08 | Layered config resolution and provenance                    | R03                             | Complete            | L    | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r08.md)                                                                                   |
+| R09 | Lossless config and remote mutation                         | R08                             | Complete            | L    | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
+| R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Accepted            | L    | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
+| C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted            | M    | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
+| R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted            | XL   | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
+| R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete            | XL   | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
+| R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted            | L    | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
+| R14 | External object-store acceptance and required formats       | R07, R10                        | Accepted            | L    | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh), [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r14.md)       |
+| R15 | File-backed pack reads and bounded caches                   | R14, R39, R03                   | Accepted            | XL   | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r15.md)                                                                          |
+| R16 | Object-store refresh and concurrent publication             | R15, R11                        | Accepted            | L    | [A05](jj-acceptance.md#a05--object-stores-resource-bounds-and-refresh); [evidence](evidence/r16.md)                                                                          |
+| R17 | Ignore parsing and hierarchical matching                    | R08                             | Accepted            | L    | [A10](jj-acceptance.md#a10--ignore-and-exclude-semantics); [evidence](evidence/r17.md)                                                                                       |
+| R18 | Deterministic inferred rename/copy detection                | R07, R15                        | Draft; deferred     | XL   | [A11](jj-acceptance.md#a11--inferred-copies-and-renames)                                                                                                                     |
+| R19 | Worktree creation, registration and orphan HEAD             | R10–R13                         | Accepted            | L    | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r19.md)                                                                                            |
+| R20 | Worktree repair, locks and pruning                          | R19                             | Scoped accepted     | L    | [A12](jj-acceptance.md#a12--worktree-administration); [evidence](evidence/r20.md); [C02 review](evidence/c02.md)                                                             |
+| C02 | Storage/layout coherence and native CI milestone            | R11–R20, R36–R40                | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c02.md)                             |
+| R41 | Representative Git-parity performance                       | C02                             | Accepted (scoped)   | L    | [A20](jj-acceptance.md#a20--representative-git-parity-performance); [evidence](evidence/r41.md); before R21 and R34.                                                         |
+| R21 | URL, environment and transport configuration                | R41, R09                        | Review ready        | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r21.md)                                                                   |
+| R22 | Credential helper and askpass lifecycle                     | R21                             | Review ready        | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r22.md)                                                                   |
+| R23 | HTTP trust, proxy, redirects and authentication             | R22                             | Scoped accepted     | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r23.md)                                                                   |
+| R24 | SSH command/agent/key configuration and cleanup             | R22                             | Scoped accepted     | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r24.md)                                                                   |
+| R25 | Native local transport and explicit helper protocols        | R21, R16                        | Review ready        | L    | [A13](jj-acceptance.md#a13--transport-configuration-and-extension-boundaries); [evidence](evidence/r25.md)                                                                   |
+| R26 | Remote advertisement, default HEAD and protocol negotiation | R23–R25                         | Planned             | L    | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
+| R27 | Fetch negotiation, shallow/depth and pack receipt           | R26, R16                        | Planned             | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
+| R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Planned             | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives)                                                                                                        |
+| R29 | Push command model, deletes, leases and options             | R26, R16                        | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
+| R30 | Push partial outcomes, progress and cancellation            | R29                             | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
+| C03 | Transport coherence and native CI milestone                 | R21–R30                         | Planned             | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
+| R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
+| R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
+| R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
+| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
+| R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
+| R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
+| R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | XL   | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
+| R38 | Split and sparse index storage                              | R12, R14                        | Accepted            | XL   | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
+| R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | L    | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
+| R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Complete            | L    | [R40 evidence](evidence/r40.md); bounded bytes/fields/roots, explicit incomplete outcomes and native evidence; required before C02/R31/R34.                                  |
 
 The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
 separates parsed identity bytes from construction policy, and exposes exact signature payload
@@ -483,9 +490,10 @@ unaccepted.
 
 ### B01 — R18 Inferred-Copy Scoring and Pairing Parity
 
-**Status:** Deferred by user decision. **Owner:** R18 follow-up, coordinated through the roadmap.
-**Evidence:** [R18 report](evidence/r18.md), draft `d84f351d12abb9f35b7075e6a3e46cea60f07bf7`,
-investigation `285e27e79d3e6264760b179e97aac4536827dda1`, and
+**Size:** L. **Status:** Deferred by user decision. **Owner:** R18 follow-up, coordinated through
+the roadmap. **Evidence:** [R18 report](evidence/r18.md), draft
+`d84f351d12abb9f35b7075e6a3e46cea60f07bf7`, investigation
+`285e27e79d3e6264760b179e97aac4536827dda1`, and
 [full original observations](../tests/fixtures/rewrites/observed.json).
 
 The draft can omit relationships or choose different sources/scores than Git for repeated spans and
@@ -509,8 +517,9 @@ first integration; R35 must report its assessment and this deferred item's dispo
 
 ### B02 — Automatic Worktree Move and Crash Recovery
 
-**Status:** Deferred under the prioritization policy. **Owner:** Worktree administration follow-up
-after consumer integration evidence. **Evidence:** [R20 report](evidence/r20.md).
+**Size:** L. **Status:** Deferred under the prioritization policy. **Owner:** Worktree
+administration follow-up after consumer integration evidence. **Evidence:**
+[R20 report](evidence/r20.md).
 
 R20 requires an explicit checkout path to repair a moved worktree and caller exclusion from
 noncooperating moves and Git maintenance. It retains crash leftovers and reports partial link
@@ -521,8 +530,9 @@ backlink as proof that a moved checkout and its private roots are disposable.
 
 ### B03 — Malformed Alternates and Optional Windows Paths
 
-**Status:** Deferred under the prioritization policy. **Owner:** R35 consumer inventory, then a
-bounded storage or platform follow-up if needed. **Evidence:** [C02 review](evidence/c02.md).
+**Size:** M. **Status:** Deferred under the prioritization policy. **Owner:** R35 consumer
+inventory, then a bounded storage or platform follow-up if needed. **Evidence:**
+[C02 review](evidence/c02.md).
 
 Girt explicitly rejects malformed alternate records that Git may skip or truncate. Native UNC,
 drive-alias and WSL backlink behavior is unverified, and girt raw status/checkout remains
@@ -532,8 +542,8 @@ run the affected native fixture. These omissions do not establish compatibility 
 
 ### B04 — Intermittent Tracing and Split-Index Assertions
 
-**Status:** Open investigation; no production defect established. **Owner:** C02 test follow-up.
-**Evidence:** [C02 review](evidence/c02.md) and original failed CI attempts.
+**Size:** M. **Status:** Open investigation; no production defect established. **Owner:** C02 test
+follow-up. **Evidence:** [C02 review](evidence/c02.md) and original failed CI attempts.
 
 The tracing test sometimes captures zero `fetch.http` spans. The split-index test occasionally fails
 its Git-oracle assertion before girt reads the index. Passing retries do not close either finding.
@@ -543,9 +553,9 @@ Promote any production correctness finding ahead of dependent work.
 
 ### B05 — Residual Packed-Read Performance
 
-**Status:** Measured performance backlog under the latency policy. **Owner:** R34 performance
-assessment, with an earlier R35 consumer follow-up if an ordinary jj workflow is read-bound.
-**Evidence:** [R41 report](evidence/r41.md).
+**Size:** L. **Status:** Measured performance backlog under the latency policy. **Owner:** R34
+performance assessment, with an earlier R35 consumer follow-up if an ordinary jj workflow is
+read-bound. **Evidence:** [R41 report](evidence/r41.md).
 
 R41 improves ordinary packed reads but does not reach the A20 Git-parity target, especially for deep
 delta chains. Revisit when R35 measures a representative jj operation dominated by packed reads, or
