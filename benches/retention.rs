@@ -1,11 +1,11 @@
-//! Read-only retention planning over an independently generated packed history.
+//! Retention planning and additive repack over an independently generated packed history.
 use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use girt::Repository;
-use girt::retention::RetentionPolicy;
+use girt::retention::{RepackLimits, RetentionPolicy};
 #[path = "../tests/support/history_git.rs"]
 mod history_git;
 
@@ -33,6 +33,19 @@ fn retention(c: &mut Criterion) {
     assert!(repository.plan_retention(&policy, &cancel).is_complete());
     c.bench_function("retention/packed-linear-256", |bench| {
         bench.iter(|| repository.plan_retention(black_box(&policy), black_box(&cancel)))
+    });
+    let repack = repository
+        .repack_retained(&policy, RepackLimits::default(), &cancel)
+        .unwrap();
+    assert!(repack.written.objects >= 256);
+    c.bench_function("repack/idempotent-packed-linear-256", |bench| {
+        bench.iter(|| {
+            repository.repack_retained(
+                black_box(&policy),
+                RepackLimits::default(),
+                black_box(&cancel),
+            )
+        })
     });
 }
 

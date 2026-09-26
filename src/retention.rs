@@ -9,6 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
 use crate::{Commit, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index};
 
+mod repack;
+pub use repack::{RepackError, RepackLimits, RepackPublished};
+
 #[derive(Debug)]
 struct ObservedLog {
     name: RefName,

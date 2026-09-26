@@ -6,8 +6,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
-use girt::retention::{RetentionOutcome, RetentionPolicy};
-use girt::{ObjectId, Repository};
+use girt::retention::{RepackError, RepackLimits, RetentionOutcome, RetentionPolicy};
+use girt::{ObjectId, PackLimits, ReadLimits, Repository};
 
 fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
     let mut command = Command::new("git");
@@ -80,6 +80,133 @@ fn fixture_format(format: &str) -> (tempfile::TempDir, Repository, ObjectId, Obj
 
 fn fixture() -> (tempfile::TempDir, Repository, ObjectId, ObjectId) {
     fixture_format("sha1")
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    let mut reader = repo.objects(PackLimits::default()).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let result = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let basename = root
+        .path()
+        .join("objects/pack")
+        .join(format!("pack-{}", result.written.checksum));
+    assert!(basename.with_extension("pack").exists());
+    assert!(basename.with_extension("idx").exists());
+    assert_eq!(
+        fs::metadata(basename.with_extension("pack")).unwrap().len(),
+        result.written.pack_bytes
+    );
+    assert_eq!(
+        fs::metadata(basename.with_extension("idx")).unwrap().len(),
+        result.written.index_bytes
+    );
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .count(),
+        2
+    );
+    git(
+        root.path(),
+        &[
+            "verify-pack",
+            "-v",
+            basename.with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+    reader
+        .refresh(PackLimits::default(), girt::AlternateLimits::default())
+        .unwrap();
+    for id in [first, second] {
+        let hex = id.to_string();
+        fs::remove_file(root.path().join("objects").join(&hex[..2]).join(&hex[2..])).unwrap();
+    }
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        reader
+            .read(second, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        second
+    );
+    let again = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(again.written.checksum, result.written.checksum);
+}
+
+#[test]
+fn repack_refuses_incomplete_plan_and_prepublication_cancellation() {
+    let (root, repo, _first, second) = fixture();
+    let cancelled = AtomicBool::new(true);
+    assert!(matches!(
+        repo.repack_retained(
+            &RetentionPolicy::default(),
+            RepackLimits::default(),
+            &cancelled
+        ),
+        Err(RepackError::Cancelled)
+    ));
+    let policy = RetentionPolicy {
+        heads: vec![second],
+        max_entries: 0,
+        ..Default::default()
+    };
+    assert!(matches!(
+        repo.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false)),
+        Err(RepackError::Incomplete(_))
+    ));
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn repack_limit_fails_before_creating_artifacts() {
+    let (root, repo, _, _) = fixture();
+    let mut limits = RepackLimits::default();
+    limits.write.max_objects = 0;
+    assert!(matches!(
+        repo.repack_retained(&RetentionPolicy::default(), limits, &AtomicBool::new(false)),
+        Err(RepackError::Write(girt::PackWriteError::Limit(
+            "object count"
+        )))
+    ));
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .count(),
+        0
+    );
 }
 
 #[rstest::rstest]

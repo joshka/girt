@@ -113,7 +113,7 @@ consumer or native-platform evidence.
 | R30 | Push partial outcomes, progress and cancellation            | R29                             | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r30.md)                                                                                         |
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Scoped accepted     | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints); [evidence](evidence/c03.md)                             |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Complete            | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
-| R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
+| R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Review ready        | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r32.md)                                                                                               |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
@@ -454,6 +454,13 @@ expiry classification, bounded object closure and the execution boundary for R32
 keeps recovered candidates on an incomplete scan and does not authorize deletion from a live
 observation. R32 owns pack publication and R33 owns pruning and reflog mutation; their existing
 dependencies and A17 fault matrix remain open.
+
+## R32 Additive Repack Publication
+
+[Implementation evidence](evidence/r32.md) records a bounded fresh-scan repack and pack-before-index
+publication. Existing storage remains available to pinned readers and concurrent writers because
+this slice never removes it. R33 retains owned-data pruning, reflog expiry, generation verification
+before destructive mutation, and old-reader retirement.
 
 ## R40 Completion
 

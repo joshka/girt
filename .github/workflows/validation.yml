@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       retention_only:
-        description: Run only read-only retention planning checks
+        description: Run focused retention and repack checks
         type: boolean
         default: false
 
@@ -301,7 +301,7 @@ jobs:
           rustc +stable -Vv
           git --version
           python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
-      - name: Read-only retention cases
+      - name: Retention and repack cases
         run: cargo +stable test --locked --no-default-features --test retention
       - name: Retention API and benchmark lint
         run: cargo +stable clippy --locked --no-default-features --lib --test retention --bench retention -- -D warnings
