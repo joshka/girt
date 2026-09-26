@@ -1475,9 +1475,30 @@ metadata, or switch the main checkout.
 The destination and its parent are trusted filesystem paths. The parent must exist; line breaks in
 paths are refused because Git's link files are line based. Creation uses exclusive file and
 directory operations. A later failure retains any completed registration and destination directory
-for inspection, identified in the structured error. There is no automatic rollback, repair, pruning,
-lock lifecycle, or crash-durability guarantee. The caller must exclude concurrent branch/worktree
-administration and destination replacement. R20 owns repair and pruning.
+for inspection, identified in the structured error. There is no automatic rollback or
+crash-durability guarantee. The caller must exclude concurrent branch/worktree administration and
+destination replacement.
+
+## Linked Worktree Administration
+
+`Repository::repair_worktree` accepts a registration and its existing checkout after a move. It
+checks the existing `.git` target, then writes `commondir`, the forward gitfile and backlink with
+temporary files and renames. It applies the common repository's `relativeWorktrees` setting and
+serializes Windows paths without verbatim prefixes. An error reports successfully replaced files;
+leftover temporary files require inspection. Git and noncooperating callers must not move the
+checkout or change links during repair.
+
+`lock_worktree` and `unlock_worktree` manage Git's `locked` metadata using an exact reason. A
+private administration lock excludes cooperating girt calls; Git does not honor it. Pruning one
+registration requires an expired `gitdir` timestamp, an absent target and no `locked` file. An
+inaccessible target is uncertain and is never evidence of absence. Pruning can leave a partially
+removed registration after I/O failure; the caller must inspect before retrying. Moved checkouts
+whose old backlink target is absent cannot be discovered without the caller supplying their new
+path. The caller owns workspace/materialization policy and must coordinate moves with pruning.
+
+Inventory checks the shared `commondir` relationship directly instead of reopening every linked
+repository. This avoids repeated common config and shallow reads while preserving per-entry link
+errors. Full private metadata validation remains available by opening the individual worktree.
 
 ## Reference Transactions and Reflogs
 

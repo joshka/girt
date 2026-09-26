@@ -149,9 +149,13 @@ fn inspect(entry: &mut Worktree, common: &Path) -> Result<(), OpenError> {
         .git_dir
         .join(metadata_path(&backlink, &read(&backlink)?)?);
     entry.path = target.parent().map(Path::to_path_buf);
-    let repository = Repository::open(&entry.git_dir)?;
-    if repository.common_dir() != common {
-        return Err(OpenError::Unrelated(repository.common_dir().into()));
+    let commondir = entry.git_dir.join("commondir");
+    let shared = entry
+        .git_dir
+        .join(metadata_path(&commondir, &read(&commondir)?)?);
+    let shared = canonical(&shared)?;
+    if shared != common {
+        return Err(OpenError::Unrelated(shared));
     }
     let checkout = target
         .parent()

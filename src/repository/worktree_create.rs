@@ -235,7 +235,7 @@ fn initial_head_table(
     }
 }
 
-fn relative_path(from: &Path, to: &Path) -> PathBuf {
+pub(super) fn relative_path(from: &Path, to: &Path) -> PathBuf {
     let absolute = to.to_path_buf();
     let from: Vec<Component<'_>> = from.components().collect();
     let to: Vec<Component<'_>> = to.components().collect();
@@ -253,7 +253,7 @@ fn relative_path(from: &Path, to: &Path) -> PathBuf {
     result
 }
 
-fn validate_path(path: &Path) -> Result<(), CreateWorktreeError> {
+pub(super) fn validate_path(path: &Path) -> Result<(), CreateWorktreeError> {
     #[cfg(unix)]
     let invalid = {
         use std::os::unix::ffi::OsStrExt;
@@ -270,7 +270,7 @@ fn validate_path(path: &Path) -> Result<(), CreateWorktreeError> {
     }
 }
 
-fn path_line(path: &Path) -> Vec<u8> {
+pub(super) fn path_line(path: &Path) -> Vec<u8> {
     #[cfg(unix)]
     let mut bytes = {
         use std::os::unix::ffi::OsStrExt;
@@ -300,7 +300,7 @@ fn path_line(path: &Path) -> Vec<u8> {
     bytes
 }
 
-fn gitfile_line(path: &Path) -> Vec<u8> {
+pub(super) fn gitfile_line(path: &Path) -> Vec<u8> {
     let mut bytes = b"gitdir: ".to_vec();
     bytes.extend_from_slice(&path_line(path));
     bytes
