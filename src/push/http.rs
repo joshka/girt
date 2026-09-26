@@ -9,7 +9,8 @@ use crate::transport::http::{HttpRemote, RequestBody};
 ///
 /// Uses [`super::send`]'s expectation, receiver-root, report-status and non-atomic update
 /// contracts. Pack compression and exclusion are selected during [`PreparedPush`] construction.
-/// Discovery rechecks live expectations before any POST. Empty commands perform discovery only.
+/// Discovery checks required capabilities before any POST; exact old values travel in each
+/// command for the receiver to enforce. Empty commands perform discovery only.
 /// Requires a Tokio runtime; [`HttpRemote`] defines TLS, explicit authentication and network
 /// controls.
 ///

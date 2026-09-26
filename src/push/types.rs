@@ -5,7 +5,8 @@ use crate::{ObjectId, PackCompression, PackWriteLimits, ReadLimits};
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum ForcePolicy {
     /// Branch updates require the old commit to be an ancestor of the new commit. Existing tags
-    /// can only retain the same ID. Creation is allowed; branches must point directly to commits.
+    /// can only retain the same ID. Other namespaces use only the exact old-value condition.
+    /// Creation is allowed; branches must point directly to commits.
     #[default]
     FastForwardOnly,
     /// Explicitly permit non-fast-forward branch changes or tag replacement, still conditional
@@ -16,15 +17,21 @@ pub enum ForcePolicy {
 /// One full destination name and an exact compare-and-swap expectation.
 #[derive(Debug, Clone)]
 pub struct PushCommand {
-    /// Validated name under `refs/heads/` or `refs/tags/`; other namespaces are rejected.
+    /// Validated full destination name under `refs/`; `HEAD` is not a push destination.
     pub name: RefName,
     /// `None` requires absence. `Some` requires this exact nonzero value, even with force enabled.
     pub expected: Option<ObjectId>,
-    /// Nonzero desired tip. Deletion is not supported. Tags may point to any supported object
-    /// kind.
+    /// Desired tip. The null ID in the repository's format deletes an existing ref. Tags and
+    /// non-branch namespaces may point to any supported object kind.
     pub new: ObjectId,
     /// Explicit replacement policy; use the default to protect existing history and tags.
     pub force: ForcePolicy,
+}
+impl PushCommand {
+    /// Returns whether this command deletes its destination.
+    pub fn deletes(&self) -> bool {
+        self.new.is_null()
+    }
 }
 
 /// Input, work and output bounds for preparation and a single receive-pack session.
@@ -41,7 +48,7 @@ pub struct PushLimits {
     pub max_refs: usize,
     /// Explicit command count (default 100,000).
     pub max_commands: usize,
-    /// Total encoded command bytes, including flush (default 16 MiB).
+    /// Total encoded command and push-option bytes, including flushes (default 16 MiB).
     pub max_command_bytes: usize,
     /// Status bytes including framing (default 4 MiB).
     pub max_status_bytes: usize,
@@ -160,7 +167,7 @@ pub enum PushFailure {
     /// Native reference publication failed after mutation may have begun.
     #[error("local reference publication: {0}")]
     Reference(#[source] Box<crate::refs::ReferenceError>),
-    /// A supplied identity is not SHA-1; this operation does not yet support SHA-256.
+    /// A supplied identity uses a different object format from the source repository.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
@@ -192,16 +199,6 @@ pub enum PushFailure {
     /// The owned transport reached its caller-supplied deadline.
     #[error("transport deadline expired")]
     Deadline,
-    /// Advertisement disagreed with the explicit expectation. No commands were sent.
-    #[error("stale expectation for {name:?}: expected {expected:?}, advertised {actual:?}")]
-    Stale {
-        /// Destination name.
-        name: RefName,
-        /// Caller expectation, with `None` meaning absent.
-        expected: Option<ObjectId>,
-        /// Advertised value, with `None` meaning unadvertised.
-        actual: Option<ObjectId>,
-    },
     /// A root used for exclusion is no longer advertised. No commands were sent.
     #[error("receiver history root is not advertised: {0}")]
     KnowledgeChanged(ObjectId),

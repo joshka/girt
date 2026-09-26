@@ -179,7 +179,7 @@ fn advances_branch_and_repeats_without_implicit_local_ref_updates() {
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
 #[test]
-fn stale_expected_value_rejects_entire_request_before_any_updates() {
+fn stale_expected_value_rejects_only_its_ref() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let old = main(&f);
@@ -192,12 +192,66 @@ fn stale_expected_value_rejects_entire_request_before_any_updates() {
             command("refs/heads/main", None, old),
         ],
     );
+    let report = result.unwrap();
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert!(matches!(report.refs[1].status, Some(Status::Rejected(_))));
+    assert_eq!(tip(&dest, "refs/heads/other"), Some(old));
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
+}
+#[test]
+fn local_delete_policy_rejects_one_ref_without_stopping_another() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    let id = main(&f);
+    push(&f.repo, &dest, vec![command("refs/tags/old", None, id)]).unwrap();
+    git(
+        dest.git_dir(),
+        &["config", "receive.denyDeletes", "true"],
+        b"",
+    );
+    let report = push(
+        &f.repo,
+        &dest,
+        vec![
+            command(
+                "refs/tags/old",
+                Some(id),
+                ObjectId::null(girt::ObjectFormat::Sha1),
+            ),
+            command("refs/tags/new", None, id),
+        ],
+    )
+    .unwrap();
+    assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
+    assert_eq!(report.refs[1].status, Some(Status::Ok));
+    assert_eq!(tip(&dest, "refs/tags/old"), Some(id));
+    assert_eq!(tip(&dest, "refs/tags/new"), Some(id));
+}
+#[test]
+fn native_push_refuses_hidden_ref_policy_before_installing_objects() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    git(
+        dest.git_dir(),
+        &["config", "receive.hideRefs", "refs/secret"],
+        b"",
+    );
+    let id = main(&f);
+    let result = push(&f.repo, &dest, vec![command("refs/secret/main", None, id)]);
     assert!(matches!(
         result,
-        Err(PushError::NotSent(PushFailure::Stale { .. }))
+        Err(PushError::NotSent(PushFailure::Unsupported(
+            "configured receive policy"
+        )))
     ));
-    assert_eq!(tip(&dest, "refs/heads/other"), None);
-    assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
+    assert_eq!(tip(&dest, "refs/secret/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(id, ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
 }
 #[test]
 fn explicit_force_rewinds_when_server_allows_it() {
@@ -231,6 +285,23 @@ fn server_non_fast_forward_policy_overrides_explicit_force() {
         result.refs[0].status,
         Some(Status::Rejected(b"non-fast-forward".to_vec()))
     );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(new));
+}
+#[test]
+fn forced_fast_forward_is_allowed_by_receive_policy() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    let old = main(&f);
+    let new = next(&f);
+    push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
+    git(
+        dest.git_dir(),
+        &["config", "receive.denyNonFastForwards", "true"],
+        b"",
+    );
+    let mut advance = command("refs/heads/main", Some(old), new);
+    advance.force = ForcePolicy::Allow;
+    assert!(push(&f.repo, &dest, vec![advance]).unwrap().all_succeeded());
     assert_eq!(tip(&dest, "refs/heads/main"), Some(new));
 }
 #[test]

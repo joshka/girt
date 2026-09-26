@@ -14,16 +14,19 @@ use crate::transport::TransportControl;
 
 /// Installs a prepared pack and conditionally updates a trusted local repository with girt.
 ///
-/// Opens an explicit path through [`crate::Repository::open`], checks expected ref values and
-/// receiver-history dependencies, installs the pack, then applies each command with a conditional
-/// reference transaction. It invokes no Git executable or hook. Existing receive hooks or a
+/// Opens an explicit path through [`crate::Repository::open`], checks receiver-history
+/// dependencies, installs the pack, then applies each command with a conditional reference
+/// transaction against its exact expected old value. A stale command rejects independently.
+/// It invokes no Git executable or hook. Existing receive hooks or a
 /// configured hooks path cause refusal before publication; checked-out branches are rejected.
 /// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
 /// Supports either object format and files or reftable references when prepared by
 /// [`PreparedPush::new_local`]. [`PreparedPush::new`] remains SHA-1 wire preparation. Ref and
 /// worktree state may change between separate reads; conditional locks prevent stale overwrites,
-/// and callers must coordinate worktree registration and GC. No reflogs are appended. Object
+/// and callers must coordinate worktree registration and GC. Deletion and non-fast-forward receive
+/// restrictions apply; remaining configured receive modes are assigned to R30. No reflogs are
+/// appended. Object
 /// installation can leave an indexed pack when later refs reject or fail.
 ///
 /// # Errors

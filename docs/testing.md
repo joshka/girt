@@ -179,7 +179,7 @@ The Windows integration selection follows implemented operations, not just file 
 - `references`: Both-format loose/packed/symbolic reads, publication, deletion, worktree routing,
   reflogs and concurrent Git writers. Non-UTF-8 argv cases remain Unix-only; raw filename cases are
   Linux-only. Windows storage-name refusals also run in `references_portable`.
-- `http`: SHA-1 fetch/push, TLS trust/hostname checks, authentication, limits, cancellation,
+- `http`: Both-format fetch/push, TLS trust/hostname checks, authentication, limits, cancellation,
   uncertain/partial outcomes and HTTP-backed fetch/clone publication. Its shell-hook fixture is
   Unix-only; the remaining suite is selected on Windows with `http_portable`.
 - `local_native`: Both-format files/reftable local fetch and push, with Git reading the destination,

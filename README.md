@@ -19,13 +19,13 @@ and type, byte names, optional taggers, opaque extra headers, and message bytes,
 signatures. Storing a tag object does not create a tag reference. Explicit-path repository opening
 supports ordinary, bare, separate Git directories, and linked worktrees, deriving the object format
 from repository-local configuration. Packs, refs, reflogs and working-tree index v2/v3/v4 support
-both formats. Transport negotiation remains SHA-1-only. Explicit layered configuration resolves
-includes and conditional includes with provenance; unsupported repository extensions return errors.
-Files-backend references support byte-preserving names, loose/packed enumeration and reads, symbolic
-resolution, and conditional batches with explicit reflog policy, plus single-ref operations without
-reflogs. HEAD and per-worktree refs use the detected layout. Repository object reads combine live
-loose storage with bounded snapshots of SHA-1/SHA-256 pack/index v2 pairs, including OFS_DELTA and
-same-pack REF_DELTA reconstruction. The API is experimental.
+both formats. V0 transport negotiation supports SHA-1 and SHA-256. Explicit layered configuration
+resolves includes and conditional includes with provenance; unsupported repository extensions return
+errors. Files-backend references support byte-preserving names, loose/packed enumeration and reads,
+symbolic resolution, and conditional batches with explicit reflog policy, plus single-ref operations
+without reflogs. HEAD and per-worktree refs use the detected layout. Repository object reads combine
+live loose storage with bounded snapshots of SHA-1/SHA-256 pack/index v2 pairs, including OFS_DELTA
+and same-pack REF_DELTA reconstruction. The API is experimental.
 
 See the crate documentation (`cargo doc --open`) for runnable examples, API contracts, and
 filesystem assumptions. [Compatibility evidence](docs/compatibility.md) records test provenance and
@@ -100,12 +100,13 @@ are not implemented. See
 
 `push::PreparedPush` validates complete reachable histories and builds a non-thin pack.
 `new_excluding` omits explicit receiver roots only when they belong to that validated graph and
-remain advertised during sending. `push::send` publishes explicit conditional branch/tag commands
-over receive-pack v0 streams; `push::send_local` supplies a local Git server adapter. Branch rewinds
-and tag replacement require explicit force policy. Results preserve unpack and per-ref status,
-including partial success; connection failures after transmission are distinguished as uncertain.
-Local tracking refs remain unchanged. Run `cargo run --example push_local` for a disposable
-branch/tag publication example. Deletion and atomic multi-ref push are deferred. See
+remain advertised during sending. `push::send` publishes conditional commands under full `refs/`
+names in either object format; `push::send_local` uses native local storage. Branch rewinds and tag
+replacement require explicit force policy. Results preserve unpack and per-ref status, including
+partial success; connection failures after transmission are distinguished as uncertain. Local
+tracking refs remain unchanged. Run `cargo run --example push_local` for a disposable branch/tag
+publication example. Deletion requires an exact old value; supplied push options require server
+support. Atomic multi-ref push is deferred. See
 [push compatibility](docs/compatibility.md#receive-pack-push).
 
 Enable the `http` feature for async smart-HTTP(S) fetch and push using a caller-owned Tokio runtime.

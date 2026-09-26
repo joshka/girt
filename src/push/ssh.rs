@@ -8,10 +8,10 @@ use crate::transport::ssh::SshRemote;
 /// Sends a synchronously prepared push through one async SSH receive-pack session.
 ///
 /// Requires a caller-owned Tokio runtime with I/O/time enabled. [`SshRemote`] defines endpoint,
-/// authentication, host trust and noninteractive process policy. Uses [`super::send`]'s live
-/// expectation checks, history exclusion, bounded report-status and non-atomic update semantics.
-/// Borrows existing prepared buffers without copying packs or doing compression on the executor.
-/// Preparation and remote inspection before retry remain caller-owned synchronous work.
+/// authentication, host trust and noninteractive process policy. Uses [`super::send`]'s exact
+/// per-command old values, history exclusion, bounded report-status and non-atomic update
+/// semantics. Borrows existing prepared buffers without copying packs or doing compression on the
+/// executor. Preparation and remote inspection before retry remain caller-owned synchronous work.
 ///
 /// Advertisement/status retention is bounded by the prepared limits. Valid acknowledgement
 /// prefixes survive cancellation, truncation and unsuccessful SSH exit, including complete reports

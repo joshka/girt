@@ -24,6 +24,9 @@ impl Graph {
         let mut pending = VecDeque::new();
         let mut expected = HashMap::new();
         for command in commands {
+            if command.deletes() {
+                continue;
+            }
             let kind = command
                 .name
                 .as_bytes()
@@ -76,6 +79,9 @@ impl Graph {
         let mut remaining = limits.max_ancestry_steps;
         for command in commands {
             check_cancelled(cancel)?;
+            if command.deletes() {
+                continue;
+            }
             if command.force == ForcePolicy::Allow {
                 continue;
             }
@@ -83,9 +89,12 @@ impl Graph {
                 if old == command.new {
                     continue;
                 }
-                if !command.name.as_bytes().starts_with(b"refs/heads/")
-                    || !graph.is_ancestor(old, command.new, &mut remaining, cancel)?
+                if command.name.as_bytes().starts_with(b"refs/heads/")
+                    && !graph.is_ancestor(old, command.new, &mut remaining, cancel)?
                 {
+                    return Err(Error::WouldForce(command.name.clone()));
+                }
+                if command.name.as_bytes().starts_with(b"refs/tags/") {
                     return Err(Error::WouldForce(command.name.clone()));
                 }
             }

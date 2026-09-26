@@ -535,6 +535,159 @@ fn real_git_delta_push_incremental_and_empty_commands() {
 }
 
 #[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let id = tip(&source.repo, "refs/heads/main");
+    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let initial = PreparedPush::new(
+        &objects,
+        vec![command("refs/for/main", None, id)],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let rt = runtime();
+    assert!(
+        rt.block_on(push::send_http(&remote, initial, control))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/for/main"), id);
+
+    let commands = vec![
+        command("refs/heads/main", None, id),
+        command("refs/tags/deletable", None, id),
+        command("refs/for/main", Some(id), ObjectId::null(format)),
+    ];
+    let mixed = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel).unwrap();
+    let report = rt
+        .block_on(push::send_http(&remote, mixed, control))
+        .unwrap();
+    assert!(report.all_succeeded());
+    assert_eq!(tip(&dest, "refs/heads/main"), id);
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new("refs/for/main").unwrap())
+            .unwrap(),
+        None
+    );
+    let deletion = PreparedPush::new(
+        &objects,
+        vec![command(
+            "refs/tags/deletable",
+            Some(id),
+            ObjectId::null(format),
+        )],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(deletion.pack_bytes(), 0);
+    let report = rt
+        .block_on(push::send_http(&remote, deletion, control))
+        .unwrap();
+    assert!(report.all_succeeded(), "{report:?}");
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/deletable").unwrap())
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn push_options_require_advertisement_and_reach_git() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let id = tip(&source.repo, "refs/heads/main");
+    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let prepare = || {
+        PreparedPush::new(
+            &objects,
+            vec![command("refs/heads/main", None, id)],
+            PushLimits::default(),
+            &cancel,
+        )
+        .unwrap()
+        .with_push_options(vec![b"review=123".to_vec()])
+        .unwrap()
+    };
+    let rt = runtime();
+    assert!(matches!(
+        rt.block_on(push::send_http(&remote, prepare(), control)),
+        Err(PushError::NotSent(PushFailure::Unsupported(_)))
+    ));
+    git(
+        dest.git_dir(),
+        &["config", "receive.advertisePushOptions", "true"],
+        b"",
+    );
+    assert!(
+        rt.block_on(push::send_http(&remote, prepare(), control))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), id);
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn stale_wire_lease_preserves_independent_success(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let id = tip(&source.repo, "refs/heads/main");
+    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let initial = PreparedPush::new(
+        &objects,
+        vec![command("refs/heads/main", None, id)],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let rt = runtime();
+    assert!(
+        rt.block_on(push::send_http(&remote, initial, control))
+            .unwrap()
+            .all_succeeded()
+    );
+    let mixed = PreparedPush::new(
+        &objects,
+        vec![
+            command("refs/heads/main", None, id),
+            command("refs/tags/independent", None, id),
+        ],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let report = rt
+        .block_on(push::send_http(&remote, mixed, control))
+        .unwrap();
+    assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
+    assert_eq!(report.refs[1].status, Some(Status::Ok));
+    assert_eq!(tip(&dest, "refs/heads/main"), id);
+    assert_eq!(tip(&dest, "refs/tags/independent"), id);
+}
+
+#[rstest]
 #[case::anonymous(false)]
 #[case::explicit(true)]
 fn authentication_is_explicit(#[case] supplied: bool) {

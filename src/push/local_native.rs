@@ -26,6 +26,25 @@ pub(super) fn send(
             "destination object format",
         )));
     }
+    if prepared.has_options {
+        return Err(PushError::NotSent(PushFailure::Unsupported(
+            "native local push options",
+        )));
+    }
+    for (section, key) in [
+        ("receive", "hiderefs"),
+        ("transfer", "hiderefs"),
+        ("receive", "procreceiverefs"),
+        ("receive", "maxinputsize"),
+        ("receive", "fsckobjects"),
+        ("transfer", "fsckobjects"),
+    ] {
+        if repository.config().value(section, None, key).is_some() {
+            return Err(PushError::NotSent(PushFailure::Unsupported(
+                "configured receive policy",
+            )));
+        }
+    }
     if !repository.shallow_roots().is_empty() {
         return Err(PushError::NotSent(PushFailure::Unsupported(
             "shallow destination",
@@ -70,24 +89,14 @@ pub(super) fn send(
         .list()
         .map_err(|error| PushError::NotSent(PushFailure::reference(error)))?;
     for command in &prepared.commands {
-        let actual = refs
-            .read(&command.name)
-            .map_err(|error| PushError::NotSent(PushFailure::reference(error)))?;
-        let actual_id = match actual {
-            Some(Target::Direct(id)) => Some(id),
-            Some(Target::Symbolic(_)) => {
-                return Err(PushError::NotSent(PushFailure::Unsupported(
-                    "symbolic push destination",
-                )));
-            }
-            None => None,
-        };
-        if actual_id != command.expected {
-            return Err(PushError::NotSent(PushFailure::Stale {
-                name: command.name.clone(),
-                expected: command.expected,
-                actual: actual_id,
-            }));
+        if matches!(
+            refs.read(&command.name)
+                .map_err(|error| PushError::NotSent(PushFailure::reference(error)))?,
+            Some(Target::Symbolic(_))
+        ) {
+            return Err(PushError::NotSent(PushFailure::Unsupported(
+                "symbolic push destination",
+            )));
         }
     }
     for root in &prepared.receiver_roots {
@@ -131,36 +140,39 @@ pub(super) fn send(
         max_objects: prepared.limits.pack.max_objects as usize,
         ..FetchLimits::default()
     };
-    let received = ReceivedFetch::native(
-        Advertisement {
-            refs: Vec::new(),
-            capabilities: Vec::new(),
-        },
-        prepared
-            .commands
-            .iter()
-            .map(|command| command.new)
-            .collect(),
-        NativeContents {
-            format: prepared.format,
-            pack: Vec::new(),
-            index: Vec::new(),
-            checksum: prepared.checksum,
-            objects: prepared.object_count() as usize,
-            dependencies: Vec::new(),
-            limits,
-        },
-    );
-    received
-        .install_bytes(
-            &repository,
-            Default::default(),
-            control.cancel,
-            &prepared.pack,
-            &prepared.index,
-            false,
-        )
-        .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+    if !prepared.pack.is_empty() {
+        let received = ReceivedFetch::native(
+            Advertisement {
+                refs: Vec::new(),
+                capabilities: Vec::new(),
+            },
+            prepared
+                .commands
+                .iter()
+                .filter(|command| !command.deletes())
+                .map(|command| command.new)
+                .collect(),
+            NativeContents {
+                format: prepared.format,
+                pack: Vec::new(),
+                index: Vec::new(),
+                checksum: prepared.checksum,
+                objects: prepared.object_count() as usize,
+                dependencies: Vec::new(),
+                limits,
+            },
+        );
+        received
+            .install_bytes(
+                &repository,
+                Default::default(),
+                control.cancel,
+                &prepared.pack,
+                &prepared.index,
+                false,
+            )
+            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+    }
     report.unpack = Some(Status::Ok);
     for (index, command) in prepared.commands.iter().enumerate() {
         if let Err(error) = control.check() {
@@ -178,19 +190,43 @@ pub(super) fn send(
             ));
             continue;
         }
+        if command.deletes()
+            && repository
+                .config()
+                .value("receive", None, "denydeletes")
+                .is_some_and(|value| crate::config::boolean(value) == Some(true))
+        {
+            report.refs[index].status = Some(Status::Rejected(b"deletion denied".to_vec()));
+            continue;
+        }
         if command.force == super::ForcePolicy::Allow
+            && command.name.as_bytes().starts_with(b"refs/heads/")
+            && let Some(old) = command.expected
+            && !command.deletes()
             && repository
                 .config()
                 .value("receive", None, "denynonfastforwards")
                 .is_some_and(|value| crate::config::boolean(value) == Some(true))
         {
-            report.refs[index].status = Some(Status::Rejected(b"non-fast-forward".to_vec()));
-            continue;
+            let objects =
+                repository
+                    .objects(Default::default())
+                    .map_err(|error| PushError::Uncertain {
+                        cause: PushFailure::install(FetchError::Destination(error)),
+                        report: Box::new(report.clone()),
+                    })?;
+            let fast_forward = objects
+                .is_ancestor(old, command.new, crate::HistoryLimits::default())
+                .unwrap_or(false);
+            if !fast_forward {
+                report.refs[index].status = Some(Status::Rejected(b"non-fast-forward".to_vec()));
+                continue;
+            }
         }
         let edit = RefEdit {
             name: command.name.clone(),
             dereference: false,
-            target: Some(Target::Direct(command.new)),
+            target: (!command.deletes()).then_some(Target::Direct(command.new)),
             expected: command
                 .expected
                 .map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id))),

@@ -133,6 +133,67 @@ fn native_fetch_and_push_preserve_git_objects_and_refs(
     assert_eq!(git_cat_file(&pushed, id), git_cat_file(&source, id));
 }
 
+#[rstest]
+#[case::sha1_files(ObjectFormat::Sha1, Backend::Files)]
+#[case::sha1_reftable(ObjectFormat::Sha1, Backend::Reftable)]
+#[case::sha256_files(ObjectFormat::Sha256, Backend::Files)]
+#[case::sha256_reftable(ObjectFormat::Sha256, Backend::Reftable)]
+fn native_push_deletes_one_ref_and_creates_another(
+    #[case] format: ObjectFormat,
+    #[case] backend: Backend,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, backend);
+    let dest = repository(&root, "dest", format, backend);
+    let id = commit(&source);
+    let objects = source.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let old = PushCommand {
+        name: RefName::new("refs/for/main").unwrap(),
+        expected: None,
+        new: id,
+        force: ForcePolicy::FastForwardOnly,
+    };
+    let prepared =
+        PreparedPush::new_local(&objects, vec![old], &[], PushLimits::default(), &cancel).unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &cancel)
+            .unwrap()
+            .all_succeeded()
+    );
+
+    let commands = vec![
+        PushCommand {
+            name: RefName::new("refs/for/main").unwrap(),
+            expected: Some(id),
+            new: girt::ObjectId::null(format),
+            force: ForcePolicy::FastForwardOnly,
+        },
+        PushCommand {
+            name: RefName::new("refs/tags/main").unwrap(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        },
+    ];
+    let prepared =
+        PreparedPush::new_local(&objects, commands, &[], PushLimits::default(), &cancel).unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &cancel)
+            .unwrap()
+            .all_succeeded()
+    );
+    let refs = dest.references().unwrap();
+    assert_eq!(
+        refs.read(&RefName::new("refs/for/main").unwrap()).unwrap(),
+        None
+    );
+    assert_eq!(
+        refs.read(&RefName::new("refs/tags/main").unwrap()).unwrap(),
+        Some(Target::Direct(id))
+    );
+}
+
 #[test]
 fn native_fetch_rejects_missing_source_object_without_installation() {
     let root = tempfile::tempdir().unwrap();

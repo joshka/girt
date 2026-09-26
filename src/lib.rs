@@ -10,8 +10,8 @@
 //! explicit format, including empty trees. Commit construction derives the format from its tree
 //! and requires matching parents; tag construction derives it from the target. References,
 //! reflogs and working-tree index v2/v3/v4 use the repository format. Remote discovery identifies
-//! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push remain SHA-1-only and refuse
-//! SHA-256 negotiation before mutation; native local transfer supports both formats.
+//! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push support both formats;
+//! native local transfer also supports both without invoking Git.
 //!
 //! # Reading a repository
 //!
@@ -119,8 +119,8 @@
 //!
 //! [`push::PreparedPush`] synchronously verifies selected history, proves required ancestry, and
 //! builds bounded pack buffers. Optional receiver roots exclude only history proven within that
-//! verified graph. Sending checks current advertised values before attempting commands; the
-//! server checks those expected old values again when updating references.
+//! verified graph. Sending checks required advertised capabilities before attempting commands;
+//! the server checks each command's exact expected old value when updating references.
 //!
 //! Inspect [`push::PushReport`] even after a successful send: individual references may be
 //! rejected. [`push::PushError`] distinguishes failure before transmission from uncertain outcomes
@@ -176,7 +176,7 @@
 //!
 //! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1/SHA-256
 //! pack/index v2 reads, caller-owned pack/index v2 exports, object transfer and fetch
-//! orchestration, and conditional branch/tag push. Wire fetch and push remain SHA-1-only and accept
+//! orchestration, and conditional push under full reference names. Wire fetch and push accept
 //! v0 streams. Native local fetch and push support SHA-1 and SHA-256 without Git server processes.
 //! The optional `http` feature adds async smart-HTTP(S)
 //! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio

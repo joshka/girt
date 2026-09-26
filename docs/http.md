@@ -157,7 +157,6 @@ notices. The dependency graph contains no mandatory copyleft license; licenses o
 alternative are evaluated under that alternative.
 
 SSH is provided by a separate optional [adapter](ssh.md). Credential discovery, remote/refspec
-policy, protocol v2, shallow/partial repositories, automatic tags/pruning, thin packs and push
-deletion remain outside this adapter. See
-[Git compatibility evidence](compatibility.md#smart-http-and-https) and
+policy, protocol v2, shallow/partial repositories, automatic tags/pruning and thin packs remain
+outside this adapter. See [Git compatibility evidence](compatibility.md#smart-http-and-https) and
 [loopback benchmarks](benchmarks.md#smart-http-loopback-baseline).

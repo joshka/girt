@@ -109,7 +109,7 @@ consumer or native-platform evidence.
 | R26 | Remote advertisement, default HEAD and protocol negotiation | R23–R25                         | Review ready        | L    | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r26.md)                                                                           |
 | R27 | Fetch negotiation, shallow/depth and pack receipt           | R26, R16                        | Scoped accepted     | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r27.md)                                                                           |
 | R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Scoped accepted     | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r28.md)                                                                           |
-| R29 | Push command model, deletes, leases and options             | R26, R16                        | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
+| R29 | Push command model, deletes, leases and options             | R26, R16                        | Review ready        | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r29.md)                                                                                         |
 | R30 | Push partial outcomes, progress and cancellation            | R29                             | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Planned             | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
@@ -212,6 +212,17 @@ baseline. Storage accelerators are performance choices, subject to measured need
 when inventory or executable evidence changes; record a required follow-up rather than claiming
 unverified parity. Native Windows/macOS/Linux runs, resource budgets, fault/race corpora and their
 limitations determine readiness, not an assertion that all edge cases have been proven.
+
+## Push Follow-through
+
+R30 must complete native-local receive policy and reflog behavior before push acceptance. In
+particular, characterize and implement `receive.denyCurrentBranch` and `denyDeleteCurrent` modes,
+hidden-ref restrictions, and Git-compatible reflog creation, append and deletion policy with an
+explicit caller identity. Report reference and reflog effects separately when publication fails.
+Keep local Git subprocess and hook execution out of the native adapter; any unsupported configured
+policy or hook must fail explicitly before mutation. R30 also owns report-status-v2/proc-receive
+rewrites, progress and cancellation evidence under A15. R35 must assess any remaining local-policy
+difference at jj integration.
 
 ## Configuration Mutation Follow-through
 

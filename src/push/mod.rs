@@ -5,11 +5,11 @@
 //! Preparation validates the complete reachable graph and buffers a non-thin pack before any
 //! commands can reach a server. Local refs, tracking refs, configuration and reflogs are untouched.
 //!
-//! Wire push is SHA-1-only; [`PreparedPush::new_local`] also supports SHA-256 native transfers.
-//! `report-status` is required by wire push; no atomic, sideband,
-//! deletion, push-options, signed-push or report-status-v2 features are requested. Multiple
-//! commands can partially succeed. The `http` feature adds async smart-HTTP sending with explicit
-//! caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
+//! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
+//! deletion requires the advertised `delete-refs` capability, and supplied push options require
+//! `push-options`. No atomic, sideband, signed-push or report-status-v2 features are requested.
+//! Multiple commands can partially succeed. The `http` feature adds async smart-HTTP sending with
+//! explicit caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
 //! Both require a caller-owned Tokio runtime. [`crate::remote`] maps configured refspecs
 //! separately; callers must authorize force and supply exact expected values. Credential discovery,
 //! pruning and automatic force are deferred.

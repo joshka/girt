@@ -25,6 +25,7 @@ pub struct PreparedPush {
     pub(super) limits: PushLimits,
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
+    pub(super) has_options: bool,
 }
 impl PreparedPush {
     /// Validates commands, selects all reachable objects, proves permitted branch ancestry, and
@@ -44,9 +45,9 @@ impl PreparedPush {
     ///
     /// # Errors
     ///
-    /// Rejects duplicate destinations, zero IDs, unsupported namespaces, missing or mistyped edges,
-    /// invalid payloads, implicit force, shallow snapshots, exhausted bounds, cancellation and
-    /// storage/pack errors. Shallow push negotiation is not implemented.
+    /// Rejects duplicate destinations, zero expected IDs, destinations outside `refs/`, missing or
+    /// mistyped edges, invalid payloads, implicit force, shallow snapshots, exhausted bounds,
+    /// cancellation and storage/pack errors. Shallow push negotiation is not implemented.
     /// No remote commands or local filesystem writes occur on either success or failure.
     pub fn new(
         objects: &Objects,
@@ -84,17 +85,13 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        if objects.object_format() != crate::ObjectFormat::Sha1 {
-            return Err(Error::Unsupported("SHA-256 wire push"));
-        }
         Self::prepare(objects, commands, receiver_roots, limits, cancel)
     }
 
-    /// Prepares a native local push in the source format, including SHA-256.
+    /// Prepares a native local push in the source format.
     ///
     /// This has the same complete-graph, force, exclusion and work bounds as
-    /// [`Self::new_excluding`]. The result can be passed to [`super::send_local`]; wire transports
-    /// refuse SHA-256 until their object-format negotiation is implemented.
+    /// [`Self::new_excluding`]. The result can be passed to [`super::send_local`].
     pub fn new_local(
         objects: &Objects,
         commands: Vec<PushCommand>,
@@ -132,8 +129,8 @@ impl PreparedPush {
             for id in receiver_roots {
                 id.require_format(objects.object_format())?;
             }
-            let request = encode_commands(objects.object_format(), &commands, limits, cancel)?;
-            if commands.is_empty() {
+            let request = encode_commands(objects.object_format(), &commands, &[], limits, cancel)?;
+            if commands.iter().all(PushCommand::deletes) {
                 return Ok(Self {
                     format: objects.object_format(),
                     commands,
@@ -144,6 +141,7 @@ impl PreparedPush {
                     limits,
                     objects: 0,
                     receiver_roots: vec![],
+                    has_options: false,
                 });
             }
             let mut graph = Graph::select(objects, &commands, limits, cancel)?;
@@ -189,6 +187,7 @@ impl PreparedPush {
                 limits,
                 objects: written.objects,
                 receiver_roots,
+                has_options: false,
             })
         };
         #[cfg(feature = "tracing")]
@@ -220,11 +219,36 @@ impl PreparedPush {
     pub fn commands(&self) -> &[PushCommand] {
         &self.commands
     }
+
+    /// Adds byte-preserving push options to a prepared wire push.
+    ///
+    /// The server must advertise `push-options`; otherwise sending refuses the push before any
+    /// command. Options are sent after the command flush, in caller order. Native local transport
+    /// refuses options because it does not execute receive hooks.
+    ///
+    /// # Errors
+    ///
+    /// Rejects options without commands, NUL or newline bytes, and packet or request limits.
+    pub fn with_push_options(mut self, options: Vec<Vec<u8>>) -> Result<Self, Error> {
+        if !options.is_empty() && self.commands.is_empty() {
+            return Err(Error::Command("push options require commands"));
+        }
+        self.request = encode_commands(
+            self.format,
+            &self.commands,
+            &options,
+            self.limits,
+            &AtomicBool::new(false),
+        )?;
+        self.has_options = !options.is_empty();
+        Ok(self)
+    }
 }
 
 fn encode_commands(
     format: crate::ObjectFormat,
     commands: &[PushCommand],
+    options: &[Vec<u8>],
     limits: PushLimits,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, Error> {
@@ -240,18 +264,29 @@ fn encode_commands(
             id.require_format(format)?;
         }
         let name = command.name.as_bytes();
-        if !name.starts_with(b"refs/heads/") && !name.starts_with(b"refs/tags/") {
+        if !name.starts_with(b"refs/") {
             return Err(Error::Unsupported("destination namespace"));
         }
-        if command.new == ObjectId::null(format) || command.expected == Some(ObjectId::null(format))
-        {
-            return Err(Error::Command("zero object ID; deletion is unsupported"));
+        if command.expected.is_some_and(ObjectId::is_null) {
+            return Err(Error::Command("zero expected object ID"));
+        }
+        if command.deletes() && command.expected.is_none() {
+            return Err(Error::Command("deletion requires an expected old value"));
         }
         if !names.insert(&command.name) {
             return Err(Error::Command("duplicate destination"));
         }
         let caps = if i == 0 {
-            b"\0report-status".as_slice()
+            match (format, options.is_empty()) {
+                (crate::ObjectFormat::Sha1, true) => b"\0report-status".as_slice(),
+                (crate::ObjectFormat::Sha1, false) => b"\0report-status push-options".as_slice(),
+                (crate::ObjectFormat::Sha256, true) => {
+                    b"\0report-status object-format=sha256".as_slice()
+                }
+                (crate::ObjectFormat::Sha256, false) => {
+                    b"\0report-status push-options object-format=sha256".as_slice()
+                }
+            }
         } else {
             b""
         };
@@ -272,6 +307,23 @@ fn encode_commands(
         return Err(Error::Limit("command bytes"));
     }
     put(&mut request, b"0000", cancel)?;
+    if !options.is_empty() {
+        for option in options {
+            if option.iter().any(|b| *b == 0 || *b == b'\n') {
+                return Err(Error::Command("invalid push option"));
+            }
+            if option.len() > 65516
+                || option.len() + 4 > limits.max_command_bytes.saturating_sub(request.len())
+            {
+                return Err(Error::Limit("push option bytes"));
+            }
+            packet(&mut request, option, cancel)?;
+        }
+        if limits.max_command_bytes.saturating_sub(request.len()) < 4 {
+            return Err(Error::Limit("push option bytes"));
+        }
+        put(&mut request, b"0000", cancel)?;
+    }
     Ok(request)
 }
 

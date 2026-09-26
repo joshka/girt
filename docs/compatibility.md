@@ -11,8 +11,8 @@ use the repository's configured object format. The [R04 evidence](evidence/r04.m
 loose storage; [R05 evidence](evidence/r05.md) covers pack/ref/index propagation, including Git
 interoperability and failure contracts. [R26 discovery](evidence/r26.md) identifies both remote
 formats through native local, HTTP, SSH and caller-owned protocol streams. R27 adds SHA-256 v0/v1
-wire fetch with bounded receipt and verified thin-pack completion. Wire push remains SHA-1-only
-under R29/R30; native local push supports both formats. No dual-hash conversion is provided.
+wire fetch with bounded receipt and verified thin-pack completion. R29 extends wire push to both
+formats; native local push also supports both. No dual-hash conversion is provided.
 
 Native local fetch and push use girt storage and references in both formats; see
 [R25 evidence](evidence/r25.md). The historical upload-pack, receive-pack and owned local-process
@@ -1035,6 +1035,19 @@ rustc 1.98.1, and macOS 26.6.2 arm64 were exercised. Other platforms, actual mul
 hostile filesystems and concurrent GC are not covered by this evidence.
 
 ## Receive-Pack Push
+
+The current R29 command model supports create, update and exact-old deletion under valid full
+`refs/` names. Wire streams, HTTP and Unix SSH support both object formats. `push-options` and
+`delete-refs` are capability-gated; the client requests `object-format=sha256` for SHA-256 peers.
+Each command retains its caller-supplied old ID, so a stale command can be rejected independently
+without turning into an unconditional overwrite. Native local push uses girt storage, not the
+historical receive-pack subprocess described below. It supports both formats, conditional mixed
+commands and `receive.denyDeletes`, but refuses push options and hooks. See
+[R29 evidence](evidence/r29.md) for current tested scope and the remaining local policy and reflog
+requirements assigned to R30.
+
+The remainder of this section records the original R13 receive-pack implementation and its
+validation scope; its SHA-1, namespace and process restrictions do not describe the current API.
 
 `push::PreparedPush::new` prepares an immutable command list and a complete non-thin SHA-1 pack.
 `push::send` implements the receive-pack v0 client over caller-owned blocking streams;

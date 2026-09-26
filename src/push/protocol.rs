@@ -9,14 +9,15 @@ use crate::refs::RefName;
 
 /// Publishes prepared commands through caller-owned receive-pack v0 blocking streams.
 ///
-/// Reads a complete advertisement, requires `report-status` for nonempty pushes, checks every
-/// expected old value, then writes commands and a raw non-thin pack. Only `report-status` is
-/// requested, even when atomic or sideband capabilities are advertised. Unknown optional
-/// capabilities are ignored; non-SHA-1 object formats, protocol versions, shallow advertisements,
-/// peeled hints and report-status-v2-only servers are rejected. Roots used by
-/// [`PreparedPush::new_excluding`] must appear as a current advertised tip or `.have`; otherwise
-/// the push fails before transmission. Hidden refs are unadvertised and cannot be updated by
-/// an expected existing value through this API.
+/// Reads a complete advertisement, requires `report-status` for nonempty pushes, checks required
+/// capabilities, then writes commands and a raw non-thin pack. Every command carries its exact
+/// expected old value for the server to compare under its reference transaction. SHA-256 requests
+/// `object-format=sha256`; deletions require `delete-refs`, and supplied options require
+/// `push-options`. Atomic, sideband and report-status-v2 are not requested. Protocol versions,
+/// shallow advertisements, peeled hints and report-status-v2-only servers are rejected. Roots used
+/// by [`PreparedPush::new_excluding`] must appear as a current advertised tip or `.have`; otherwise
+/// the push fails before transmission. Hidden refs remain subject to the server's exact old-value
+/// and visibility policies.
 ///
 /// Streams must end at EOF after the report flush, and cannot be reused. Callers must close both
 /// streams after failure. Cancellation is checked between I/O calls and packets; setting the flag
@@ -29,8 +30,8 @@ use crate::refs::RefName;
 /// malformed/truncated reports, exceeded limits, cancellation and peer ERR packets produce
 /// [`PushError::Uncertain`] with the valid acknowledgement prefix. Inspect remote refs before
 /// retrying unknown outcomes. A complete rejection or partial success is an `Ok` report, not an
-/// error: inspect [`PushReport::all_succeeded`] and per-ref results. A racing remote update is
-/// checked by the server using the command's old ID; advertisement checks alone do not lock refs.
+/// error: inspect [`PushReport::all_succeeded`] and per-ref results. Stale advertised values and
+/// racing remote updates are checked by the server using each command's old ID.
 pub fn send(
     reader: &mut impl Read,
     writer: &mut impl Write,
@@ -51,9 +52,6 @@ pub fn send(
     );
 
     let operation = || {
-        if prepared.format != crate::ObjectFormat::Sha1 {
-            return Err(PushError::NotSent(Error::Unsupported("SHA-256 wire push")));
-        }
         let mut wire = Wire {
             reader,
             remaining: prepared.limits.max_advertisement_bytes,
@@ -113,13 +111,13 @@ pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
 ) -> Result<(), Error> {
-    if prepared.format != crate::ObjectFormat::Sha1 {
-        return Err(Error::Unsupported("SHA-256 wire push"));
-    }
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
     let mut report_status = false;
+    let mut delete_refs = false;
+    let mut push_options = false;
+    let mut advertised_format = crate::ObjectFormat::Sha1;
     let mut empty = false;
     while let Some(packet) = wire.packet()? {
         let bytes = line(&packet);
@@ -133,10 +131,14 @@ pub(super) fn advertise(
                 return Err(Error::Protocol("invalid capabilities"));
             }
             for cap in caps.split(|b| *b == b' ') {
-                if cap.starts_with(b"object-format=") && cap != b"object-format=sha1" {
+                if cap == b"object-format=sha256" {
+                    advertised_format = crate::ObjectFormat::Sha256;
+                } else if cap.starts_with(b"object-format=") && cap != b"object-format=sha1" {
                     return Err(Error::Unsupported("object format"));
                 }
                 report_status |= cap == b"report-status";
+                delete_refs |= cap == b"delete-refs";
+                push_options |= cap == b"push-options";
             }
             reference
         } else {
@@ -144,8 +146,8 @@ pub(super) fn advertise(
         };
         let (id, name) =
             split(reference, b' ').ok_or(Error::Protocol("reference advertisement"))?;
-        let id = parse_id(id)?;
-        if id == ObjectId::Sha1([0; 20]) {
+        let id = parse_id(id, prepared.format)?;
+        if id.is_null() {
             if count != 0 || name != b"capabilities^{}" {
                 return Err(Error::Protocol("zero advertised ID"));
             }
@@ -176,23 +178,23 @@ pub(super) fn advertise(
     if !prepared.commands.is_empty() && !report_status {
         return Err(Error::Unsupported("report-status is required"));
     }
+    if advertised_format != prepared.format {
+        return Err(Error::Unsupported("object format"));
+    }
+    if prepared.commands.iter().any(super::PushCommand::deletes) && !delete_refs {
+        return Err(Error::Unsupported("delete-refs is required"));
+    }
+    if prepared.has_options && !push_options {
+        return Err(Error::Unsupported("push-options is required"));
+    }
     for &id in &prepared.receiver_roots {
         check_cancelled(wire.cancel)?;
         if !roots.contains(&id) {
             return Err(Error::KnowledgeChanged(id));
         }
     }
-    for command in &prepared.commands {
-        check_cancelled(wire.cancel)?;
-        let actual = refs.get(&command.name).copied();
-        if actual != command.expected {
-            return Err(Error::Stale {
-                name: command.name.clone(),
-                expected: command.expected,
-                actual,
-            });
-        }
-    }
+    // Every command carries its exact old ID. The receiver checks that value under its ref
+    // transaction, allowing a stale command to fail without suppressing independent commands.
     Ok(())
 }
 
@@ -255,13 +257,10 @@ fn status(bytes: &[u8]) -> Result<Status, Error> {
         Status::Rejected(bytes.to_vec())
     })
 }
-fn parse_id(bytes: &[u8]) -> Result<ObjectId, Error> {
-    if bytes.len() != 40 {
-        return Err(Error::Unsupported("object format"));
-    }
+fn parse_id(bytes: &[u8], format: crate::ObjectFormat) -> Result<ObjectId, Error> {
     std::str::from_utf8(bytes)
         .ok()
-        .and_then(|id| id.parse().ok())
+        .and_then(|id| ObjectId::from_hex(format, id).ok())
         .ok_or(Error::Protocol("advertised object ID"))
 }
 fn split(bytes: &[u8], separator: u8) -> Option<(&[u8], &[u8])> {

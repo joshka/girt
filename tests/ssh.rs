@@ -641,6 +641,55 @@ fn real_git_delta_push_incremental_and_empty_commands() {
     );
 }
 
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn ssh_pushes_arbitrary_ref_and_deletes_with_lease(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let server = Server::new(dest.git_dir(), "none");
+    let remote = server.remote("config");
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let id = tip(&source.repo, "refs/heads/main");
+    let objects = source.repo.objects(PackLimits::default()).unwrap();
+    let initial = PreparedPush::new(
+        &objects,
+        vec![command("refs/for/main", None, id)],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let rt = runtime();
+    assert!(
+        rt.block_on(push::send_ssh(&remote, &initial, control))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/for/main"), id);
+
+    let deletion = PreparedPush::new(
+        &objects,
+        vec![command("refs/for/main", Some(id), ObjectId::null(format))],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(deletion.pack_bytes(), 0);
+    assert!(
+        rt.block_on(push::send_ssh(&remote, &deletion, control))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new("refs/for/main").unwrap())
+            .unwrap(),
+        None
+    );
+}
+
 fn deadline(cancel: &AtomicBool) -> TransportControl<'_> {
     TransportControl {
         cancel,

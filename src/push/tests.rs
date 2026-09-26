@@ -301,12 +301,79 @@ fn bounds_edges_and_ancestry_proof() {
 }
 #[rstest]
 #[case::head("HEAD")]
-#[case::other("refs/custom/value")]
 fn rejects_unsupported_namespaces(#[case] name: &str) {
     let f = Fixture::new();
     assert!(matches!(
         f.prepare(vec![command(name, None, f.blob())], PushLimits::default()),
         Err(PushFailure::Unsupported(_))
+    ));
+}
+#[test]
+fn accepts_arbitrary_ref_namespace() {
+    let f = Fixture::new();
+    assert!(
+        f.prepare(
+            vec![command("refs/for/main", None, f.blob())],
+            PushLimits::default(),
+        )
+        .is_ok()
+    );
+}
+#[test]
+fn deletion_requires_lease_and_prepares_without_objects() {
+    let f = Fixture::new();
+    let name = "refs/for/main";
+    let old = f.blob();
+    let delete = command(name, Some(old), ObjectId::null(crate::ObjectFormat::Sha1));
+    let prepared = f.prepare(vec![delete], PushLimits::default()).unwrap();
+    assert_eq!(prepared.object_count(), 0);
+    assert_eq!(prepared.pack_bytes(), 0);
+    assert!(matches!(
+        f.prepare(
+            vec![command(
+                name,
+                None,
+                ObjectId::null(crate::ObjectFormat::Sha1)
+            )],
+            PushLimits::default(),
+        ),
+        Err(PushFailure::Command(_))
+    ));
+}
+#[test]
+fn deletion_capability_mismatch_sends_nothing() {
+    let f = Fixture::new();
+    let id = f.blob();
+    let prepared = f
+        .prepare(
+            vec![command(
+                "refs/tags/test",
+                Some(id),
+                ObjectId::null(crate::ObjectFormat::Sha1),
+            )],
+            PushLimits::default(),
+        )
+        .unwrap();
+    let mut sent = vec![];
+    let result = send(
+        &mut response(&[]).as_slice(),
+        &mut sent,
+        &prepared,
+        &AtomicBool::new(false),
+    );
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(PushFailure::Unsupported(_)))
+    ));
+    assert!(sent.is_empty());
+}
+
+#[test]
+fn push_options_reject_invalid_bytes_before_sending() {
+    let prepared = prepared(PushLimits::default());
+    assert!(matches!(
+        prepared.with_push_options(vec![b"bad\noption".to_vec()]),
+        Err(PushFailure::Command("invalid push option"))
     ));
 }
 #[test]
@@ -406,14 +473,26 @@ fn invalid_advertisement_never_sends_commands(#[case] bytes: &[u8]) {
     assert!(written.is_empty());
 }
 #[test]
-fn stale_expectation_never_sends_commands() {
+fn advertised_stale_value_keeps_exact_lease_on_wire() {
     let p = prepared(PushLimits::default());
     let mut bytes = pkt(format!("{} refs/tags/test\0report-status", p.commands[0].new).as_bytes());
     bytes.extend(b"0000");
-    assert!(matches!(
-        run(&bytes, &p),
-        Err(PushError::NotSent(PushFailure::Stale { .. }))
-    ));
+    bytes.extend(pkt(b"unpack ok\n"));
+    bytes.extend(pkt(b"ng refs/tags/test stale old value\n"));
+    bytes.extend(b"0000");
+    let mut written = vec![];
+    let report = send(
+        &mut bytes.as_slice(),
+        &mut written,
+        &p,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(b"stale old value".to_vec()))
+    );
+    assert_eq!(written, [p.request.as_slice(), p.pack.as_slice()].concat());
 }
 #[rstest]
 #[case::missing_unpack(&[])]
