@@ -14,9 +14,13 @@ use std::time::{Duration, Instant};
 use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
 use girt::push::{self, ForcePolicy, PreparedPush, PushCommand, PushLimits, Status};
 use girt::refs::RefName;
+use girt::remote::{
+    CredentialContext, CredentialHelper, CredentialProgram, CredentialSession, Prompt,
+    ProtocolEnvironment, Remote,
+};
 use girt::transport::TransportControl;
-use girt::transport::http::{HttpError, HttpRemote};
-use girt::{InitKind, ObjectId, PackLimits, ReadLimits, Repository};
+use girt::transport::http::{HttpEnvironment, HttpError, HttpRemote, HttpSettings};
+use girt::{Config, InitKind, ObjectId, PackLimits, ReadLimits, Repository};
 use http_git::Server;
 use pack_git::{Fixture, git};
 use rstest::rstest;
@@ -42,6 +46,211 @@ fn all(advertisement: &Advertisement) -> Vec<ObjectId> {
         .filter(|r| !r.peeled)
         .map(|r| r.id)
         .collect()
+}
+
+#[test]
+fn configured_connection_retries_challenged_discovery_at_its_bound_origin() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(source.root.path(), "", "Basic dTpw", None);
+    let config = Config::parse(
+        format!(
+            "[remote \"r\"]\nurl = {}\n[credential]\nusername = u\n",
+            server.url
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let settings =
+        HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()).unwrap();
+    let context = CredentialContext {
+        protocol: b"http".to_vec(),
+        host: server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
+        path: Some(b"repo".to_vec()),
+        use_http_path: false,
+    };
+    let cancel = AtomicBool::new(false);
+    let mut prompt = |field| (field == Prompt::Password).then(|| b"p".to_vec());
+    let session =
+        CredentialSession::fill(&config, context, &[], Some(&mut prompt), &cancel, None).unwrap();
+    let remote = HttpRemote::configured(settings)
+        .unwrap()
+        .with_credentials(session)
+        .unwrap();
+    let downloaded = runtime()
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            control(&cancel),
+        ))
+        .unwrap();
+    assert!(
+        !downloaded
+            .validate(&cancel, |_| ControlFlow::Continue(()))
+            .unwrap()
+            .wants()
+            .is_empty()
+    );
+    assert_eq!(server.requests(), ["GET", "GET", "POST"]);
+}
+
+#[rstest]
+#[case::accepted("", "Basic dTpw", &["get", "store"], &["GET", "GET", "POST"], true)]
+#[case::rejected("", "Basic b3RoZXI6cA==", &["get", "erase"], &["GET", "GET"], false)]
+#[case::unsupported("bearer-challenge", "", &["get"], &["GET"], false)]
+fn helper_notification_follows_http_authentication_outcome(
+    #[case] fault: &str,
+    #[case] expected_authorization: &str,
+    #[case] expected_actions: &[&str],
+    #[case] expected_requests: &[&str],
+    #[case] success: bool,
+) {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(source.root.path(), fault, expected_authorization, None);
+    let config = Config::parse(b"[credential]\nhelper = fixture\n").unwrap();
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let helper = CredentialHelper {
+        configured_name: b"fixture".to_vec(),
+        program: CredentialProgram {
+            executable: if cfg!(windows) { "python" } else { "python3" }.into(),
+            arguments: vec![
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/http/credential.py"
+                )
+                .into(),
+                log.path().as_os_str().to_owned(),
+            ],
+            inherit_environment: true,
+            environment: Vec::new(),
+        },
+    };
+    let context = CredentialContext {
+        protocol: b"http".to_vec(),
+        host: server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
+        path: Some(b"repo".to_vec()),
+        use_http_path: false,
+    };
+    let cancel = AtomicBool::new(false);
+    let session =
+        CredentialSession::fill(&config, context, &[helper], None, &cancel, None).unwrap();
+    let remote = HttpRemote::new(&server.url, &[], &[])
+        .unwrap()
+        .with_credentials(session)
+        .unwrap();
+    let result = runtime().block_on(fetch::receive_http(
+        &remote,
+        all,
+        None,
+        FetchLimits::default(),
+        control(&cancel),
+    ));
+    assert_eq!(result.is_ok(), success);
+    assert_eq!(
+        std::fs::read_to_string(log.path())
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        expected_actions
+    );
+    assert_eq!(server.requests(), expected_requests);
+}
+
+#[test]
+fn insecure_tls_requires_application_approval_before_connecting() {
+    let config = Config::parse(
+        b"[remote \"r\"]\nurl = https://example.invalid/repo\n[http]\nsslVerify = false\n",
+    )
+    .unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    assert!(matches!(
+        HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()),
+        Err(HttpError::Configuration(
+            "insecure TLS requires application approval"
+        ))
+    ));
+}
+
+#[test]
+fn configured_connection_follows_initial_same_origin_redirect_for_rpc() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(source.root.path(), "same-origin-redirect", "", None);
+    let config =
+        Config::parse(format!("[remote \"r\"]\nurl = {}\n", server.url).as_bytes()).unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let settings =
+        HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()).unwrap();
+    let remote = HttpRemote::configured(settings).unwrap();
+    let cancel = AtomicBool::new(false);
+    let downloaded = runtime()
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            control(&cancel),
+        ))
+        .unwrap();
+    assert!(
+        !downloaded
+            .validate(&cancel, |_| ControlFlow::Continue(()))
+            .unwrap()
+            .wants()
+            .is_empty()
+    );
+    assert_eq!(server.requests(), ["GET", "GET", "POST"]);
+}
+
+#[test]
+fn configured_connection_uses_approved_proxy_basic_authentication() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let server = Server::new(source.root.path(), "proxy-auth", "", None);
+    let config = Config::parse(b"[remote \"r\"]\nurl = http://example.invalid/repo\n").unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let proxy = server.url.trim_end_matches("/repo").to_owned();
+    let environment = HttpEnvironment {
+        proxy: Some(proxy),
+        proxy_credentials: Some(("pu".to_owned(), "pp".to_owned())),
+        ..HttpEnvironment::default()
+    };
+    let settings = HttpSettings::resolve(&config, &destination, &environment).unwrap();
+    let remote = HttpRemote::configured(settings).unwrap();
+    let cancel = AtomicBool::new(false);
+    let downloaded = runtime()
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            control(&cancel),
+        ))
+        .unwrap();
+    assert!(
+        !downloaded
+            .validate(&cancel, |_| ControlFlow::Continue(()))
+            .unwrap()
+            .wants()
+            .is_empty()
+    );
+    assert_eq!(server.requests(), ["GET", "POST"]);
 }
 
 #[test]

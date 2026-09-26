@@ -266,6 +266,12 @@ impl CredentialSession {
         &self.credential
     }
 
+    /// Scope used for this lookup. Transports must compare it with the final destination before
+    /// attaching the credential to a request.
+    pub fn context(&self) -> &CredentialContext {
+        &self.context
+    }
+
     /// Notify all selected helpers after successful authentication.
     pub fn approve(
         &self,

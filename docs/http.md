@@ -48,24 +48,41 @@ budgets; the caller bounds concurrency and aggregate memory.
 
 ## Endpoint, Authentication and TLS
 
-Construct `transport::http::HttpRemote` with a repository URL, explicit headers and optional PEM
-trust roots. URLs must omit userinfo, query and fragment. Up to 8192 URL bytes and 16 KiB of
-supplied header names/values are accepted. Allowed headers are `Authorization`, `User-Agent` and
-`X-*`; protocol, routing, proxy and framing headers cannot be overridden. All supplied values are
-marked sensitive. A credential applies to both service paths at the same configured repository.
+Resolve an R21 `Destination` with `HttpSettings::resolve(config, destination, environment)`, then
+construct `HttpRemote::configured(settings)`. This reads global and URL-scoped `http.sslVerify`,
+`http.sslCAInfo`, `http.proxy` and `http.followRedirects` from the supplied config snapshot. URL
+sections match scheme, host, effective port and repository path at a component boundary; the longest
+path wins, then the latest occurrence. Explicit `HttpEnvironment` values override CA, verification
+and proxy settings. Girt never reads process environment or configured CA files: the application
+supplies bounded PEM bytes, proxy selection, exclusions and optional approved Basic proxy
+credentials. Configured CA paths without supplied bytes fail before I/O. Disabling certificate and
+hostname verification requires both the effective setting and `allow_insecure_tls` application
+approval. Platform roots remain trusted unless the application changes its TLS policy outside this
+API.
 
-Supply a complete authorization header up front. There is no challenge retry, credential-helper,
-keychain, cookie or remote-config discovery. Plain HTTP transmits credentials without encryption;
-use HTTPS across untrusted networks. HTTPS uses rustls with platform certificate trust and any
-explicit additional trust roots. Certificate and hostname verification cannot be disabled through
-this API. HTTP/1.1 is used even when a server supports HTTP/2.
+For origin authentication, fill a `remote::CredentialSession` using application-approved helper
+programs or prompting, then call `HttpRemote::with_credentials`. The session must match the exact
+scheme, authority and repository path. Discovery first tries without the credential; a 401 response
+advertising Basic retries that GET once at the same origin. Other challenges receive no credential.
+An authenticated 200 approves the session; a 401 rejects it. Subsequent RPCs send the credential to
+the bound origin. Helper notification is synchronous, including process startup and callbacks; place
+configured network operations on an application worker when executor responsiveness matters. The R22
+deadline and cancellation bounds apply, but synchronous callback and process-start phases cannot be
+interrupted. Passwords are never displayed or traced. Plain HTTP transmits credentials without
+encryption; use HTTPS across untrusted networks. A push POST is never retried after an
+authentication challenge or transport failure because remote application may already have occurred.
+Inspect the remote before another push attempt.
 
-All redirects are rejected, including same-origin redirects. Their locations and response bodies are
-not included in errors. Proxy discovery and use are disabled, including environment proxies. Only
-HTTP status 200 is accepted; 401/403, 3xx, 4xx and 5xx return their status code without the body.
-The adapter never retries an exchange. It emits no logs and redacts endpoint/header data from its
-Debug representation and HTTP errors. Git progress and rejection reasons remain server-controlled
-bytes; callers decide whether to display them.
+Configured connections accept one same-origin initial discovery redirect, retaining its repository
+base for the RPC. Cross-origin redirects and redirects with a credential session are refused before
+forwarding secrets. `http.followRedirects=false` disables this path; `true` and other values are
+refused because their wider semantics are not implemented. Redirect locations and response bodies
+are omitted from errors. The explicit `HttpRemote::new` constructor retains its earlier behavior:
+caller-supplied `Authorization`, `User-Agent` and `X-*` headers, optional PEM roots, and no proxies
+or redirects. Both constructors reject URL userinfo, query and fragment, use HTTP/1.1, refuse
+protocol/routing/framing header overrides, and accept only status 200 and exact Git media types.
+Cookies and content compression remain disabled. Girt emits no HTTP logs; Git progress and rejection
+text remain server-controlled bytes for callers to handle.
 
 ## Limits and Interruption
 

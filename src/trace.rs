@@ -85,6 +85,7 @@ fn http(error: &crate::transport::http::HttpError) -> &'static str {
     use crate::transport::http::HttpError::*;
     match error {
         Configuration(_) => "invalid_input",
+        Credential(_) => "authentication",
         Status(_) => "remote",
         Protocol(_) => "protocol",
         Limit(_) => "limit",

@@ -41,9 +41,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(10)
             return
         if args.authorization and self.headers.get("Authorization") != args.authorization:
-            self.send_error(401)
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", "Basic realm=\"synthetic\"")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         fault = args.fault
+        if fault == "bearer-challenge":
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", "Bearer realm=\"synthetic\"")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if fault == "proxy-auth" and self.headers.get("Proxy-Authorization") != "Basic cHU6cHA=":
+            self.send_error(407)
+            return
+        if fault == "same-origin-redirect" and self.path.startswith("/repo/"):
+            self.send_response(302)
+            self.send_header("Location", self.path.replace("/repo/", "/alias/", 1))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if fault in ("redirect", "failure") or (fault == "post-failure" and self.command == "POST"):
             self.send_response(302 if fault == "redirect" else 503)
             self.send_header("Location", "http://127.0.0.1:1/credential-trap")
@@ -56,7 +74,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         request = self.rfile.read(size)
         path = urllib.parse.urlsplit(self.path)
-        if not path.path.startswith("/repo/"):
+        prefix = "/alias" if fault == "same-origin-redirect" else "/repo"
+        if not path.path.startswith(prefix + "/"):
             self.send_error(404)
             return
         env = {
@@ -64,7 +83,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_HTTP_EXPORT_ALL": "1",
-            "PATH_TRANSLATED": "." + path.path[len("/repo"):],
+            "PATH_TRANSLATED": "." + path.path[len(prefix):],
             "REQUEST_METHOD": self.command,
             "QUERY_STRING": path.query,
             "CONTENT_TYPE": self.headers.get("Content-Type", ""),
