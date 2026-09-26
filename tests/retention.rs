@@ -308,6 +308,150 @@ fn reftable_expiry_refuses_before_mutation() {
     );
 }
 
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let directory = root.path().join("objects/pack");
+    let old_index = fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
+        .unwrap();
+    let canonical_index = old_index.canonicalize().unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.published.is_some());
+    assert_eq!(report.removed.first(), Some(&canonical_index));
+    assert_eq!(
+        report.removed.last(),
+        Some(&canonical_index.with_extension("pack"))
+    );
+    assert!(!old_index.exists());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn kept_pack_is_not_retired() {
+    let (root, repo, _, _) = fixture();
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let directory = root.path().join("objects/pack");
+    let old_pack = fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pack")
+        })
+        .unwrap();
+    fs::write(old_pack.with_extension("keep"), b"keep\n").unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.removed.is_empty());
+    assert!(old_pack.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_replacement_keeps_old_pack() {
+    let (root, repo, first, _) = fixture();
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let old_pack = fs::read_dir(root.path().join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pack")
+        })
+        .unwrap();
+    let mut limits = RepackLimits::default();
+    limits.write.max_objects = 0;
+    let error = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            limits,
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::RetireCause::Repack(_)
+    ));
+    assert!(error.report.published.is_none());
+    assert!(error.report.removed.is_empty());
+    assert!(old_pack.exists());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn pack_retirement_refuses_without_directory_durability() {
+    let (root, repo, _, _) = fixture();
+    let directory = root.path().join("objects/pack");
+    let before = fs::read_dir(&directory).unwrap().count();
+    let error = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::RetireCause::UnsupportedPlatform
+    ));
+    assert!(error.report.published.is_none());
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), before);
+}
+
 #[rstest::rstest]
 #[case::sha1("sha1")]
 #[case::sha256("sha256")]
@@ -779,6 +923,29 @@ fn alternate_objects_are_read_but_not_owned() {
         plan.alternate_stores,
         [fs::canonicalize(borrowed.join("objects")).unwrap()]
     );
+    #[cfg(unix)]
+    {
+        let borrowed_path = borrowed
+            .join("objects")
+            .join(&blob.to_string()[..2])
+            .join(&blob.to_string()[2..]);
+        let original = fs::read(&borrowed_path).unwrap();
+        let report = repo
+            .retire_old_packs(
+                &mut FixtureIsolation,
+                &policy,
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert!(report.published.is_some());
+        assert_eq!(fs::read(&borrowed_path).unwrap(), original);
+        fs::remove_file(borrowed_path).unwrap();
+        assert_eq!(
+            git(&primary, &["cat-file", "-t", &blob.to_string()], b""),
+            "blob"
+        );
+    }
 }
 
 #[test]

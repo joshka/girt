@@ -72,6 +72,27 @@ fn retention(c: &mut Criterion) {
             repository.expire_reflogs(&mut IsolatedFixture, black_box(&policy), black_box(&cancel))
         })
     });
+    #[cfg(unix)]
+    {
+        repository
+            .retire_old_packs(
+                &mut IsolatedFixture,
+                &policy,
+                RepackLimits::default(),
+                &cancel,
+            )
+            .unwrap();
+        c.bench_function("pack-retire/idempotent-packed-linear-256", |bench| {
+            bench.iter(|| {
+                repository.retire_old_packs(
+                    &mut IsolatedFixture,
+                    black_box(&policy),
+                    RepackLimits::default(),
+                    black_box(&cancel),
+                )
+            })
+        });
+    }
 }
 
 criterion_group! {

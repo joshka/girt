@@ -15,6 +15,8 @@ mod prune;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
 mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
+mod retire;
+pub use retire::{RetireCause, RetireFailure, RetireReport};
 
 #[derive(Debug)]
 struct ObservedLog {
