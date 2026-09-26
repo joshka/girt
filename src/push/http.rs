@@ -29,7 +29,7 @@ use crate::transport::http::{HttpRemote, RequestBody};
 /// proves rejection. Complete Git rejection reports return `Ok`; inspect each reference status.
 pub async fn send_http(
     remote: &HttpRemote,
-    prepared: PreparedPush,
+    mut prepared: PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
     #[cfg(feature = "tracing")]
@@ -61,16 +61,23 @@ pub async fn send_http(
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            protocol::advertise(&mut wire, &prepared)?;
+            let caps = protocol::advertise(&mut wire, &prepared)?;
             wire.end()?;
             control.check()?;
-            Ok::<_, PushFailure>(())
+            Ok::<_, PushFailure>(caps)
         };
-        preflight.await.map_err(PushError::NotSent)?;
+        let caps = preflight.await.map_err(PushError::NotSent)?;
+        if caps.report_v2 || caps.sideband {
+            prepared.request = prepared
+                .request_for(caps.report_v2, caps.sideband)
+                .map_err(PushError::NotSent)?
+                .into_owned();
+        }
         let mut report = PushReport::pending(&prepared.commands);
         if prepared.commands.is_empty() {
             return Ok(report);
         }
+        report.mark_attempted(&prepared.request, prepared.request.len());
         let body = RequestBody::new(prepared.request, prepared.pack);
         control.check().map_err(|e| PushError::NotSent(e.into()))?;
         let response = remote
@@ -91,8 +98,13 @@ pub async fn send_http(
             remaining: prepared.limits.max_status_bytes,
             cancel: &retain,
         };
-        let parsed = protocol::read_status(&mut wire, &mut report)
-            .and_then(|()| wire.end().map_err(PushFailure::from));
+        let parsed = protocol::read_response(
+            &mut wire,
+            &mut report,
+            caps,
+            prepared.limits.max_status_bytes,
+        )
+        .and_then(|()| wire.end().map_err(PushFailure::from));
         let result = response.result.map_err(PushFailure::from).and(parsed);
         match result {
             Ok(()) => Ok(report),

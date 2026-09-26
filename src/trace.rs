@@ -166,7 +166,7 @@ pub(crate) fn push_failure(error: &crate::push::PushFailure) -> &'static str {
         Cancelled => "cancelled",
         Deadline => "deadline",
         KnowledgeChanged(_) | WouldForce(_) => "precondition",
-        Command(_) => "invalid_input",
+        Command(_) | Identity => "invalid_input",
         Missing(_) => "missing",
         Kind(_) => "wrong_kind",
         Read { source, .. } => object(source),

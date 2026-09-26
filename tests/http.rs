@@ -496,7 +496,8 @@ fn real_git_delta_push_incremental_and_empty_commands() {
             command("refs/tags/packed", None, tag),
         ],
         &[],
-    );
+    )
+    .with_progress();
     let rt = runtime();
     assert!(
         rt.block_on(push::send_http(&remote, initial, control))
@@ -1087,6 +1088,95 @@ fn server_can_accept_one_ref_and_reject_another() {
     assert!(matches!(report.refs[1].status, Some(Status::Rejected(_))));
     assert!(!report.all_succeeded());
     assert_eq!(tip(&dest, "refs/heads/main"), id);
+}
+
+#[cfg(unix)]
+#[test]
+fn git_proc_receive_reports_rewritten_destination() {
+    use std::os::unix::fs::PermissionsExt;
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let id = tip(&source.repo, "refs/heads/main");
+    git(
+        dest.git_dir(),
+        &[
+            "fetch",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main",
+        ],
+        b"",
+    );
+    git(
+        dest.git_dir(),
+        &["config", "receive.procReceiveRefs", "refs/for/"],
+        b"",
+    );
+    let hook = dest.git_dir().join("hooks/proc-receive");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        r##"#!/usr/bin/env python3
+import subprocess
+import sys
+
+reader = sys.stdin.buffer
+writer = sys.stdout.buffer
+
+def read_packet():
+    header = reader.read(4)
+    length = int(header, 16)
+    return None if length == 0 else reader.read(length - 4)
+
+def write_packet(data):
+    writer.write(f"{len(data) + 4:04x}".encode() + data)
+    writer.flush()
+
+assert read_packet().startswith(b"version=1")
+assert read_packet() is None
+write_packet(b"version=1")
+writer.write(b"0000")
+writer.flush()
+old, new, name = read_packet().strip().split(b" ", 2)
+assert read_packet() is None
+subprocess.run(["git", "update-ref", "refs/heads/reviewed", new.decode()], check=True)
+write_packet(b"ok " + name)
+write_packet(b"option refname refs/heads/reviewed")
+write_packet(b"option old-oid " + old)
+write_packet(b"option new-oid " + new)
+write_packet(b"option forced-update")
+writer.write(b"0000")
+writer.flush()
+"##,
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let prepared = prepared(&source, vec![command("refs/for/main", None, id)], &[]);
+    let cancel = AtomicBool::new(false);
+    let report = runtime()
+        .block_on(push::send_http(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    assert!(report.all_succeeded());
+    assert_eq!(report.refs[0].rewrites.len(), 1);
+    assert_eq!(
+        report.refs[0].rewrites[0].name,
+        Some(RefName::new("refs/heads/reviewed").unwrap())
+    );
+    assert_eq!(report.refs[0].rewrites[0].new, Some(id));
+    assert!(report.refs[0].rewrites[0].forced);
+    assert_eq!(tip(&dest, "refs/heads/reviewed"), id);
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new("refs/for/main").unwrap())
+            .unwrap(),
+        None
+    );
 }
 
 #[test]

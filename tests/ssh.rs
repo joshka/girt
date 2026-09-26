@@ -607,7 +607,8 @@ fn real_git_delta_push_incremental_and_empty_commands() {
             command("refs/tags/packed", None, tag),
         ],
         &[],
-    );
+    )
+    .with_progress();
     let rt = runtime();
     assert!(
         rt.block_on(push::send_ssh(&remote, &initial, control))

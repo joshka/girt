@@ -59,19 +59,22 @@ pub async fn send_ssh(
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            protocol::advertise(&mut wire, prepared)?;
+            let caps = protocol::advertise(&mut wire, prepared)?;
             wire.end()?;
             control.check()?;
-            Ok::<_, PushFailure>(())
+            Ok::<_, PushFailure>(caps)
         };
-        preflight.await.map_err(PushError::NotSent)?;
+        let caps = preflight.await.map_err(PushError::NotSent)?;
+        let negotiated = prepared
+            .request_for(caps.report_v2, caps.sideband)
+            .map_err(PushError::NotSent)?;
         let mut report = PushReport::pending(&prepared.commands);
         let request = if prepared.commands.is_empty() {
             b"0000"
         } else {
-            prepared.request.as_slice()
+            negotiated.as_ref()
         };
-        let (body, result, attempted) = session
+        let (body, result, written) = session
             .exchange(
                 request,
                 &prepared.pack,
@@ -88,9 +91,12 @@ pub async fn send_ssh(
             }
             return Ok(report);
         }
-        if !attempted && let Err(cause) = result {
+        if written == 0
+            && let Err(cause) = result
+        {
             return Err(PushError::NotSent(cause.into()));
         }
+        report.mark_attempted(request, written);
         let retain = AtomicBool::new(false);
         let mut reader = body.as_slice();
         let mut wire = Wire {
@@ -98,8 +104,13 @@ pub async fn send_ssh(
             remaining: prepared.limits.max_status_bytes,
             cancel: &retain,
         };
-        let parsed = protocol::read_status(&mut wire, &mut report)
-            .and_then(|()| wire.end().map_err(PushFailure::from));
+        let parsed = protocol::read_response(
+            &mut wire,
+            &mut report,
+            caps,
+            prepared.limits.max_status_bytes,
+        )
+        .and_then(|()| wire.end().map_err(PushFailure::from));
         match result.map_err(PushFailure::from).and(parsed) {
             Ok(()) => Ok(report),
             Err(cause) => Err(PushError::Uncertain {

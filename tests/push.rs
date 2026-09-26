@@ -228,7 +228,7 @@ fn local_delete_policy_rejects_one_ref_without_stopping_another() {
     assert_eq!(tip(&dest, "refs/tags/new"), Some(id));
 }
 #[test]
-fn native_push_refuses_hidden_ref_policy_before_installing_objects() {
+fn native_push_rejects_hidden_ref_without_publishing_it() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     git(
@@ -238,20 +238,27 @@ fn native_push_refuses_hidden_ref_policy_before_installing_objects() {
     );
     let id = main(&f);
     let result = push(&f.repo, &dest, vec![command("refs/secret/main", None, id)]);
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "configured receive policy"
-        )))
-    ));
+    let report = result.unwrap();
+    assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
     assert_eq!(tip(&dest, "refs/secret/main"), None);
     assert!(
         dest.objects(PackLimits::default())
             .unwrap()
             .read(id, ReadLimits::default())
             .unwrap()
-            .is_none()
+            .is_some()
     );
+    let git_result = std::process::Command::new("git")
+        .current_dir(f.root.path())
+        .args([
+            "push",
+            dest.git_dir().to_str().unwrap(),
+            "refs/heads/main:refs/secret/main",
+        ])
+        .output()
+        .unwrap();
+    assert!(!git_result.status.success());
+    assert_eq!(tip(&dest, "refs/secret/main"), None);
 }
 #[test]
 fn explicit_force_rewinds_when_server_allows_it() {

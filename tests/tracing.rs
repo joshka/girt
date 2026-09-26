@@ -216,7 +216,7 @@ fn history_limit_and_index_lifecycle_have_owned_spans() {
 mod http;
 
 #[test]
-fn push_write_failure_is_uncertain_without_logging_source_text() {
+fn push_first_write_failure_is_not_sent_without_logging_source_text() {
     use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushError, PushLimits};
     let (_root, repo) = repository();
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
@@ -245,10 +245,10 @@ fn push_write_failure_is_uncertain_without_logging_source_text() {
             &AtomicBool::new(false),
         )
     });
-    assert!(matches!(result, Err(PushError::Uncertain { .. })));
+    assert!(matches!(result, Err(PushError::NotSent(_))));
     assert_eq!(writer.0, 1);
     let span = capture.named("push.send");
-    assert_eq!(span.fields["effects"], "uncertain");
+    assert_eq!(span.fields["effects"], "not_sent");
     assert_eq!(span.fields["failure_class"], "io");
     assert!(!format!("{:?}", capture.spans()).contains("R03_SECRET"));
     assert!(capture.events().is_empty());

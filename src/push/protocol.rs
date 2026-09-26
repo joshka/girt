@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use super::{PreparedPush, PushError, PushFailure as Error, PushReport, Status};
+use super::{PreparedPush, PushError, PushFailure as Error, PushReport, RefRewrite, Status};
 use crate::ObjectId;
 use crate::packet::{Wire, check_cancelled, put};
 use crate::refs::RefName;
@@ -13,8 +13,10 @@ use crate::refs::RefName;
 /// capabilities, then writes commands and a raw non-thin pack. Every command carries its exact
 /// expected old value for the server to compare under its reference transaction. SHA-256 requests
 /// `object-format=sha256`; deletions require `delete-refs`, and supplied options require
-/// `push-options`. Atomic, sideband and report-status-v2 are not requested. Protocol versions,
-/// shallow advertisements, peeled hints and report-status-v2-only servers are rejected. Roots used
+/// `push-options`. Report-status-v2 is requested when advertised, preserving proc-receive rewrite
+/// options. [`PreparedPush::with_progress`] requests sideband when available; channel-2 frames
+/// remain untrusted bytes in the report. Protocol versions, shallow advertisements and peeled
+/// hints are rejected. Roots used
 /// by [`PreparedPush::new_excluding`] must appear as a current advertised tip or `.have`; otherwise
 /// the push fails before transmission. Hidden refs remain subject to the server's exact old-value
 /// and visibility policies.
@@ -57,15 +59,32 @@ pub fn send(
             remaining: prepared.limits.max_advertisement_bytes,
             cancel,
         };
-        let preflight = advertise(&mut wire, prepared)
-            .and_then(|()| check_cancelled(cancel).map_err(Error::from));
-        preflight.map_err(PushError::NotSent)?;
+        let caps = advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
+        check_cancelled(cancel).map_err(|error| PushError::NotSent(error.into()))?;
+        let request = prepared
+            .request_for(caps.report_v2, caps.sideband)
+            .map_err(PushError::NotSent)?;
         let mut report = PushReport::pending(&prepared.commands);
         wire.remaining = prepared.limits.max_status_bytes;
-        let result = transmit(&mut wire, writer, prepared, &mut report, cancel);
+        let mut counted = CountingWriter {
+            inner: writer,
+            written: 0,
+        };
+        let result = transmit(
+            &mut wire,
+            &mut counted,
+            &request,
+            prepared,
+            &mut report,
+            cancel,
+            caps,
+        );
+        report.mark_attempted(&request, counted.written);
         match result {
             Ok(()) => Ok(report),
-            Err(cause) if prepared.commands.is_empty() => Err(PushError::NotSent(cause)),
+            Err(cause) if prepared.commands.is_empty() || counted.written == 0 => {
+                Err(PushError::NotSent(cause))
+            }
             Err(cause) => Err(PushError::Uncertain {
                 cause,
                 report: Box::new(report),
@@ -86,14 +105,33 @@ pub fn send(
     result
 }
 
+struct CountingWriter<'a, W> {
+    inner: &'a mut W,
+    written: usize,
+}
+
+impl<W: Write> Write for CountingWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let count = self.inner.write(bytes)?;
+        self.written = self.written.saturating_add(count);
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn transmit(
     wire: &mut Wire<'_, impl Read>,
     writer: &mut impl Write,
+    request: &[u8],
     prepared: &PreparedPush,
     report: &mut PushReport,
     cancel: &AtomicBool,
+    caps: Capabilities,
 ) -> Result<(), Error> {
-    put(writer, &prepared.request, cancel)?;
+    put(writer, request, cancel)?;
     // Chunk large writes so cancellation can be observed without relying on a short-writing sink.
     for chunk in prepared.pack.chunks(65536) {
         put(writer, chunk, cancel)?;
@@ -101,20 +139,28 @@ fn transmit(
     check_cancelled(cancel)?;
     writer.flush()?;
     if !prepared.commands.is_empty() {
-        read_status(wire, report)?;
+        read_response(wire, report, caps, prepared.limits.max_status_bytes)?;
     }
     wire.end()?;
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Capabilities {
+    pub report_v2: bool,
+    pub sideband: bool,
+}
+
 pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
-) -> Result<(), Error> {
+) -> Result<Capabilities, Error> {
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
     let mut report_status = false;
+    let mut report_v2 = false;
+    let mut sideband = false;
     let mut delete_refs = false;
     let mut push_options = false;
     let mut advertised_format = crate::ObjectFormat::Sha1;
@@ -137,6 +183,8 @@ pub(super) fn advertise(
                     return Err(Error::Unsupported("object format"));
                 }
                 report_status |= cap == b"report-status";
+                report_v2 |= cap == b"report-status-v2";
+                sideband |= cap == b"side-band-64k";
                 delete_refs |= cap == b"delete-refs";
                 push_options |= cap == b"push-options";
             }
@@ -175,7 +223,7 @@ pub(super) fn advertise(
     if count == 0 {
         return Err(Error::Protocol("missing advertisement"));
     }
-    if !prepared.commands.is_empty() && !report_status {
+    if !prepared.commands.is_empty() && !report_status && !report_v2 {
         return Err(Error::Unsupported("report-status is required"));
     }
     if advertised_format != prepared.format {
@@ -195,12 +243,57 @@ pub(super) fn advertise(
     }
     // Every command carries its exact old ID. The receiver checks that value under its ref
     // transaction, allowing a stale command to fail without suppressing independent commands.
-    Ok(())
+    Ok(Capabilities {
+        report_v2,
+        sideband: sideband && prepared.progress,
+    })
+}
+
+pub(super) fn read_response(
+    wire: &mut Wire<'_, impl Read>,
+    report: &mut PushReport,
+    caps: Capabilities,
+    limit: usize,
+) -> Result<(), Error> {
+    if !caps.sideband {
+        return read_status(wire, report, caps.report_v2);
+    }
+    let mut status_bytes = Vec::new();
+    let outer = loop {
+        match wire.packet() {
+            Ok(Some(packet)) if packet.first() == Some(&1) => {
+                let data = &packet[1..];
+                if data.len() > limit.saturating_sub(status_bytes.len()) {
+                    break Err(Error::Limit("status bytes"));
+                }
+                status_bytes.extend_from_slice(data);
+            }
+            Ok(Some(packet)) if packet.first() == Some(&2) => {
+                report.progress.push(packet[1..].to_vec())
+            }
+            Ok(Some(packet)) if packet.first() == Some(&3) => {
+                break Err(Error::Remote(packet[1..].to_vec()));
+            }
+            Ok(Some(_)) => break Err(Error::Protocol("invalid sideband channel")),
+            Ok(None) => break Ok(()),
+            Err(error) => break Err(Error::from(error)),
+        }
+    };
+    let mut reader = status_bytes.as_slice();
+    let mut nested = Wire {
+        reader: &mut reader,
+        remaining: limit,
+        cancel: wire.cancel,
+    };
+    let parsed = read_status(&mut nested, report, caps.report_v2)
+        .and_then(|()| nested.end().map_err(Error::from));
+    outer.and(parsed)
 }
 
 pub(super) fn read_status(
     wire: &mut Wire<'_, impl Read>,
     report: &mut PushReport,
+    report_v2: bool,
 ) -> Result<(), Error> {
     let unpack = wire
         .packet()?
@@ -216,8 +309,26 @@ pub(super) fn read_status(
         .map(|(i, r)| (r.command.name.clone(), i))
         .collect();
     let mut seen = HashSet::new();
+    let mut active: Option<(usize, RefRewrite, bool)> = None;
     while let Some(packet) = wire.packet()? {
         let bytes = line(&packet);
+        if let Some(option) = bytes.strip_prefix(b"option ") {
+            if !report_v2 {
+                return Err(Error::Protocol("unexpected report option"));
+            }
+            let (position, rewrite, changed) = active
+                .as_mut()
+                .ok_or(Error::Protocol("option without successful ref"))?;
+            if let Err(error) =
+                parse_rewrite_option(option, rewrite, report.refs[0].command.new.format())
+            {
+                report.refs[*position].status = None;
+                return Err(error);
+            }
+            *changed = true;
+            continue;
+        }
+        finish_success(&mut active, report, &mut seen);
         let (name, result) = if let Some(name) = bytes.strip_prefix(b"ok ") {
             if report.unpack != Some(Status::Ok) {
                 return Err(Error::Protocol("ref success after unpack failure"));
@@ -237,13 +348,67 @@ pub(super) fn read_status(
         let position = *positions
             .get(&name)
             .ok_or(Error::Protocol("status for unrequested ref"))?;
-        if !seen.insert(position) {
+        if seen.contains(&position) && (!report_v2 || result != Status::Ok) {
             return Err(Error::Protocol("duplicate ref status"));
         }
-        report.refs[position].status = Some(result);
+        if result == Status::Ok && report_v2 {
+            report.refs[position].status = Some(Status::Ok);
+            active = Some((position, RefRewrite::default(), false));
+        } else {
+            seen.insert(position);
+            report.refs[position].status = Some(result);
+            report.refs[position].rewrite_complete = true;
+        }
     }
+    finish_success(&mut active, report, &mut seen);
     if seen.len() != report.refs.len() {
         return Err(Error::Protocol("missing ref status"));
+    }
+    Ok(())
+}
+
+fn finish_success(
+    active: &mut Option<(usize, RefRewrite, bool)>,
+    report: &mut PushReport,
+    seen: &mut HashSet<usize>,
+) {
+    if let Some((position, rewrite, changed)) = active.take() {
+        seen.insert(position);
+        report.refs[position].status = Some(Status::Ok);
+        report.refs[position].rewrite_complete = true;
+        if changed {
+            report.refs[position].rewrites.push(rewrite);
+        }
+    }
+}
+
+fn parse_rewrite_option(
+    option: &[u8],
+    rewrite: &mut RefRewrite,
+    format: crate::ObjectFormat,
+) -> Result<(), Error> {
+    if let Some(name) = option.strip_prefix(b"refname ") {
+        if rewrite.name.is_some() {
+            return Err(Error::Protocol("duplicate rewrite refname"));
+        }
+        rewrite.name = Some(RefName::new(name).map_err(|_| Error::Protocol("rewrite refname"))?);
+    } else if let Some(old) = option.strip_prefix(b"old-oid ") {
+        if rewrite.old.is_some() {
+            return Err(Error::Protocol("duplicate rewrite old ID"));
+        }
+        rewrite.old = Some(parse_id(old, format)?);
+    } else if let Some(new) = option.strip_prefix(b"new-oid ") {
+        if rewrite.new.is_some() {
+            return Err(Error::Protocol("duplicate rewrite new ID"));
+        }
+        rewrite.new = Some(parse_id(new, format)?);
+    } else if option == b"forced-update" {
+        if rewrite.forced {
+            return Err(Error::Protocol("duplicate rewrite forced update"));
+        }
+        rewrite.forced = true;
+    } else {
+        return Err(Error::Protocol("unknown rewrite option"));
     }
     Ok(())
 }

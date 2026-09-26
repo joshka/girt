@@ -437,7 +437,6 @@ fn preserves_unpack_failure_and_binary_reason() {
 }
 #[rstest]
 #[case::no_status("ofs-delta")]
-#[case::v2_only("report-status-v2")]
 #[case::sha256("report-status object-format=sha256")]
 fn refuses_unsupported_capabilities_before_writing(#[case] caps: &str) {
     let mut written = vec![];
@@ -521,6 +520,107 @@ fn truncated_status_preserves_valid_prefix() {
     assert_eq!(report.unpack, Some(Status::Ok));
     assert_eq!(report.refs[0].status, Some(Status::Ok));
 }
+
+#[test]
+fn report_status_v2_retains_proc_receive_rewrite() {
+    let prepared = prepared(PushLimits::default());
+    let actual = prepared.commands()[0].new;
+    let mut bytes = advertisement("report-status-v2 object-format=sha1");
+    for line in [
+        b"unpack ok".to_vec(),
+        b"ok refs/tags/test".to_vec(),
+        b"option refname refs/heads/rewritten".to_vec(),
+        format!("option new-oid {actual}").into_bytes(),
+        b"option forced-update".to_vec(),
+    ] {
+        bytes.extend(pkt(&line));
+    }
+    bytes.extend(b"0000");
+    let mut written = Vec::new();
+    let report = send(
+        &mut bytes.as_slice(),
+        &mut written,
+        &prepared,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(report.all_succeeded());
+    assert!(
+        written
+            .windows(b"report-status-v2".len())
+            .any(|part| part == b"report-status-v2")
+    );
+    assert_eq!(report.refs[0].rewrites.len(), 1);
+    assert_eq!(
+        report.refs[0].rewrites[0].name,
+        Some(RefName::new("refs/heads/rewritten").unwrap())
+    );
+    assert_eq!(report.refs[0].rewrites[0].new, Some(actual));
+    assert!(report.refs[0].rewrites[0].forced);
+}
+
+#[test]
+fn malformed_v2_option_leaves_current_command_uncertain() {
+    let prepared = prepared(PushLimits::default());
+    let mut bytes = advertisement("report-status-v2");
+    bytes.extend(pkt(b"unpack ok"));
+    bytes.extend(pkt(b"ok refs/tags/test"));
+    bytes.extend(pkt(b"option unknown value"));
+    bytes.extend(b"0000");
+    let Err(PushError::Uncertain { report, .. }) = run(&bytes, &prepared) else {
+        panic!("expected uncertain outcome");
+    };
+    assert_eq!(report.refs[0].status, None);
+}
+
+#[test]
+fn sideband_progress_and_status_are_kept_separate() {
+    let prepared = prepared(PushLimits::default()).with_progress();
+    let mut bytes = advertisement("report-status side-band-64k");
+    let mut status = pkt(b"unpack ok");
+    status.extend(pkt(b"ok refs/tags/test"));
+    status.extend(b"0000");
+    let mut progress = vec![2];
+    progress.extend(b"checking objects\r");
+    bytes.extend(pkt(&progress));
+    let mut result = vec![1];
+    result.extend(status);
+    bytes.extend(pkt(&result));
+    bytes.extend(b"0000");
+    let mut written = Vec::new();
+    let report = send(
+        &mut bytes.as_slice(),
+        &mut written,
+        &prepared,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(report.all_succeeded());
+    assert_eq!(report.progress, vec![b"checking objects\r".to_vec()]);
+    assert!(
+        written
+            .windows(b"side-band-64k".len())
+            .any(|part| part == b"side-band-64k")
+    );
+}
+
+#[test]
+fn interrupted_sideband_keeps_completed_status_and_progress() {
+    let prepared = prepared(PushLimits::default()).with_progress();
+    let mut bytes = advertisement("report-status side-band-64k");
+    bytes.extend(pkt(b"\x02checking objects\n"));
+    let mut status = vec![1];
+    status.extend(pkt(b"unpack ok"));
+    status.extend(pkt(b"ok refs/tags/test"));
+    status.extend(b"0000");
+    bytes.extend(pkt(&status));
+    // EOF omits the sideband flush; the retained inner report still confirms the ref.
+    let Err(PushError::Uncertain { report, .. }) = run(&bytes, &prepared) else {
+        panic!("expected uncertain transport completion");
+    };
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert_eq!(report.progress, vec![b"checking objects\n".to_vec()]);
+}
 #[test]
 fn rejects_trailing_bytes_after_complete_report() {
     let mut bytes = response(&[b"unpack ok", b"ok refs/tags/test"]);
@@ -591,7 +691,7 @@ fn interrupted_io_is_not_retried_and_is_classified_by_phase() {
         matches!(send(&mut Interrupted, &mut vec![], &p, &AtomicBool::new(false)), Err(PushError::NotSent(PushFailure::Io(e))) if e.kind() == io::ErrorKind::Interrupted)
     );
     assert!(
-        matches!(send(&mut advertisement("report-status").as_slice(), &mut Interrupted, &p, &AtomicBool::new(false)), Err(PushError::Uncertain { cause: PushFailure::Io(e), .. }) if e.kind() == io::ErrorKind::Interrupted)
+        matches!(send(&mut advertisement("report-status").as_slice(), &mut Interrupted, &p, &AtomicBool::new(false)), Err(PushError::NotSent(PushFailure::Io(e))) if e.kind() == io::ErrorKind::Interrupted)
     );
 }
 struct CancelWriter<'a>(&'a AtomicBool);
@@ -814,6 +914,53 @@ fn later_output_failures_are_uncertain(#[case] bytes: usize, #[case] fail_flush:
         ),
         Err(PushError::Uncertain { .. })
     ));
+}
+#[test]
+fn failed_first_write_is_not_sent() {
+    let p = prepared(PushLimits::default());
+    let mut writer = FailingWriter {
+        bytes: 0,
+        fail_flush: false,
+    };
+    assert!(matches!(
+        send(
+            &mut advertisement("report-status").as_slice(),
+            &mut writer,
+            &p,
+            &AtomicBool::new(false)
+        ),
+        Err(PushError::NotSent(PushFailure::Io(_)))
+    ));
+}
+
+#[test]
+fn partial_command_upload_marks_later_ref_not_attempted() {
+    let fixture = Fixture::new();
+    let id = fixture.blob();
+    let prepared = fixture
+        .prepare(
+            vec![tag_command(id), command("refs/tags/later", None, id)],
+            PushLimits::default(),
+        )
+        .unwrap();
+    let first_packet =
+        usize::from_str_radix(std::str::from_utf8(&prepared.request[..4]).unwrap(), 16).unwrap();
+    let mut writer = FailingWriter {
+        bytes: first_packet,
+        fail_flush: false,
+    };
+    let Err(PushError::Uncertain { report, .. }) = send(
+        &mut advertisement("report-status").as_slice(),
+        &mut writer,
+        &prepared,
+        &AtomicBool::new(false),
+    ) else {
+        panic!("expected uncertain partial upload");
+    };
+    assert!(report.refs[0].attempted);
+    assert!(!report.refs[1].attempted);
+    assert_eq!(report.refs[0].status, None);
+    assert_eq!(report.refs[1].status, None);
 }
 #[test]
 fn interrupted_read_during_report_is_uncertain() {

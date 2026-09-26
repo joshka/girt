@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicBool;
 use super::{PreparedPush, PushError, PushReport};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use super::{PushFailure, protocol};
+use crate::Signature;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use crate::packet::Wire;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -17,17 +18,18 @@ use crate::transport::TransportControl;
 /// Opens an explicit path through [`crate::Repository::open`], checks receiver-history
 /// dependencies, installs the pack, then applies each command with a conditional reference
 /// transaction against its exact expected old value. A stale command rejects independently.
-/// It invokes no Git executable or hook. Existing receive hooks or a
-/// configured hooks path cause refusal before publication; checked-out branches are rejected.
+/// It invokes no Git executable or hook. Existing receive hooks or a configured hooks path cause
+/// refusal before publication. Current-branch, hidden-ref and reflog behavior follows supported
+/// receive configuration; use [`send_local_with_identity`] when an append needs a caller identity.
 /// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
 /// Supports either object format and files or reftable references when prepared by
 /// [`PreparedPush::new_local`]. [`PreparedPush::new`] remains SHA-1 wire preparation. Ref and
 /// worktree state may change between separate reads; conditional locks prevent stale overwrites,
 /// and callers must coordinate worktree registration and GC. Deletion and non-fast-forward receive
-/// restrictions apply; remaining configured receive modes are assigned to R30. No reflogs are
-/// appended. Object
-/// installation can leave an indexed pack when later refs reject or fail.
+/// restrictions apply. `updateInstead`, namespace-specific policy, hooks and unsupported receive
+/// settings refuse before mutation. Object installation can leave an indexed pack when later refs
+/// reject or fail.
 ///
 /// # Errors
 ///
@@ -72,7 +74,7 @@ pub fn send_local_with_control(
         unpack = tracing::field::Empty,
     );
 
-    let operation = || super::local_native::send(destination.as_ref(), prepared, control);
+    let operation = || super::local_native::send(destination.as_ref(), prepared, control, None);
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);
     #[cfg(not(feature = "tracing"))]
@@ -85,6 +87,26 @@ pub fn send_local_with_control(
     }
 
     result
+}
+
+/// Sends a native local push with an explicit reflog identity.
+///
+/// Git receive policy controls whether each successful update creates, appends, or deletes a
+/// reflog. Existing logs are appended even when automatic log creation is disabled. The identity
+/// is used only for records actually written; no environment identity is consulted.
+///
+/// # Errors
+///
+/// Uses [`send_local_with_control`]'s partial-outcome contract. An invalid identity refuses the
+/// push before object installation. A log publication failure retains separate reference and log
+/// effects in the uncertain report.
+pub fn send_local_with_identity(
+    destination: impl AsRef<Path>,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+    identity: &Signature,
+) -> Result<PushReport, PushError> {
+    super::local_native::send(destination.as_ref(), prepared, control, Some(identity))
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -109,27 +131,34 @@ fn send_server(
     let operation = || {
         let mut child =
             Server::spawn(command, control).map_err(|e| PushError::NotSent(e.into()))?;
-        let (body, exchange, attempted) = {
+        let (body, exchange, written, caps, request) = {
             let (mut reader, writer) = child.streams();
             let mut wire = Wire {
                 reader: &mut reader,
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            protocol::advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
+            let caps = protocol::advertise(&mut wire, prepared).map_err(PushError::NotSent)?;
             control.check().map_err(|e| PushError::NotSent(e.into()))?;
-            Server::exchange(
+            let request = prepared
+                .request_for(caps.report_v2, caps.sideband)
+                .map_err(PushError::NotSent)?;
+            let (body, exchange, written) = Server::exchange(
                 reader,
                 writer,
-                &prepared.request,
+                &request,
                 &prepared.pack,
                 prepared.limits.max_status_bytes,
-            )
+            );
+            (body, exchange, written, caps, request)
         };
-        if !attempted && let Err(cause) = exchange {
+        if written == 0
+            && let Err(cause) = exchange
+        {
             return Err(PushError::NotSent(cause.into()));
         }
         let mut report = PushReport::pending(&prepared.commands);
+        report.mark_attempted(&request, written);
         // Parse retained bytes even after cancellation; no further I/O or mutation occurs here.
         let retain = AtomicBool::new(false);
         let mut reader = body.as_slice();
@@ -141,8 +170,13 @@ fn send_server(
         let parsed = if prepared.commands.is_empty() {
             wire.end().map_err(PushFailure::from)
         } else {
-            protocol::read_status(&mut wire, &mut report)
-                .and_then(|()| wire.end().map_err(PushFailure::from))
+            protocol::read_response(
+                &mut wire,
+                &mut report,
+                caps,
+                prepared.limits.max_status_bytes,
+            )
+            .and_then(|()| wire.end().map_err(PushFailure::from))
         };
         let transfer = exchange.map_err(PushFailure::from).and(parsed);
         if let Err(cause) = transfer {

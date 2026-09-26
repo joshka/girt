@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +27,8 @@ pub struct PreparedPush {
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
     pub(super) has_options: bool,
+    options: Vec<Vec<u8>>,
+    pub(super) progress: bool,
 }
 impl PreparedPush {
     /// Validates commands, selects all reachable objects, proves permitted branch ancestry, and
@@ -129,7 +132,15 @@ impl PreparedPush {
             for id in receiver_roots {
                 id.require_format(objects.object_format())?;
             }
-            let request = encode_commands(objects.object_format(), &commands, &[], limits, cancel)?;
+            let request = encode_commands(
+                objects.object_format(),
+                &commands,
+                &[],
+                limits,
+                cancel,
+                false,
+                false,
+            )?;
             if commands.iter().all(PushCommand::deletes) {
                 return Ok(Self {
                     format: objects.object_format(),
@@ -142,6 +153,8 @@ impl PreparedPush {
                     objects: 0,
                     receiver_roots: vec![],
                     has_options: false,
+                    options: vec![],
+                    progress: false,
                 });
             }
             let mut graph = Graph::select(objects, &commands, limits, cancel)?;
@@ -188,6 +201,8 @@ impl PreparedPush {
                 objects: written.objects,
                 receiver_roots,
                 has_options: false,
+                options: vec![],
+                progress: false,
             })
         };
         #[cfg(feature = "tracing")]
@@ -239,9 +254,39 @@ impl PreparedPush {
             &options,
             self.limits,
             &AtomicBool::new(false),
+            false,
+            false,
         )?;
         self.has_options = !options.is_empty();
+        self.options = options;
         Ok(self)
+    }
+
+    /// Requests sideband progress when the server advertises it. Progress frames are retained in
+    /// the bounded push report; they are never interpreted as reference acknowledgements.
+    pub fn with_progress(mut self) -> Self {
+        self.progress = true;
+        self
+    }
+
+    pub(super) fn request_for(
+        &self,
+        report_v2: bool,
+        sideband: bool,
+    ) -> Result<Cow<'_, [u8]>, Error> {
+        if (!report_v2 && !sideband) || self.commands.is_empty() {
+            return Ok(Cow::Borrowed(&self.request));
+        }
+        encode_commands(
+            self.format,
+            &self.commands,
+            &self.options,
+            self.limits,
+            &AtomicBool::new(false),
+            report_v2,
+            sideband,
+        )
+        .map(Cow::Owned)
     }
 }
 
@@ -251,6 +296,8 @@ fn encode_commands(
     options: &[Vec<u8>],
     limits: PushLimits,
     cancel: &AtomicBool,
+    report_v2: bool,
+    sideband: bool,
 ) -> Result<Vec<u8>, Error> {
     if commands.len() > limits.max_commands {
         return Err(Error::Limit("commands"));
@@ -277,18 +324,35 @@ fn encode_commands(
             return Err(Error::Command("duplicate destination"));
         }
         let caps = if i == 0 {
-            match (format, options.is_empty()) {
-                (crate::ObjectFormat::Sha1, true) => b"\0report-status".as_slice(),
-                (crate::ObjectFormat::Sha1, false) => b"\0report-status push-options".as_slice(),
-                (crate::ObjectFormat::Sha256, true) => {
+            let base = match (format, options.is_empty(), report_v2) {
+                (crate::ObjectFormat::Sha1, true, false) => b"\0report-status".as_slice(),
+                (crate::ObjectFormat::Sha1, false, false) => {
+                    b"\0report-status push-options".as_slice()
+                }
+                (crate::ObjectFormat::Sha256, true, false) => {
                     b"\0report-status object-format=sha256".as_slice()
                 }
-                (crate::ObjectFormat::Sha256, false) => {
+                (crate::ObjectFormat::Sha256, false, false) => {
                     b"\0report-status push-options object-format=sha256".as_slice()
                 }
+                (crate::ObjectFormat::Sha1, true, true) => b"\0report-status-v2".as_slice(),
+                (crate::ObjectFormat::Sha1, false, true) => {
+                    b"\0report-status-v2 push-options".as_slice()
+                }
+                (crate::ObjectFormat::Sha256, true, true) => {
+                    b"\0report-status-v2 object-format=sha256".as_slice()
+                }
+                (crate::ObjectFormat::Sha256, false, true) => {
+                    b"\0report-status-v2 push-options object-format=sha256".as_slice()
+                }
+            };
+            let mut caps = base.to_vec();
+            if sideband {
+                caps.extend_from_slice(b" side-band-64k");
             }
+            caps
         } else {
-            b""
+            vec![]
         };
         let length = (format.digest_len() * 4 + 2)
             .checked_add(name.len())
@@ -300,7 +364,7 @@ fn encode_commands(
         let old = command.expected.unwrap_or(ObjectId::null(format));
         let mut line = format!("{old} {} ", command.new).into_bytes();
         line.extend_from_slice(name);
-        line.extend_from_slice(caps);
+        line.extend_from_slice(&caps);
         packet(&mut request, &line, cancel)?;
     }
     if limits.max_command_bytes.saturating_sub(request.len()) < 4 {

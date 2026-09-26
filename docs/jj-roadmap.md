@@ -110,7 +110,7 @@ consumer or native-platform evidence.
 | R27 | Fetch negotiation, shallow/depth and pack receipt           | R26, R16                        | Scoped accepted     | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r27.md)                                                                           |
 | R28 | Fetch install, refspec mapping and prune outcomes           | R27, R11                        | Scoped accepted     | XL   | [A14](jj-acceptance.md#a14--advertisement-fetch-and-clone-primitives); [evidence](evidence/r28.md)                                                                           |
 | R29 | Push command model, deletes, leases and options             | R26, R16                        | Scoped accepted     | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r29.md)                                                                                         |
-| R30 | Push partial outcomes, progress and cancellation            | R29                             | Planned             | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes)                                                                                                                      |
+| R30 | Push partial outcomes, progress and cancellation            | R29                             | Review ready        | XL   | [A15](jj-acceptance.md#a15--push-commands-and-outcomes); [evidence](evidence/r30.md)                                                                                         |
 | C03 | Transport coherence and native CI milestone                 | R21–R30                         | Planned             | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage), [A18](jj-acceptance.md#a18--architecture-checkpoints)                                                          |
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Planned             | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Planned             | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry)                                                                                                                            |
@@ -223,6 +223,13 @@ Keep local Git subprocess and hook execution out of the native adapter; any unsu
 policy or hook must fail explicitly before mutation. R30 also owns report-status-v2/proc-receive
 rewrites, progress and cancellation evidence under A15. R35 must assess any remaining local-policy
 difference at jj integration.
+
+The [R30 evidence](evidence/r30.md) records bounded response/progress reporting and native policy
+support. C03 owns transport-boundary review and any additional proc-receive fixture coverage; R35
+must confirm whether jj needs live progress callbacks or native `updateInstead`. Required
+differences need dedicated implementation and validation before final replacement. R30 retains its
+XL estimate because policy, partial-effect and multi-transport validation remained one large review
+unit.
 
 ## Configuration Mutation Follow-through
 

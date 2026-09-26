@@ -100,6 +100,34 @@ pub struct RefStatus {
     pub command: PushCommand,
     /// `None` means no valid acknowledgement was received. It does not mean rejection.
     pub status: Option<Status>,
+    /// Whether any bytes of this command may have reached the peer, or native publication
+    /// reached this command. `false` proves this command was not attempted by this push. A true
+    /// value without an acknowledgement is uncertain and requires remote inspection.
+    pub attempted: bool,
+    /// Native reference and reflog effects, when publication was attempted. Wire servers do not
+    /// expose this detail. A published reference can accompany a failed reflog append.
+    pub effects: Option<crate::refs::RefEditOutcome>,
+    /// Actual destination(s) reported by `report-status-v2` for a successful proc-receive
+    /// command. Empty for ordinary updates or v1 servers. Each entry is server evidence, not a
+    /// local reference mutation.
+    pub rewrites: Vec<RefRewrite>,
+    /// Whether all v2 rewrite options for this acknowledgement were terminated by the next
+    /// status or report flush. False after an interrupted `ok` packet: the command was
+    /// acknowledged, but its actual rewritten destination may still be unknown.
+    pub rewrite_complete: bool,
+}
+
+/// One server-reported replacement for a successful pseudo-reference command.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct RefRewrite {
+    /// Actual destination. `None` means the submitted name was used.
+    pub name: Option<RefName>,
+    /// Actual previous ID, when reported by the server.
+    pub old: Option<ObjectId>,
+    /// Actual new ID, when reported by the server.
+    pub new: Option<ObjectId>,
+    /// Whether the server marked the update as forced.
+    pub forced: bool,
 }
 
 /// Server evidence, including individual results for a non-atomic multi-ref push.
@@ -113,19 +141,44 @@ pub struct PushReport {
     pub unpack: Option<Status>,
     /// Per-ref results in request order. Empty for an empty push.
     pub refs: Vec<RefStatus>,
+    /// Bounded channel-2 progress frames when sideband reporting was requested. Bytes are
+    /// untrusted and need not be UTF-8. Frames received before failure remain in the report.
+    pub progress: Vec<Vec<u8>>,
+    /// Native receive warnings that did not reject a reference.
+    pub warnings: Vec<Vec<u8>>,
 }
 impl PushReport {
     pub(super) fn pending(commands: &[PushCommand]) -> Self {
         Self {
             unpack: None,
+            progress: vec![],
+            warnings: vec![],
             refs: commands
                 .iter()
                 .cloned()
                 .map(|command| RefStatus {
                     command,
                     status: None,
+                    attempted: false,
+                    effects: None,
+                    rewrites: vec![],
+                    rewrite_complete: false,
                 })
                 .collect(),
+        }
+    }
+
+    pub(super) fn mark_attempted(&mut self, request: &[u8], written: usize) {
+        let mut offset = 0usize;
+        for reference in &mut self.refs {
+            if written > offset {
+                reference.attempted = true;
+            }
+            let header = &request[offset..offset + 4];
+            let length =
+                usize::from_str_radix(std::str::from_utf8(header).expect("encoded packet"), 16)
+                    .expect("encoded packet length");
+            offset += length;
         }
     }
 
@@ -133,7 +186,10 @@ impl PushReport {
     /// is successful. Inspect individual results even when this returns false.
     pub fn all_succeeded(&self) -> bool {
         (self.refs.is_empty() || self.unpack == Some(Status::Ok))
-            && self.refs.iter().all(|r| r.status == Some(Status::Ok))
+            && self
+                .refs
+                .iter()
+                .all(|r| r.status == Some(Status::Ok) && r.rewrite_complete)
     }
 }
 
@@ -167,6 +223,9 @@ pub enum PushFailure {
     /// Native reference publication failed after mutation may have begun.
     #[error("local reference publication: {0}")]
     Reference(#[source] Box<crate::refs::ReferenceError>),
+    /// Explicit reflog identity is invalid for a new record.
+    #[error("invalid push reflog identity")]
+    Identity,
     /// A supplied identity uses a different object format from the source repository.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),

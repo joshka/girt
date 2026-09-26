@@ -120,6 +120,28 @@ impl ReflogEntry {
 }
 
 impl References<'_> {
+    /// Reports whether a reflog exists without reading its complete history.
+    ///
+    /// Files storage rejects symlinks and non-regular log paths. Reftable reads a bounded
+    /// snapshot; absence means no live log records. This is a live observation, not a lock or a
+    /// promise that a subsequent append will succeed.
+    ///
+    /// # Errors
+    ///
+    /// Returns unsafe path, filesystem or reftable snapshot failures.
+    pub fn has_reflog(&self, name: &RefName) -> Result<bool, ReferenceError> {
+        if self.repository.reference_backend() == super::Backend::Reftable {
+            return Ok(super::reftable::backend::reflog(self, name)?.is_some());
+        }
+        let path = self.reflog_path(name)?;
+        super::store::check_path(&path)?;
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(super::store::io_error(&path, error)),
+        }
+    }
+
     /// Reads a complete reflog in oldest-to-newest order, or returns `None` if absent.
     ///
     /// Reftable uses a bounded snapshot, omits tombstones and strips one trailing message newline.

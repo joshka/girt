@@ -1036,15 +1036,36 @@ hostile filesystems and concurrent GC are not covered by this evidence.
 
 ## Receive-Pack Push
 
-The current R29 command model supports create, update and exact-old deletion under valid full
+The current R29/R30 command model supports create, update and exact-old deletion under valid full
 `refs/` names. Wire streams, HTTP and Unix SSH support both object formats. `push-options` and
 `delete-refs` are capability-gated; the client requests `object-format=sha256` for SHA-256 peers.
 Each command retains its caller-supplied old ID, so a stale command can be rejected independently
 without turning into an unconditional overwrite. Native local push uses girt storage, not the
 historical receive-pack subprocess described below. It supports both formats, conditional mixed
-commands and `receive.denyDeletes`, but refuses push options and hooks. See
-[R29 evidence](evidence/r29.md) for current tested scope and the remaining local policy and reflog
-requirements assigned to R30.
+commands, receive restrictions, hidden refs and explicit-identity reflogs, but refuses push options
+and hooks. Wire push negotiates report-status-v2 and can retain bounded sideband progress. See
+[R29 evidence](evidence/r29.md) for commands and [R30 evidence](evidence/r30.md) for outcomes and
+remaining limits.
+
+R30 distinguishes a complete acknowledged result from a transport or publication failure. A failed
+first write is not sent. Each ref report marks whether its command packet may have reached the peer;
+later commands beyond a short upload remain unattempted. Missing outcomes for attempted commands are
+uncertain. V2 `ok` packets remain evidence even if rewrite options are incomplete.
+`RefStatus::rewrite_complete` identifies that case, and `all_succeeded` requires a complete block.
+Proc-receive `option` lines retain actual refname, old/new IDs and forced-update flags. Optional
+sideband channel-2 progress is returned as untrusted byte frames; channel-3 fatal messages never
+become per-ref rejection. HTTP and SSH retain received status and progress even when their owned
+exchange ends with cancellation, deadline or process failure.
+
+Native local push uses conditional per-ref transactions. `send_local_with_identity` supplies the
+identity for reflogs when `core.logAllRefUpdates` or an existing log requires an append; without it,
+the push refuses before object installation. Deletion removes the edited name's log. The report
+retains separate reference and log effects on publication failure, so an appended or failed log is
+not inferred from the ref acknowledgement. Current-branch refuse, ignore and warn modes are
+supported, as are `receive.denyDeleteCurrent`, `receive.denyDeletes`, `receive.denyNonFastForwards`
+and ordered `transfer.hideRefs`/`receive.hideRefs` restrictions. The native adapter refuses
+`updateInstead`, configured hooks, proc-receive execution and other unsupported receive policy
+before mutation. It does not run a Git subprocess or bypass jj's caller-owned pre-push policy.
 
 The remainder of this section records the original R13 receive-pack implementation and its
 validation scope; its SHA-1, namespace and process restrictions do not describe the current API.

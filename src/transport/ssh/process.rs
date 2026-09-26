@@ -113,15 +113,15 @@ impl Session {
         pack: &[u8],
         limit: usize,
         control: TransportControl<'_>,
-    ) -> (Vec<u8>, Result<(), SshError>, bool) {
+    ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
-        let mut attempted = false;
+        let mut written = 0;
         let input = self.input.take().expect("one request per session");
         let exchange = async {
             // Drain response concurrently with upload: a rejecting server can fill stdout while
             // no longer consuming input. Retain received status bytes even when writing fails.
             tokio::try_join!(
-                write_request(input, request, pack, &mut attempted),
+                write_request(input, request, pack, &mut written),
                 read_body(&mut self.output, &mut body, limit)
             )?;
             Ok(())
@@ -136,7 +136,7 @@ impl Session {
         if result.is_ok() {
             result = self.finish(control).await;
         }
-        (body, result, attempted)
+        (body, result, written)
     }
 
     async fn finish(&mut self, control: TransportControl<'_>) -> Result<(), SshError> {
@@ -216,19 +216,17 @@ async fn write_request(
     mut input: AsyncFd<ChildStdin>,
     request: &[u8],
     pack: &[u8],
-    attempted: &mut bool,
+    written: &mut usize,
 ) -> Result<(), SshError> {
     for mut bytes in [request, pack] {
         while !bytes.is_empty() {
             let mut ready = input.writable_mut().await?;
-            if let Ok(result) = ready.try_io(|fd| {
-                *attempted = true;
-                fd.get_mut().write(bytes)
-            }) {
+            if let Ok(result) = ready.try_io(|fd| fd.get_mut().write(bytes)) {
                 let count = result?;
                 if count == 0 {
                     return Err(SshError::Io(std::io::ErrorKind::WriteZero));
                 }
+                *written += count;
                 bytes = &bytes[count..];
                 tokio::task::yield_now().await;
             }
@@ -375,10 +373,10 @@ mod tests {
             let mut session =
                 Session::spawn(Command::new("/bin/sh").args(["-c", "sleep 10"])).unwrap();
             let cancel = AtomicBool::new(true);
-            let (_, result, attempted) = session
+            let (_, result, written) = session
                 .exchange(b"commands", &[], 100, TransportControl::new(&cancel))
                 .await;
-            assert!(!attempted);
+            assert_eq!(written, 0);
             assert!(matches!(result, Err(SshError::Cancelled)));
         });
     }

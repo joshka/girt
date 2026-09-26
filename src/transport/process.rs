@@ -68,9 +68,9 @@ impl<'a> Server<'a> {
         request: &[u8],
         pack: &[u8],
         limit: usize,
-    ) -> (Vec<u8>, Result<(), crate::packet::Error>, bool) {
+    ) -> (Vec<u8>, Result<(), crate::packet::Error>, usize) {
         let mut body = Vec::new();
-        let mut attempted = false;
+        let mut written = 0;
         let result = exchange(
             &mut reader,
             writer,
@@ -78,9 +78,9 @@ impl<'a> Server<'a> {
             pack,
             limit,
             &mut body,
-            &mut attempted,
+            &mut written,
         );
-        (body, result, attempted)
+        (body, result, written)
     }
 
     pub(crate) fn wait(&mut self) -> io::Result<ExitStatus> {
@@ -131,7 +131,7 @@ fn exchange(
     pack: &[u8],
     limit: usize,
     body: &mut Vec<u8>,
-    attempted: &mut bool,
+    written: &mut usize,
 ) -> Result<(), crate::packet::Error> {
     let mut writer = Some(writer);
     let mut sent = 0;
@@ -178,7 +178,6 @@ fn exchange(
         if pending.is_empty() {
             writer.take();
         } else if let Some(output) = writer.as_mut() {
-            *attempted = true;
             match output.pipe.write(&pending[..pending.len().min(65536)]) {
                 Ok(0) => {
                     write_error = Some(
@@ -188,6 +187,7 @@ fn exchange(
                 }
                 Ok(count) => {
                     sent += count;
+                    *written = sent;
                     progressed = true;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
