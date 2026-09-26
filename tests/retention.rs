@@ -501,3 +501,21 @@ fn git_gc_preserves_planned_history_and_repository_use(#[case] format: &str) {
         "commit"
     );
 }
+
+#[test]
+fn recent_loose_object_and_pack_are_protected() {
+    let (root, repo, _first, _second) = fixture();
+    let blob: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"recent orphan\n",
+    )
+    .parse()
+    .unwrap();
+    git(root.path(), &["repack", "-ad"], b"");
+    let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.strong_roots.contains(&blob));
+    assert!(plan.required.contains(&blob));
+    assert!(!plan.protected_packs.is_empty());
+}
