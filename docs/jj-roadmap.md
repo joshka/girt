@@ -470,11 +470,11 @@ crash-durable replacement for old storage.
 ## R33 Destructive Maintenance Safety
 
 The [R33 evidence](evidence/r33.md) identifies prerequisites for full maintenance. A bounded loose
-prune now operates under caller-owned repository isolation; it retains every observed reflog root
-and does not depend on R32 publication. Reflog expiry, pack retirement and composed maintenance
-remain open until publication durability, writer coordination, old-reader retirement and generation
-checks have an executable contract and fault evidence. The additive R32 API and complete R31 plans
-do not authorize deletion.
+prune and files-backend reflog expiry now operate under caller-owned repository isolation. The loose
+prune retains every observed reflog root and does not depend on R32 publication. Reftable expiry,
+pack retirement and composed maintenance remain open until publication durability, writer
+coordination, old-reader retirement and generation checks have an executable contract and fault
+evidence. The additive R32 API and complete R31 plans do not authorize deletion.
 
 ## R40 Completion
 

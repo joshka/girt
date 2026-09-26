@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 
 use girt::retention::{
-    MaintenanceIsolation, PruneCause, RepackError, RepackLimits, RetentionOutcome, RetentionPolicy,
+    ExpireCause, MaintenanceIsolation, PruneCause, RepackError, RepackLimits, RetentionOutcome,
+    RetentionPolicy,
 };
 use girt::{ObjectId, PackLimits, ReadLimits, Repository};
 
@@ -210,6 +211,100 @@ fn loose_prune_refreshes_shallow_state_before_scanning() {
     assert_eq!(
         git(root.path(), &["cat-file", "-t", &parent], b""),
         "commit"
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn isolated_files_reflog_expiry_preserves_live_git_objects(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    let path = root.path().join("logs/refs/heads/deleted");
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_unreachable_before: Some(1700000001),
+        ..Default::default()
+    };
+    let report = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(report.changed.len(), 1);
+    assert_eq!(report.changed[0].name().as_bytes(), b"refs/heads/deleted");
+    assert_eq!(fs::read(path).unwrap(), b"");
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn files_reflog_expiry_refuses_without_directory_durability() {
+    let (root, repo, _, _) = fixture();
+    let path = root.path().join("logs/refs/heads/deleted");
+    let before = fs::read(&path).unwrap();
+    let error = repo
+        .expire_reflogs(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(error.cause, ExpireCause::UnsupportedDurability));
+    assert!(error.report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn reflog_expiry_refuses_without_isolation() {
+    let (root, repo, _, _) = fixture();
+    let path = root.path().join("logs/refs/heads/deleted");
+    let before = fs::read(&path).unwrap();
+    let policy = RetentionPolicy {
+        reflog_expire_unreachable_before: Some(1700000001),
+        ..Default::default()
+    };
+    let error = repo
+        .expire_reflogs(&mut RefusingIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(error.cause, ExpireCause::Isolation(_)));
+    assert!(error.report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn reftable_expiry_refuses_before_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--ref-format=reftable",
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let before = fs::read(root.path().join("reftable/tables.list")).unwrap();
+    let error = repo
+        .expire_reflogs(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(error.cause, ExpireCause::UnsupportedBackend));
+    assert!(error.report.changed.is_empty());
+    assert_eq!(
+        fs::read(root.path().join("reftable/tables.list")).unwrap(),
+        before
     );
 }
 

@@ -13,6 +13,8 @@ mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
 mod prune;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
+mod expire;
+pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 
 #[derive(Debug)]
 struct ObservedLog {

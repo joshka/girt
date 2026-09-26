@@ -67,6 +67,11 @@ fn retention(c: &mut Criterion) {
             )
         })
     });
+    c.bench_function("reflog-expire/noop-packed-linear-256", |bench| {
+        bench.iter(|| {
+            repository.expire_reflogs(&mut IsolatedFixture, black_box(&policy), black_box(&cancel))
+        })
+    });
 }
 
 criterion_group! {

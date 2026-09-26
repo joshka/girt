@@ -167,7 +167,7 @@ impl References<'_> {
             .transpose()
     }
 
-    pub(super) fn reflog_path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
+    pub(crate) fn reflog_path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
         let path = self.path(name)?;
         let root = if name.per_worktree() {
             self.repository.git_dir()
