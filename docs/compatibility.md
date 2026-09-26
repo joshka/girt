@@ -1354,6 +1354,12 @@ boundary. Host-key verification and noninteractive policy are enforced; remote p
 quoted. Fetch returns a bounded download for synchronous validation, while push borrows a prepared
 pack. See [SSH contracts](ssh.md) for supported inputs, runtime, bounds and recovery.
 
+R24 also resolves R21 SSH URL and scp destinations. A configured command is executed only through an
+exact application-approved executable/argument mapping; the `ssh` variant is supported. The
+application can select an agent socket or askpass executable for an encrypted key. Disposable
+loopback fixtures verify configured Git fetch with both authentication routes. The existing process
+owner preserves cancellation, exit and uncertain-push behavior. Windows SSH remains unsupported.
+
 Original isolated sshd fixtures with throwaway keys demonstrate actual Git full, incremental and
 known-only fetch; initial, subsequent and no-op push; branches, annotated tags, internal deltas and
 receiver-history exclusion. Git and girt read the resulting payloads independently, and Git

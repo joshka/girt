@@ -5,6 +5,12 @@ Enable `ssh` on macOS/Linux for protocol v0 over a system OpenSSH client. Supply
 absolute OpenSSH executable path and an absolute configuration file path. Call `fetch::receive_ssh`
 or `push::send_ssh` inside a caller-owned Tokio runtime with I/O and time enabled.
 
+`SshRemote::configured` accepts a resolved R21 SSH destination and `SshEnvironment` supplied by the
+application. It supports `ssh://[user@]host[:port]/path` and `[user@]host:path`. The application
+supplies a default user and trusted executable and config paths. Percent encoding, URL query or
+fragment fields, implicit tilde expansion and non-OpenSSH variants are refused. R25 owns local/file
+and helper transports; no Git executable is used as a local fallback.
+
 ## Endpoints and Configuration
 
 Hosts accept DNS names, IPv4 and bare IPv6 addresses. Usernames accept ASCII letters, digits, dots,
@@ -12,12 +18,12 @@ underscores and hyphens, without a leading hyphen. Ports must be nonzero. Reposi
 literal UTF-8, absolute or relative to the remote account's working directory. Paths may contain
 spaces, quotes and shell metacharacters. Empty paths, leading hyphens/tilde and control characters
 are rejected. Host/user components are limited to 255 bytes and paths/configuration filenames to
-8192 bytes. URLs, scp-style endpoints, percent decoding and home expansion are not implemented;
-callers parse their own supported configuration into these components.
+8192 bytes. The explicit constructor accepts components; the configured constructor parses the
+limited URL and scp forms above. Other endpoint forms remain unsupported.
 
 The remote command is exactly `git-upload-pack 'quoted path'` or `git-receive-pack 'quoted path'`.
-Embedded single quotes are escaped using POSIX shell quoting. Neither service names nor arbitrary
-SSH arguments are caller inputs. Host, user and port are separate executable arguments, with `--`
+Embedded single quotes are escaped using POSIX shell quoting. The service name is fixed; configured
+SSH arguments require application approval. Host, user and port are separate arguments, with `--`
 before the host. The remote account must provide a compatible shell and Git services. A server may
 restrict these through its own forced command.
 
@@ -31,16 +37,26 @@ GlobalKnownHostsFile /dev/null
 ```
 
 Pre-provision host trust through a trusted channel. Enforced command-line options require strict
-host-key checking and batch mode, disable host-key updates, and prevent
-password/keyboard-interactive authentication, agents, default identity filenames, forwarding,
-proxies, connection sharing, TTYs, local commands and backgrounding. Caller config cannot override
-these settings. Only explicitly selected public-key identities are used. Encrypted keys needing a
-prompt fail; hardware keys selected by the caller may still need user presence, so impose a
-deadline. The environment is cleared except PATH and an explicit askpass prohibition; `GIT_SSH*`,
-`SSH_AUTH_SOCK`, askpass and `GIT_PROTOCOL` environment discovery are not used. Explicit config
-`SetEnv`/`SendEnv` directives remain caller policy; do not request another Git protocol version.
-Unsupported service versions are rejected before update commands. Connection attempts are limited to
-one.
+host-key checking, disable host-key updates, and prevent password/keyboard-interactive
+authentication, default identity filenames, forwarding, proxies, connection sharing, TTYs, local
+commands and backgrounding. Batch mode applies unless askpass is selected. Caller config cannot
+override these settings. Only explicitly selected public-key identities are used. The explicit
+constructor disables agents and prompts; hardware keys may still need user presence, so impose a
+deadline. The environment is cleared except the selected PATH and authentication variables.
+`GIT_PROTOCOL` environment discovery is not used. Explicit config `SetEnv`/`SendEnv` directives
+remain caller policy; do not request another Git protocol version. Unsupported service versions are
+rejected before update commands. Connection attempts are limited to one.
+
+The configured constructor selects `GIT_SSH_COMMAND`, then `GIT_SSH`, then `core.sshCommand`. These
+are application-supplied values, never read from the process environment. A selected value must
+exactly match `ApprovedSshCommand::configured`; the application supplies the absolute executable and
+literal argument vector after parsing and approving it. Girt never executes configured shell
+snippets. Approved arguments are trusted application policy and can affect OpenSSH behavior.
+`GIT_SSH_VARIANT` overrides `ssh.variant`; only the `ssh` variant is accepted. An unapproved command
+or variant fails before process creation. The application may supply an agent socket and an askpass
+executable. Askpass enables encrypted-key passphrase prompts while password and keyboard-interactive
+authentication remain disabled. Girt supplies `SSH_AUTH_SOCK` and `SSH_ASKPASS` only when selected;
+neither is discovered globally.
 
 Trust the executable and config. OpenSSH includes and `Match exec` can run local programs; this
 boundary is not a configuration sandbox. OpenSSH's own parsing, algorithm negotiation and platform
@@ -144,6 +160,12 @@ separately prove local reaping, future-drop cleanup and group isolation. Fault s
 claimed as Git interoperability. See [compatibility evidence](compatibility.md#ssh-transport) and
 [benchmark evidence](benchmarks.md#ssh-loopback-baseline).
 
+Configured-path tests cover an R21 URL, command precedence and refusal, a disposable agent and
+encrypted-key askpass authentication, and redacted errors. The existing cancellation, exit, cleanup
+and uncertain-push tests use the same `Session` owner as configured connections. Native Windows SSH
+remains unsupported; girt never spawns a Windows SSH process. Reopen it for a required Windows
+consumer endpoint with native quoting, process containment, console and cancellation fixtures.
+
 ## Dependencies and Deferred Work
 
 No new crate or version requirement is added. `ssh` enables the existing optional Tokio dependency
@@ -152,7 +174,7 @@ process and descriptor operations. Core-only builds remain runtime-free. OpenSSH
 caller-selected executable with its own distribution notices, not linked or vendored code.
 
 Supported Git scope stays SHA-1 protocol v0 and non-thin packs. Windows SSH, proxy/jump hosts,
-connection reuse, URL/refspec/remote policy, protocol v2, shallow/partial repositories and new
-credential services remain excluded. Broader async object-store/filesystem interfaces and storage
-concurrency need a subsequent design investigation driven by a consumer's responsiveness
+connection reuse, broader URL/refspec/remote policy, protocol v2, shallow/partial repositories and
+new credential services remain excluded. Broader async object-store/filesystem interfaces and
+storage concurrency need a subsequent design investigation driven by a consumer's responsiveness
 requirements; this adapter does not decide them.

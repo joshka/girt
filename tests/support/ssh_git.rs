@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[path = "fixture_process.rs"]
-mod fixture_process;
+pub mod fixture_process;
 use fixture_process::Process;
 use girt::transport::ssh::SshRemote;
 
@@ -12,8 +12,8 @@ pub struct Server {
     _process: Process,
     pub root: PathBuf,
     pub port: u16,
-    user: String,
-    repository: String,
+    pub user: String,
+    pub repository: String,
 }
 impl Server {
     pub fn new(repository: &Path, fault: &str) -> Self {

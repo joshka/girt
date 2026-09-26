@@ -76,7 +76,11 @@ def main(args):
         root = Path(directory)
         for name in ("host", "client", "wrong"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
-        (root / "authorized_keys").write_text("restrict " + (root / "client.pub").read_text())
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "fixture-passphrase",
+                        "-f", str(root / "encrypted")], check=True)
+        (root / "authorized_keys").write_text(
+            "restrict " + (root / "client.pub").read_text() +
+            "restrict " + (root / "encrypted.pub").read_text())
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -107,6 +111,8 @@ LogLevel ERROR
         (root / "empty_hosts").write_text("")
         (root / "changed_hosts").write_text(f"[127.0.0.1]:{port} " + (root / "wrong.pub").read_text())
         for name, key, trust in [("config", "client", "known_hosts"),
+                                 ("encrypted_config", "encrypted", "known_hosts"),
+                                 ("agent_config", "client.pub", "known_hosts"),
                                  ("unknown", "client", "empty_hosts"),
                                  ("changed", "client", "changed_hosts"),
                                  ("unauthorized", "wrong", "known_hosts")]:

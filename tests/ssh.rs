@@ -6,6 +6,7 @@ mod pack_git;
 mod ssh_git;
 
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -13,12 +14,44 @@ use std::time::{Duration, Instant};
 use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
 use girt::push::{self, ForcePolicy, PreparedPush, PushCommand, PushError, PushLimits, Status};
 use girt::refs::RefName;
+use girt::remote::{ProtocolEnvironment, Remote};
 use girt::transport::TransportControl;
-use girt::transport::ssh::SshError;
-use girt::{ObjectId, PackCompression, PackLimits, ReadLimits, Repository};
+use girt::transport::ssh::{SshEnvironment, SshError, SshRemote};
+use girt::{Config, ObjectId, PackCompression, PackLimits, ReadLimits, Repository};
 use pack_git::{Fixture, git};
 use rstest::rstest;
 use ssh_git::Server;
+
+fn configured_remote(
+    server: &Server,
+    config_name: &str,
+    askpass: Option<PathBuf>,
+    agent_socket: Option<PathBuf>,
+) -> SshRemote {
+    let text = format!(
+        "[remote \"r\"]\nurl = ssh://{}@127.0.0.1:{}{}\n",
+        server.user, server.port, server.repository
+    );
+    let config = Config::parse(text.as_bytes()).unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    SshRemote::configured(
+        &config,
+        &destination,
+        SshEnvironment {
+            default_executable: "/usr/bin/ssh".into(),
+            config_file: server.root.join(config_name),
+            default_user: server.user.clone(),
+            askpass,
+            agent_socket,
+            ..SshEnvironment::default()
+        },
+    )
+    .unwrap()
+}
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -259,6 +292,98 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn configured_destination_fetches_from_real_git_over_ssh() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "none");
+    let remote = configured_remote(&server, "config", None, None);
+    let cancel = AtomicBool::new(false);
+    let received = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let received = received
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap();
+    assert!(
+        received
+            .advertisement()
+            .refs
+            .iter()
+            .any(|r| r.name.as_bytes() == b"refs/heads/main")
+    );
+}
+
+#[test]
+fn configured_askpass_unlocks_encrypted_key() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "none");
+    let askpass = server.root.join("askpass");
+    std::fs::write(&askpass, "#!/bin/sh\nprintf 'fixture-passphrase\\n'\n").unwrap();
+    std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let remote = configured_remote(&server, "encrypted_config", Some(askpass), None);
+    let cancel = AtomicBool::new(false);
+    let received = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap()
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap();
+    assert!(!received.wants().is_empty());
+}
+
+#[test]
+fn configured_agent_uses_application_socket() {
+    use std::process::{Command, Stdio};
+
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "none");
+    let socket = server.root.join("agent.sock");
+    let mut command = Command::new("ssh-agent");
+    command.args(["-D", "-a"]).arg(&socket);
+    let _agent = ssh_git::fixture_process::Process::spawn(&mut command, false);
+    let start = Instant::now();
+    while !socket.exists() && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(socket.exists());
+    let status = Command::new("ssh-add")
+        .arg(server.root.join("client"))
+        .env("SSH_AUTH_SOCK", &socket)
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let remote = configured_remote(&server, "agent_config", None, Some(socket));
+    let cancel = AtomicBool::new(false);
+    let received = runtime()
+        .block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap()
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap();
+    assert!(!received.wants().is_empty());
 }
 
 #[rstest]
