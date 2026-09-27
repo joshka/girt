@@ -352,6 +352,11 @@ maintenance. Windows expiry, pack retirement and composition must refuse before 
 reader-isolation and native fault criteria. A scoped Unix acceptance does not establish Windows jj
 parity or excuse unsafe mutation within the supported scope.
 
+The [R34 gate](evidence/r34.md#required-unix-maintenance-blocker) finds that an ordinary jj caller
+cannot currently establish R33's external writer, reader and alternate-dependent exclusion. The
+required [B09 follow-up](jj-roadmap.md#b09--ordinary-jj-maintenance-isolation) must supply a safe
+ordinary GC path before R35 replaces Git GC; fixture-only isolation does not satisfy A17.
+
 ### A18 — Architecture checkpoints
 
 **Tasks:** C01–C03 and earlier reviews if debt accumulates. Review layering, cohesive Git concepts,

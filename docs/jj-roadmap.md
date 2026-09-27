@@ -115,7 +115,7 @@ consumer or native-platform evidence.
 | R31 | GC roots, retention and expiry planning                     | C03, R11, R16, R20, R40         | Complete            | L    | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r31.md)                                                                                               |
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Complete            | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r32.md)                                                                                               |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Scoped accepted     | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r33.md); Windows destructive maintenance [B08](#b08--nonadmin-windows-destructive-maintenance)        |
-| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Planned             | XL   | [Acceptance matrix](jj-acceptance.md), including [A20](jj-acceptance.md#a20--representative-git-parity-performance)                                                          |
+| R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Scoped gate         | XL   | [Readiness evidence](evidence/r34.md); [acceptance matrix](jj-acceptance.md); required GC follow-up [B09](#b09--ordinary-jj-maintenance-isolation)                           |
 | R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | XL   | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
@@ -594,28 +594,34 @@ run the affected native fixture. These omissions do not establish compatibility 
 
 ### B04 — Intermittent Tracing and Split-Index Assertions
 
-**Size:** M. **Status:** Open investigation; no production defect established. **Owner:** R35
-pre-integration observability assessment for the abandoned-download case; the split-index case
-remains a C02 fixture follow-up. **Evidence:** [C02 review](evidence/c02.md),
-[C03 review](evidence/c03.md) and original failed CI attempts.
+**Size:** M. **Status:** Open investigation; exact-tree R34 platform matrix failed, with no
+production defect established. **Owner:** R35 pre-integration observability assessment for the HTTP
+cases; the split-index case remains a C02 fixture follow-up. **Evidence:**
+[C02 review](evidence/c02.md), [C03 review](evidence/c03.md),
+[R34 gate](evidence/r34.md#transport-and-observability-boundaries) and original failed CI attempts.
 
-The tracing test sometimes captures zero `fetch.http` spans. The split-index test occasionally fails
-its Git-oracle assertion before girt reads the index. Passing retries do not close either finding.
-Reproduce with complete captured spans or raw main/shared index bytes and Git output, respectively;
-then fix the demonstrated lifetime, codec or fixture defect without weakening the assertions.
-Promote any production correctness finding ahead of dependent work.
+The tracing test sometimes captures zero `fetch.http` spans or observes only its caller span. The
+split-index test occasionally fails its Git-oracle assertion before girt reads the index. R34's
+first exact-tree platform run failed the tracing cases on Ubuntu 24.04 and macOS 14; its second
+platform run passed, while the final-revision Windows index job failed the SHA-256 oracle case.
+Passing retries do not close either finding. Reproduce with complete captured spans or raw
+main/shared index bytes and Git output, respectively; then fix the demonstrated lifetime, codec or
+fixture defect without weakening the assertions. Promote any production correctness finding ahead of
+dependent work.
 
 ### B05 — Residual Packed-Read Performance
 
-**Size:** L. **Status:** Measured performance backlog under the latency policy. **Owner:** R34
-performance assessment, with an earlier R35 consumer follow-up if an ordinary jj workflow is
-read-bound. **Evidence:** [R41 report](evidence/r41.md).
+**Size:** L. **Status:** Measured performance backlog under the latency policy. **Owner:** R35
+consumer measurement and a bounded packed-read follow-up if an ordinary jj workflow is read-bound.
+**Evidence:** [R41 report](evidence/r41.md) and
+[R34 gate](evidence/r34.md#performance-and-resource-decision).
 
 R41 improves ordinary packed reads but does not reach the A20 Git-parity target, especially for deep
 delta chains. Revisit when R35 measures a representative jj operation dominated by packed reads, or
-at R34's final corpus assessment, whichever comes first. Preserve full intermediate identity checks
-and per-read resource limits. Profile the actual consumer distribution before choosing a cache or a
-different validation strategy; do not infer a safe cache size from R41's small repeated fixture.
+at R35's consumer assessment. R34 records the incomplete full corpus and does not claim A20 parity.
+Preserve full intermediate identity checks and per-read resource limits. Profile the actual consumer
+distribution before choosing a cache or a different validation strategy; do not infer a safe cache
+size from R41's small repeated fixture.
 
 ### B06 — Credential Helper Early Exit
 
@@ -664,6 +670,25 @@ bounded temporary disk, descriptor and memory evidence. Refuse before destructiv
 Windows filesystem where these guarantees cannot be established. A17 and R35 must report this
 limitation explicitly until the follow-up passes; data loss, corruption or unsafe mutation in the
 supported Unix scope remain blockers.
+
+### B09 — Ordinary jj Maintenance Isolation
+
+**Size:** L or larger after consumer design. **Status:** Required blocker before final GC
+replacement. **Owner:** R35 integration, with a bounded maintenance follow-up before completion.
+**Evidence:** [R34 gate](evidence/r34.md#required-unix-maintenance-blocker) and
+[R33 contract](evidence/r33.md#required-deletion-argument).
+
+R33's destructive Unix API requires exclusion of arbitrary external Git writers, pinned old-pack
+readers and repositories borrowing this store as an alternate. An ordinary jj command, including one
+in a colocated repository, cannot establish that boundary with its import/export lock or a
+recent-object cutoff. Do not wire the destructive API to a guard that merely asserts isolation.
+First evaluate an additive, no-deletion GC adapter with explicit deferred reclamation and bounded
+retained-disk behavior. If ordinary GC must delete, establish a proof that tolerates independent
+writers/readers or a genuinely enforceable exclusion protocol. Preserve no-GC heads and cutoff
+policy, verify Git usability and reopen after interruption, and exercise colocation, alternate
+dependents and external Git races. Revisit the size after the R35 call-site and user-visible GC
+assessment. R35 may begin non-destructive integration while this blocker is resolved; it cannot
+complete A19 with an unsafe destructive call or a hidden Git GC fallback.
 
 ## C02 Storage and Layout Review
 

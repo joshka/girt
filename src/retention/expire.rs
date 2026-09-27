@@ -108,8 +108,9 @@ impl Repository {
     ///
     /// Cancellation, I/O and interruption can leave a published prefix. An error from the
     /// replacement call names the uncertain history. Retry only after a fresh scan; do not reuse
-    /// an older [`RetentionPlan`]. A directory synchronization error after replacement identifies
-    /// the uncertain history or stack; callers must inspect it before relying on expired roots.
+    /// an older [`crate::retention::RetentionPlan`]. A directory synchronization error identifies
+    /// the uncertain history or stack after replacement; callers must inspect it before relying
+    /// on expired roots.
     ///
     /// # Errors
     ///
