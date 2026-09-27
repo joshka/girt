@@ -695,6 +695,40 @@ fn native_fetch_rejects_missing_source_object_without_installation() {
     assert!(matches!(result, Err(FetchError::Missing(missing)) if missing == id));
 }
 
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn native_fetch_materializes_absent_canonical_empty_tree(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, Backend::Files);
+    let destination = repository(&root, "destination", format, Backend::Files);
+    let id = commit(&source);
+    let empty_tree = Tree::new(format, vec![]).unwrap().id();
+    let hex = empty_tree.to_string();
+    std::fs::remove_file(source.object_dir().join(&hex[..2]).join(&hex[2..])).unwrap();
+
+    let cancel = AtomicBool::new(false);
+    let received = receive_local(
+        source.git_dir(),
+        |_| vec![id],
+        FetchLimits::default(),
+        &cancel,
+        |_| ControlFlow::Continue(()),
+    )
+    .unwrap();
+    received
+        .install(&destination, PackLimits::default(), &cancel)
+        .unwrap();
+    let tree = destination
+        .objects(PackLimits::default())
+        .unwrap()
+        .read(empty_tree, Default::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(tree.kind(), girt::ObjectKind::Tree);
+    assert!(tree.data().is_empty());
+}
+
 #[test]
 fn resolved_file_url_fetches_from_local_storage() {
     let root = tempfile::tempdir().unwrap();

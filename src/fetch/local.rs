@@ -21,6 +21,8 @@ use crate::transport::TransportControl;
 /// touches no destination until [`ReceivedFetch::install`] is called.
 ///
 /// Supports SHA-1 and SHA-256 with files or reftable references on native local filesystems.
+/// A missing canonical empty tree is materialized from its verified identity; other missing
+/// reachable objects fail before installation.
 /// Cancellation and deadlines are checked between synchronous operations; one filesystem read,
 /// graph parse, hash or compression call cannot be interrupted. Concurrent source updates may
 /// produce a mixed advertisement; missing or corrupt selected history fails before publication.
