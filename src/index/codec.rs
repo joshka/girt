@@ -301,6 +301,26 @@ impl Index {
         Ok(())
     }
 
+    pub(super) fn invalidate_tree_cache(&mut self, limits: Limits) -> Result<(), Error> {
+        if let Some(extension) = self
+            .extensions
+            .iter()
+            .find(|extension| extension.signature != *b"TREE")
+        {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        if self.extensions.is_empty() {
+            return Ok(());
+        }
+
+        let mut replacement = self.clone();
+        replacement.extensions.clear();
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn discard_tree_cache(&mut self) {
         self.original = None;

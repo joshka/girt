@@ -20,6 +20,59 @@ fn populated(repo: &Repository) -> Vec<u8> {
     edit.commit().unwrap();
     fs::read(repo.git_dir().join("index")).unwrap()
 }
+
+fn add_extension(repo: &Repository, signature: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut bytes = populated(repo);
+    bytes.truncate(bytes.len() - repo.object_format().digest_len());
+    bytes.extend_from_slice(signature);
+    bytes.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(data);
+    let checksum = repo.object_format().checksum(&bytes);
+    bytes.extend_from_slice(checksum.as_bytes());
+    fs::write(repo.git_dir().join("index"), &bytes).unwrap();
+    bytes
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn invalidates_tree_cache_without_changing_entries(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let before = add_extension(&repo, b"TREE", b"cached tree");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let entries = edit.index().entries().to_vec();
+    edit.replace_entries(entries.clone()).unwrap();
+    edit.invalidate_tree_cache().unwrap();
+    assert!(edit.index().extensions().is_empty());
+    edit.commit().unwrap();
+
+    let after = fs::read(repo.git_dir().join("index")).unwrap();
+    assert_ne!(after, before);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries(), entries);
+    assert!(index.extensions().is_empty());
+}
+
+#[rstest]
+#[case::unknown(*b"TEST", b"opaque".as_slice())]
+#[case::split(*b"link", &[0; 20])]
+fn tree_invalidation_rejects_other_extensions_without_changes(
+    #[case] signature: [u8; 4],
+    #[case] data: &[u8],
+) {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    let before = add_extension(&repo, &signature, data);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    assert_eq!(
+        edit.invalidate_tree_cache(),
+        Err(Error::ExtensionPreventsEdit(signature))
+    );
+    assert_eq!(edit.index().extensions()[0].signature(), signature);
+    edit.abort().unwrap();
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
