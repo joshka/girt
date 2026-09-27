@@ -382,6 +382,9 @@ Run jj core/lib/CLI Git, Gerrit, workspace, colocation, ignore, signing and GC s
 formats on native platforms. Exercise init/clone/import, binary snapshot, conflict/rewrite,
 bookmark/tag export, mixed push outcomes, fetch/prune/depth, worktree repair, GC and reopen with
 independent Git operations between steps. Preserve jj-owned algorithms and error/UI behavior.
+Include the [R35 consumer cases](jj-roadmap.md#r35-consumer-cases-from-jj-reports): nonempty
+colocated reftable in both formats, SHA-256 clone format discovery across supported transports,
+lossless remote rename with specific refusals, and colocated index correctness and measured cost.
 Compare baseline import/log/rewrite resources and inspect failures and leaked locks. Deny local Git
 execution in production-path tests while allowing separate oracle invocations; controlled remote
 servers may use Git. Inventory remaining dependencies and extension programs with reasons. Publish
@@ -428,7 +431,8 @@ attributing causes; verify improvements against the same corpus and relevant cor
 Document justified exceptions with the affected workload, observed ratio, rationale, resource or
 semantic tradeoff, owner and follow-up decision for coordinator acceptance.
 
-The starting [R15 report](/Users/joshka/.codex/reports/girt-vs-git/README.md) measures only warm
-SHA-1 packed reads on one macOS machine: ordinary reads 0.20–0.25x and selected deep deltas
-0.017–0.026x. Its eager-open, startup and memory observations remain distinct. These results are
-investigation inputs, not an all-function baseline or evidence for later capabilities.
+The starting R15 report (maintainer-local provenance:
+`/Users/joshka/.codex/reports/girt-vs-git/README.md`) measures only warm SHA-1 packed reads on one
+macOS machine: ordinary reads 0.20–0.25x and selected deep deltas 0.017–0.026x. Its eager-open,
+startup and memory observations remain distinct. These results are investigation inputs, not an
+all-function baseline or evidence for later capabilities.

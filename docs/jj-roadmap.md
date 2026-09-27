@@ -22,14 +22,15 @@ The integration attempt continues while independent planning work proceeds.
 ## Baseline and Ownership
 
 The source assessment used girt `9a44ad7e4aa76e26caca0c48cccf7aac6f170b74` and jj
-`be5f5ebdc200593d8f1be06f11e27b485a97093d` on 2026-09-24. Its local artifacts are
-[report](/Users/joshka/.codex/reports/girt-jj-2026-09-24/report.md),
-[old queue](/Users/joshka/.codex/reports/girt-jj-2026-09-24/queue.md),
-[call sites](/Users/joshka/.codex/reports/girt-jj-2026-09-24/call-sites.txt), and
-[source manifest](/Users/joshka/.codex/reports/girt-jj-2026-09-24/source-manifest.json).
-These are historical local evidence; this repository roadmap supersedes their staged migration plan.
-The [acceptance matrix](jj-acceptance.md) retains the actionable scope without requiring those
-files. Re-inventory the target jj revision before final integration to catch drift.
+`be5f5ebdc200593d8f1be06f11e27b485a97093d` on 2026-09-24. Its maintainer-local provenance files,
+which are not shipped with this repository, are
+`/Users/joshka/.codex/reports/girt-jj-2026-09-24/report.md` (report),
+`/Users/joshka/.codex/reports/girt-jj-2026-09-24/queue.md` (old queue),
+`/Users/joshka/.codex/reports/girt-jj-2026-09-24/call-sites.txt` (call sites), and
+`/Users/joshka/.codex/reports/girt-jj-2026-09-24/source-manifest.json` (source manifest). These are
+historical local evidence; this repository roadmap supersedes their staged migration plan. The
+[acceptance matrix](jj-acceptance.md) retains the actionable scope without requiring those files.
+Re-inventory the target jj revision before final integration to catch drift.
 
 Girt owns Git representation, storage, repository/config/ref/index operations, ignore and inferred
 copy primitives, maintenance, and transport. jj retains its metadata tables, virtual roots/change
@@ -442,11 +443,10 @@ welcome; the upper value is not a regression threshold. Preserve correctness and
 exceptions with evidence and ownership. Later transport and other capabilities extend the corpus;
 R34 assesses the complete representative corpus, so R41 cannot pre-accept later functionality.
 
-The initial R15-only warm SHA-1 macOS
-[packed-read report](/Users/joshka/.codex/reports/girt-vs-git/README.md) reports ordinary packed
-reads at 0.20–0.25x Git throughput and selected deep deltas at 0.017–0.026x. It motivates
-investigation, not an all-function or cross-platform baseline. No performance implementation is
-included in R40.
+The initial R15-only warm SHA-1 macOS packed-read report (maintainer-local provenance:
+`/Users/joshka/.codex/reports/girt-vs-git/README.md`) reports ordinary packed reads at 0.20–0.25x
+Git throughput and selected deep deltas at 0.017–0.026x. It motivates investigation, not an
+all-function or cross-platform baseline. No performance implementation is included in R40.
 
 The [R41 report](evidence/r41.md) rebaselines the current code and records bounded index retention,
 `zlib-rs` inflation, direct result-buffer decoding and accelerated identity hashing. Warm buffered
@@ -565,6 +565,37 @@ ref export, other ref paths, transport, worktree operations, exposed gix types a
 subprocesses remain before [A19](jj-acceptance.md#a19--final-replacement-gate) can close. B09 is
 safe for this bounded no-deletion path, but full GC equivalence and retained-disk cleanup remain
 open. Windows maintenance stays in B08.
+
+### R35 Consumer Cases from jj Reports
+
+These are integration checks against delivered girt primitives, not new library capability owners.
+They belong to R35 and [A19](jj-acceptance.md#a19--final-replacement-gate); record a focused
+follow-up only when a case demonstrates a missing required behavior.
+
+- **Colocated reftable (M; R35 with R37 backend):** Open nonempty SHA-1 and SHA-256 colocated
+  repositories, import and resolve HEAD/branches, conditionally export a ref, reopen, and compare
+  independent Git observations. R37 owns the backend; opening an empty repository is insufficient.
+  Source: [jj reftable request](https://github.com/jj-vcs/jj/issues/9358). Restart with a
+  reproducible nonempty consumer failure and exact backend/ref state.
+- **SHA-256 clone (L; R35 with R26–R28 transfer):** Discover the remote format before creating local
+  storage, then verify local, HTTP and Unix SSH clone results, refs and working state. Keep the
+  verified v0/v1 transfer boundary distinct from protocol-v2-only endpoints and report an actionable
+  unsupported endpoint. Source:
+  [jj SHA-256 remote request](https://github.com/jj-vcs/jj/issues/3813). Restart with a destination
+  created in the wrong format or a failed supported transfer.
+- **Remote rename (M; R35 with R09 config and R28 ref composition):** Preserve `gh-resolved`,
+  `pushurl`, custom refspecs and branch selectors without dropping unknown keys. If a semantic
+  rename spans inherited sources or cannot be made safely, identify the blocking key and next action
+  instead of a generic nonstandard-config error. Source:
+  [jj remote rename report](https://github.com/jj-vcs/jj/issues/6984). Restart with exact config
+  files and remote-tracking refs that show loss or an unclear refusal.
+- **Colocated index (L; R35 with R12/R13/R38 and A20):** Verify stat reuse, cache-tree validity and
+  external Git reads after unchanged and changed large-tree transactions. Measure full-index rewrite
+  cost under the existing latency policy; optimize a demonstrated consumer bottleneck without
+  weakening index safety. Sources:
+  [jj zeroed index entries](https://github.com/jj-vcs/jj/issues/3786) and
+  [jj full-index rewrite cost](https://github.com/jj-vcs/jj/issues/9858). Restart with a
+  reproducible invalid index or representative measured regression.
 
 ## Comeback Backlog
 
@@ -728,6 +759,19 @@ resource limits and partial-operation recovery; preserve original fixture proven
 Restart after the initial jj-backed release or when a concrete defect identifies an underserved
 input boundary. Retain reproducible crash inputs and regression tests, bounded fuzz budgets and a
 clear triage path. Fuzzing supplements independent Git observations and does not replace them.
+
+### B11 — Partial-Clone Promisor Object Reads
+
+**Size:** XL. **Status:** Deferred post-baseline scope expansion; not an R35 or initial-publication
+gate. **Owner:** Post-integration storage and transport follow-up. **Evidence:**
+[jj partial-clone request](https://github.com/jj-vcs/jj/issues/8920).
+
+Restart after a working jj-backed baseline if the user approves lazy object retrieval, or sooner if
+a required repository demonstrates a core failure that changes the baseline scope. Define when
+object reads may access the network, which remotes are trusted, bounded request batching and
+resource use, cancellation, and an actionable result for a promised object that cannot be fetched.
+Keep a missing promised object distinct from local corruption. Validate blob/tree reads, offline
+behavior, partial fetches and retry outcomes before claiming support.
 
 ## C02 Storage and Layout Review
 
