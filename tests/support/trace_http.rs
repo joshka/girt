@@ -192,6 +192,8 @@ fn abandoning_download_on_worker_closes_original_spans() {
 
 #[test]
 fn clone_finish_owns_fetch_installation_phases() {
+    // Initialize the retained dispatchers before fixture setup can register any callsites.
+    let capture = Capture::default();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let remote = remote(&listener);
     let server = std::thread::spawn(|| serve_empty(listener));
@@ -215,7 +217,6 @@ fn clone_finish_owns_fetch_installation_phases() {
         .validate(&cancel, |_| std::ops::ControlFlow::Continue(()))
         .unwrap();
     server.join().unwrap();
-    let capture = Capture::default();
     let report = tracing::dispatcher::with_default(&capture.dispatch(), || {
         ready.finish(Default::default(), &cancel)
     })
@@ -278,4 +279,71 @@ fn cancellation_after_suspension_records_cancelled_outcome() {
     assert_eq!(span.fields["outcome"], "cancelled");
     assert_eq!(span.fields["failure_class"], "cancelled");
     assert!(span.closed);
+}
+
+// A fresh process makes fetch.http unregistered and excludes subscribers from sibling tests.
+// Without Capture's retained dispatchers, the unobserved first poll poisons this callsite.
+#[test]
+fn unsubscribed_first_poll_does_not_disable_captured_download() {
+    in_fresh_process(
+        "http::unsubscribed_first_poll_does_not_disable_captured_download",
+        || {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let remote = remote(&listener);
+            let capture = Capture::default();
+            let dispatch = capture.dispatch();
+            let cancel = AtomicBool::new(true);
+            let runtime = runtime();
+            let first = runtime.block_on(receive_http(
+                &remote,
+                |_| vec![],
+                None,
+                FetchLimits::default(),
+                TransportControl::new(&cancel),
+            ));
+            assert!(matches!(first, Err(girt::fetch::FetchError::Cancelled)));
+            assert!(capture.spans().is_empty());
+            cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+            let server = std::thread::spawn(|| serve_empty(listener));
+            let download = tracing::dispatcher::with_default(&dispatch, || {
+                runtime.block_on(
+                    receive_http(
+                        &remote,
+                        |_| vec![],
+                        None,
+                        FetchLimits::default(),
+                        TransportControl::new(&cancel),
+                    )
+                    .instrument(tracing::info_span!("caller")),
+                )
+            })
+            .unwrap();
+            server.join().unwrap();
+            drop(download);
+            let span = capture.named("fetch.http");
+            assert_eq!(capture.parent_name(&span), "caller");
+            assert_eq!(span.fields["outcome"], "success");
+            assert!(span.closed);
+            assert!(capture.named("caller").closed);
+        },
+    );
+}
+
+fn in_fresh_process(name: &str, test: impl FnOnce()) {
+    const CHILD_TEST: &str = "GIRT_TRACING_REGISTRATION_CHILD";
+    if std::env::var(CHILD_TEST).as_deref() == Ok(name) {
+        test();
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture"])
+        .env(CHILD_TEST, name)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "isolated tracing regression failed: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
