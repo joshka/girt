@@ -101,6 +101,19 @@ Explain the problem, resulting behavior, validation performed, and remaining lim
 relevant issues and call out public API changes, new dependencies, and compatibility assumptions.
 Keep documentation consistent with what the library actually implements.
 
+## Releases
+
+The first `girt` release was published manually. Subsequent releases use
+[`release-plz`](https://release-plz.dev/docs/github/quickstart): a push to
+`joshka/platform-validation` prepares a release pull request, and merging that request permits the
+release job to publish through crates.io trusted publishing. Review the proposed version, changelog,
+CI results and supported scope before merging.
+
+The release workflow uses GitHub's default token. GitHub does not start pull-request checks for
+branches created with that token. Close and reopen a release pull request to start its checks, then
+wait for them before merging. The publish job uses a short-lived crates.io token obtained through
+OIDC; do not add a persistent registry token to the workflow.
+
 ## HTTP Fixtures
 
 The optional `http` feature uses a caller-owned Tokio runtime. Its interoperability tests need Git,
