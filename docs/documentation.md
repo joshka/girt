@@ -41,9 +41,11 @@ Illustrative revisions grounded in girt's current behavior:
 
 Keep an artifact when it supports a claim, review, reproduction, or unresolved task. Ask what a
 reader or the next worker would do with it tomorrow. Retain exact revisions, fixture provenance,
-failure records, and logs when they answer that question. Consolidate repetitive status, command
-transcripts, and test-count inventories into a short linked result. Archive superseded evidence with
-an index when readers still need its history; preserve stable links and the original facts.
+failure records, and logs when they answer that question. Remove spent process notes, command
+transcripts, and test-count inventories from tracked docs. Preserve useful history in private local
+storage outside tracked paths when needed, then repair links so published pages stand alone. Keep a
+compact index only when readers still need to locate retained evidence; do not leave placeholder
+pages.
 
 A handoff should state the delivered behavior, material decisions and limits, the next action, and a
 concise validation reference. Put detailed evidence at the linked source so a reader can inspect it
