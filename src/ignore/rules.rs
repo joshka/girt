@@ -206,6 +206,22 @@ impl Ignore {
         self.direct(path, is_directory, &mut work)
     }
 
+    /// Resolves rules for this path without checking excluded ancestors.
+    ///
+    /// Use this when the caller traverses directories and has already decided whether each
+    /// ancestor may be entered. [`Ignore::check`] is the usual whole-path query. A match here
+    /// does not establish that an untracked child of an excluded directory can be included.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Path`] for invalid paths and [`Error::Limit`] for path or matching-work
+    /// exhaustion. No partial decision is returned.
+    pub fn check_direct(&self, path: &[u8], is_directory: bool) -> Result<Option<Match>, Error> {
+        validate_path(path, false, self.limits.path_bytes)?;
+        let mut work = self.limits.work;
+        self.direct(path, is_directory, &mut work)
+    }
+
     fn direct(
         &self,
         path: &[u8],

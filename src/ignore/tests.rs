@@ -80,6 +80,15 @@ fn blocked_parent_reports_ancestor_and_ignores_nested_source() {
     );
 }
 #[test]
+fn direct_query_leaves_ancestor_policy_to_the_caller() {
+    let mut rules = root(b"a/\n");
+    rules.add(Source::Directory(b"a"), b"!x\n").unwrap();
+    assert!(rules.check(b"a/x", false).unwrap().unwrap().ignored);
+    assert!(!rules.check_direct(b"a/x", false).unwrap().unwrap().ignored);
+    assert_eq!(rules.check_direct(b"a/y", false).unwrap(), None);
+    assert_eq!(rules.check_direct(b"", false), Err(Error::Path));
+}
+#[test]
 fn equal_level_sources_append() {
     let mut rules = root(b"x\n");
     rules.add(Source::Directory(b""), b"!x\n").unwrap();
