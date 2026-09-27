@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/joshka/girt/compare/v0.1.4...v0.1.5) - 2026-09-27
+
+### Other
+
+- Stabilize split-index overlap fixture ([#12](https://github.com/joshka/girt/pull/12))
+- Retain complete fetch packs through publication ([#9](https://github.com/joshka/girt/pull/9))
+- Fix tracing capture after unsubscribed setup ([#10](https://github.com/joshka/girt/pull/10))
+
 ## [0.1.4](https://github.com/joshka/girt/compare/v0.1.3...v0.1.4) - 2026-09-27
 
 ### Other
