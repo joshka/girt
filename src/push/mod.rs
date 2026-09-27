@@ -39,7 +39,7 @@ pub use prepared::PreparedPush;
 pub use protocol::send;
 pub use types::{
     ForcePolicy, PushCommand, PushError, PushFailure, PushLimits, PushReport, RefRewrite,
-    RefStatus, Status,
+    RefStatus, RejectionOrigin, Status,
 };
 
 #[cfg(test)]

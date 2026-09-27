@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use super::{PreparedPush, PushError, PushFailure as Error, PushReport, RefRewrite, Status};
+use super::{
+    PreparedPush, PushError, PushFailure as Error, PushReport, RefRewrite, RejectionOrigin, Status,
+};
 use crate::ObjectId;
 use crate::packet::{Wire, check_cancelled, put};
 use crate::refs::RefName;
@@ -356,6 +358,9 @@ pub(super) fn read_status(
             active = Some((position, RefRewrite::default(), false));
         } else {
             seen.insert(position);
+            if matches!(result, Status::Rejected(_)) {
+                report.refs[position].rejection_origin = Some(RejectionOrigin::Receiver);
+            }
             report.refs[position].status = Some(result);
             report.refs[position].rewrite_complete = true;
         }

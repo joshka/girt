@@ -420,6 +420,10 @@ fn sends_only_report_status_then_raw_pack_and_retains_rejections() {
         report.refs[0].status,
         Some(Status::Rejected(b"hook declined".to_vec()))
     );
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::Receiver)
+    );
     assert_eq!(&sent[..p.request.len()], p.request);
     assert_eq!(&sent[p.request.len()..p.request.len() + 4], b"PACK");
     assert!(sent.windows(14).any(|w| w == b"\0report-status"));
@@ -490,6 +494,10 @@ fn advertised_stale_value_keeps_exact_lease_on_wire() {
     assert_eq!(
         report.refs[0].status,
         Some(Status::Rejected(b"stale old value".to_vec()))
+    );
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::Receiver)
     );
     assert_eq!(written, [p.request.as_slice(), p.pack.as_slice()].concat());
 }

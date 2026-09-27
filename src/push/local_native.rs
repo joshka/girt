@@ -3,11 +3,13 @@
 use std::fs;
 use std::path::Path;
 
-use super::{PreparedPush, PushError, PushFailure, PushReport, Status};
+use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, Status};
 use crate::fetch::{
     Advertisement, FetchError, FetchLimits, KnownHistory, NativeContents, ReceivedFetch,
 };
-use crate::refs::{Expected, RefEdit, RefName, RefOutcome, Reflog, Target, TransactionError};
+use crate::refs::{
+    Expected, RefEdit, RefName, RefOutcome, ReferenceError, Reflog, Target, TransactionError,
+};
 use crate::transport::TransportControl;
 use crate::{Repository, Signature};
 
@@ -203,6 +205,7 @@ pub(super) fn send(
         report.refs[index].attempted = true;
         if hide.matches(&command.name) {
             report.refs[index].status = Some(Status::Rejected(b"hidden reference".to_vec()));
+            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
             continue;
         }
         let checked_out =
@@ -215,12 +218,14 @@ pub(super) fn send(
                 report.refs[index].status = Some(Status::Rejected(
                     b"deletion of current branch denied".to_vec(),
                 ));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
             if !command.deletes() && current_policy == CurrentPolicy::Refuse {
                 report.refs[index].status = Some(Status::Rejected(
                     b"branch is currently checked out".to_vec(),
                 ));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
             if !command.deletes() && current_policy == CurrentPolicy::Warn {
@@ -231,6 +236,7 @@ pub(super) fn send(
         }
         if command.deletes() && deny_deletes {
             report.refs[index].status = Some(Status::Rejected(b"deletion denied".to_vec()));
+            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
             continue;
         }
         if command.force == super::ForcePolicy::Allow
@@ -251,6 +257,7 @@ pub(super) fn send(
                 .unwrap_or(false);
             if !fast_forward {
                 report.refs[index].status = Some(Status::Rejected(b"non-fast-forward".to_vec()));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
                 continue;
             }
         }
@@ -273,10 +280,17 @@ pub(super) fn send(
                 report.refs[index].status = Some(Status::Ok);
                 report.refs[index].effects = outcomes.into_iter().next();
             }
-            Err(TransactionError::Prepare { .. }) => {
-                report.refs[index].status = Some(Status::Rejected(
-                    b"reference precondition or storage rejected".to_vec(),
-                ));
+            Err(TransactionError::Prepare { source, .. }) => {
+                let (reason, origin) = if matches!(source, ReferenceError::Mismatch { .. }) {
+                    (b"stale old value".to_vec(), RejectionOrigin::ExpectedValue)
+                } else {
+                    (
+                        b"reference storage rejected".to_vec(),
+                        RejectionOrigin::Receiver,
+                    )
+                };
+                report.refs[index].status = Some(Status::Rejected(reason));
+                report.refs[index].rejection_origin = Some(origin);
             }
             Err(TransactionError::Publish { source, outcomes }) => {
                 if let Some(effect) = outcomes.into_iter().next() {

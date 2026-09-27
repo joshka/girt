@@ -6,8 +6,8 @@ use std::sync::atomic::AtomicBool;
 
 use girt::fetch::{FetchError, FetchLimits, receive_local};
 use girt::push::{
-    ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, send_local,
-    send_local_with_identity,
+    ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, RejectionOrigin,
+    send_local, send_local_with_identity,
 };
 use girt::refs::{Backend, Expected, RefName, Target};
 use girt::transport::TransportControl;
@@ -306,6 +306,10 @@ fn native_hidden_ref_rejects_independently_of_visible_ref() {
         report.refs[0].status,
         Some(girt::push::Status::Rejected(_))
     ));
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::Receiver)
+    );
     assert_eq!(report.refs[1].status, Some(girt::push::Status::Ok));
     let refs = dest.references().unwrap();
     assert_eq!(refs.read(&commands[0].name).unwrap(), None);
@@ -313,6 +317,60 @@ fn native_hidden_ref_rejects_independently_of_visible_ref() {
         refs.read(&commands[1].name).unwrap(),
         Some(Target::Direct(id))
     );
+}
+
+#[rstest]
+#[case::sha1_files(ObjectFormat::Sha1, Backend::Files)]
+#[case::sha1_reftable(ObjectFormat::Sha1, Backend::Reftable)]
+#[case::sha256_files(ObjectFormat::Sha256, Backend::Files)]
+#[case::sha256_reftable(ObjectFormat::Sha256, Backend::Reftable)]
+fn native_stale_expectation_is_distinct_from_receiver_rejection(
+    #[case] format: ObjectFormat,
+    #[case] backend: Backend,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, backend);
+    let dest = repository(&root, "dest", format, backend);
+    let id = commit(&source);
+    let stale = RefName::new("refs/heads/stale").unwrap();
+    let accepted = RefName::new("refs/heads/accepted").unwrap();
+    let commands = vec![
+        PushCommand {
+            name: stale.clone(),
+            expected: Some(id),
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        },
+        PushCommand {
+            name: accepted.clone(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        },
+    ];
+    let cancel = AtomicBool::new(false);
+    let prepared = PreparedPush::new_local(
+        &source.objects(PackLimits::default()).unwrap(),
+        commands,
+        &[],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let report = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    assert!(matches!(
+        report.refs[0].status,
+        Some(girt::push::Status::Rejected(_))
+    ));
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::ExpectedValue)
+    );
+    assert_eq!(report.refs[1].status, Some(girt::push::Status::Ok));
+    assert_eq!(report.refs[1].rejection_origin, None);
+    let refs = dest.references().unwrap();
+    assert_eq!(refs.read(&stale).unwrap(), None);
+    assert_eq!(refs.read(&accepted).unwrap(), Some(Target::Direct(id)));
 }
 
 #[test]

@@ -93,6 +93,17 @@ pub enum Status {
     Rejected(Vec<u8>),
 }
 
+/// Provenance of a rejected reference update.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RejectionOrigin {
+    /// The native destination's locked reference did not match the command's expected old value.
+    ExpectedValue,
+    /// A receiver rejected the command for policy, storage, or another reason. Wire status
+    /// reports use this variant even when their reason text mentions a stale value: the client
+    /// cannot independently prove the receiver's exact comparison.
+    Receiver,
+}
+
 /// Evidence for one submitted command, in caller command order.
 #[derive(Debug, Clone)]
 pub struct RefStatus {
@@ -100,6 +111,8 @@ pub struct RefStatus {
     pub command: PushCommand,
     /// `None` means no valid acknowledgement was received. It does not mean rejection.
     pub status: Option<Status>,
+    /// Rejection provenance, present only when `status` is [`Status::Rejected`].
+    pub rejection_origin: Option<RejectionOrigin>,
     /// Whether any bytes of this command may have reached the peer, or native publication
     /// reached this command. `false` proves this command was not attempted by this push. A true
     /// value without an acknowledgement is uncertain and requires remote inspection.
@@ -159,6 +172,7 @@ impl PushReport {
                 .map(|command| RefStatus {
                     command,
                     status: None,
+                    rejection_origin: None,
                     attempted: false,
                     effects: None,
                     rewrites: vec![],
