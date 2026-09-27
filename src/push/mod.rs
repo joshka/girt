@@ -1,7 +1,14 @@
 //! Conditional reference publication over receive-pack protocol v0.
 //!
-//! Build a [`PreparedPush`] from explicit commands and a local object reader, then call [`send`]
-//! with caller-owned blocking streams or [`send_local`] with a trusted local repository.
+//! # Push lifecycle
+//!
+//! Build [`PushCommand`] values with exact expected old targets, then use [`PreparedPush::new`]
+//! or [`PreparedPush::new_local`] to validate objects and buffer the pack. Choose [`send_local`]
+//! for a native local destination or [`send`] for caller-owned protocol streams. A successful
+//! exchange can contain rejected refs: inspect [`PushReport`] per command. [`PushError`] retains
+//! known acknowledgements when the final outcome is uncertain; read destination refs before
+//! retrying.
+//!
 //! Preparation validates the complete reachable graph and buffers a non-thin pack before any
 //! commands can reach a server. Preparation leaves local refs and reflogs untouched.
 //!

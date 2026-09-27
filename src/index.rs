@@ -1,5 +1,10 @@
 //! SHA-1/SHA-256 Git index v2/v3/v4 entries and synchronous per-worktree storage.
 //!
+//! [`Index::parse`] and [`Index::encode`] work with caller-owned bytes. In a repository,
+//! [`crate::Repository::read_index`] distinguishes absent storage from an empty index;
+//! [`crate::Repository::edit_index`] holds the lock until [`IndexEdit::commit`] publishes an
+//! explicit edit. [`Entry`] carries paths, stages, modes, and cached stat information.
+//!
 //! An index records candidate tree entries and cached filesystem metadata. [`Index`] validates
 //! format structure without resolving objects or touching working files. Paths remain bytes;
 //! format validity does not establish checkout safety on any host filesystem.

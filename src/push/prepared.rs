@@ -10,6 +10,13 @@ use crate::{ObjectId, Objects, PackObject};
 
 /// An immutable command list and non-thin pack ready for one push.
 ///
+/// # Preparation choices
+///
+/// [`Self::new`] prepares a full wire transfer. [`Self::new_excluding`] can omit validated
+/// advertised receiver history; [`Self::new_local`] prepares the native local path. Add explicit
+/// options with [`Self::with_push_options`] or progress with [`Self::with_progress`] before
+/// sending. [`super::send`] and [`super::send_local`] own exchange and status reporting.
+///
 /// Keeps exact caller expectations; wire advertisement checking occurs in [`super::send`].
 /// [`Self::new`] sends complete histories; [`Self::new_excluding`] omits explicit receiver history
 /// after validating its selected closure. The source object reader can

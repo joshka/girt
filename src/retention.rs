@@ -1,4 +1,23 @@
-//! Conservative, read-only object retention planning for later maintenance.
+//! Object retention planning, additive repacking, and isolated maintenance.
+//!
+//! # Retention planning
+//!
+//! [`Repository::plan_retention`](crate::Repository::plan_retention) observes roots under a
+//! [`RetentionPolicy`] and returns a [`RetentionPlan`]. A complete plan explains reachability for
+//! that observation; it does not authorize deletion after another writer or reader changes state.
+//! [`Repository::repack_retained`](crate::Repository::repack_retained) publishes a new pack without
+//! removing old storage.
+//!
+//! # Maintenance that removes data
+//!
+//! [`Repository::run_maintenance`](crate::Repository::run_maintenance) composes reflog expiry,
+//! pack retirement, and loose-object pruning. Each phase also has a separate method:
+//! [`Repository::expire_reflogs`](crate::Repository::expire_reflogs),
+//! [`Repository::retire_old_packs`](crate::Repository::retire_old_packs), and
+//! [`Repository::prune_unreachable_loose`](crate::Repository::prune_unreachable_loose).
+//! The caller supplies [`MaintenanceIsolation`] to exclude external writers and dependent readers
+//! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
+//! a new isolation guard. Read each method's platform and recovery contract before use.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Read;

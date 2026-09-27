@@ -1,5 +1,11 @@
 //! Explicit smart-HTTP discovery and RPC exchanges.
 //!
+//! Resolve [`HttpSettings`] from a selected [`Destination`], [`crate::Config`], and explicit
+//! [`HttpEnvironment`], then construct [`HttpRemote::configured`] for fetch or push adapters.
+//! [`HttpRemote::with_credentials`] attaches an application-approved credential session.
+//! [`TransportControl`] supplies cancellation and a deadline for owned
+//! waits; the application owns the Tokio runtime and synchronous fetch validation worker.
+//!
 //! [`HttpRemote`] binds credentials to one repository URL. Fetch and push use protocol v0 over
 //! HTTP/1.1. [`HttpSettings`] resolves an R21 destination, HTTP configuration and explicit
 //! application environment. The legacy [`HttpRemote::new`] remains an explicit, redirect-free

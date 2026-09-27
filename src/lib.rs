@@ -1,4 +1,78 @@
-//! An incremental Rust library for Git's data formats and storage.
+//! Git objects, repositories, references, and explicit transfer workflows for Rust applications.
+//!
+//! girt opens a repository at a chosen path and works with its Git data directly. The application
+//! chooses which objects to write, which references to publish, and when to update a working tree.
+//! The API is experimental, but its current operations document their accepted formats, effects,
+//! limits, and recovery obligations.
+//!
+//! # First use
+//!
+//! Add `girt = "0.1"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
+//! without opening a repository:
+//!
+//! ```rust
+//! use girt::{ObjectFormat, ObjectKind};
+//!
+//! let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"hello");
+//! assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
+//! ```
+//!
+//! To store a blob, add `tempfile = "3"` for this disposable example so it does not change an
+//! existing repository:
+//!
+//! ```rust
+//! use girt::{InitKind, ObjectFormat, Repository};
+//!
+//! let directory = tempfile::tempdir()?;
+//! let repository = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("project"),
+//!     InitKind::Worktree,
+//! )?;
+//! let id = repository.loose_objects().write_blob(b"hello\n")?;
+//! assert_eq!(repository.loose_objects().read_blob(id, 1024)?, b"hello\n");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Writing an object does not move a branch or populate the working tree. The temporary directory
+//! is removed when `directory` is dropped. For an existing repository, start with
+//! [`Repository::open`] and the read-only [`Objects`] interface.
+//!
+//! In the [source checkout](https://github.com/joshka/girt), run
+//! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
+//! [`LooseObjects`] for storage assumptions and the
+//! [contributor guide](https://github.com/joshka/girt/blob/joshka/platform-validation/CONTRIBUTING.md)
+//! for setup and checks.
+//!
+//! # How the APIs fit together
+//!
+//! Read the task sections below in the order your application needs them:
+//!
+//! 1. [Read a repository](#reading-a-repository), then use [`ObjectId`], [`Tree`], [`Commit`], and
+//!    [`Tag`] for object data. [`Repository`] chooses the repository format; an [`Objects`] reader
+//!    holds a pack snapshot until it is reopened.
+//! 2. Use [`refs`] to resolve or conditionally publish references when objects must become
+//!    reachable. Object installation and reference updates are separate steps.
+//! 3. Use [`remote`] to interpret explicit remote configuration, then [`fetch`], [`clone`], or
+//!    [`push`] for transfer and publication. The application still owns endpoint selection,
+//!    authorization, and retry decisions.
+//! 4. Use [`index`], [`status`], and [`checkout`] when the application also manages a working tree.
+//!    Status and checkout use raw byte and platform rules that differ from Git's default CLI.
+//!
+//! Follow a module link for its API map and the owning methods' contracts. The runnable
+//! [examples](https://github.com/joshka/girt/tree/joshka/platform-validation/examples) show
+//! full workflows; check each one's input and effects before running it. The
+//! [compatibility record](https://github.com/joshka/girt/blob/joshka/platform-validation/docs/compatibility.md)
+//! retains tested scope and historical evidence.
+//!
+//! # Features and platforms
+//!
+//! Local storage, references, and native local transfer need no optional feature. `http` adds
+//! smart-HTTP(S) transfer; `ssh` adds system OpenSSH transfer on macOS/Linux. Both network paths
+//! use a caller-owned Tokio runtime. Their fetch adapters return downloaded data for explicit
+//! synchronous validation. `tracing` adds operation spans without installing a subscriber. Raw
+//! working-tree status and checkout are supported on macOS/Linux; their module pages describe
+//! accepted paths and mutation limits.
 //!
 //! # Object identities
 //!
@@ -13,23 +87,13 @@
 //! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push support both formats;
 //! native local transfer also supports both without invoking Git.
 //!
-//! # First use
+//! # Creating and finding a repository
 //!
-//! Add `girt = "0.1"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
-//! without opening a repository:
-//!
-//! ```rust
-//! use girt::{ObjectFormat, ObjectKind};
-//!
-//! let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"hello");
-//! assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
-//! ```
-//!
-//! In the [source checkout](https://github.com/joshka/girt), run
-//! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
-//! [`LooseObjects`] for storage assumptions and the
-//! [contributor guide](https://github.com/joshka/girt/blob/joshka/platform-validation/CONTRIBUTING.md)
-//! for setup and checks.
+//! [`Repository::init`] creates a bare or ordinary SHA-1 or SHA-256 repository with unborn `main`
+//! and refuses reinitialization. [`Repository::discover`] searches physical ancestors from an
+//! existing directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive
+//! ancestor. Discovery stops at malformed or unsupported metadata rather than selecting an outer
+//! repository.
 //!
 //! # Reading a repository
 //!
@@ -55,63 +119,6 @@
 //! line edits with explicit resource limits. Absence and mode changes remain on the original tree
 //! record; empty and absent payloads compare equal. Gitlinks require a separate submodule policy.
 //! Run `cargo run --example content_diff` for the composed operation.
-//!
-//! # Reading and replacing the index
-//!
-//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2/v3/v4 indexes with byte paths, stat
-//! words and conflict stages. [`Repository::read_index`] distinguishes missing storage from an
-//! empty index; [`Repository::edit_index`] holds `index.lock` while the caller derives and
-//! publishes changes. Optional extensions round-trip; edits discard derived caches, retain
-//! resolve-undo records and refuse unknown optional extensions. Index operations never create
-//! working files or apply staging policy. Run `cargo run --example index` for a disposable
-//! repository example.
-//!
-//! # Observing working-tree status
-//!
-//! [`Repository::raw_status`] separates staged tree/index changes, raw index/worktree changes,
-//! conflicts and unchecked gitlinks. It verifies content instead of trusting cached stat data,
-//! applies no normalization or ignores, and never refreshes the index. macOS/Linux traversal
-//! avoids symlink ancestors and repository metadata. Reports are observations, not atomic
-//! snapshots or checkout preconditions. Run `cargo run --example status` for a disposable fixture.
-//!
-//! # Planning object retention
-//!
-//! [`Repository::plan_retention`] observes caller heads, references, imported reflogs, registered
-//! worktree HEADs and indexes, recent loose objects, shallow boundaries, and protected packs.
-//! [`retention::RetentionPolicy`] supplies resource limits and expiry cutoffs. Complete reports
-//! distinguish every observed reachable object from objects still required after reflog expiry.
-//! Incomplete reports retain recovered candidates and cannot justify deletion. A later maintenance
-//! executor must exclude writers and rescan before acting; this library operation changes no files.
-//! [`Repository::repack_retained`] performs a fresh scan and publishes a bounded pack/index pair
-//! without removing existing storage. It cannot authorize pruning while external writers or pinned
-//! readers may still depend on old data.
-//!
-//! # Creating and finding a repository
-//!
-//! [`Repository::init`] creates a bare or ordinary SHA-1 or SHA-256 repository with unborn `main`
-//! and refuses reinitialization. [`Repository::discover`] searches physical ancestors from an
-//! existing directory; [`Repository::discover_with_ceiling`] bounds that search to an inclusive
-//! ancestor. Discovery stops at malformed or unsupported metadata rather than selecting an outer
-//! repository.
-//!
-//! # Checking out a selected tree
-//!
-//! [`Repository::checkout_tree`] materializes raw blob bytes and publishes a matching index on
-//! macOS/Linux. Supply an explicit baseline matching the clean index, or `None` for an initial
-//! no-checkout clone. The operation refuses staged/unstaged changes and untracked obstructions;
-//! HEAD and refs remain unchanged. [`checkout`] documents caller exclusion, supported names,
-//! preparation/mutation/publication phases and per-path failure reports. Run
-//! `cargo run --example checkout` for a disposable lifecycle example.
-//!
-//! # Cloning without checkout
-//!
-//! [`clone::CloneRequest::prepare_tracking`] selects a new destination, layout, stored origin URL,
-//! branch policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any
-//! owned network download on a caller-controlled worker, then call [`clone::CloneReady::finish`].
-//! Both layouts retain all remote-tracking branches and tags, with one selected local branch or
-//! detached HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout
-//! state. Inspect [`clone::CloneError`] for initialized, installed, configured and published state
-//! after failure. Run `cargo run --example clone_repository` for the lifecycle.
 //!
 //! # Planning from remote configuration
 //!
@@ -147,6 +154,16 @@
 //! sequential publication and choose explicit reflog policy; inspect partial outcomes on
 //! publication failure.
 //!
+//! # Cloning without checkout
+//!
+//! [`clone::CloneRequest::prepare_tracking`] selects a new destination, layout, stored origin URL,
+//! branch policy and reflog policy. Receive from an explicit local/HTTP/SSH endpoint, validate any
+//! owned network download on a caller-controlled worker, then call [`clone::CloneReady::finish`].
+//! Both layouts retain all remote-tracking branches and tags, with one selected local branch or
+//! detached HEAD. No index or working files are populated; an ordinary clone has Git's no-checkout
+//! state. Inspect [`clone::CloneError`] for initialized, installed, configured and published state
+//! after failure. Run `cargo run --example clone_repository` for the lifecycle.
+//!
 //! # Preparing and sending a push
 //!
 //! [`push::PreparedPush`] synchronously verifies selected history, proves required ancestry, and
@@ -161,6 +178,45 @@
 //! transports use the caller's runtime. Resource limits apply to the documented phase or read, not
 //! total process memory or an operation-wide deadline.
 //!
+//! # Reading and replacing the index
+//!
+//! [`index::Index`] parses and encodes bounded SHA-1/SHA-256 v2/v3/v4 indexes with byte paths, stat
+//! words and conflict stages. [`Repository::read_index`] distinguishes missing storage from an
+//! empty index; [`Repository::edit_index`] holds `index.lock` while the caller derives and
+//! publishes changes. Optional extensions round-trip; edits discard derived caches, retain
+//! resolve-undo records and refuse unknown optional extensions. Index operations never create
+//! working files or apply staging policy. Run `cargo run --example index` for a disposable
+//! repository example.
+//!
+//! # Observing working-tree status
+//!
+//! [`Repository::raw_status`] separates staged tree/index changes, raw index/worktree changes,
+//! conflicts and unchecked gitlinks. It verifies content instead of trusting cached stat data,
+//! applies no normalization or ignores, and never refreshes the index. macOS/Linux traversal
+//! avoids symlink ancestors and repository metadata. Reports are observations, not atomic
+//! snapshots or checkout preconditions. Run `cargo run --example status` for a disposable fixture.
+//!
+//! # Checking out a selected tree
+//!
+//! [`Repository::checkout_tree`] materializes raw blob bytes and publishes a matching index on
+//! macOS/Linux. Supply an explicit baseline matching the clean index, or `None` for an initial
+//! no-checkout clone. The operation refuses staged/unstaged changes and untracked obstructions;
+//! HEAD and refs remain unchanged. [`checkout`] documents caller exclusion, supported names,
+//! preparation/mutation/publication phases and per-path failure reports. Run
+//! `cargo run --example checkout` for a disposable lifecycle example.
+//!
+//! # Planning object retention
+//!
+//! [`Repository::plan_retention`] observes caller heads, references, imported reflogs, registered
+//! worktree HEADs and indexes, recent loose objects, shallow boundaries, and protected packs.
+//! [`retention::RetentionPolicy`] supplies resource limits and expiry cutoffs. Complete reports
+//! distinguish every observed reachable object from objects still required after reflog expiry.
+//! Incomplete reports retain recovered candidates and cannot justify deletion. A later maintenance
+//! executor must exclude writers and rescan before acting; this library operation changes no files.
+//! [`Repository::repack_retained`] performs a fresh scan and publishes a bounded pack/index pair
+//! without removing existing storage. It cannot authorize pruning while external writers or pinned
+//! readers may still depend on old data.
+//!
 //! # Optional operation tracing
 //!
 //! Enable the `tracing` feature for categorical operation spans on the `girt` target. DEBUG
@@ -172,51 +228,14 @@
 //! validation or drop. Their span lifetime therefore includes queue time. See `docs/tracing.md` for
 //! coverage, overhead, async context propagation and guidance for extending instrumentation.
 //!
-//! # Library contents
+//! # Current boundaries
 //!
-//! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
-//!   initialization of bare or ordinary SHA-1 or SHA-256 repositories.
-//! - [`refs`]: validated reference names, files/reftable enumeration and reads, symbolic
-//!   resolution, conditional transactions with explicit reflogs, and single-reference operations
-//!   without reflogs.
-//! - [`Config`] and [`ConfigError`]: byte-oriented parsing and explicit layered resolution with
-//!   provenance.
-//! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
-//! - [`Objects`], [`Object`], [`PackLimits`], and [`ReadLimits`]: bounded loose/packed reads.
-//! - [`clone`]: bare and ordinary no-checkout creation with persistent origin configuration.
-//! - [`fetch`]: upload-pack v0, validated object installation, and conditional fetch publication.
-//! - [`push`]: bounded graph selection and conditional receive-pack v0 branch/tag publication.
-//! - [`transport`]: owned transport cancellation, deadlines, and process lifetime contracts.
-//! - [`write_pack`]: bounded pack/index v2 artifact generation from explicit objects.
-//! - [`ObjectReadError`]: packed storage corruption, unsupported formats, and resource failures.
-//! - [`HistoryLimits`] and [`HistoryError`]: bounded walks, ancestry queries, and merge bases.
-//! - [`ObjectFormat`]: recognized Git object hash formats.
-//! - [`ObjectId`]: SHA-1/SHA-256 identity, hashing blob bytes, and hexadecimal parsing.
-//! - [`TreeChange`], [`TreeValue`], [`TreeCompareLimits`], and [`TreeCompareError`]: recursive
-//!   structural tree comparison.
-//! - [`content_diff`]: bounded byte-preserving line edits and separate tree-change blob loading.
-//! - [`Tree`], [`TreeEntry`], and [`EntryMode`]: in-memory tree payloads and identity.
-//! - [`Commit`], [`CommitFields`], [`Signature`], and [`CommitHeader`]: commit payloads and
-//!   identity.
-//! - [`Tag`], [`TagFields`], [`ObjectKind`], and [`TagError`]: annotated tag payloads and identity.
-//! - [`CommitError`]: commit parsing and construction failures.
-//! - [`TreeError`]: tree parsing and structural validation failures.
-//! - [`encode_blob`]: uncompressed Git blob encoding.
-//! - [`LooseObjects`]: loose blob, tree, commit, and tag reads and writes, with a usage example and
-//!   storage assumptions.
-//! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
-//!
-//! The current API is experimental and supports SHA-1/SHA-256 loose objects, pack v2/v3 and index
-//! v1/v2 reads in both formats, caller-owned pack v2/index v2 exports, object transfer and fetch
-//! orchestration, and conditional push under full reference names. Wire fetch and push accept
-//! v0 streams. Native local fetch and push support SHA-1 and SHA-256 without Git server processes.
-//! The optional `http` feature adds async smart-HTTP(S)
-//! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio
-//! runtime; fetch pack validation remains an explicit synchronous step. Files and reftable
-//! references support enumeration, reads, symbolic resolution, explicit no-reflog updates and
-//! deletion, conditional batches, and caller-controlled reflog appends. SHA-1/SHA-256 working-tree
-//! index v2/v3/v4 is available; raw status and conservative raw tree checkout run on macOS/Linux.
-//! Attribute/filter/EOL conversion, branch switching, sparse checkout and submodules are deferred.
+//! Git object and reference operations support SHA-1 and SHA-256. Wire fetch and push use
+//! protocol v0 streams; native local transfer uses girt storage without a Git server process.
+//! The supported working-tree operations use literal blob bytes and POSIX modes. They do not apply
+//! attributes, filters, or EOL conversion. Branch switching, sparse checkout, and submodule
+//! operations remain outside this API. Each operation's module and item docs state its narrower
+//! accepted formats, resource limits, and failure effects.
 pub mod checkout;
 pub mod clone;
 mod commit;

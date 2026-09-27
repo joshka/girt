@@ -52,6 +52,15 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
 /// An opened repository's metadata paths, checkout location and resolved snapshots.
 ///
+/// # Common entry points
+///
+/// - [`Self::open`] opens an explicit path; [`Self::discover`] searches ancestors, and
+///   [`Self::init`] creates a repository at a chosen path.
+/// - [`Self::loose_objects`] writes and reads loose objects; [`Self::objects`] opens a bounded
+///   loose/packed reader. [`Self::references`] accesses the selected reference backend.
+/// - [`Self::read_index`] observes per-worktree index storage; [`Self::edit_index`] locks and
+///   publishes an explicit edit. Fetch, push, status, and checkout have separate module contracts.
+///
 /// Opening accepts a worktree root, Git directory, or `gitdir:` file. It never searches parents,
 /// initializes files, runs Git, or reads environment overrides or system/global configuration.
 /// Relative input paths resolve against the process current directory. Symlinks are resolved;

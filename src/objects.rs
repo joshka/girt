@@ -122,6 +122,13 @@ impl Default for ReadLimits {
 
 /// Reads loose objects and validated, pinned local pack/index files.
 ///
+/// # Common operations
+///
+/// Use [`Self::read`] for an object payload and [`Self::refresh`] to discover newly published
+/// packs without replacing a valid reader on failure. [`Self::compare_trees`] reports structural
+/// tree changes; [`Self::detect_rewrites`] infers content matches separately. Loose-object writes
+/// belong to [`LooseObjects`], and reference updates belong to [`crate::refs`].
+///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening streams
 /// all `.idx`/`.pack` pairs in the repository's object format in filename order and verifies index
 /// v1/v2 structure, checksums, pack v2/v3 headers/counts, offset ranges, and v2 entry CRCs.

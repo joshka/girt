@@ -1,15 +1,20 @@
 //! Named remote configuration and pure refspec mapping.
 //!
-//! [`Remote::find`] reads the four URL/refspec keys from an explicit [`crate::Config`] snapshot.
-//! [`RemoteUrls::find`] reads URL keys without parsing unrelated refspecs.
-//! [`Refspecs`] maps supplied resolved references without I/O, revision lookup, or update
-//! permission. Transport choice, URL rewriting, implicit branch selection, tag
-//! following, pruning, mirror policy and other remote options remain the caller's responsibility.
+//! # URLs, mappings, and credentials
+//!
+//! - [`RemoteUrls::find`] reads URL values without parsing refspecs; [`Remote::find`] also loads
+//!   fetch and push [`Refspecs`] from an explicit configuration snapshot.
+//! - [`Refspecs`] maps supplied sources to destinations without I/O or update authorization.
+//!   [`Destination`] identifies a selected local or network endpoint separately.
+//! - [`RemoteConfig`] edits named remote configuration. [`CredentialSession`] discovers credentials
+//!   only through an application-approved helper lifecycle.
+//!
+//! Transport choice, URL rewriting, implicit branch selection, tag following, pruning, mirror
+//! policy and other remote options remain the caller's responsibility.
 //! This is not a complete interpretation of `git fetch <remote>` or `git push <remote>`.
 //!
 //! See `examples/remote_plan.rs` for configuration, advertisement selection and push-command
-//! planning. [`CredentialSession`] provides separate application-approved credential discovery.
-//! [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
+//! planning. [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
 
 mod config;
 mod credential;

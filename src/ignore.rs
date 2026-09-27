@@ -1,8 +1,13 @@
 //! Git ignore rules over repository-relative byte paths.
 //!
-//! [`Ignore`] combines caller-loaded sources in Git precedence order. It checks every ancestor
-//! before the requested path: an excluded directory prevents child rules from re-including its
-//! contents. Callers still own traversal, symlink classification and tracked-file selection.
+//! Construct [`Ignore`] with [`Case`] and [`Limits`], add explicitly loaded [`Source`] bytes in
+//! precedence order, then call [`Ignore::check`] for a path and its directory kind. A returned
+//! [`Match`] explains the decision; `None` means no supplied rule matched. The caller owns source
+//! discovery and tracked-file policy.
+//!
+//! Rule evaluation checks every ancestor before the requested path: an excluded directory prevents
+//! child rules from re-including its contents. Callers still own traversal, symlink classification
+//! and tracked-file selection.
 //! Convert native OS paths to slash-separated repository paths before querying; in particular,
 //! backslash is a literal byte here even on Windows. Git for Windows CLI path interpretation is
 //! therefore a separate adapter boundary.

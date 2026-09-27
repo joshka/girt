@@ -1,5 +1,11 @@
 //! Async protocol v0 over a caller-approved OpenSSH executable and configuration.
 //!
+//! [`SshRemote::new`] accepts explicit endpoint and trusted executable inputs;
+//! [`SshRemote::configured`] resolves a selected [`Destination`] with [`crate::Config`] and
+//! [`SshEnvironment`]. [`ApprovedSshCommand`] lets the application authorize a configured
+//! command before girt starts a process. [`TransportControl`] governs
+//! owned waits; the application owns the Tokio runtime and synchronous fetch validation worker.
+//!
 //! Available with `ssh` on macOS/Linux. No runtime, credential discovery, keychain or cryptography
 //! is implemented here. Callers own a Tokio runtime with I/O/time enabled and trust the executable,
 //! config (including includes and Match exec), remote account and service. The configured path

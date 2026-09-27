@@ -1,11 +1,16 @@
 //! Conservative tree checkout with literal blob bytes and native POSIX modes.
 //!
-//! [`Repository::checkout_tree`](crate::Repository::checkout_tree) replaces a clean baseline and
-//! index with a selected tree, without changing HEAD or references. The baseline is explicit:
-//! pass the tree represented by the current index, or `None` for an empty index, including a
-//! no-checkout clone. A nonempty baseline with a missing index is rejected. An unborn HEAD needs
-//! no special treatment because HEAD is neither read nor switched. Staged changes relative to
-//! the supplied baseline, conflicts and dirty tracked paths are refused, even on unchanged paths.
+//! [`Repository::checkout_tree`](crate::Repository::checkout_tree) takes an explicit clean
+//! baseline, target, [`Limits`] and cancellation flag. [`Report`] records completed operations and
+//! index publication; [`Failure`] preserves that report and cleanup failures when a later phase
+//! stops. Inspect the actual worktree before recovery because mutations are not rolled back.
+//!
+//! The selected tree replaces a clean baseline and index without changing HEAD or references.
+//! Pass the tree represented by the current index as the baseline, or `None` for an empty index
+//! (including a no-checkout clone). A nonempty baseline with a missing index is rejected. An unborn
+//! HEAD needs no special treatment because HEAD is neither read nor switched. Staged changes
+//! relative to the supplied baseline, conflicts and dirty tracked paths are refused, even on
+//! unchanged paths.
 //!
 //! Callers must exclude other worktree writers and renames of the root/ancestors throughout the
 //! call, and protect repository metadata, objects and mount topology from replacement. The index

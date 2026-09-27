@@ -1,8 +1,12 @@
 //! Byte-preserving line edits and explicit binary classification.
 //!
-//! [`diff`] compares borrowed payloads without storage or path policy. [`BlobContent`] separately
-//! loads a [`crate::TreeChange`]'s blob sides. No attributes, textconv, whitespace normalization,
-//! rename detection, patch encoding/application, merge, index or worktree access is performed.
+//! Start with [`diff`] when both payloads are already in memory. [`BlobContent::read`] loads the
+//! blob sides of a [`crate::TreeChange`] from object storage first. [`ContentDiff`] distinguishes
+//! unchanged, binary-changed, and text results; [`DiffLimits`] bounds the comparison. Returned
+//! text edits borrow the supplied payloads and do not include patch context or rendering.
+//!
+//! The comparison does not apply attributes, textconv, whitespace normalization, rename
+//! detection, or patch encoding. It performs no merge, index, or worktree operation.
 mod blobs;
 mod myers;
 mod types;

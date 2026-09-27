@@ -16,6 +16,14 @@ use crate::{ObjectId, Repository};
 
 /// A synchronous destination snapshot and explicit policy for one fetch.
 ///
+/// # Workflow
+///
+/// [`Self::prepare`] captures destination values. Choose optional depth, pruning, and reflog
+/// policy before [`Self::receive_local`] or a network adapter reads the actual advertisement.
+/// [`FetchReady::finish`] installs validated objects and publishes eligible refs; inspect
+/// [`FetchReport`] or [`FetchFinishError`] for completed effects and retry decisions. Use
+/// [`Self::plan`] only to preview how an advertisement would map, not to reserve its tips.
+///
 /// Construct with a named remote's [`crate::remote::Remote::fetch_refspecs`] or an explicit list.
 /// Endpoint selection and credentials remain separate transport arguments. Only `refs/remotes/*`
 /// and `refs/tags/*` destinations are supported by default. A caller may add tag-like namespaces

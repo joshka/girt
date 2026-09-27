@@ -1,10 +1,13 @@
 //! Clone into a new bare repository or an ordinary repository without checkout.
 //!
-//! [`CloneRequest::prepare_tracking`] explicitly chooses a remote-tracking reference layout,
-//! selecting all branches and tags from the actual transfer advertisement.
-//! [`CloneReady::finish`] exclusively creates the destination, installs the validated transfer,
-//! saves `origin` configuration, and sets the selected branch/HEAD. Both layouts use
-//! `refs/remotes/origin/*`; bare clone does not copy every branch into `refs/heads/*`.
+//! Start with [`CloneRequest::prepare_tracking`] to choose the destination, layout, origin URL,
+//! branch policy, and reflog policy. Transfer from an explicit endpoint, then call
+//! [`CloneReady::finish`] to create the repository and publish its initial refs. [`ClonePlan`]
+//! describes the selected advertisement; [`CloneReport`] and [`CloneError`] identify completed
+//! phases when publication is incomplete.
+//!
+//! Preparation selects all branches and tags from the actual transfer advertisement. Both layouts
+//! use `refs/remotes/origin/*`; bare clone does not copy every branch into `refs/heads/*`.
 //! No index or worktree files are created. An ordinary clone therefore has an absent index,
 //! and Git status can show tracked files as deleted until the caller performs a checkout.
 //!

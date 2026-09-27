@@ -1,9 +1,14 @@
 //! Read-only staged changes and literal working-tree observations.
 //!
+//! Call [`Repository::raw_status`](crate::Repository::raw_status) with [`Baseline`] to choose the
+//! comparison tree and [`Untracked`] to choose whether raw untracked leaves are listed. [`Report`]
+//! separates staged, unstaged, unmerged, unchecked gitlink, and boundary observations. Empty
+//! change lists do not establish Git-default cleanliness or authorize checkout.
+//!
 //! [`Repository::raw_status`](crate::Repository::raw_status) deliberately compares raw bytes and
 //! POSIX executable/symlink modes. It does not apply attributes, filters, EOL conversion, ignore
 //! rules, `core.filemode`, `core.symlinks`, or ambient configuration. This is useful for consumers
-//! that own normalization policy, and is **not Git-default status**. Results repeat that contract.
+//! that own normalization policy, and is **not Git-default status**.
 //! Cached index stat words and assume-valid never bypass content verification. No index refresh,
 //! locks, hooks, writes, rename detection, staging or checkout occur.
 //!
