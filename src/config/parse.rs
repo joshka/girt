@@ -57,9 +57,10 @@ impl Config {
     ///
     /// A UTF-8 BOM is accepted only at the start. Escape sequences are `\n`, `\t`, `\b`,
     /// `\\`, and `\"`; backslash-newline joins physical lines. Unquoted surrounding whitespace
-    /// is removed, while quoted whitespace is preserved. An absent `=` is distinct from an empty
-    /// value. Comments may contain uninterpreted NUL bytes; NUL in names, subsections or values
-    /// and malformed syntax return an error.
+    /// is removed, while quoted whitespace and whitespace before a continuation after value text
+    /// are preserved. An absent `=` is distinct from an empty value. Comments may contain
+    /// uninterpreted NUL bytes; NUL in names, subsections or values and malformed syntax return
+    /// an error.
     ///
     /// # Errors
     ///
@@ -341,6 +342,7 @@ impl Parser<'_> {
                 b'\\' => {
                     let escaped = match self.take() {
                         Some(b'\n') => {
+                            keep = value.len();
                             self.value_end = self.pos;
                             continue;
                         }
@@ -383,6 +385,9 @@ mod tests {
     #[case::continuation(b"[core]\nx = ab\\\ncd\n", b"abcd")]
     #[case::escapes(b"[core]\nx = \\n\\t\\b\\\\\\\"\n", b"\n\t\x08\\\"")]
     #[case::bytes(b"[core]\nx = \xff\n", b"\xff")]
+    #[case::continued_space(b"[core]\nx = first  \\\n\n", b"first  ")]
+    #[case::continued_space_comment(b"[core]\nx = first\t \\\n# comment\n", b"first\t ")]
+    #[case::continued_empty(b"[core]\nx = \\\n\n", b"")]
     #[case::empty_quote_prefix(b"[core]\nx = \"\"  value\n", b"value")]
     #[case::continued_prefix(b"[core]\nx = \\\n  value\n", b"value")]
     fn parses_values(#[case] input: &[u8], #[case] expected: &[u8]) {
