@@ -13,14 +13,16 @@ described in [compatibility](compatibility.md).
 
 Completion has two deliverables: a working jj integration without production Git executable, gix or
 libgit2 dependencies, and published `girt*` crates that support that integration as their minimum
-demonstrated capability. Independent Git test oracles and remote servers remain permitted; explicit
-user extension programs must be inventoried. Deferred platform support must stay visible. A
-successful local path dependency does not complete registry delivery.
+demonstrated capability. The first usable 0.1 crate is published before this full integration is
+complete, with the supported jj slice verified through the registry. Independent Git test oracles
+and remote servers remain permitted; explicit user extension programs must be inventoried. Deferred
+platform support must stay visible. A successful local path dependency does not complete registry
+delivery.
 
-After R35, follow the [publication plan](publication-plan.md): documentation quality, release
-qualification and CI hardening, initial crates.io publication with verified docs.rs builds, then
-release-plz automation. IDs R42–R45 extend this queue; their dependencies determine dispatch order.
-The integration attempt continues while independent planning work proceeds.
+Follow the [publication plan](publication-plan.md): documentation quality for the stable 0.1 API,
+release qualification and CI hardening, initial crates.io publication with verified docs.rs builds,
+then release-plz automation. R35 continues toward A19 while R42–R45 deliver the tested library
+slice; the initial publication does not wait for final replacement.
 
 ## Baseline and Ownership
 

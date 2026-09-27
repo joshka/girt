@@ -28,11 +28,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Toolchain
@@ -73,11 +73,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Environment
@@ -96,7 +96,7 @@ jobs:
         run: cargo +stable build --locked --release --example reftable_resources
       - name: Owned snapshot and compaction resources
         run: python tests/fixtures/reftable/measure.py
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: reftable-${{ matrix.os }}
@@ -107,11 +107,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-26.04, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Environment
@@ -136,7 +136,7 @@ jobs:
         run: cargo +stable run --locked --release --no-default-features --example reflog_resources
       - name: Git operation observations
         run: python tests/fixtures/reflogs/observe.py
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: imported-reflogs-${{ matrix.os }}
           path: reflog-observations.json

@@ -1,9 +1,11 @@
 # Publication and Maintenance Plan
 
-The release must support the tested jj integration through published crates, with useful docs.rs
-pages. R35 remains the integration owner; R42–R45 turn its verified scope into a maintained release.
-Optional limitations stay on the roadmap. Unsafe mutation, corruption and required interoperability
-failures cannot be converted into release acceptance by documenting them.
+The initial 0.1 release publishes girt's tested, usable library scope while R35 continues the jj
+integration. Its published APIs must support the matching tested jj integration slice, and its
+docs.rs pages must make that scope usable. Complete Git-free jj remains the later A19 goal, not a
+precondition for the first crate. Optional limitations stay on the roadmap. Unsafe mutation,
+corruption and failures in the supported interoperability scope cannot be converted into release
+acceptance by documenting them.
 
 ## Authorization and Sequence
 
@@ -13,8 +15,9 @@ configured; never print or copy them into reports. This authorization does not i
 pull requests to jj. Local jj integration and validation remain authorized.
 
 First qualify and publish the initial crates, then adopt release-plz for subsequent releases. Do not
-publish a placeholder to satisfy the order. Registry publication must use the tested package
-contents and an honest supported-scope statement. Keep unrelated crates and repositories untouched.
+publish a placeholder to satisfy the order or wait for all of A19. Registry publication must use the
+tested package contents and an honest supported-scope statement. Keep unrelated crates and
+repositories untouched.
 
 ## Maintainer Policy
 
@@ -77,8 +80,9 @@ chosen MSRV and standard GitHub security settings; avoid adding bespoke release-
 
 Publish necessary crates in dependency order using the existing Cargo login after R43 passes. Record
 package versions and source revisions. Verify registry availability, install a fresh consumer
-without path patches, and switch the local jj integration to the published version for relevant
-acceptance tests. Account for any permitted remote servers and extension programs in the audit.
+without path patches, and switch the matching jj integration slice to the published version for
+relevant acceptance tests. This verifies registry usability without claiming the unfinished A19
+replacement. Account for any permitted remote servers and extension programs in the audit.
 
 Verify successful [docs.rs builds](https://docs.rs/about/builds) for the published versions and
 inspect their landing pages, links, examples and feature/platform annotations. A local Rustdoc build

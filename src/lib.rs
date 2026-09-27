@@ -15,6 +15,16 @@
 //!
 //! # First use
 //!
+//! Add `girt = "0.1"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
+//! without opening a repository:
+//!
+//! ```rust
+//! use girt::{ObjectFormat, ObjectKind};
+//!
+//! let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"hello");
+//! assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
+//! ```
+//!
 //! In the [source checkout](https://github.com/joshka/girt), run
 //! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
 //! [`LooseObjects`] for storage assumptions and the

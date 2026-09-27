@@ -17,6 +17,16 @@ worktree/HEAD changes through publication. Inspect partial publication before re
 
 ## First use
 
+Add `girt = "0.1"` to your dependencies (Rust 1.97.1 or newer). This small example computes a Git
+blob identity without opening a repository:
+
+```rust
+use girt::{ObjectFormat, ObjectKind};
+
+let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"hello");
+assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
+```
+
 Run a blob write and read in a disposable object directory:
 
 ```sh

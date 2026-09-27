@@ -5,8 +5,12 @@ edition = "2024"
 authors = ["Josh McKinney"]
 description = "An incremental, idiomatic Rust implementation of Git"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/joshka/girt"
+documentation = "https://docs.rs/girt"
+rust-version = "1.97.1"
 keywords = ["git", "version-control", "repository"]
 categories = ["development-tools"]
+exclude = ["/AGENTS.md", "/docs/benchmarks/**", "/docs/evidence/*.sha256"]
 
 [features]
 tracing = ["dep:tracing"]

@@ -34,9 +34,9 @@ impl Capture {
     }
     pub fn named(&self, name: &str) -> Span {
         let spans = self.spans();
-        let found: Vec<_> = spans.into_iter().filter(|s| s.name == name).collect();
-        assert_eq!(found.len(), 1, "expected one {name}: {found:?}");
-        found.into_iter().next().unwrap()
+        let found: Vec<_> = spans.iter().filter(|s| s.name == name).collect();
+        assert_eq!(found.len(), 1, "expected one {name}; captured: {spans:?}");
+        found[0].clone()
     }
     pub fn parent_name(&self, span: &Span) -> &'static str {
         self.0.lock().unwrap()[&span.parent.unwrap()].name
