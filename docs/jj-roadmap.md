@@ -129,7 +129,7 @@ consumer or native-platform evidence.
 | R32 | Repack and concurrent atomic pack publication               | R31, R16                        | Complete            | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r32.md)                                                                                               |
 | R33 | Safe pruning, reflog expiry and maintenance composition     | R32                             | Scoped accepted     | XL   | [A17](jj-acceptance.md#a17--gc-repack-and-expiry); [evidence](evidence/r33.md); Windows destructive maintenance [B08](#b08--nonadmin-windows-destructive-maintenance)        |
 | R34 | Full girt acceptance corpus and native readiness            | R00–R33, R36–R41                | Scoped gate         | XL   | [Readiness evidence](evidence/r34.md); [acceptance matrix](jj-acceptance.md); required GC follow-up [B09](#b09--ordinary-jj-maintenance-isolation)                           |
-| R35 | Final jj replacement and integration                        | R34 and all required follow-ups | Planned             | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate)                                                                                                                          |
+| R35 | Final jj replacement and integration                        | R34 and all required follow-ups | In progress         | XL   | [A19](jj-acceptance.md#a19--final-replacement-gate); [bounded attempt](evidence/r35.md)                                                                                      |
 | R36 | Coherent Windows native integration coverage                | R06; alongside R11/R12          | Accepted            | L    | [A16](jj-acceptance.md#a16--native-ci-and-platform-coverage); [evidence](evidence/r36.md)                                                                                    |
 | R37 | Reftable reference and reflog backend                       | R11, R14                        | Accepted            | XL   | [Backend evidence](evidence/r37.md); both-format records, stacks, conditional publication, compaction and native evidence; required before R34.                              |
 | R38 | Split and sparse index storage                              | R12, R14                        | Accepted            | XL   | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
@@ -554,6 +554,16 @@ partial registration state for inspection; R20 owns repair and pruning. The succ
 the failed macOS split-index and Windows tracing jobs do not erase their original failures. C02
 assesses split-index intermittency alongside its tracing owner. R18/B01 remains deferred and
 unaccepted.
+
+## R35 Bounded Unix Integration Attempt
+
+The [R35 evidence](evidence/r35.md) records the target jj inventory and first local-dependency
+changes. Direct ignore matching now uses girt, and `jj util gc` uses additive repacking with an
+explicit deferred-reclamation result. These are partial milestones: the Git backend, transport,
+worktree operations, exposed gix types and production subprocesses remain to be replaced before
+[A19](jj-acceptance.md#a19--final-replacement-gate) can close. B09 is safe for this bounded
+no-deletion path, but full GC equivalence and retained-disk cleanup remain open. Windows maintenance
+stays in B08.
 
 ## Comeback Backlog
 
