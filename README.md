@@ -5,6 +5,27 @@ An incremental, idiomatic Rust implementation of Git, dual-licensed under MIT an
 girt aims to provide a Git library for applications such as jj, with APIs organized around Git's own
 concepts and exact interoperability for supported repository formats and operations.
 
+## Start Here
+
+Run `cargo run --example loose_blob` to write and read a blob in a disposable object store. The
+temporary directory is removed when the example exits normally. For API contracts and runnable Rust
+examples, build the crate documentation with `cargo doc --open`.
+
+Choose another example for the operation you need:
+
+- `tree` builds and parses an in-memory tree; `loose_tree`, `loose_commit`, and `loose_tag` store
+  and read object graphs in disposable storage.
+- `open_repository -- /path/to/repo <blob-id>` reads a loose blob from an existing repository;
+  `packed_repository -- /path/to/repo <object-id>` reads loose or packed object payloads. These
+  examples do not modify the supplied repository.
+- `publish_branch` stores commits and advances a branch through HEAD without reflogs; `history`
+  walks commit ancestry; `write_pack` exports and reopens a private pack.
+- `fetch_local` and `push_local` demonstrate transport through disposable local Git processes.
+
+Prefix each name with `cargo run --example` to run it. The commands that take a repository path
+require the additional arguments shown. See [Contributing](CONTRIBUTING.md) for setup and checks and
+[Compatibility evidence](docs/compatibility.md) for verified behavior and limitations.
+
 ## Status
 
 The library derives SHA-1 blob identities, encodes blobs, and reads and writes loose blobs, trees,
@@ -68,19 +89,6 @@ Deletion, atomic multi-ref push and HTTP/SSH adapters are deferred. See
 Compatibility will be established through format specifications, independently generated fixtures,
 and tests against Git's observable behavior. All implementation, documentation, and tests must be
 original; do not copy, translate, or adapt copyrightable expression from Git source code.
-
-Run `cargo run --example loose_blob` for a complete write/read operation in a disposable object
-store. The temporary directory is removed when the example exits normally. Run
-`cargo run --example tree` to build, encode, and parse an in-memory tree. Run
-`cargo run --example loose_tree` to write blobs, construct a tree referencing them, store it, and
-read the tree and its blobs back. Run `cargo run --example loose_commit` to store a blob, its tree,
-and a root commit, then read the snapshot back. Run `cargo run --example loose_tag` to store an
-annotated tag of a blob and read both objects back. Run
-`cargo run --example open_repository -- /path/to/repo <blob-id>` to open an existing repository and
-read a loose blob without modifying files. Run `cargo run --example publish_branch` to store commits
-and publish/advance a branch through HEAD in a disposable repository, explicitly omitting reflogs.
-Run `cargo run --example packed_repository -- /path/to/repo <object-id>` to print the exact payload
-of a loose or packed object; its kind, identity, and size go to stderr.
 
 ## Development
 
