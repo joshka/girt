@@ -1,11 +1,12 @@
 # Git Compatibility Evidence
 
-This page records supported boundaries and the observations that established them. Start with the
-[README task paths](../README.md#choose-a-workflow) or crate Rustdoc for an operation's current
-contract. The task guides cover [repository layouts](repositories.md),
-[configuration](configuration.md), [references and recovery](reference-transactions.md),
+Each supported boundary is tied to the observations that established it. For current usage, start
+with the [README examples](../README.md#examples) or the
+[published API documentation](https://docs.rs/girt/latest/girt/). For task-specific instructions,
+read [repository layouts](repositories.md), [configuration](configuration.md),
+[references and recovery](reference-transactions.md),
 [working-tree status and checkout](working-tree.md), [HTTP](http.md), and [SSH](ssh.md). The results
-below apply to their stated revisions. Paths under `/Users/joshka/.codex/reports/` identify
+apply to their stated revisions. Paths under `/Users/joshka/.codex/reports/` identify
 maintainer-local artifacts that are not part of this repository or published crate. The linked
 `docs/evidence/` records retain the portable scope and revision summaries.
 
@@ -942,8 +943,8 @@ arm64 was exercised; other platforms and actual multi-gigabyte output remain unt
 
 ## Upload-Pack Fetch
 
-This section records the original R16 upload-pack acceptance revision. R27 extends it with SHA-256
-wire transfer, verified external thin-pack bases, and explicit shallow/depth negotiation; see
+R16 established the original upload-pack acceptance boundary. R27 extends it with SHA-256 wire
+transfer, verified external thin-pack bases, and explicit shallow/depth negotiation; see
 [R27 evidence](evidence/r27.md) for the current supported boundary. The original test and resource
 claims below describe that earlier revision.
 

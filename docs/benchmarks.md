@@ -1,6 +1,6 @@
 # Performance Measurements
 
-This page retains workload-specific measurements at their recorded revisions. They are baselines for
+These workload-specific measurements are tied to their recorded revisions. They are baselines for
 comparison under similar conditions, not current speed guarantees. Start with the
 [blob workloads](#workloads-and-measurements), or jump to [pack reads](#pack-read-baseline),
 [fetch](#fetch-baseline), [push](#push-baseline), [HTTP](#smart-http-loopback-baseline),
@@ -496,8 +496,8 @@ separate work and memory evidence.
 
 ## Owned Transport Baseline
 
-This section records the original Git-server measurement. R25 replaced the local adapter and renamed
-the current benchmark to `native-local-read-pack`; see [R25 evidence](evidence/r25.md) for the new
+The original Git-server measurement predates R25, which replaced the local adapter and renamed the
+current benchmark to `native-local-read-pack`; see [R25 evidence](evidence/r25.md) for the new
 workload and samples. The command below applies to the original revision only.
 
 Run `cargo bench --locked --bench fetch -- local-process-import-connectivity --noplot`. The same

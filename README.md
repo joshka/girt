@@ -1,7 +1,7 @@
 # girt
 
-girt is an experimental Rust library for applications that work with Git repositories, including jj.
-It is dual-licensed under MIT and Apache-2.0.
+girt is an experimental Rust library for applications that work with Git repositories. It is
+dual-licensed under MIT and Apache-2.0.
 
 ## Status
 
@@ -12,7 +12,7 @@ change; there is no CLI.
 Raw status and checkout run on macOS/Linux and do not apply Git's attribute, filter, or EOL
 transformations. Native local transfer requires callers to exclude external GC/pruning and
 worktree/HEAD changes through publication. Inspect partial publication before retrying. The
-[crate Rustdoc source](src/lib.rs) documents API contracts;
+[published API documentation](https://docs.rs/girt/latest/girt/) describes public contracts;
 [compatibility evidence](docs/compatibility.md) records tested boundaries and provenance.
 
 ## First use
@@ -35,20 +35,21 @@ cargo run --example loose_blob
 
 The example prints the object ID and removes its temporary directory when it exits. To read an
 existing repository without changing it, run
-`cargo run --example open_repository -- /path/to/repo <blob-id>`. Run `cargo doc --open` for the
-crate documentation on object identities, repository reads, and public API contracts. Its
-[Rustdoc source](src/lib.rs) is available in this repository.
+`cargo run --example open_repository -- /path/to/repo <blob-id>`. Run `cargo doc --open` to build
+the API documentation locally, or read the
+[published API documentation](https://docs.rs/girt/latest/girt/).
 
-## Choose a workflow
+## Examples
 
-The [examples](examples/) show library calls for individual tasks. Check each example's setup before
-running it; the linked guides describe prerequisites, effects, limits, and recovery.
+Run the [examples](examples/) from a source checkout. Each linked guide explains prerequisites,
+effects, limits, and recovery for the corresponding operation.
 
 - **Create or inspect a repository:** Run `cargo run --example init_repository`, then read
   [repository layouts and shallow history](docs/repositories.md).
 - **Write and read objects:** Run `cargo run --example loose_commit`, then use
   `cargo run --example packed_repository -- /path/to/repo <object-id>` to inspect an existing
-  repository. See the [crate Rustdoc source](src/lib.rs) for object and pack APIs.
+  repository. See the [API documentation](https://docs.rs/girt/latest/girt/) for object and pack
+  APIs.
 - **Edit refs with explicit history:** Run `cargo run --example reference_transaction` and read
   [conditional references and reflogs](docs/reference-transactions.md), including partial failure
   recovery.
@@ -70,7 +71,7 @@ See [SSH setup and contracts](docs/ssh.md). The `tracing` feature and its
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, compatibility testing, and contribution
-guidance. The [roadmap](docs/jj-roadmap.md) tracks integration and remaining work.
+guidance.
 
 ## License
 

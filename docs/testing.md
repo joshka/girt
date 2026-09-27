@@ -226,11 +226,12 @@ and `references` establish format-specific execution; a successful compile or a 
 not sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for
 checkout and temporary-fixture storage.
 
-## Historical Capability Completion Records
+## Earlier Capability Evidence
 
-The following sections record evidence collected when each capability landed. Counts, commands, API
-names, and platform results describe those revisions, not a fresh run of the current checkout.
-Current implementation expectations are above; current capability and platform boundaries are in
+These records capture evidence collected when each capability landed. Counts, commands, API names,
+and platform results describe those revisions, not a fresh run of the current checkout. Current
+implementation expectations are in [Required Evidence](#required-evidence) and the
+[task checklist](#implementation-task-checklist); current capability and platform boundaries are in
 [compatibility evidence](compatibility.md).
 Later records may supersede earlier limitations, with the original evidence retained for provenance.
 

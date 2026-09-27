@@ -4,7 +4,7 @@ Use these operations when the application owns literal byte and POSIX-mode polic
 macOS/Linux; Windows status traversal and tree materialization are unsupported. Neither operation
 applies Git attributes, filters, EOL conversion, ignore rules, or configuration normalization.
 
-## Observe Raw Status
+## Inspect Raw Status
 
 Run `cargo run --example status` for a disposable repository, or add a repository path to inspect an
 existing one. `Repository::raw_status` compares the selected tree, index, and working files. It
