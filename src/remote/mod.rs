@@ -6,6 +6,8 @@
 //!   fetch and push [`Refspecs`] from an explicit configuration snapshot.
 //! - [`Refspecs`] maps supplied sources to destinations without I/O or update authorization.
 //!   [`Destination`] identifies a selected local or network endpoint separately.
+//! - [`ParsedUrl`] exposes a URL's original bytes, host, and path for presentation, and expands
+//!   local paths against an explicit base without accessing the filesystem.
 //! - [`RemoteConfig`] edits named remote configuration. [`CredentialSession`] discovers credentials
 //!   only through an application-approved helper lifecycle.
 //!
@@ -22,6 +24,7 @@ mod edit;
 mod endpoint;
 pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
 mod refspec;
+mod url;
 
 pub use config::{Remote, RemoteError, RemoteUrls};
 pub use credential::{
@@ -32,3 +35,4 @@ pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment};
 pub use refspec::{
     Direction, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs, RefspecsError,
 };
+pub use url::{ParsedUrl, UrlError};
