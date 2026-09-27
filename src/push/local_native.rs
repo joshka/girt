@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, Status};
+use crate::config::ConfigInputs;
 use crate::fetch::{
     Advertisement, FetchError, FetchLimits, KnownHistory, NativeContents, ReceivedFetch,
 };
@@ -18,11 +19,12 @@ pub(super) fn send(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
     identity: Option<&Signature>,
+    config_inputs: &ConfigInputs,
 ) -> Result<PushReport, PushError> {
     control
         .check()
         .map_err(|error| PushError::NotSent(error.into()))?;
-    let repository = Repository::open(destination)
+    let repository = Repository::open_with_config(destination, config_inputs)
         .map_err(|error| PushError::NotSent(PushFailure::destination(error)))?;
     if repository.object_format() != prepared.format {
         return Err(PushError::NotSent(PushFailure::Unsupported(
@@ -112,7 +114,8 @@ pub(super) fn send(
                 "symbolic push destination",
             )));
         }
-        let checked_out = is_checked_out(&repository, &command.name).map_err(PushError::NotSent)?;
+        let checked_out = is_checked_out(&repository, &command.name, config_inputs)
+            .map_err(PushError::NotSent)?;
         let rejected_current = checked_out
             && (command.deletes() && deny_delete_current
                 || !command.deletes() && current_policy == CurrentPolicy::Refuse);
@@ -209,9 +212,11 @@ pub(super) fn send(
             continue;
         }
         let checked_out =
-            is_checked_out(&repository, &command.name).map_err(|error| PushError::Uncertain {
-                cause: error,
-                report: Box::new(report.clone()),
+            is_checked_out(&repository, &command.name, config_inputs).map_err(|error| {
+                PushError::Uncertain {
+                    cause: error,
+                    report: Box::new(report.clone()),
+                }
             })?;
         if checked_out {
             if command.deletes() && deny_delete_current {
@@ -360,11 +365,16 @@ impl HideRules {
     }
 }
 
-fn is_checked_out(repository: &Repository, name: &RefName) -> Result<bool, PushFailure> {
+fn is_checked_out(
+    repository: &Repository,
+    name: &RefName,
+    config_inputs: &ConfigInputs,
+) -> Result<bool, PushFailure> {
     if !name.as_bytes().starts_with(b"refs/heads/") {
         return Ok(false);
     }
-    let main = Repository::open(repository.common_dir()).map_err(PushFailure::destination)?;
+    let main = Repository::open_with_config(repository.common_dir(), config_inputs)
+        .map_err(PushFailure::destination)?;
     if head_names(&main, name)? {
         return Ok(true);
     }
@@ -378,7 +388,8 @@ fn is_checked_out(repository: &Repository, name: &RefName) -> Result<bool, PushF
         if !entry.file_type()?.is_dir() {
             return Err(PushFailure::Unsupported("worktree registration"));
         }
-        let worktree = Repository::open(entry.path()).map_err(PushFailure::destination)?;
+        let worktree = Repository::open_with_config(entry.path(), config_inputs)
+            .map_err(PushFailure::destination)?;
         if head_names(&worktree, name)? {
             return Ok(true);
         }

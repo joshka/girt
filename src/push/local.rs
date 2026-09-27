@@ -7,6 +7,7 @@ use super::{PreparedPush, PushError, PushReport};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use super::{PushFailure, protocol};
 use crate::Signature;
+use crate::config::ConfigInputs;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use crate::packet::Wire;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -61,6 +62,41 @@ pub fn send_local_with_control(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
+    let inputs = ConfigInputs::default();
+    send_local_with_context(
+        destination,
+        prepared,
+        control,
+        LocalPushContext {
+            config_inputs: &inputs,
+            identity: None,
+        },
+    )
+}
+
+/// Explicit inherited configuration and optional reflog identity for one native local push.
+///
+/// The destination and its linked worktrees add their own local/worktree configuration to these
+/// inputs. No ambient environment is read. The caller must supply the same effective sources and
+/// runtime pairs that its Git push policy would use.
+pub struct LocalPushContext<'a> {
+    /// System, global, and runtime configuration sources to inherit.
+    pub config_inputs: &'a ConfigInputs,
+    /// Identity for reflogs that the receive policy actually appends.
+    pub identity: Option<&'a Signature>,
+}
+
+/// Sends a native local push with explicit inherited configuration.
+///
+/// Uses [`send_local_with_control`]'s partial-outcome contract. The supplied configuration is
+/// resolved before any object installation or reference publication. Unsupported receive policy
+/// refuses before mutation; no Git process or hook is invoked.
+pub fn send_local_with_context(
+    destination: impl AsRef<Path>,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+    context: LocalPushContext<'_>,
+) -> Result<PushReport, PushError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -74,7 +110,15 @@ pub fn send_local_with_control(
         unpack = tracing::field::Empty,
     );
 
-    let operation = || super::local_native::send(destination.as_ref(), prepared, control, None);
+    let operation = || {
+        super::local_native::send(
+            destination.as_ref(),
+            prepared,
+            control,
+            context.identity,
+            context.config_inputs,
+        )
+    };
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);
     #[cfg(not(feature = "tracing"))]
@@ -106,7 +150,16 @@ pub fn send_local_with_identity(
     control: TransportControl<'_>,
     identity: &Signature,
 ) -> Result<PushReport, PushError> {
-    super::local_native::send(destination.as_ref(), prepared, control, Some(identity))
+    let inputs = ConfigInputs::default();
+    send_local_with_context(
+        destination,
+        prepared,
+        control,
+        LocalPushContext {
+            config_inputs: &inputs,
+            identity: Some(identity),
+        },
+    )
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

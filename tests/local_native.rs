@@ -4,10 +4,11 @@ use std::ops::ControlFlow;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
+use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::fetch::{FetchError, FetchLimits, receive_local};
 use girt::push::{
-    ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, RejectionOrigin,
-    send_local, send_local_with_identity,
+    ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushError, PushFailure, PushLimits,
+    RejectionOrigin, send_local, send_local_with_context, send_local_with_identity,
 };
 use girt::refs::{Backend, Expected, RefName, Target};
 use girt::transport::TransportControl;
@@ -268,6 +269,88 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
             .read(&RefName::new("refs/heads/main").unwrap())
             .unwrap()
             .is_none()
+    );
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn native_push_uses_explicit_inherited_receive_config(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, Backend::Files);
+    let dest = repository(&root, "dest", format, Backend::Files);
+    let id = commit(&source);
+    let name = RefName::new("refs/heads/topic").unwrap();
+    let cancel = AtomicBool::new(false);
+    let objects = source.objects(PackLimits::default()).unwrap();
+    let create = PreparedPush::new_local(
+        &objects,
+        vec![PushCommand {
+            name: name.clone(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert!(
+        send_local(dest.git_dir(), &create, &cancel)
+            .unwrap()
+            .all_succeeded()
+    );
+
+    let global_config = root.path().join("global-config");
+    std::fs::write(&global_config, b"[receive]\n denyDeletes = true\n").unwrap();
+    let config_inputs = ConfigInputs {
+        files: vec![ConfigFile {
+            path: global_config,
+            scope: ConfigScope::Global,
+            optional: false,
+        }],
+        ..ConfigInputs::default()
+    };
+    let delete = PreparedPush::new_local(
+        &objects,
+        vec![PushCommand {
+            name: name.clone(),
+            expected: Some(id),
+            new: girt::ObjectId::null(format),
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let report = send_local_with_context(
+        dest.git_dir(),
+        &delete,
+        TransportControl::new(&cancel),
+        LocalPushContext {
+            config_inputs: &config_inputs,
+            identity: None,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        report.refs[0].status,
+        Some(girt::push::Status::Rejected(_))
+    ));
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::Receiver)
+    );
+    assert_eq!(
+        dest.references().unwrap().read(&name).unwrap(),
+        Some(Target::Direct(id))
+    );
+    assert!(
+        send_local(dest.git_dir(), &delete, &cancel)
+            .unwrap()
+            .all_succeeded()
     );
 }
 

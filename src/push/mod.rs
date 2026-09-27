@@ -34,7 +34,10 @@ mod prepared;
 mod protocol;
 mod types;
 
-pub use local::{send_local, send_local_with_control, send_local_with_identity};
+pub use local::{
+    LocalPushContext, send_local, send_local_with_context, send_local_with_control,
+    send_local_with_identity,
+};
 pub use prepared::PreparedPush;
 pub use protocol::send;
 pub use types::{
