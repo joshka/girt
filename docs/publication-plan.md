@@ -16,6 +16,22 @@ First qualify and publish the initial crates, then adopt release-plz for subsequ
 publish a placeholder to satisfy the order. Registry publication must use the tested package
 contents and an honest supported-scope statement. Keep unrelated crates and repositories untouched.
 
+## Maintainer Policy
+
+Use jj's existing MSRV policy for the integration target; otherwise support stable Rust N-2 (two
+stable releases behind current). Resolve and test the concrete compiler version during release
+qualification. Use ordinary Rust/Cargo 0.x compatibility conventions, without a bespoke versioning
+policy.
+
+Use GitHub's standard security settings and reporting facilities. Keep the requested zizmor,
+cargo-deny and Dependabot checks; do not add a custom security-process project. Handle yanking
+manually if needed. Partial-publication and release-recovery procedures are not prerequisites.
+
+General performance parity with Git remains the goal under
+[A20](jj-acceptance.md#a20--representative-git-parity-performance). Report workload-specific gaps
+and retain their roadmap owners; a deferred optimization does not lower the goal. Long-horizon
+fuzzing is tracked as [B10](jj-roadmap.md#b10--long-horizon-fuzzing).
+
 ## R42 — Documentation Quality
 
 Apply the [documentation standard](documentation.md) and [Rustdoc standard](rustdoc.md) to every
@@ -54,9 +70,8 @@ minimum bumps. Security updates must remain timely; version cooldown does not ap
 the current schema and behavior during implementation.
 
 Acceptance includes a release-candidate package dry run, dependency/runtime subprocess audit,
-consumer tests at recorded revisions, and a short supported-platform/feature matrix. Maintain a
-security-reporting route, documented support/MSRV policy and release recovery instructions. These
-are operational prerequisites, not claims of security certification.
+consumer tests at recorded revisions, and a short supported-platform/feature matrix. Verify the
+chosen MSRV and standard GitHub security settings; avoid adding bespoke release-process gates.
 
 ## R44 — Initial Publication
 
@@ -83,6 +98,5 @@ consistent with the documented first-publication restriction.
 Acceptance: dry runs select only intended crates, release PR version/changelog changes are correct,
 and permissions and workflow triggers are reviewed with zizmor. Verify registry publisher bindings
 and the release workflow's controlled path without publishing an artificial version just to test it.
-Document semver review, failed/partial publication recovery, yanking criteria and credential
-recovery. Record that first live automated publication remains unproven until a genuine release
-exercises it.
+Apply ordinary Rust 0.x versioning. Record that first live automated publication remains unproven
+until a genuine release exercises it.

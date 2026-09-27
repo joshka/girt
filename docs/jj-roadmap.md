@@ -707,6 +707,17 @@ dependents and external Git races. Revisit the size after the R35 call-site and 
 assessment. R35 may begin non-destructive integration while this blocker is resolved; it cannot
 complete A19 with an unsafe destructive call or a hidden Git GC fallback.
 
+### B10 — Long-Horizon Fuzzing
+
+**Size:** L. **Status:** Deferred; not an initial-publication gate. **Owner:** Post-release
+correctness work. Start with format parsers and protocol decoding, then fault-driven stateful
+operation sequences where they add coverage beyond deterministic tests. Prioritize malformed bytes,
+resource limits and partial-operation recovery; preserve original fixture provenance.
+
+Restart after the initial jj-backed release or when a concrete defect identifies an underserved
+input boundary. Retain reproducible crash inputs and regression tests, bounded fuzz budgets and a
+clear triage path. Fuzzing supplements independent Git observations and does not replace them.
+
 ## C02 Storage and Layout Review
 
 The [review evidence](evidence/c02.md) records the scoped decision and later native validation. The
