@@ -1,9 +1,19 @@
 use std::sync::atomic::AtomicBool;
 
-use super::{PreparedPush, PushError, PushFailure, PushReport, protocol};
+use super::{PreparedPush, PushAdvertisement, PushError, PushFailure, PushReport, protocol};
 use crate::packet::Wire;
 use crate::transport::TransportControl;
 use crate::transport::http::{HttpRemote, RequestBody};
+
+/// Outcome of an HTTP push whose caller inspected the receive-pack advertisement.
+#[derive(Debug)]
+pub enum HttpPushOutcome {
+    /// The caller declined before the receive-pack POST. No update command was sent.
+    Declined,
+    /// The accepted operation completed with a report. Empty batches send no POST.
+    /// Inspect each reference for rejection or partial success.
+    Sent(PushReport),
+}
 
 /// Sends a prepared push through smart-HTTP discovery and one receive-pack RPC.
 ///
@@ -29,9 +39,41 @@ use crate::transport::http::{HttpRemote, RequestBody};
 /// proves rejection. Complete Git rejection reports return `Ok`; inspect each reference status.
 pub async fn send_http(
     remote: &HttpRemote,
-    mut prepared: PreparedPush,
+    prepared: PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
+    match send_http_checked(remote, prepared, control, |_| true).await? {
+        HttpPushOutcome::Sent(report) => Ok(report),
+        HttpPushOutcome::Declined => unreachable!("unconditional HTTP push cannot decline"),
+    }
+}
+
+/// Sends a prepared push only when the caller accepts the live receive-pack advertisement.
+///
+/// After bounded discovery and capability validation, `should_send` receives the validated
+/// advertised tips. Returning `false` yields [`HttpPushOutcome::Declined`] without a POST or
+/// receiver mutation; the caller can choose another transport. Returning `true` retains
+/// [`send_http`]'s exact old-value commands and structured report. The callback runs synchronously
+/// on the caller's async task and should return promptly. It cannot change the prepared commands.
+/// Advertised values can change after the callback; the receiver still enforces each command's
+/// expected old value. An absent advertised tip may also represent a hidden reference.
+///
+/// Preparation has already consumed local CPU and memory before this call. Discovery and declined
+/// decisions do not install a pack. Once the POST begins, failures are
+/// [`PushError::Uncertain`] and must not trigger an automatic retry or fallback.
+///
+/// # Errors
+///
+/// Discovery, capability, cancellation and request-encoding failures before the POST are
+/// [`PushError::NotSent`]. Post-send failures retain the valid response prefix in
+/// [`PushError::Uncertain`]. Complete receiver rejections are returned in
+/// [`HttpPushOutcome::Sent`] and must be inspected per reference.
+pub async fn send_http_checked(
+    remote: &HttpRemote,
+    mut prepared: PreparedPush,
+    control: TransportControl<'_>,
+    should_send: impl FnOnce(&PushAdvertisement) -> bool,
+) -> Result<HttpPushOutcome, PushError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -61,12 +103,15 @@ pub async fn send_http(
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            let caps = protocol::advertise(&mut wire, &prepared)?;
+            let (caps, advertisement) = protocol::advertise_with_refs(&mut wire, &prepared)?;
             wire.end()?;
             control.check()?;
-            Ok::<_, PushFailure>(caps)
+            Ok::<_, PushFailure>((caps, advertisement))
         };
-        let caps = preflight.await.map_err(PushError::NotSent)?;
+        let (caps, advertisement) = preflight.await.map_err(PushError::NotSent)?;
+        if !should_send(&advertisement) {
+            return Ok(HttpPushOutcome::Declined);
+        }
         if caps.report_v2 || caps.sideband {
             prepared.request = prepared
                 .request_for(caps.report_v2, caps.sideband)
@@ -75,7 +120,7 @@ pub async fn send_http(
         }
         let mut report = PushReport::pending(&prepared.commands);
         if prepared.commands.is_empty() {
-            return Ok(report);
+            return Ok(HttpPushOutcome::Sent(report));
         }
         report.mark_attempted(&prepared.request, prepared.request.len());
         let body = RequestBody::new(prepared.request, prepared.pack);
@@ -107,7 +152,7 @@ pub async fn send_http(
         .and_then(|()| wire.end().map_err(PushFailure::from));
         let result = response.result.map_err(PushFailure::from).and(parsed);
         match result {
-            Ok(()) => Ok(report),
+            Ok(()) => Ok(HttpPushOutcome::Sent(report)),
             Err(cause) => Err(PushError::Uncertain {
                 cause,
                 report: Box::new(report),
@@ -121,7 +166,7 @@ pub async fn send_http(
     #[cfg(feature = "tracing")]
     crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
     #[cfg(feature = "tracing")]
-    if let Ok(report) = &result {
+    if let Ok(HttpPushOutcome::Sent(report)) = &result {
         crate::trace::push_report(&span, report);
     }
 

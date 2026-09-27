@@ -34,6 +34,14 @@ and generates the ordinary or delta-compressed pack synchronously. Prepare it be
 There is no full-pack copy during the async call. Reprepare after inspecting remote state when an
 attempt has an uncertain outcome.
 
+Use `push::send_http_checked` when the application needs to compare its commands with the actual
+receive-pack advertisement before sending. Its synchronous callback sees validated reference tips
+after discovery. Returning `false` declines the whole batch before POST, so the caller can choose
+another transport. `HttpPushOutcome::Declined` proves no command was sent; `Sent` contains the usual
+per-reference report. Advertised absence can also mean a hidden ref, and tips may move after the
+callback. The receiver still checks every command's expected old value. A failed POST remains
+uncertain and must not trigger automatic fallback.
+
 Advertisement parsing, knowledge-budget checks, request selection/encoding and bounded push status
 parsing remain synchronous preflight/completion work. Their costs scale with configured ref, known
 object, want and status limits; there is no executor latency guarantee for arbitrarily large limits

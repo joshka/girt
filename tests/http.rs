@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
 use girt::push::{
-    self, ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, Status,
+    self, ForcePolicy, HttpPushOutcome, PreparedPush, PushCommand, PushError, PushFailure,
+    PushLimits, Status,
 };
 use girt::refs::RefName;
 use girt::transport::TransportControl;
@@ -533,6 +534,210 @@ fn real_git_delta_push_incremental_and_empty_commands() {
         server.requests(),
         ["GET", "POST", "GET", "POST", "GET", "POST", "GET"]
     );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn checked_http_push_can_decline_after_validated_discovery(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let old = tip(&source.repo, "refs/heads/main");
+    git(
+        dest.git_dir(),
+        &[
+            "fetch",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/heads/main",
+        ],
+        b"",
+    );
+    let new = next(&source);
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = prepared(
+        &source,
+        vec![command("refs/heads/main", Some(old), new)],
+        &[],
+    );
+    let main = RefName::new("refs/heads/main").unwrap();
+    let missing = RefName::new("refs/heads/missing").unwrap();
+    let outcome = runtime()
+        .block_on(push::send_http_checked(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |advertisement| {
+                assert_eq!(advertisement.target(&main), Some(old));
+                assert_eq!(advertisement.target(&missing), None);
+                false
+            },
+        ))
+        .unwrap();
+    assert!(matches!(outcome, HttpPushOutcome::Declined));
+    assert_eq!(server.requests(), ["GET"]);
+    assert_eq!(tip(&dest, "refs/heads/main"), old);
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn checked_http_push_sends_after_accepting_discovery(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let id = tip(&source.repo, "refs/heads/main");
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = prepared(&source, vec![command("refs/heads/main", None, id)], &[]);
+    let main = RefName::new("refs/heads/main").unwrap();
+    let outcome = runtime()
+        .block_on(push::send_http_checked(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |advertisement| {
+                assert_eq!(advertisement.target(&main), None);
+                true
+            },
+        ))
+        .unwrap();
+    assert!(matches!(outcome, HttpPushOutcome::Sent(report) if report.all_succeeded()));
+    assert_eq!(server.requests(), ["GET", "POST"]);
+    assert_eq!(tip(&dest, "refs/heads/main"), id);
+}
+
+#[test]
+fn checked_http_push_declines_stale_lease_before_post() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let old = tip(&source.repo, "refs/heads/main");
+    git(
+        dest.git_dir(),
+        &[
+            "fetch",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/heads/main",
+        ],
+        b"",
+    );
+    let new = next(&source);
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = prepared(&source, vec![command("refs/heads/main", None, new)], &[]);
+    let main = RefName::new("refs/heads/main").unwrap();
+    let outcome = runtime()
+        .block_on(push::send_http_checked(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |advertisement| advertisement.target(&main).is_none(),
+        ))
+        .unwrap();
+    assert!(matches!(outcome, HttpPushOutcome::Declined));
+    assert_eq!(server.requests(), ["GET"]);
+    assert_eq!(tip(&dest, "refs/heads/main"), old);
+}
+
+#[test]
+fn checked_http_push_declines_whole_batch_for_current_tip() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination();
+    let current = tip(&source.repo, "refs/heads/main");
+    git(
+        dest.git_dir(),
+        &[
+            "fetch",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/heads/main",
+        ],
+        b"",
+    );
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = prepared(
+        &source,
+        vec![
+            command("refs/heads/main", Some(current), current),
+            command("refs/tags/new", None, current),
+        ],
+        &[],
+    );
+    let main = RefName::new("refs/heads/main").unwrap();
+    let outcome = runtime()
+        .block_on(push::send_http_checked(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |advertisement| advertisement.target(&main) != Some(current),
+        ))
+        .unwrap();
+    assert!(matches!(outcome, HttpPushOutcome::Declined));
+    assert_eq!(server.requests(), ["GET"]);
+    assert_eq!(tip(&dest, "refs/heads/main"), current);
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/new").unwrap())
+            .unwrap(),
+        None
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn checked_http_push_keeps_receiver_lease_after_discovery(#[case] format: girt::ObjectFormat) {
+    let source = Fixture::new(format, true, 4);
+    let (_root, dest) = destination_for(format);
+    let old = tip(&source.repo, "refs/heads/main");
+    git(
+        dest.git_dir(),
+        &[
+            "fetch",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/heads/main",
+        ],
+        b"",
+    );
+    let new = next(&source);
+    let server = Server::new(dest.git_dir(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = prepared(
+        &source,
+        vec![command("refs/heads/main", Some(old), new)],
+        &[],
+    );
+    let main = RefName::new("refs/heads/main").unwrap();
+    let outcome = runtime()
+        .block_on(push::send_http_checked(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |advertisement| {
+                assert_eq!(advertisement.target(&main), Some(old));
+                dest.references()
+                    .unwrap()
+                    .delete_without_reflog(
+                        &main,
+                        girt::refs::Expected::Value(girt::refs::Target::Direct(old)),
+                    )
+                    .unwrap();
+                true
+            },
+        ))
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        HttpPushOutcome::Sent(report)
+            if matches!(report.refs[0].status, Some(Status::Rejected(_)))
+    ));
+    assert_eq!(server.requests(), ["GET", "POST"]);
+    assert_eq!(dest.references().unwrap().read(&main).unwrap(), None);
 }
 
 #[rstest]

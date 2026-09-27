@@ -16,6 +16,9 @@
 //! automatic force are deferred. [`crate::remote::CredentialSession`] is a separate
 //! application-approved helper lifecycle; callers attach resulting credentials to their chosen
 //! transport and keep authentication approval or rejection under application control.
+//! `send_http_checked` lets an HTTP caller inspect validated receive-pack tips and decline a
+//! whole batch before POST. A decision does not reserve those tips; the receiver still checks each
+//! command's expected old value.
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
@@ -25,7 +28,7 @@ pub use ssh::send_ssh;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
-pub use http::send_http;
+pub use http::{HttpPushOutcome, send_http, send_http_checked};
 
 mod graph;
 mod local;
@@ -39,7 +42,7 @@ pub use local::{
     send_local_with_identity,
 };
 pub use prepared::PreparedPush;
-pub use protocol::send;
+pub use protocol::{PushAdvertisement, send};
 pub use types::{
     ForcePolicy, PushCommand, PushError, PushFailure, PushLimits, PushReport, RefRewrite,
     RefStatus, RejectionOrigin, Status,

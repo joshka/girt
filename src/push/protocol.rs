@@ -153,10 +153,36 @@ pub(super) struct Capabilities {
     pub sideband: bool,
 }
 
+/// Validated reference tips from one receive-pack advertisement.
+///
+/// These values describe discovery, not the receiver's state when a later command is applied.
+/// The receiver must still compare each command's expected old value during publication.
+#[derive(Debug)]
+pub struct PushAdvertisement {
+    refs: HashMap<RefName, ObjectId>,
+}
+
+impl PushAdvertisement {
+    /// Returns the advertised tip of `name`, or `None` when the name was not advertised.
+    ///
+    /// An unadvertised name may still be hidden by receiver policy. This observation does not
+    /// reserve the reference or prove that it will remain absent.
+    pub fn target(&self, name: &RefName) -> Option<ObjectId> {
+        self.refs.get(name).copied()
+    }
+}
+
 pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
 ) -> Result<Capabilities, Error> {
+    advertise_with_refs(wire, prepared).map(|(capabilities, _)| capabilities)
+}
+
+pub(super) fn advertise_with_refs(
+    wire: &mut Wire<'_, impl Read>,
+    prepared: &PreparedPush,
+) -> Result<(Capabilities, PushAdvertisement), Error> {
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
@@ -245,10 +271,13 @@ pub(super) fn advertise(
     }
     // Every command carries its exact old ID. The receiver checks that value under its ref
     // transaction, allowing a stale command to fail without suppressing independent commands.
-    Ok(Capabilities {
-        report_v2,
-        sideband: sideband && prepared.progress,
-    })
+    Ok((
+        Capabilities {
+            report_v2,
+            sideband: sideband && prepared.progress,
+        },
+        PushAdvertisement { refs },
+    ))
 }
 
 pub(super) fn read_response(
