@@ -6,6 +6,19 @@ compatibility oracle in disposable fixtures, not a production fallback. No capab
 ready by this planning change. Existing coverage remains described in
 [compatibility](compatibility.md).
 
+## Delivery Goals
+
+Completion has two deliverables: a working jj integration without production Git executable, gix or
+libgit2 dependencies, and published `girt*` crates that support that integration as their minimum
+demonstrated capability. Independent Git test oracles and remote servers remain permitted; explicit
+user extension programs must be inventoried. Deferred platform support must stay visible. A
+successful local path dependency does not complete registry delivery.
+
+After R35, follow the [publication plan](publication-plan.md): documentation quality, release
+qualification and CI hardening, initial crates.io publication with verified docs.rs builds, then
+release-plz automation. IDs R42–R45 extend this queue; their dependencies determine dispatch order.
+The integration attempt continues while independent planning work proceeds.
+
 ## Baseline and Ownership
 
 The source assessment used girt `9a44ad7e4aa76e26caca0c48cccf7aac6f170b74` and jj
@@ -122,6 +135,10 @@ consumer or native-platform evidence.
 | R38 | Split and sparse index storage                              | R12, R14                        | Accepted            | XL   | [R38 evidence](evidence/r38.md); split resolution/publication, sparse preservation/expansion and both-format native fault/race evidence; required before R34.                |
 | R39 | Alternate object stores and known storage extensions        | R14                             | Accepted            | L    | [R39 evidence](evidence/r39.md); required before R15/C02/R34.                                                                                                                |
 | R40 | Bounded imported reflog interpretation and roots            | R11, R14, R37                   | Complete            | L    | [R40 evidence](evidence/r40.md); bounded bytes/fields/roots, explicit incomplete outcomes and native evidence; required before C02/R31/R34.                                  |
+| R42 | Curate all human-facing documentation                       | R35 API scope stabilizes        | Planned             | L    | [Documentation acceptance](publication-plan.md#r42--documentation-quality)                                                                                                   |
+| R43 | Qualify release artifacts and harden CI                     | R35, R42                        | Planned             | L    | [Release qualification](publication-plan.md#r43--release-qualification-and-ci)                                                                                               |
+| R44 | Publish initial crates and verify docs.rs                   | R43                             | Planned             | M    | [Initial publication](publication-plan.md#r44--initial-publication)                                                                                                          |
+| R45 | Adopt release-plz and trusted publishing                    | R44                             | Planned             | M    | [Release automation](publication-plan.md#r45--release-automation)                                                                                                            |
 
 The first tranche is R01 → R02 → R03 → R04 → R05 → R06. R01 constructs signed negative timestamps,
 separates parsed identity bytes from construction policy, and exposes exact signature payload

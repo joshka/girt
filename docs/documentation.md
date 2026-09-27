@@ -28,14 +28,49 @@ These preferences are revision signals, not forbidden words or proof of authorsh
 readers must still understand why the behavior exists, when it applies, and what can go wrong.
 Concision must not produce choppy fragments that force readers to supply the connections.
 
-Illustrative revisions grounded in girt's current scaffold:
+## Reader Tasks and Organization
 
-- Before: "girt delivers seamless Git interoperability." After: "girt has no Git functionality yet;
-  its public API contains only a placeholder `add` function."
-- Before: "This section explores our correctness-first compatibility story." After: "Each supported
-  Git feature must preserve Git's formats and semantics."
-- Before: "Use nightly. Format Rust." After: "`just fmt-rust` uses nightly rustfmt because
-  `rustfmt.toml` enables unstable options."
+Every page needs an identifiable reader and purpose: learning a first workflow, completing a task,
+looking up a contract, or understanding a design decision. Use [Diátaxis](https://diataxis.fr/) to
+separate these needs without creating four empty sections for every topic. Library users and
+contributors need distinct entry points. Historical evidence belongs in linked reports, not in the
+getting-started path.
+
+Support three reading modes: a short ordered path for newcomers; self-contained API and task pages
+for direct arrivals; and informative headings, opening sentences and links for scanning. Put the
+reader's vocabulary and distinguishing concepts early. Link labels should predict their destination,
+as described by [information scent](https://www.nngroup.com/articles/information-scent/). Keep
+related prerequisites, effects and recovery advice close to the relevant operation.
+
+Prefer useful information per sentence over minimum word count. Remove duplicated setup, stale
+scaffold claims, unsupported promises and conversational residue. Preserve explanations that prevent
+mistakes. Use consistent Git terminology, specific examples and a calm, direct voice. Avoid applying
+style rules mechanically when they obscure a technical contract. Google's
+[style highlights](https://developers.google.com/style/highlights) and Microsoft's
+[voice guidance](https://learn.microsoft.com/en-us/style-guide/top-10-tips-style-voice) inform
+editorial judgment; local conventions resolve conflicts.
+
+## Whole-Project Documentation Review
+
+Inventory README, guides, contributor material, examples, public Rustdoc, diagnostics and release
+text. For each surface, record its reader, task, canonical owner and current accuracy. Consolidate,
+move or remove material when that reduces navigation and duplication; do not expand every topic into
+a page. Keep historical evidence clearly dated and separate from current instructions.
+
+Review using concrete journeys: install and read an object; mutate refs and recover from failure;
+configure a transport; understand supported formats and limitations; contribute and run checks. Test
+both ordered reading and entry through an API search result. Record broken steps, misleading
+headings, unnecessary navigation, missing prerequisites and terminology drift. Fix high-impact
+findings, then reread the changed journeys and inspect the rendered pages. A second editorial pass
+should challenge the first draft's organization and assumptions, not merely polish its sentences.
+
+Use [Vale](https://docs.vale.sh/) for selected high-signal rules and a project vocabulary. Review
+Google/Microsoft style packages for conflicting rules and false positives before enabling them.
+Scope checks to prose, preserving code and protocol literals; document justified exceptions. Passing
+Vale does not establish accuracy, a coherent voice or usable information architecture. Completion
+requires runnable examples, working links, verified claims and the reader journeys above, with
+remaining findings explicitly assigned. Stop when remaining edits only exchange equivalent wording;
+documentation volume and lint counts are not quality targets.
 
 ## Validation
 
