@@ -55,6 +55,8 @@ pub struct FetchRequest {
     snapshot: BTreeMap<RefName, Target>,
     authorized_force: BTreeSet<RefName>,
     reflog: Reflog,
+    namespace_reflogs: Vec<(RefName, Reflog, Reflog)>,
+    kind_reflogs: Vec<(RefName, FetchUpdateKind, Reflog)>,
     additional_tag_namespaces: Vec<RefName>,
     prune: bool,
     pub(super) depth: Option<NonZeroU32>,
@@ -65,10 +67,10 @@ impl FetchRequest {
     /// Captures destination values and validates the supported worktree layout without writing.
     ///
     /// `authorized_force` authorizes replacement only for those exact destination names; it does
-    /// not turn an unforced refspec into a forced one. `reflog` explicitly chooses preservation
-    /// or an append identity/message for changed refs. Reference enumeration has its existing
-    /// unbounded metadata allocation contract; transfer and object budgets are supplied
-    /// separately.
+    /// not turn an unforced refspec into a forced one. `reflog` chooses the default action for
+    /// changed refs; [`Self::with_reflog_for_namespace`] may override it. Reference enumeration has
+    /// its existing unbounded metadata allocation contract; transfer and object budgets are
+    /// supplied separately.
     ///
     /// # Errors
     ///
@@ -97,6 +99,8 @@ impl FetchRequest {
             snapshot,
             authorized_force,
             reflog,
+            namespace_reflogs: Vec::new(),
+            kind_reflogs: Vec::new(),
             additional_tag_namespaces: Vec::new(),
             prune: false,
             depth: None,
@@ -115,12 +119,69 @@ impl FetchRequest {
         self
     }
 
+    /// Chooses reflog actions for changed destinations below one reference namespace.
+    ///
+    /// `update` applies to creates and updates and must not be [`Reflog::Delete`]. `prune` applies
+    /// to deletions requested by
+    /// [`Self::with_prune`]. The most specific matching namespace wins. Names outside configured
+    /// namespaces keep the policy passed to [`Self::prepare`]. This does not authorize a
+    /// destination or alter its update rules. Use [`Reflog::Delete`] for `prune` when a removed
+    /// reference should lose its log, as Git does for pruned remote-tracking refs.
+    pub fn with_reflog_for_namespace(
+        mut self,
+        namespace: RefName,
+        update: Reflog,
+        prune: Reflog,
+    ) -> Self {
+        self.namespace_reflogs.push((namespace, update, prune));
+        self
+    }
+
+    /// Overrides a namespace's reflog action for one changed update kind.
+    ///
+    /// This permits different messages for creation, fast-forward, forced update and other
+    /// outcomes. The caller supplies the complete message and identity; this workflow does not
+    /// synthesize Git CLI command text. A kind-specific action takes priority over a matching
+    /// [`Self::with_reflog_for_namespace`] action, and the most specific matching namespace wins.
+    /// `SourceOnly` and `Unchanged` never write a reference or a reflog.
+    pub fn with_reflog_for_update_kind(
+        mut self,
+        namespace: RefName,
+        kind: FetchUpdateKind,
+        reflog: Reflog,
+    ) -> Self {
+        self.kind_reflogs.push((namespace, kind, reflog));
+        self
+    }
+
+    fn reflog_for(&self, name: &RefName, kind: FetchUpdateKind) -> Reflog {
+        if let Some((_, _, reflog)) = self
+            .kind_reflogs
+            .iter()
+            .filter(|(namespace, selected, _)| *selected == kind && is_descendant(name, namespace))
+            .max_by_key(|(namespace, _, _)| namespace.as_bytes().len())
+        {
+            return reflog.clone();
+        }
+        self.namespace_reflogs
+            .iter()
+            .filter(|(namespace, _, _)| is_descendant(name, namespace))
+            .max_by_key(|(namespace, _, _)| namespace.as_bytes().len())
+            .map(|(_, update, prune)| {
+                if kind == FetchUpdateKind::Prune {
+                    prune
+                } else {
+                    update
+                }
+            })
+            .unwrap_or(&self.reflog)
+            .clone()
+    }
+
     fn additional_tag_destination(&self, name: &RefName) -> bool {
-        self.additional_tag_namespaces.iter().any(|namespace| {
-            name.as_bytes()
-                .strip_prefix(namespace.as_bytes())
-                .is_some_and(|suffix| suffix.starts_with(b"/") && suffix.len() > 1)
-        })
+        self.additional_tag_namespaces
+            .iter()
+            .any(|namespace| is_descendant(name, namespace))
     }
 
     /// Requests a positive commit depth on HTTP/SSH upload-pack and permits a resulting
@@ -319,6 +380,12 @@ impl FetchRequest {
         }
         Ok(())
     }
+}
+
+fn is_descendant(name: &RefName, namespace: &RefName) -> bool {
+    name.as_bytes()
+        .strip_prefix(namespace.as_bytes())
+        .is_some_and(|suffix| suffix.starts_with(b"/") && suffix.len() > 1)
 }
 
 fn update_kind(
@@ -577,23 +644,26 @@ impl FetchReady {
             .updates
             .iter()
             .filter(|update| update.kind.changes_ref())
-            .map(|update| RefEdit {
-                name: update
+            .map(|update| {
+                let name = update
                     .mapping
                     .destination
-                    .clone()
-                    .expect("changed destination"),
-                dereference: false,
-                target: update
-                    .mapping
-                    .source
                     .as_ref()
-                    .map(|source| Target::Direct(source.id)),
-                expected: update
-                    .previous
-                    .map(|id| Expected::Value(Target::Direct(id)))
-                    .unwrap_or(Expected::Absent),
-                reflog: self.request.reflog.clone(),
+                    .expect("changed destination");
+                RefEdit {
+                    name: name.clone(),
+                    dereference: false,
+                    target: update
+                        .mapping
+                        .source
+                        .as_ref()
+                        .map(|source| Target::Direct(source.id)),
+                    expected: update
+                        .previous
+                        .map(|id| Expected::Value(Target::Direct(id)))
+                        .unwrap_or(Expected::Absent),
+                    reflog: self.request.reflog_for(name, update.kind),
+                }
             })
             .collect();
         let refs = self

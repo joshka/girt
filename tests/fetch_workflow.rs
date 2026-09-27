@@ -60,13 +60,11 @@ fn name(value: &str) -> RefName {
     RefName::new(value).unwrap()
 }
 fn destination() -> (tempfile::TempDir, Repository) {
+    destination_with_format(girt::ObjectFormat::Sha1)
+}
+fn destination_with_format(format: girt::ObjectFormat) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    let repository = Repository::init(
-        girt::ObjectFormat::Sha1,
-        root.path().join("repo"),
-        InitKind::Bare,
-    )
-    .unwrap();
+    let repository = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
     (root, repository)
 }
 struct Source {
@@ -79,13 +77,16 @@ struct Source {
 }
 impl Source {
     fn new() -> Self {
+        Self::with_format("sha1")
+    }
+    fn with_format(format: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         git(
             root.path(),
             &[
                 "init",
                 "--bare",
-                "--object-format=sha1",
+                &format!("--object-format={format}"),
                 "--template=",
                 "--initial-branch=main",
                 ".",
@@ -1110,6 +1111,107 @@ fn explicit_reflog_identity_is_used_only_for_changed_refs() {
     assert_eq!(log[0].committer, committer);
     assert_eq!(log[0].new, source.first);
     assert_eq!(log[0].message, b"explicit fetch");
+}
+
+#[rstest]
+#[case::sha1("sha1", girt::ObjectFormat::Sha1)]
+#[case::sha256("sha256", girt::ObjectFormat::Sha256)]
+fn namespace_reflog_policy_distinguishes_tracking_branches_and_remote_tags(
+    #[case] format_name: &str,
+    #[case] format: girt::ObjectFormat,
+) {
+    let source = Source::with_format(format_name);
+    let (_root, repository) = destination_with_format(format);
+    let branch = name("refs/remotes/origin/main");
+    let tag = name("refs/jj/remote-tags/origin/v1");
+    let committer = girt::Signature {
+        name: b"Fetch Writer".to_vec(),
+        email: b"fetch@example.com".to_vec(),
+        seconds: 1700000010,
+        offset_minutes: 0,
+    };
+    let reflog = |message: &[u8]| Reflog::Append {
+        committer: committer.clone(),
+        message: message.to_vec(),
+    };
+    let prepare = || {
+        request(
+            &repository,
+            &[
+                "+refs/heads/main:refs/remotes/origin/main",
+                "+refs/tags/v1:refs/jj/remote-tags/origin/v1",
+            ],
+            &["refs/remotes/origin/main", "refs/jj/remote-tags/origin/v1"],
+            Reflog::Preserve,
+        )
+        .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+        .with_reflog_for_namespace(
+            name("refs/remotes/origin"),
+            reflog(b"fetch origin: storing ref"),
+            Reflog::Delete,
+        )
+        .with_reflog_for_update_kind(
+            name("refs/remotes/origin"),
+            FetchUpdateKind::Create,
+            reflog(b"fetch origin: storing head"),
+        )
+        .with_reflog_for_update_kind(
+            name("refs/remotes/origin"),
+            FetchUpdateKind::FastForward,
+            reflog(b"fetch origin: fast-forward"),
+        )
+        .with_reflog_for_update_kind(
+            name("refs/remotes/origin"),
+            FetchUpdateKind::ForcedTracking,
+            reflog(b"fetch origin: forced-update"),
+        )
+        .with_prune()
+    };
+    let run = || {
+        receive(prepare(), &source, &KnownHistory::default())
+            .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+    };
+
+    run();
+    let refs = repository.references().unwrap();
+    let log = refs.reflog(&branch).unwrap().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].message, b"fetch origin: storing head");
+    assert!(refs.reflog(&tag).unwrap().is_none());
+
+    run();
+    assert_eq!(refs.reflog(&branch).unwrap().unwrap().len(), 1);
+
+    source.set("refs/heads/main", source.second);
+    source.set("refs/tags/v1", source.second);
+    run();
+    let log = refs.reflog(&branch).unwrap().unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[1].message, b"fetch origin: fast-forward");
+    assert!(refs.reflog(&tag).unwrap().is_none());
+
+    source.set("refs/heads/main", source.first);
+    run();
+    let log = refs.reflog(&branch).unwrap().unwrap();
+    assert_eq!(log.len(), 3);
+    assert_eq!(log[2].message, b"fetch origin: forced-update");
+
+    git(
+        source.root.path(),
+        &["update-ref", "-d", "refs/heads/main"],
+        b"",
+    );
+    git(
+        source.root.path(),
+        &["update-ref", "-d", "refs/tags/v1"],
+        b"",
+    );
+    run();
+    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+    assert_eq!(stored(&repository, "refs/jj/remote-tags/origin/v1"), None);
+    assert!(refs.reflog(&branch).unwrap().is_none());
+    assert!(refs.reflog(&tag).unwrap().is_none());
 }
 
 #[test]
