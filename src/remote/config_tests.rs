@@ -23,6 +23,17 @@ fn url_order_and_fallback(
     let remote = Remote::find(&config, b"origin").unwrap().unwrap();
     assert_eq!(remote.fetch_url(), fetch);
     assert_eq!(remote.push_urls(), push);
+    let urls = RemoteUrls::find(&config, b"origin").unwrap().unwrap();
+    assert_eq!(urls.fetch_url(), fetch);
+    assert_eq!(urls.push_urls(), remote.push_urls());
+    assert_eq!(
+        urls.fetch_display_url(&config).unwrap(),
+        fetch.map(<[u8]>::to_vec)
+    );
+    assert_eq!(
+        urls.push_display_url(&config).unwrap(),
+        push.first().map(|url| url.to_vec())
+    );
 }
 
 #[rstest]
@@ -62,6 +73,7 @@ fn remote_names_and_repeated_sections_are_exact() {
         Remote::names(&config),
         vec![b"Origin".as_slice(), b"origin", b"\xff"]
     );
+    assert_eq!(RemoteUrls::names(&config), Remote::names(&config));
     let remote = Remote::find(&config, b"Origin").unwrap().unwrap();
     assert_eq!(remote.name(), b"Origin");
     assert_eq!(remote.urls(), vec![b"first".to_vec(), b"second".to_vec()]);
@@ -75,4 +87,45 @@ fn remote_names_and_repeated_sections_are_exact() {
             .urls()
             .is_empty()
     );
+}
+
+#[test]
+fn url_only_snapshot_ignores_malformed_refspecs_and_retains_bytes() {
+    let config = Config::parse(
+        b"[remote \"r\"]\nurl=old\nurl=\nurl=\xff\nurl=second\npushurl=old-push\npushurl=\npushurl=first-push\npushurl=second-push\nfetch=^invalid\npush=^invalid\n",
+    )
+    .unwrap();
+    let remote = RemoteUrls::find(&config, b"r").unwrap().unwrap();
+    assert_eq!(remote.name(), b"r");
+    assert_eq!(remote.urls(), [b"\xff".to_vec(), b"second".to_vec()]);
+    assert_eq!(remote.fetch_url(), Some(b"\xff".as_slice()));
+    assert_eq!(
+        remote.configured_push_urls(),
+        [b"first-push".to_vec(), b"second-push".to_vec()]
+    );
+    assert_eq!(remote.push_urls(), remote.configured_push_urls());
+    assert!(matches!(
+        Remote::find(&config, b"r"),
+        Err(RemoteError::Refspec { .. })
+    ));
+    assert!(RemoteUrls::find(&config, b"missing").unwrap().is_none());
+}
+
+#[test]
+fn url_only_snapshot_reports_url_errors() {
+    let config = Config::parse(b"[remote \"r\"]\nurl=first\nurl\nfetch=^invalid\n").unwrap();
+    assert!(matches!(
+        RemoteUrls::find(&config, b"r"),
+        Err(RemoteError::MissingValue {
+            key: "url",
+            occurrence: 2
+        })
+    ));
+}
+
+#[test]
+fn url_only_snapshot_debug_redacts_values() {
+    let config = Config::parse(b"[remote \"r\"]\nurl=https://secret@example.test/repo\n").unwrap();
+    let remote = RemoteUrls::find(&config, b"r").unwrap().unwrap();
+    assert!(!format!("{remote:?}").contains("secret"));
 }

@@ -3,7 +3,8 @@
 `Config::parse` decodes one byte source without I/O. `Config::resolve` reads explicit `ConfigInputs`
 and returns the same queryable snapshot with an `Origin` on every entry. `Repository::open` resolves
 local and enabled worktree sources; `open_with_config` also accepts inherited inputs. `Remote::find`
-consumes the resulting order, including empty URL resets. Try `cargo run --example config`.
+consumes the resulting order, including empty URL resets. `RemoteUrls::find` reads only URL keys
+when a caller needs display URLs without parsing refspecs. Try `cargo run --example config`.
 
 ## Inputs and Precedence
 
@@ -136,7 +137,7 @@ an explicit URL and ordered fetch refspecs; it does not guess mappings from the 
 `set` and `remove_value` operate on `RemoteKey` URL/pushURL/fetch/push occurrences. URL bytes remain
 opaque; refspec changes use the existing direction-specific parser. Explicit occurrence selection
 avoids regular-expression and consumer naming policy. Empty URL resets and push fallback remain
-owned by `Remote::find`.
+owned by `Remote::find` and `RemoteUrls::find`.
 
 Rename updates every local remote header, local branch `remote`/`pushRemote`, local
 `remote.pushDefault`, and fetch destinations under `refs/remotes/<old>/`. Custom fetch destinations

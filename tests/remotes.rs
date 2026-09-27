@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use girt::refs::RefName;
-use girt::remote::{Direction, MappingError, RefSource, Refspecs, Remote};
+use girt::remote::{Direction, MappingError, RefSource, Refspecs, Remote, RemoteUrls};
 use girt::{ObjectId, Repository};
 use rstest::rstest;
 
@@ -263,6 +263,68 @@ fn configure_urls(path: &Path, key: &str, values: &[&str]) {
             b"",
         );
     }
+}
+
+#[test]
+fn git_display_urls_match_rewrites_without_parsing_refspecs_or_policy() {
+    let dir = init();
+    git(
+        dir.path(),
+        &["config", "--add", "remote.origin.url", "short:long/repo"],
+        b"",
+    );
+    git(
+        dir.path(),
+        &["config", "--add", "remote.origin.fetch", "^invalid"],
+        b"",
+    );
+    git(
+        dir.path(),
+        &["config", "--add", "url.https://short/.insteadOf", "short:"],
+        b"",
+    );
+    git(
+        dir.path(),
+        &[
+            "config",
+            "--add",
+            "url.https://long/.insteadOf",
+            "short:long",
+        ],
+        b"",
+    );
+    git(
+        dir.path(),
+        &[
+            "config",
+            "--add",
+            "url.https://push/.pushInsteadOf",
+            "short:",
+        ],
+        b"",
+    );
+    git(
+        dir.path(),
+        &["config", "protocol.https.allow", "never"],
+        b"",
+    );
+    let repository = Repository::open(dir.path()).unwrap();
+    let config = repository.config();
+    let urls = RemoteUrls::find(config, b"origin").unwrap().unwrap();
+    assert!(Remote::find(config, b"origin").is_err());
+    assert_eq!(
+        urls.fetch_display_url(config).unwrap().unwrap(),
+        text(&git(dir.path(), &["remote", "get-url", "origin"], b"")).as_bytes()
+    );
+    assert_eq!(
+        urls.push_display_url(config).unwrap().unwrap(),
+        text(&git(
+            dir.path(),
+            &["remote", "get-url", "--push", "origin"],
+            b""
+        ))
+        .as_bytes()
+    );
 }
 
 #[test]

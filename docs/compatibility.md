@@ -1623,6 +1623,14 @@ addresses. Missing keys give empty lists; a missing named subsection with entrie
 Empty section headers are not retained by `Config`. Implicit boolean values fail with key and
 occurrence diagnostics. Both refspec lists are parsed eagerly, and empty refspec values fail.
 
+`remote::RemoteUrls::find(config, name)` reads only `url` and `pushurl`, with the same
+byte-preserving order, reset and fallback rules. It can inspect a remote whose unrelated refspecs
+are invalid. `fetch_display_url(config)` and `push_display_url(config)` return the first effective
+URL bytes after Git-style `insteadOf` and `pushInsteadOf` rewriting. An explicit `pushurl` receives
+only `insteadOf`; otherwise a matching `pushInsteadOf` takes priority for push. These display values
+do not apply protocol policy, classify or validate endpoint syntax, or authorize transport.
+Malformed rewrite settings still return a configuration error.
+
 `remote::Refspecs` supports explicit full `refs/` names, exact source `HEAD`, one-star mappings
 (including partial components, empty captures, slash-containing captures and non-UTF-8 bytes),
 leading force intent, negative fetch exclusions, source-only fetch selection, same-name push and

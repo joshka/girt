@@ -16,6 +16,38 @@ pub struct Remote {
     push: Refspecs,
 }
 
+/// An owned snapshot of a named remote's raw URLs, independent of its refspecs.
+///
+/// Values preserve bytes and configuration order after empty-value resets. This snapshot does not
+/// resolve URLs, validate endpoint syntax or inspect fetch/push refspecs.
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::RemoteUrls;
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl=short:repo\n").unwrap();
+/// let urls = RemoteUrls::find(&config, b"origin").unwrap().unwrap();
+/// assert_eq!(
+///     urls.fetch_display_url(&config).unwrap(),
+///     Some(b"short:repo".to_vec())
+/// );
+/// ```
+#[derive(Clone)]
+pub struct RemoteUrls {
+    name: Vec<u8>,
+    urls: Vec<Vec<u8>>,
+    push_urls: Vec<Vec<u8>>,
+}
+
+impl std::fmt::Debug for RemoteUrls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteUrls")
+            .field("url_count", &self.urls.len())
+            .field("push_url_count", &self.push_urls.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A named remote contains a missing value or unsupported refspec.
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteError {
@@ -46,17 +78,7 @@ impl Remote {
     /// Bare empty section headers are not retained by [`Config`]. Names are not validated as paths
     /// or reference components; consumers must validate before using them in either context.
     pub fn names(config: &Config) -> Vec<&[u8]> {
-        let mut names = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for entry in config.entries() {
-            if entry.section.eq_ignore_ascii_case(b"remote")
-                && let Some(name) = entry.subsection.as_deref()
-                && seen.insert(name)
-            {
-                names.push(name);
-            }
-        }
-        names
+        RemoteUrls::names(config)
     }
 
     /// Reads a case-sensitive subsection from one configuration snapshot.
@@ -72,13 +94,13 @@ impl Remote {
     /// including the other direction's list; empty refspecs fail rather than selecting Git
     /// defaults.
     pub fn find(config: &Config, name: &[u8]) -> Result<Option<Self>, RemoteError> {
-        if !Self::names(config).contains(&name) {
+        let Some(remote_urls) = RemoteUrls::find(config, name)? else {
             return Ok(None);
-        }
+        };
         Ok(Some(Self {
-            name: name.to_vec(),
-            urls: urls(config, name, "url")?,
-            push_urls: urls(config, name, "pushurl")?,
+            name: remote_urls.name,
+            urls: remote_urls.urls,
+            push_urls: remote_urls.push_urls,
             fetch: refspecs(config, name, "fetch", Direction::Fetch)?,
             push: refspecs(config, name, "push", Direction::Push)?,
         }))
@@ -124,6 +146,75 @@ impl Remote {
     /// Ordered push specifications; empty means no configured mappings, not `push.default`.
     pub fn push_refspecs(&self) -> &Refspecs {
         &self.push
+    }
+}
+
+impl RemoteUrls {
+    /// Lists exact subsection names with at least one entry, once, in first-entry order.
+    ///
+    /// Bare empty section headers are not retained by [`Config`]. Names are not validated as paths
+    /// or reference components; consumers must validate before using them in either context.
+    /// This enumeration does not parse URLs or refspecs.
+    pub fn names(config: &Config) -> Vec<&[u8]> {
+        let mut names = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for entry in config.entries() {
+            if entry.section.eq_ignore_ascii_case(b"remote")
+                && let Some(name) = entry.subsection.as_deref()
+                && seen.insert(name)
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+    /// Reads only `url` and `pushurl` from an exact, case-sensitive remote subsection.
+    ///
+    /// Returns `None` if the subsection has no entries. Repeated values retain configuration
+    /// order, and an empty value clears preceding URLs of the same key. Other remote keys,
+    /// including malformed refspecs, do not affect this snapshot.
+    ///
+    /// # Errors
+    ///
+    /// An implicit boolean `url` or `pushurl` has no URL value and fails.
+    pub fn find(config: &Config, name: &[u8]) -> Result<Option<Self>, RemoteError> {
+        if !Self::names(config).contains(&name) {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            name: name.to_vec(),
+            urls: urls(config, name, "url")?,
+            push_urls: urls(config, name, "pushurl")?,
+        }))
+    }
+
+    /// Exact subsection bytes; no normalization or path validation.
+    pub fn name(&self) -> &[u8] {
+        &self.name
+    }
+
+    /// Raw URL list after empty-value resets, in occurrence order, including duplicates.
+    pub fn urls(&self) -> &[Vec<u8>] {
+        &self.urls
+    }
+
+    /// First raw URL, or `None` when absent/reset.
+    pub fn fetch_url(&self) -> Option<&[u8]> {
+        self.urls.first().map(Vec::as_slice)
+    }
+
+    /// Raw pushURL list after resets, before URL fallback, including duplicates.
+    pub fn configured_push_urls(&self) -> &[Vec<u8>] {
+        &self.push_urls
+    }
+
+    /// All remaining pushURLs, or all URLs when the pushURL list is empty.
+    pub fn push_urls(&self) -> &[Vec<u8>] {
+        if self.push_urls.is_empty() {
+            &self.urls
+        } else {
+            &self.push_urls
+        }
     }
 }
 

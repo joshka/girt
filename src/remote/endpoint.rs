@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::Remote;
+use super::{Remote, RemoteUrls};
 use crate::Config;
 use crate::config::boolean;
 
@@ -241,6 +241,41 @@ impl Remote {
     }
 }
 
+impl RemoteUrls {
+    /// Returns the first fetch URL after `insteadOf` rewriting, for display.
+    ///
+    /// The result preserves bytes and may contain credentials. It does not classify the URL,
+    /// apply protocol policy, validate transport syntax or perform I/O. `None` means no URL is
+    /// configured after resets. The supplied configuration provides rewrite rules and should be
+    /// the same snapshot used by [`Self::find`].
+    ///
+    /// # Errors
+    ///
+    /// Malformed rewrite settings produce [`EndpointError::Configuration`].
+    pub fn fetch_display_url(&self, config: &Config) -> Result<Option<Vec<u8>>, EndpointError> {
+        self.fetch_url()
+            .map(|raw| rewrite_url(raw, config, false))
+            .transpose()
+    }
+
+    /// Returns the first push URL after Git-style rewriting, for display.
+    ///
+    /// An explicit `pushurl` wins over `url` and receives only `insteadOf` rewriting. When
+    /// falling back to `url`, a matching `pushInsteadOf` takes priority over `insteadOf`. The
+    /// result preserves bytes and may contain credentials; it performs no protocol validation,
+    /// authorization or I/O. `None` means neither URL key has a value after resets.
+    ///
+    /// # Errors
+    ///
+    /// Malformed rewrite settings produce [`EndpointError::Configuration`].
+    pub fn push_display_url(&self, config: &Config) -> Result<Option<Vec<u8>>, EndpointError> {
+        self.push_urls()
+            .first()
+            .map(|raw| rewrite_url(raw, config, self.configured_push_urls().is_empty()))
+            .transpose()
+    }
+}
+
 fn resolve(
     raw: &[u8],
     config: &Config,
@@ -248,20 +283,24 @@ fn resolve(
     push_rewrite: bool,
     user: bool,
 ) -> Result<Destination, EndpointError> {
-    let replacement = if push_rewrite {
-        rewrite(raw, config, "pushinsteadof")?
-    } else {
-        None
-    };
-    let bytes = match replacement.or(rewrite(raw, config, "insteadof")?) {
-        Some((prefix, matched)) => [prefix, &raw[matched..]].concat(),
-        None => raw.to_vec(),
-    };
+    let bytes = rewrite_url(raw, config, push_rewrite)?;
     let protocol = classify(&bytes)?;
     if !allowed(protocol, &bytes, config, env, user)? {
         return Err(EndpointError::Refused);
     }
     Ok(Destination { bytes, protocol })
+}
+
+fn rewrite_url(raw: &[u8], config: &Config, push_rewrite: bool) -> Result<Vec<u8>, EndpointError> {
+    let replacement = if push_rewrite {
+        rewrite(raw, config, "pushinsteadof")?
+    } else {
+        None
+    };
+    Ok(match replacement.or(rewrite(raw, config, "insteadof")?) {
+        Some((prefix, matched)) => [prefix, &raw[matched..]].concat(),
+        None => raw.to_vec(),
+    })
 }
 
 fn rewrite<'a>(
@@ -409,6 +448,56 @@ mod tests {
                 .unwrap()[0]
                 .bytes(),
             b"ssh://push/repo"
+        );
+    }
+
+    #[test]
+    fn display_urls_use_longest_rewrites_and_push_precedence() {
+        let config = Config::parse(b"[remote \"r\"]\nurl=short:long/repo\nurl=short:other\n[url \"ssh://short/\"]\ninsteadOf=short:\n[url \"ssh://long/\"]\ninsteadOf=short:long\n[url \"ssh://push/\"]\npushInsteadOf=short:\n").unwrap();
+        let remote = RemoteUrls::find(&config, b"r").unwrap().unwrap();
+        assert_eq!(remote.urls().len(), 2);
+        assert_eq!(
+            remote.fetch_display_url(&config).unwrap(),
+            Some(b"ssh://long//repo".to_vec())
+        );
+        assert_eq!(
+            remote.push_display_url(&config).unwrap(),
+            Some(b"ssh://push/long/repo".to_vec())
+        );
+    }
+
+    #[test]
+    fn explicit_pushurl_receives_only_ordinary_rewrite() {
+        let config = Config::parse(b"[remote \"r\"]\nurl=short:fetch\npushurl=short:push\npushurl=short:later\n[url \"ssh://ordinary/\"]\ninsteadOf=short:\n[url \"ssh://push/\"]\npushInsteadOf=short:\n").unwrap();
+        let remote = RemoteUrls::find(&config, b"r").unwrap().unwrap();
+        assert_eq!(remote.configured_push_urls().len(), 2);
+        assert_eq!(
+            remote.push_display_url(&config).unwrap(),
+            Some(b"ssh://ordinary/push".to_vec())
+        );
+    }
+
+    #[test]
+    fn display_urls_ignore_protocol_policy_and_endpoint_syntax() {
+        let config = Config::parse(
+            b"[remote \"r\"]\nurl=custom://opaque\n[protocol \"custom\"]\nallow=never\n",
+        )
+        .unwrap();
+        let remote = RemoteUrls::find(&config, b"r").unwrap().unwrap();
+        assert_eq!(
+            remote.fetch_display_url(&config).unwrap(),
+            Some(b"custom://opaque".to_vec())
+        );
+        assert_eq!(
+            remote.push_display_url(&config).unwrap(),
+            Some(b"custom://opaque".to_vec())
+        );
+        assert_eq!(
+            Remote::find(&config, b"r")
+                .unwrap()
+                .unwrap()
+                .fetch_destination(&config, &ProtocolEnvironment::default()),
+            Err(EndpointError::Refused)
         );
     }
 

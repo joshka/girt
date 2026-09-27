@@ -1,6 +1,7 @@
 //! Named remote configuration and pure refspec mapping.
 //!
 //! [`Remote::find`] reads the four URL/refspec keys from an explicit [`crate::Config`] snapshot.
+//! [`RemoteUrls::find`] reads URL keys without parsing unrelated refspecs.
 //! [`Refspecs`] maps supplied resolved references without I/O, revision lookup, or update
 //! permission. Transport choice, URL rewriting, implicit branch selection, tag
 //! following, pruning, mirror policy and other remote options remain the caller's responsibility.
@@ -17,7 +18,7 @@ mod endpoint;
 pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
 mod refspec;
 
-pub use config::{Remote, RemoteError};
+pub use config::{Remote, RemoteError, RemoteUrls};
 pub use credential::{
     Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,
     CredentialSession, Prompt, askpass,
