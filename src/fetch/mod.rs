@@ -6,6 +6,8 @@
 //!   transferring objects. Discovery is a preview, not permission for a later ref update.
 //! - [`receive_local`] or [`receive`] transfers selected advertised IDs and returns
 //!   [`ReceivedFetch`]. Install the result and update refs separately when the caller owns policy.
+//!   [`ReceivedFetch::install_retained`] protects a new complete pack with an owned Git `.keep`
+//!   marker through caller-controlled reference publication.
 //! - [`FetchRequest`] captures a destination snapshot, refspecs, force authorization, and reflog
 //!   policy. Its adapters return [`FetchReady`]; [`FetchReady::finish`] installs objects and
 //!   conditionally publishes selected refs.
@@ -93,6 +95,8 @@ pub use discovery::{
 };
 mod import;
 mod install;
+mod retention;
+pub use retention::{FetchRetention, RetainedFetchError};
 mod shallow;
 pub use shallow::FetchShallowError;
 mod known;
