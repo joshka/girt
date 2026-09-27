@@ -28,6 +28,14 @@ needed. Generate fixtures independently and isolate filesystem tests from the wo
 global configuration. Follow [Rust Conventions](rust-conventions.md#unit-tests) and the
 [Rustdoc Standard](rustdoc.md#examples-and-validation) for local tests and executable examples.
 
+## Completion Handoffs
+
+Report delivered behavior, material decisions and limits, the exact tested revision, and the next
+action. Give a concise validation reference with links to evidence needed for review or
+reproduction. Keep full logs and fixture provenance at those links when they support a claim or an
+unresolved failure. Do not repeat command transcripts, test-count inventories, or status chronology
+in the handoff. A passing suite supports only the platforms and operations it actually exercised.
+
 ## Parameterized Tests
 
 Use `rstest` with named `#[case::name(...)]` inputs for parameterized unit and integration tests.
