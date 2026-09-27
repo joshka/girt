@@ -1,3 +1,5 @@
+//! Run `cargo run --features ssh --example ssh_local` on macOS/Linux. The disposable fixture needs
+//! an installed OpenSSH client and server.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "../tests/support/ssh_git.rs"]
 mod ssh_git;

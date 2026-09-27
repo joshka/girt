@@ -5,11 +5,11 @@ Enable `ssh` on macOS/Linux for protocol v0 over a system OpenSSH client. Supply
 absolute OpenSSH executable path and an absolute configuration file path. Call `fetch::receive_ssh`
 or `push::send_ssh` inside a caller-owned Tokio runtime with I/O and time enabled.
 
-`SshRemote::configured` accepts a resolved R21 SSH destination and `SshEnvironment` supplied by the
+`SshRemote::configured` accepts a resolved SSH destination and `SshEnvironment` supplied by the
 application. It supports `ssh://[user@]host[:port]/path` and `[user@]host:path`. The application
 supplies a default user and trusted executable and config paths. Percent encoding, URL query or
-fragment fields, implicit tilde expansion and non-OpenSSH variants are refused. R25 owns local/file
-and helper transports; no Git executable is used as a local fallback.
+fragment fields, implicit tilde expansion and non-OpenSSH variants are refused. Local paths, file
+URLs, and helper schemes use separate transport paths; SSH has no Git-executable fallback.
 
 ## Endpoints and Configuration
 
@@ -160,7 +160,7 @@ separately prove local reaping, future-drop cleanup and group isolation. Fault s
 claimed as Git interoperability. See [compatibility evidence](compatibility.md#ssh-transport) and
 [benchmark evidence](benchmarks.md#ssh-loopback-baseline).
 
-Configured-path tests cover an R21 URL, command precedence and refusal, a disposable agent and
+Configured-path tests cover an SSH URL, command precedence and refusal, a disposable agent and
 encrypted-key askpass authentication, and redacted errors. The existing cancellation, exit, cleanup
 and uncertain-push tests use the same `Session` owner as configured connections. Native Windows SSH
 remains unsupported; girt never spawns a Windows SSH process. Reopen it for a required Windows

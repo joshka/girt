@@ -18,8 +18,9 @@ selects HOME/XDG, system/global overrides and NOSYSTEM, then decodes COUNT/KEY/V
 The caller supplies the installation's default system path. The library never reads or changes
 process environment. `GIT_CONFIG` is a selector for Git's config command, not a general repository
 setting, and is ignored. Private command serialization such as `GIT_CONFIG_PARAMETERS` is not a
-public input format; supply parsed command entries instead. Transport environment policy belongs to
-R21.
+public input format; supply parsed command entries instead. Transport settings are applied by the
+configured remote and adapter APIs after configuration resolution; see the [HTTP](http.md) and
+[SSH](ssh.md) guides.
 
 Empty include paths, missing optional roots and missing includes are ignored; a required root
 returns its I/O error. Existing malformed or unreadable sources always fail. Include directives
@@ -85,12 +86,14 @@ Original fixtures in `tests/config_resolution.rs` compare public APIs with Git's
 isolated HOME/config/runtime inputs. They cover layer order, reset values, nested origins,
 conditions, linked worktrees, byte/case behavior, missing and malformed sources, cycles, bounds and
 refresh. The suite is selected for native Windows CI; filename byte cases are Linux-only. Local
-macOS results and unexecuted native platforms are distinguished in [R08 evidence](evidence/r08.md).
+macOS results and unexecuted native platforms are distinguished in the
+[resolution evidence](evidence/r08.md).
 
 The specification input is the [Git configuration manual](https://git-scm.com/docs/git-config). No
 upstream implementation or test source is used. This finite corpus does not establish every
 configuration edge case. Repository layouts and shallow snapshots are described in
-[their contract](repositories.md), URL rewriting belongs to R21, and jj integration to R35.
+[their contract](repositories.md). URL rewriting and transport selection use the resolved config
+through separate remote APIs; see the [HTTP](http.md) and [SSH](ssh.md) guides.
 
 ## Lossless File Editing
 
@@ -148,8 +151,8 @@ can leave an included/global remote effective. Included/global branch references
 unchanged. The library never implicitly rewrites those sources or claims effective removal.
 Re-resolve using the original inputs, or reopen with `open_with_config`, before constructing a new
 `Remote`. Old repository and remote snapshots remain unchanged. Remote-tracking ref rename/deletion
-is a separate reference operation, not a side effect of configuration editing; R11 owns the
-conditional reference foundation and R28 owns composed remote/prune outcomes.
+is a separate reference operation, not a side effect of configuration editing. The fetch workflow
+can select remote-tracking updates and pruning explicitly; editing config alone does neither.
 
 Run `cargo run --example edit_config` for a disposable lock/edit/commit/refresh example. The
 portable `config_edit` suite observes Git add/remove/rename/set-url, byte quoting, inherited

@@ -179,7 +179,8 @@ impl ProtocolEnvironment {
     /// Decodes supplied transport environment bytes without reading process-global state.
     ///
     /// A present empty `GIT_ALLOW_PROTOCOL` allows no protocol. Invalid boolean bytes fail with
-    /// a value-free diagnostic. Other transport environment belongs to R22–R25.
+    /// a value-free diagnostic. Credential and transport-specific inputs are supplied to their
+    /// respective adapters after protocol selection.
     pub fn from_environment(
         mut get: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> Result<Self, EndpointError> {

@@ -38,8 +38,7 @@ DEBUG avoids object-by-object output. TRACE deliberately makes individual storag
 including storage calls within traversal. There are no byte, packet or tree/index-entry events. Pure
 codecs and hashing, discovery, standalone reference reads/writes outside transactions, pack writing
 outside push, tree comparison, content diff, status and checkout have no dedicated spans yet; calls
-they make to covered operations can still appear. Future roadmap operations extend this coverage at
-their owning boundaries rather than claiming crate-wide instrumentation.
+they make to covered operations can still appear.
 
 Configuration resolution emits `config.resolve` at DEBUG; mutation emits `config.edit_config`,
 `config.commit` and `config.abort`. These spans record categorical outcomes and cleanup failure
@@ -47,12 +46,17 @@ without paths, names, values or URLs. Failed commit cleanup is nested under the 
 
 ## Outcomes, Effects and Counts
 
-Every operation starts with `outcome = "incomplete"`. A returned result records `success`, `failure`
-or `cancelled`; a dropped future or unwind remains `incomplete`. Incomplete does not mean that a
-mutation was rolled back. A successful download is not validated or installed, and a successful push
-exchange can contain per-reference rejection statuses; `accepted`, `rejected`, `pending` and
-`unpack` expose that distinction without remote message text. Missing-object reads returning `None`
-are successful lookups; their result remains the caller's responsibility.
+Each instrumented operation starts with `outcome = "incomplete"`. A returned result records
+`success`, `failure` or `cancelled`; a dropped future or unwind remains `incomplete`. Incomplete
+does not mean that a mutation was rolled back. A successful download is not validated or installed,
+and a successful push exchange can contain per-reference rejection statuses; `accepted`, `rejected`,
+`pending` and `unpack` expose that distinction without remote message text. Missing-object reads
+returning `None` are successful lookups; their result remains the caller's responsibility.
+
+The example's default text formatter appends recorded fields. A completed span can therefore print
+both `outcome="incomplete"` and a later `outcome="success"`. They describe one operation; the later
+value is the recorded completion. Subscribers that retain structured span fields can present the
+final value according to their own export policy.
 
 `failure_class` records fixed categories such as `missing`, `wrong_kind`, `corrupt`, `unsupported`,
 `limit`, `cancelled`, `deadline`, `io`, `transport`, `protocol`, `remote`, `conflict`,

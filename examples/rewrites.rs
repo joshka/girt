@@ -1,4 +1,7 @@
-//! Print inferred relationships for two trees using stored bytes and default rename policy.
+//! Emit inferred relationships for two stored trees using the default rename policy.
+//! Run `cargo run --example rewrites -- REPOSITORY OLD_TREE NEW_TREE`.
+//! Each NUL-delimited record contains an `R` or `C` marker, a three-digit similarity score, and
+//! source and target byte paths.
 use std::error::Error;
 use std::io::{self, Write};
 use std::sync::atomic::AtomicBool;

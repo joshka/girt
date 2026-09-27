@@ -98,7 +98,6 @@ failed again in this follow-up's diagnostic run, while local tracing passes. No 
 HTTP discovery timing was demonstrated and no tracing code or assertion was changed.
 
 [Artifact fingerprints](r14-http-artifacts.sha256) cover the diagnostic/verification metadata, logs
-and local checks under
-[/Users/joshka/.codex/reports/girt-r14-http](/Users/joshka/.codex/reports/girt-r14-http). The
-canceled initial diagnostic supplies no evidence. R14's original failed attempts and fingerprint
-manifests remain intact. No successor, merge or release is performed.
+and local checks under `/Users/joshka/.codex/reports/girt-r14-http`. The canceled initial diagnostic
+supplies no evidence. R14's original failed attempts and fingerprint manifests remain intact. No
+successor, merge or release is performed.

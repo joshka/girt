@@ -1,4 +1,15 @@
-# Blob Performance Baseline
+# Performance Measurements
+
+This page retains workload-specific measurements at their recorded revisions. They are baselines for
+comparison under similar conditions, not current speed guarantees. Start with the
+[blob workloads](#workloads-and-measurements), or jump to [pack reads](#pack-read-baseline),
+[fetch](#fetch-baseline), [push](#push-baseline), [HTTP](#smart-http-loopback-baseline),
+[SSH](#ssh-loopback-baseline), [index](#working-tree-index-baseline), or
+[checkout](#raw-tree-checkout-baseline). Each section names its measured operation and environment;
+later source changes do not inherit earlier timing evidence. Paths under
+`/Users/joshka/.codex/reports/` identify maintainer-local logs and samples that are not distributed
+with this repository. The linked CSVs and source manifests under `docs/benchmarks/` are
+repository-retained artifacts.
 
 ## Reproduce
 
@@ -1107,10 +1118,10 @@ filesystem variance and subscriber costs; they establish no numerical regression
 `cargo bench --bench object_formats --no-default-features` compares SHA-1 and SHA-256 hashing, owned
 tree/commit/tag codecs, and loose storage. At revision `248a7244e9d403ae0d08ec476bd85035c4f0ade7`,
 Criterion used 20 samples, 500-ms warmup and at least one second collection per case on macOS arm64,
-Rust 1.98.1. No builds or tests overlapped sampling. The
-[source hashes, commands and estimates](/Users/joshka/.codex/reports/girt-r04/benchmarks.json),
-[raw samples](/Users/joshka/.codex/reports/girt-r04/criterion) and
-[run log](/Users/joshka/.codex/reports/girt-r04/bench.log) are retained.
+Rust 1.98.1. No builds or tests overlapped sampling. The source hashes, commands and estimates
+(`/Users/joshka/.codex/reports/girt-r04/benchmarks.json`), raw samples
+(`/Users/joshka/.codex/reports/girt-r04/criterion`) and run log
+(`/Users/joshka/.codex/reports/girt-r04/bench.log`) are retained.
 
 Blob input is 64 KiB of deterministic varied bytes. Trees contain 256 entries with byte names and
 format-sized IDs; commit input includes a negative timestamp and a folded opaque signature. Setup is
@@ -1139,8 +1150,8 @@ imposed. See the [R04 report](evidence/r04.md) for compatibility and storage-fai
 `cargo bench --bench object_formats -- storage_formats` measures the format-propagated storage paths
 at `7a9ef5dcf17dc08af0593bd3487142e4d6499037`. The
 [source fingerprints](benchmarks/r05-storage-formats.sha256) cover Rust sources, test fixtures,
-examples, benchmarks and Cargo inputs; they were verified unchanged after sampling.
-[Raw Criterion output and estimates](/Users/joshka/.codex/reports/girt-r05/bench.log) and the
+examples, benchmarks and Cargo inputs; they were verified unchanged after sampling. Raw Criterion
+output and estimates (`/Users/joshka/.codex/reports/girt-r05/bench.log`) and the
 [CSV means and 95% confidence intervals](benchmarks/r05-storage-formats.csv) are retained.
 
 The run used macOS 26.6.2 arm64 on Apple M2 Max, Rust/Cargo 1.98.1, Git 2.55.0, the release profile,
@@ -1173,8 +1184,8 @@ peak-RSS/file-handle claims are made.
 ## R07 Imported Parsing and Peeling
 
 Implementation `68ed48ac89afa323eb735c3f664c7649871f6fd0` was measured on macOS 26.6.2 arm64 with
-Rust 1.98.1. The [source manifest](/Users/joshka/.codex/reports/girt-r07/source.json) records file
-fingerprints; the [final log](/Users/joshka/.codex/reports/girt-r07/benchmarks-final.log) retains
+Rust 1.98.1. The source manifest (`/Users/joshka/.codex/reports/girt-r07/source.json`) records file
+fingerprints; the final log (`/Users/joshka/.codex/reports/girt-r07/benchmarks-final.log`) retains
 the command output. Reproduce the selected changed paths with:
 
 ```sh

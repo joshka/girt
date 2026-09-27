@@ -84,8 +84,9 @@ impl Repository {
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
     /// writers. This operation never deletes data, so a concurrent new root cannot make it prune
     /// that root's object. An external writer that removes or mutates input files can still make
-    /// the scan/read fail. Do not use this result as deletion authorization; R33 must rescan under
-    /// its own execution boundary and account for old pinned readers before removing files.
+    /// the scan/read fail. Do not use this result as deletion authorization. Destructive
+    /// maintenance must rescan under its own execution boundary and account for old pinned
+    /// readers before removing files.
     ///
     /// # Errors
     ///

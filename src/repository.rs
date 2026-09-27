@@ -472,8 +472,7 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
-    /// failures, or exhausted snapshot limits. Both SHA-1 and SHA-256 pack/index v2 pairs use
-    /// the repository's configured format; wrong-format bytes are corruption.
+    /// failures, or exhausted snapshot limits. Supported SHA-1 and SHA-256 packs and indexes use
     /// Reopen after a concurrent repack failure.
     pub fn objects(
         &self,

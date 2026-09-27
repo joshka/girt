@@ -3,8 +3,9 @@ use std::str::FromStr;
 
 /// The hash format used by a Git object database.
 ///
-/// Object codecs, loose/packed storage, references and index v2 support both formats.
-/// Transport negotiation currently supports SHA-1 only.
+/// Object codecs, loose/packed storage, references, index v2/v3/v4, and wire fetch/push support
+/// both formats. A repository selects one format from its local configuration; this type does not
+/// translate identities between formats.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectFormat {
     /// Git's SHA-1 object format, with 20-byte identities.

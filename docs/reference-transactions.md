@@ -2,8 +2,9 @@
 
 The files backend supports SHA-1 and SHA-256 repositories on Unix and Windows local filesystems.
 `Repository::references()` provides live reads and conditional mutations. Object existence, hooks,
-configuration-driven reflog policy, and crash durability belong to callers. Reftable remains a
-required separate backend under R37; R14 owns broader backend acceptance.
+configuration-driven reflog policy, and crash durability belong to callers. Configured reftable
+storage uses the same `References` operations with its own budgets and publication boundaries,
+described in [Reftable Backend](#reftable-backend).
 
 ## Preconditions and Publication
 
@@ -77,15 +78,16 @@ survival.
 
 The executable [reference transaction example](../examples/reference_transaction.rs) demonstrates
 unborn publication, retained deletion history, absent-or-same retention refs and explicit ref/log
-deletion. [R11 evidence](evidence/r11.md) identifies exact tested revisions and platform results.
+deletion. The [reference evidence](evidence/r11.md) identifies tested revisions and platform
+results.
 
 ## Reftable Backend
 
-R37 adds configured reftable storage behind the existing `References` operations. See
-[its acceptance and evidence](evidence/r37.md). `Repository::init_with_backend` selects files or
-reftable for a new repository. Opening reads the real reftable HEAD for branch-conditional config;
-`open_with_config_and_reference_limits` selects its bootstrap budgets. `References` independently
-selects operation budgets with `with_reftable_limits`.
+Configured reftable storage uses the existing `References` operations; its
+[acceptance evidence](evidence/r37.md) records tested boundaries. `Repository::init_with_backend`
+selects files or reftable for a new repository. Opening reads the real reftable HEAD for
+branch-conditional config; `open_with_config_and_reference_limits` selects its bootstrap budgets.
+`References` independently selects operation budgets with `with_reftable_limits`.
 
 Each stack snapshot pins the listed immutable files before decoding, then owns the merged records
 without retained file handles. A missing table fails one attempt; callers may explicitly reopen.

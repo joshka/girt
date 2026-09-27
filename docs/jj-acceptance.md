@@ -179,9 +179,8 @@ C01 D1 adds both-format imported reflog fixtures with identities `b"A <a@b> 1 +0
 repeated spaces. Each record uses real Git-created commit IDs and a tab-separated `fixture` message.
 Compare `git reflog show '--format=%H %gn %gs' HEAD` interpretation, preserving raw bytes where
 rewriting needs them. Keep append construction validation separate, and retain format,
-record-boundary and partial-publication guarantees. The original and rerun observations are
-identified in
-[C01 evidence](evidence/c01.md).
+record-boundary and partial-publication guarantees. C01 established these inputs as accepted D1
+follow-through; the byte sequences and Git comparison above are the continuing contract.
 
 ### A09 — Index and colocation primitives
 
@@ -431,8 +430,7 @@ attributing causes; verify improvements against the same corpus and relevant cor
 Document justified exceptions with the affected workload, observed ratio, rationale, resource or
 semantic tradeoff, owner and follow-up decision for coordinator acceptance.
 
-The starting R15 report (maintainer-local provenance:
-`/Users/joshka/.codex/reports/girt-vs-git/README.md`) measures only warm SHA-1 packed reads on one
-macOS machine: ordinary reads 0.20–0.25x and selected deep deltas 0.017–0.026x. Its eager-open,
-startup and memory observations remain distinct. These results are investigation inputs, not an
-all-function baseline or evidence for later capabilities.
+An initial R15-only local measurement covers only warm SHA-1 packed reads on one macOS machine:
+ordinary reads 0.20–0.25x and selected deep deltas 0.017–0.026x. Its eager-open, startup and memory
+observations remain distinct. These results are investigation inputs, not an all-function baseline
+or evidence for later capabilities.

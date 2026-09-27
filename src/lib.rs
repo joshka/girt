@@ -13,6 +13,14 @@
 //! SHA-1/SHA-256 advertisements before transfer. Wire fetch and push support both formats;
 //! native local transfer also supports both without invoking Git.
 //!
+//! # First use
+//!
+//! In the [source checkout](https://github.com/joshka/girt), run
+//! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
+//! [`LooseObjects`] for storage assumptions and the
+//! [contributor guide](https://github.com/joshka/girt/blob/joshka/platform-validation/CONTRIBUTING.md)
+//! for setup and checks.
+//!
 //! # Reading a repository
 //!
 //! Open an explicit path with [`Repository::open`], then retain an [`Objects`] reader with chosen
@@ -109,7 +117,9 @@
 //! [`fetch::FetchReady::finish`] installs objects before checking update rules and conditionally
 //! publishing remote-tracking refs and tags. Local branch destinations are unsupported. Inspect
 //! [`fetch::FetchFinishError`] for installed objects and possible partial transaction effects.
-//! `FETCH_HEAD`, pruning and implicit tag following are deferred; this is not full CLI fetch.
+//! [`fetch::FetchRequest::with_prune`] opts into remote-tracking deletion; depth requests use
+//! [`fetch::FetchRequest::with_depth`] with coordinated shallow publication. `FETCH_HEAD` and
+//! implicit tag following remain caller policy; this is not full CLI fetch.
 //! Run `cargo run --example fetch_remote` for a disposable workflow with named remote
 //! configuration.
 //!
@@ -156,9 +166,9 @@
 //!
 //! - [`Repository`], [`OpenError`], [`InitKind`], and [`InitError`]: opening, upward discovery, and
 //!   initialization of bare or ordinary SHA-1 or SHA-256 repositories.
-//! - [`refs`]: validated reference names, loose/packed enumeration and reads, symbolic resolution,
-//!   conditional transactions with explicit reflogs, and single-reference operations without
-//!   reflogs.
+//! - [`refs`]: validated reference names, files/reftable enumeration and reads, symbolic
+//!   resolution, conditional transactions with explicit reflogs, and single-reference operations
+//!   without reflogs.
 //! - [`Config`] and [`ConfigError`]: byte-oriented parsing and explicit layered resolution with
 //!   provenance.
 //! - [`remote`]: named raw remote URLs and pure, direction-aware refspec mapping.
@@ -186,18 +196,17 @@
 //!   storage assumptions.
 //! - [`Error`] and [`ParseObjectIdError`]: storage and identity-parsing failures.
 //!
-//! The current API is experimental and supports SHA-1/SHA-256 loose objects and SHA-1/SHA-256
-//! pack/index v2 reads, caller-owned pack/index v2 exports, object transfer and fetch
+//! The current API is experimental and supports SHA-1/SHA-256 loose objects, pack v2/v3 and index
+//! v1/v2 reads in both formats, caller-owned pack v2/index v2 exports, object transfer and fetch
 //! orchestration, and conditional push under full reference names. Wire fetch and push accept
 //! v0 streams. Native local fetch and push support SHA-1 and SHA-256 without Git server processes.
 //! The optional `http` feature adds async smart-HTTP(S)
 //! adapters; `ssh` adds system OpenSSH adapters on macOS/Linux. Both use a caller-owned Tokio
-//! runtime; fetch pack validation remains an explicit synchronous step. Files references support
-//! enumeration, reads, symbolic resolution, and explicit no-reflog updates and deletion, plus
-//! conditional batches and caller-controlled reflog appends. SHA-1/SHA-256 working-tree index
-//! v2/v3/v4, raw status and conservative raw tree checkout are available. Attribute/filter/EOL
-//! conversion, branch switching, sparse checkout and submodules are deferred.
-
+//! runtime; fetch pack validation remains an explicit synchronous step. Files and reftable
+//! references support enumeration, reads, symbolic resolution, explicit no-reflog updates and
+//! deletion, conditional batches, and caller-controlled reflog appends. SHA-1/SHA-256 working-tree
+//! index v2/v3/v4 is available; raw status and conservative raw tree checkout run on macOS/Linux.
+//! Attribute/filter/EOL conversion, branch switching, sparse checkout and submodules are deferred.
 pub mod checkout;
 pub mod clone;
 mod commit;

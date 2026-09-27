@@ -24,8 +24,10 @@ opening a checkout does not redirect shared object storage to its private direct
 Relative `commondir` and linked `gitdir` backlinks resolve against the private Git directory.
 Relative forward gitfile targets resolve against the gitfile's containing directory, including a
 symlinked gitfile opened through its caller-visible location. Whole layouts with relative links can
-move together. Stale absolute backlinks remain observable until repaired externally. Girt does not
-create registrations, repair links, or prune entries; those operations belong to R19/R20.
+move together. Stale absolute backlinks remain observable. `create_orphan_worktree` registers an
+empty linked checkout; `repair_worktree` repairs links to an identified checkout, and
+`prune_worktree` removes a retired registration only after explicit retirement confirmation. These
+operations require caller coordination and can retain partial state after failure.
 
 Without `extensions.worktreeConfig`, linked layouts ignore shared `core.bare` and `core.worktree`.
 With it, direct common settings followed by direct private settings determine the checkout.
@@ -39,17 +41,14 @@ Existing paths are canonicalized through the filesystem, preserving native case/
 identity. Missing or inaccessible checkout paths remain absolute OS spellings and may contain `..`.
 Unix metadata paths preserve bytes; non-Unix metadata paths require UTF-8. Rust filesystem paths
 retain native Windows prefixes; no Git subprocess receives those canonical paths. Native UNC shares,
-WSL path interchange and additional alias contexts still require R36/C02 evidence. There is no
-lexical Unicode normalization, case folding, environment expansion or drive remapping.
+WSL path interchange and additional alias contexts remain unverified. There is no lexical Unicode
+normalization, case folding, environment expansion or drive remapping.
 
 The opener reads no ambient `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_SHALLOW_FILE`, discovery ceilings or ownership policy. Callers choose paths and supply config
-inputs explicitly. The inspected jj consumer opens its stored repository path, compares canonical
-common directories, and supplies identity config overrides. Installed jj 0.45.1 also imports and
-reopens an explicit backing repository with each of those five path overrides pointing to a
-nonexistent location. No repository-path environment adapter is established by those call sites or
-observations. R14 owns external object storage and R21 transport environment policy; R35 must
-re-inventory the consumer before integration.
+inputs explicitly. External object storage and transport environment inputs use separate explicit
+APIs. Applications that need repository-path environment behavior must resolve it before opening a
+repository.
 
 ## Registered Worktrees
 
@@ -113,8 +112,3 @@ destinations. Installation also checks the live shallow marker, including a mark
 opening. Callers must exclude concurrent depth changes for the whole operation. Empty live markers
 are conservatively refused at the destination guard. Low-level advertised shallow-server responses
 remain unsupported, and clone does not request depth/deepening.
-
-R26/R27 still own negotiation and depth-changing transfers; R29 owns shallow push policy. These
-refusals protect existing SHA-1-only operations and do not close those roadmap gaps. External object
-storage/backends remain R14. The original public fixtures in `tests/layout_shallow.rs` use Git for
-depth cloning and deepening, not a girt transport adapter.

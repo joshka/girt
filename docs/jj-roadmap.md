@@ -1,10 +1,13 @@
 # Full jj Git Coverage Roadmap
 
 The target is girt coverage of jj's Git responsibilities followed by one final jj replacement task.
-There is no early partial migration or final retained Git executable provider. Git is an independent
-compatibility oracle in disposable fixtures, not a production fallback. No capability is declared
-ready by this planning change. Existing coverage remains described in
-[compatibility](compatibility.md).
+The final target has no retained Git executable provider. The current R35 integration attempt uses a
+default-off jj `git.native-local-operations` setting for local clone, fetch, push and default-branch
+discovery. Ordinary jj local operations still use Git because jj cannot exclude external GC/pruning
+or worktree/HEAD changes throughout girt's native transfer. The opt-in path requires caller
+coordination for these external changes. The
+[A19 gate](jj-acceptance.md#a19--final-replacement-gate) remains open. Existing girt coverage is
+described in [compatibility](compatibility.md).
 
 ## Delivery Goals
 
@@ -21,16 +24,9 @@ The integration attempt continues while independent planning work proceeds.
 
 ## Baseline and Ownership
 
-The source assessment used girt `9a44ad7e4aa76e26caca0c48cccf7aac6f170b74` and jj
-`be5f5ebdc200593d8f1be06f11e27b485a97093d` on 2026-09-24. Its maintainer-local provenance files,
-which are not shipped with this repository, are
-`/Users/joshka/.codex/reports/girt-jj-2026-09-24/report.md` (report),
-`/Users/joshka/.codex/reports/girt-jj-2026-09-24/queue.md` (old queue),
-`/Users/joshka/.codex/reports/girt-jj-2026-09-24/call-sites.txt` (call sites), and
-`/Users/joshka/.codex/reports/girt-jj-2026-09-24/source-manifest.json` (source manifest). These are
-historical local evidence; this repository roadmap supersedes their staged migration plan. The
-[acceptance matrix](jj-acceptance.md) retains the actionable scope without requiring those files.
-Re-inventory the target jj revision before final integration to catch drift.
+The 2026-09-24 source assessment used girt `9a44ad7e4aa76e26caca0c48cccf7aac6f170b74` and jj
+`be5f5ebdc200593d8f1be06f11e27b485a97093d`. The [acceptance matrix](jj-acceptance.md) records the
+actionable scope. Re-inventory the target jj revision before final integration to catch drift.
 
 Girt owns Git representation, storage, repository/config/ref/index operations, ignore and inferred
 copy primitives, maintenance, and transport. jj retains its metadata tables, virtual roots/change
@@ -102,7 +98,7 @@ consumer or native-platform evidence.
 | R08 | Layered config resolution and provenance                    | R03                             | Complete            | L    | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r08.md)                                                                                   |
 | R09 | Lossless config and remote mutation                         | R08                             | Complete            | L    | [A06](jj-acceptance.md#a06--config-layers-and-remote-editing); [evidence](evidence/r09.md)                                                                                   |
 | R10 | Repository discovery, linked layouts and shallow roots      | R05, R08                        | Accepted            | L    | [A07](jj-acceptance.md#a07--repository-layouts-and-shallow-state); [evidence](evidence/r10.md)                                                                               |
-| C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted            | M    | [A18](jj-acceptance.md#a18--architecture-checkpoints); [remediation](evidence/c01.md)                                                                                        |
+| C01 | First architecture and abstraction-debt review              | R01–R10                         | Accepted            | M    | [A18](jj-acceptance.md#a18--architecture-checkpoints); accepted fixes at `120e2788`                                                                                          |
 | R11 | Portable conditional refs and reflogs                       | C01, R05, R09, R10              | Accepted            | XL   | [A08](jj-acceptance.md#a08--references-and-reflogs); [evidence](evidence/r11.md)                                                                                             |
 | R12 | Index versions, flags and extension policy                  | R05, R10                        | Complete            | XL   | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r12.md)                                                                                    |
 | R13 | Colocation index/HEAD and operation-state primitives        | R11, R12                        | Accepted            | L    | [A09](jj-acceptance.md#a09--index-and-colocation-primitives); [evidence](evidence/r13.md)                                                                                    |
@@ -164,8 +160,8 @@ read/display/write/fsck behavior, exact signature bytes, tested revisions and na
 completes layered resolution with provenance; its [evidence](evidence/r08.md) records exact source,
 Git observations, limits, benchmarks and platform boundaries. R09 completion is recorded in
 [its evidence](evidence/r09.md). The coordinator accepts R10 and C01 after independent verification
-of the [remediation](evidence/c01.md#coordinator-acceptance). Native evidence gaps and assigned
-follow-ups remain open; final jj integration remains R35.
+of fixes at `120e2788`. Native evidence gaps and assigned follow-ups remain open; final jj
+integration remains R35.
 
 R14, R21 and R34 are discovery gates as well as deliverables. If characterization reveals a large
 required format, helper, platform, or policy feature, append bounded dependent tasks before marking
@@ -262,23 +258,22 @@ Git CLI regex-selection or warning-producing partial-edit emulation is promised.
 
 ## Repository Layout Follow-through
 
-R10 implementation and native macOS evidence are [retained here](evidence/r10.md), accepted with
-[C01 remediation](evidence/c01.md#coordinator-acceptance). R36 records native Linux and Windows
-execution of `layout_shallow`, including Unicode and ordinary/verbatim drive paths; its Linux run
-also executes byte-path fixtures. C02 retains UNC, denied-access registration and WSL
-relative-backlink evidence. Cross-builds do not close these native requirements. R19/R20 retain
-registration, repair, locks and pruning; R26/R27 retain shallow negotiation/depth changes, and R29
-retains shallow push policy. Current transport guards prevent unsupported use without claiming those
-future requirements complete. R14 retains external storage/backends; R35 re-inventories consumer
-environment and caching needs.
+R10 implementation and native macOS evidence are [retained here](evidence/r10.md), accepted with C01
+fixes at `120e2788`. R36 records native Linux and Windows execution of `layout_shallow`, including
+Unicode and ordinary/verbatim drive paths; its Linux run also executes byte-path fixtures. C02
+retains UNC, denied-access registration and WSL relative-backlink evidence. Cross-builds do not
+close these native requirements. R19/R20 retain registration, repair, locks and pruning; R26/R27
+retain shallow negotiation/depth changes, and R29 retains shallow push policy. Current transport
+guards prevent unsupported use without claiming those future requirements complete. R14 retains
+external storage/backends; R35 re-inventories consumer environment and caching needs.
 
 ## C01 Follow-through
 
 C01 review is delivered. F1 shallow prefix interpretation, F2 discovery candidate recognition, F3
-inert NUL comments and D2 configuration tracing are remediated with retained
-[evidence](evidence/c01.md). The coordinator accepts R10/C01 on independent verification of F1–F3
-and D2. That acceptance did not close native R07–R10 gaps. R36 now records the broader native
-refresh and remaining exclusions; C02's milestone remains open.
+inert NUL comments and D2 configuration tracing are remediated at `120e2788`. The coordinator
+accepts R10/C01 on independent verification of F1–F3 and D2. That acceptance did not close native
+R07–R10 gaps. R36 now records the broader native refresh and remaining exclusions; C02's milestone
+remains open.
 
 - **D1 — R11:** Imported reflogs must accept the exact Git-observed `+0060`, empty-name and
   padded-name cases in [A08](jj-acceptance.md#a08--references-and-reflogs), in both object formats.
@@ -443,10 +438,9 @@ welcome; the upper value is not a regression threshold. Preserve correctness and
 exceptions with evidence and ownership. Later transport and other capabilities extend the corpus;
 R34 assesses the complete representative corpus, so R41 cannot pre-accept later functionality.
 
-The initial R15-only warm SHA-1 macOS packed-read report (maintainer-local provenance:
-`/Users/joshka/.codex/reports/girt-vs-git/README.md`) reports ordinary packed reads at 0.20–0.25x
-Git throughput and selected deep deltas at 0.017–0.026x. It motivates investigation, not an
-all-function or cross-platform baseline. No performance implementation is included in R40.
+An initial R15-only warm SHA-1 macOS measurement found ordinary packed reads at 0.20–0.25x Git
+throughput and selected deep deltas at 0.017–0.026x. It motivates investigation, not an all-function
+or cross-platform baseline. No performance implementation is included in R40.
 
 The [R41 report](evidence/r41.md) rebaselines the current code and records bounded index retention,
 `zlib-rs` inflation, direct result-buffer decoding and accelerated identity hashing. Warm buffered

@@ -48,7 +48,7 @@ budgets; the caller bounds concurrency and aggregate memory.
 
 ## Endpoint, Authentication and TLS
 
-Resolve an R21 `Destination` with `HttpSettings::resolve(config, destination, environment)`, then
+Resolve a `Destination` with `HttpSettings::resolve(config, destination, environment)`, then
 construct `HttpRemote::configured(settings)`. This reads global and URL-scoped `http.sslVerify`,
 `http.sslCAInfo`, `http.proxy` and `http.followRedirects` from the supplied config snapshot. URL
 sections match scheme, host, effective port and repository path at a component boundary; the longest
@@ -66,12 +66,12 @@ scheme, authority and repository path. Discovery first tries without the credent
 advertising Basic retries that GET once at the same origin. Other challenges receive no credential.
 An authenticated 200 approves the session; a 401 rejects it. Subsequent RPCs send the credential to
 the bound origin. Helper notification is synchronous, including process startup and callbacks; place
-configured network operations on an application worker when executor responsiveness matters. The R22
-deadline and cancellation bounds apply, but synchronous callback and process-start phases cannot be
-interrupted. Passwords are never displayed or traced. Plain HTTP transmits credentials without
-encryption; use HTTPS across untrusted networks. A push POST is never retried after an
-authentication challenge or transport failure because remote application may already have occurred.
-Inspect the remote before another push attempt.
+configured network operations on an application worker when executor responsiveness matters. The
+operation's deadline and cancellation bounds apply, but synchronous callback and process-start
+phases cannot be interrupted. Passwords are never displayed or traced. Plain HTTP transmits
+credentials without encryption; use HTTPS across untrusted networks. A push POST is never retried
+after an authentication challenge or transport failure because remote application may already have
+occurred. Inspect the remote before another push attempt.
 
 Configured connections accept one same-origin initial discovery redirect, retaining its repository
 base for the RPC. Cross-origin redirects and redirects with a credential session are refused before
@@ -142,8 +142,9 @@ cargo bench --features http --bench http
 TLS tests generate a private one-day CA and localhost certificate in temporary directories. They
 exercise trusted HTTPS fetch/push, untrusted chains and hostname mismatch without changing platform
 trust. Fixtures additionally inject HTTP errors, malformed headers/media types, redirects, truncated
-and stalled bodies. The HTTP tests are Unix-gated; runtime evidence currently covers macOS arm64.
-Configured Linux CI is future validation, not evidence that this revision has run there.
+and stalled bodies. This original HTTP suite is Unix-gated. Later native Linux and Windows HTTP
+selections are recorded with their exact revisions in
+[platform evidence](compatibility.md#platform-and-git-version-validation).
 
 ## Dependencies and Scope
 

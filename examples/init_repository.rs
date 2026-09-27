@@ -1,5 +1,6 @@
 //! Initialize a disposable repository and discover it from a nested directory.
-//! Run `cargo run --example init_repository`. SHA-256 loose storage works without refs or indexes.
+//! Run `cargo run --example init_repository`. This writes a SHA-256 loose blob without updating
+//! refs or an index.
 use girt::{InitKind, Repository};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

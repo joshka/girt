@@ -1,0 +1,9 @@
+extends: substitution
+message: "Use '%s' for this Git or project term."
+level: warning
+ignorecase: false
+swap:
+  'Github': 'GitHub'
+  'SHA1': 'SHA-1'
+  'SHA256': 'SHA-256'
+  'git-file': 'gitfile'

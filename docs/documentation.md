@@ -72,6 +72,21 @@ requires runnable examples, working links, verified claims and the reader journe
 remaining findings explicitly assigned. Stop when remaining edits only exchange equivalent wording;
 documentation volume and lint counts are not quality targets.
 
+## Evidence and Handoffs
+
+Keep an artifact when it supports a claim, review, reproduction, or unresolved task. Ask what a
+reader or the next worker would do with it tomorrow. Retain exact revisions, fixture provenance,
+failure records, and logs when they answer that question. Remove spent process notes, command
+transcripts, and test-count inventories from tracked docs. Preserve useful history in private local
+storage outside tracked paths when needed, then repair links so published pages stand alone. Keep a
+compact index only when readers still need to locate retained evidence; do not leave placeholder
+pages.
+
+A handoff should state the delivered behavior, material decisions and limits, the next action, and a
+concise validation reference. Put detailed evidence at the linked source so a reader can inspect it
+without making the handoff a work diary. User guides should explain the current operation and its
+recovery obligations; keep roadmap history in roadmap or evidence pages.
+
 ## Validation
 
 - For final review of substantive prose changes or tone-focused edits, load

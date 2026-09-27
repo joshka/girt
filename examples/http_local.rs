@@ -1,4 +1,5 @@
-//! Runs only against two disposable repositories and a loopback Git http-backend fixture.
+//! Run `cargo run --features http --example http_local` to use two disposable repositories and a
+//! loopback Git http-backend fixture.
 #[path = "../tests/support/http_git.rs"]
 mod http_git;
 

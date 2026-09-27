@@ -41,19 +41,17 @@ here and in the convention guides instead of expanding worker prompts. Keep jj u
 roadmap's final integration item; earlier corpus work exercises girt public APIs and observes an
 unchanged jj baseline in disposable repositories.
 
-A worker completion must report implemented behavior; new or changed public calls, types, and
-modules; exact tested revision; validation commands and results; interoperability, boundary, fault,
-race, platform, and benchmark evidence; and remaining limitations. Mark inapplicable evidence with a
-reason. Link retained artifacts and independently generated fixture provenance. Never describe a
-finite corpus as exhaustive parity proof.
+A worker completion states implemented behavior, changed public API, material decisions and limits,
+the exact tested revision, and the next action. Link concise validation results and applicable
+interoperability, boundary, fault, race, platform, and benchmark evidence. Keep commands, logs, and
+independent fixture provenance at those links when needed for review or reproduction; explain why
+required evidence is inapplicable. Never describe a finite corpus as exhaustive parity proof.
 
 Make task updates easy to scan without losing the decision trail. Open with the concrete problem,
-intended capability and central uncertainty. During work, report findings and why they change the
-next investigation or decision. Lead completion with the outcome and material blocker, if any;
-summarize the major design choices, enabled behavior and limits in a few substantive points. Keep
-revision lists, test counts and CI chronology in linked evidence, while naming the exact tested
-revision in the completion callback. Separate the original delivery from later corrections when
-summarizing history.
+intended capability and central uncertainty. During work, report findings that change the next
+investigation or decision. Lead completion with the outcome and material blocker, if any. Keep
+revision lists, test counts and CI chronology in linked evidence. Separate the original delivery
+from later corrections when summarizing history.
 
 The coordinator presents that concise summary, updates the roadmap status and completion links, adds
 discovered follow-ups and dependency changes, and dispatches the next ready item after acceptance or
@@ -135,8 +133,9 @@ implemented. Keep these distinctions visible in the completion report.
 
 The portable `decoding` integration suite exercises R07 in SHA-1 and SHA-256, including executable
 Git interpretation, loose/history reads, tag peeling and resource/corruption errors. Its transfer
-case is SHA-1-only because wire transfer remains owned by R27/R29. Linux/macOS run it in the full
-suite; Windows explicitly selects it. Retained provider-capture comparisons need no installed key or
+case remains SHA-1-only as originally written. R27 and R29 later added both-format wire transfer;
+their separate suites cover that behavior. Linux/macOS run the decoding suite in the full suite;
+Windows explicitly selects it. Retained provider-capture comparisons need no installed key or
 signing provider.
 
 ## Native Platform Coverage
@@ -157,7 +156,8 @@ The Windows integration selection follows implemented operations, not just file 
   explicitly scoped to macOS/Linux; files-reference rejection cases require Unix.
 - `blobs`, `trees`, `commits`, `tags`: Object formats, loose storage, Git byte interoperability.
 - `decoding`: Both-format tolerant tree/tag/commit interpretation, peeling and corruption/resource
-  boundaries. Its transfer case is SHA-1-only pending R27/R29.
+  boundaries. Its transfer case remains SHA-1-only; separate R27/R29 suites cover both-format wire
+  transfer.
 - `discovery`: Native local HEAD and both-format Git v0/v1/v2 advertisement observations, including
   unborn v2 `ls-refs`; no network transfer is claimed by this portable suite.
 - `packs`, `history`, `tree_compare`, `content_diff`: Pack/index I/O, deltas, graph queries,
@@ -199,14 +199,13 @@ The Windows integration selection follows implemented operations, not just file 
 Git-managed refs inside fixtures do not by themselves establish girt reference-storage support; the
 reference suites exercise girt operations explicitly. Tree symlink modes and non-UTF-8 entry names
 are object bytes, not Windows filesystem symlinks or byte filenames. Windows raw status and checkout
-remain unsupported, with refusal-only tests; C02 retains assessment and assignment of any required
-native implementation before R34.
+remain unsupported, with refusal-only tests; native implementation would require runtime validation.
 
 HTTP fixtures use disposable loopback servers, Python and Git's public CGI backend. TLS fixtures
-also need OpenSSL. Wire transfer remains SHA-1-only pending R27/R29; two-format storage tests do not
-establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records exact native results and
-the C02/R19/R20 UNC, WSL, ACL and worktree-administration exclusions. Maintenance remains with
-R31–R33. A CI compile or explicit unsupported error does not close those capability gaps.
+also need OpenSSL. Separate R27/R29 transfer suites cover both wire formats; two-format storage
+tests alone do not establish SHA-256 negotiation. R36's [evidence](evidence/r36.md) records its
+exact native results and exclusions. A CI compile or explicit unsupported error does not close
+runtime capability gaps.
 
 For Git CLI fixtures, pass repository-relative path arguments under an explicit working directory
 when possible. Rust's Windows canonical paths use verbatim prefixes that some Git commands and CGI
@@ -232,7 +231,7 @@ checkout and temporary-fixture storage.
 The following sections record evidence collected when each capability landed. Counts, commands, API
 names, and platform results describe those revisions, not a fresh run of the current checkout.
 Current implementation expectations are above; current capability and platform boundaries are in
-[compatibility evidence](compatibility.md#current-capabilities-and-evidence).
+[compatibility evidence](compatibility.md).
 Later records may supersede earlier limitations, with the original evidence retained for provenance.
 
 ### Blob Baseline Completion

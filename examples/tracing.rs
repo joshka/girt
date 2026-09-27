@@ -1,4 +1,5 @@
-//! A caller-owned scoped subscriber; the library installs no process-wide logging policy.
+//! Run `cargo run --features tracing --example tracing` for a caller-owned scoped subscriber.
+//! The library installs no process-wide logging policy.
 use girt::{InitKind, Repository};
 use tracing_subscriber::fmt::format::FmtSpan;
 

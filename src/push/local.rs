@@ -26,12 +26,12 @@ use crate::transport::TransportControl;
 ///
 /// Supports either object format and files or reftable references when prepared by
 /// [`PreparedPush::new_local`]. [`PreparedPush::new`] remains SHA-1 wire preparation. Ref and
-/// worktree state may change between separate reads; conditional locks prevent stale overwrites,
-/// and callers must coordinate worktree registration and GC. Deletion and non-fast-forward receive
-/// restrictions apply. `updateInstead`, namespace-specific policy, hooks and unsupported receive
-/// settings refuse before mutation. Object installation can leave an indexed pack when later refs
-/// reject or fail.
-///
+/// worktree state may change between separate reads; conditional locks prevent stale ref
+/// overwrites. Callers must exclude external GC/pruning, checkout, symbolic-HEAD/branch changes and
+/// worktree registration changes from preparation through publication. Ref locks do not enforce
+/// this exclusion. Deletion and non-fast-forward receive restrictions apply. `updateInstead`,
+/// namespace-specific policy, hooks and unsupported receive settings refuse before mutation.
+/// Object installation can leave an indexed pack when later refs reject or fail.
 /// # Errors
 ///
 /// Preflight and object installation failures are [`PushError::NotSent`] for ref effects. A

@@ -151,8 +151,9 @@ impl References<'_> {
     ///
     /// Uses the same worktree routing as references. Reads are live and may see an incomplete
     /// append by another writer. Prefer [`Self::imported_reflog`] for bounded recoverable reads.
-    /// Memory is proportional to the whole log; expiry and streaming
-    /// reads are deferred.
+    /// Memory is proportional to the whole log; this reader does not stream records or expire
+    /// history. [`crate::Repository::expire_reflogs`] separately expires eligible files or
+    /// reftable records under caller-owned maintenance isolation on Unix.
     ///
     /// # Errors
     ///

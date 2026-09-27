@@ -22,14 +22,19 @@ cargo install cargo-docs-rs --locked
 ```
 
 Nightly is needed for rustfmt's unstable options and the docs.rs check. Normal builds, tests, and
-Clippy use your default Rust toolchain.
+Clippy use your default Rust toolchain. Install Vale with your OS package manager for the prose
+check (`brew install vale` on macOS).
 
 ## Development Checks
 
-For Markdown-only changes, run `just fmt-md-check` (rumdl). Use `just fmt-md` to fix formatting. For
-Rustdoc-only changes, run the checks applicable to the change in
-[Rustdoc Standard](docs/rustdoc.md#examples-and-validation). Corrections that preserve meaning,
-links, and examples need prose review, but no Rust tests or documentation builds.
+For Markdown-only changes, run `just docs-check` (rumdl and Vale). Vale checks spelling and selected
+Git terminology in the README, this guide, and the repository, configuration, reference, HTTP, SSH,
+and working-tree guides. Its [project vocabulary](.config/vale/config/vocabularies/Girt/accept.txt)
+accepts domain terms; review a warning in context before changing a technical contract. Use
+`just fmt-md` to fix formatting. Vale covers these guides while the remaining historical evidence
+and API documentation are being audited. For Rustdoc-only changes, run the checks applicable to the
+change in [Rustdoc Standard](docs/rustdoc.md#examples-and-validation). Corrections that preserve
+meaning, links, and examples need prose review, but no Rust tests or documentation builds.
 
 For Rust implementation changes, run these checks before submitting a contribution:
 
@@ -49,8 +54,8 @@ Use `just fmt-rust` or `just fmt-md` to format one language, and `just fmt-rust-
 columns and separators stay aligned, even when a table must be wider.
 
 For performance-sensitive changes, run `just bench`. See
-[Blob Performance Baseline](docs/benchmarks.md) for workloads, measured operations, cache
-conditions, and recorded results.
+[performance measurements](docs/benchmarks.md) for workloads, measured operations, cache conditions,
+and recorded results.
 
 The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
 checks on macOS and Linux, with a separate Windows portable-test job. Its explicit

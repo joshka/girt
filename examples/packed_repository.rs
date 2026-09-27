@@ -1,6 +1,7 @@
 //! Read exact bytes from an existing loose or packed repository without modifying it.
 //!
-//! Run `cargo run --example packed_repository -- /path/to/repo <full-sha1-id>`.
+//! Run `cargo run --example packed_repository -- /path/to/repo <object-id>` with a full SHA-1 or
+//! SHA-256 identity matching the repository's format.
 //! To prepare a disposable packed repository, create commits and run `git repack -ad` there.
 use std::io::{self, Write};
 
@@ -11,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = args.next().ok_or("expected repository path")?;
     let id: ObjectId = args
         .next()
-        .ok_or("expected full SHA-1 object identity")?
+        .ok_or("expected full object identity")?
         .parse()?;
     let repository = Repository::open(path)?;
     let objects = repository.objects(PackLimits::default())?;

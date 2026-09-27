@@ -1,5 +1,14 @@
 # Git Compatibility Evidence
 
+This page records supported boundaries and the observations that established them. Start with the
+[README task paths](../README.md#choose-a-workflow) or crate Rustdoc for an operation's current
+contract. The task guides cover [repository layouts](repositories.md),
+[configuration](configuration.md), [references and recovery](reference-transactions.md),
+[working-tree status and checkout](working-tree.md), [HTTP](http.md), and [SSH](ssh.md). The results
+below apply to their stated revisions. Paths under `/Users/joshka/.codex/reports/` identify
+maintainer-local artifacts that are not part of this repository or published crate. The linked
+`docs/evidence/` records retain the portable scope and revision summaries.
+
 R11 extends the files backend to portable conditional refs and reflogs; its current
 [contracts](reference-transactions.md) and [evidence](evidence/r11.md) supersede historical
 Unix-only reference and strict imported-reflog restrictions below. R37 adds reftable under its
@@ -15,8 +24,10 @@ wire fetch with bounded receipt and verified thin-pack completion. R29 extends w
 formats; native local push also supports both. No dual-hash conversion is provided.
 
 Native local fetch and push use girt storage and references in both formats; see
-[R25 evidence](evidence/r25.md). The historical upload-pack, receive-pack and owned local-process
-sections below describe their original validation revisions, not the current local adapter.
+[R25 evidence](evidence/r25.md). Callers must exclude external GC/pruning and worktree/HEAD changes
+from preparation through publication; conditional ref locks do not enforce that exclusion. The
+historical upload-pack, receive-pack and owned local-process sections below describe their original
+validation revisions, not the current local adapter.
 
 Explicit format arguments select standalone pack/index/reflog codecs, including empty artifacts.
 Repository operations derive the format from common configuration, never from artifact lengths.
@@ -45,27 +56,19 @@ objects or references. The [R07 evidence](evidence/r07.md) records executable-Gi
 between reading, display, canonical writing and strict fsck, plus signature-provider payload
 captures.
 
-## Current Capabilities and Evidence
+## R06 Native Validation Snapshot
 
-The current API supports both-format loose objects and complete-history queries, SHA-1/SHA-256 pack
-v2/v3 and index v1/v2 reads, object-only fetch, conditional branch/tag push, reference enumeration,
-and conditional transactions with explicit reflog policy, named remote/refspec mapping, explicit
-fetch orchestration, and tracking-layout clone into bare or ordinary no-checkout repositories,
-recursive tree comparison, and byte-preserving content diff, SHA-1/SHA-256 working-tree index
-v2/v3/v4 read/replacement, and raw read-only working-tree status and conservative raw tree checkout
-on macOS/Linux. The single-reference no-reflog operations remain available. HTTP and SSH downloads
-share owned validation state. Installation takes explicit destination snapshot limits. Read and
-operation limits remain per phase; no process-wide heap or hard CPU-latency guarantee is implied.
+The [R06 native validation](evidence/r06.md) records this platform boundary at revision
+`f79b50843a47aeed7b468acb7b4a133f35e98a10`:
 
-| Platform       | Current evidence boundary                                |
+| Platform       | R06 evidence boundary                                    |
 | -------------- | -------------------------------------------------------- |
 | macOS arm64    | Full suite through raw checkout, including HTTP and SSH. |
 | Linux x86_64   | Full suite through raw checkout, including HTTP and SSH. |
 | Windows x86_64 | Portable integration suites and bounded HTTP runtime.    |
 
-The [R06 native validation](evidence/r06.md) records the latest native results and Windows
-exclusions at `f79b50843a47aeed7b468acb7b4a133f35e98a10`. Run IDs, counts and environments apply
-only to their stated revisions; later code changes require new evidence.
+Its run IDs, counts, environments and Windows exclusions apply to that revision. Later validation
+appears in the next section.
 
 ## Platform and Git-Version Validation
 
@@ -1295,9 +1298,8 @@ histories, branch/tag selection, gitlinks, unavailable receiver roots, corrupt/m
 objects, ACK states and bounds, installation failures without ref publication, expected-ref races
 and partial push status. The existing push integration helper now exercises exclusion using expected
 old tips, including the rejection and race tests. Fixtures are independently generated with Git
-plumbing and girt writers. Measurements and exact platform evidence are recorded with the
-[incremental benchmark](benchmarks.md#incremental-transfer-comparison) and
-[completion checklist](testing.md#incremental-transfer-completion).
+plumbing and girt writers. Measurements and platform conditions are recorded with the
+[incremental benchmark](benchmarks.md#incremental-transfer-comparison).
 
 ## Bounded Pack Delta Compression
 
@@ -1764,10 +1766,9 @@ also rejects malformed advertisements without installation. Existing transaction
 partial-publication evidence.
 
 This increment was exercised on 2026-09-24 on macOS arm64 with Git 2.55.0 and rustc 1.98.1; its
-[completion record](testing.md#fetch-orchestration-completion) and
-[benchmark baseline](benchmarks.md#fetch-orchestration-baseline) record the checks and retained
-measurements. Earlier Linux/Windows validation records do not establish runtime support for these
-new workflow paths.
+[benchmark baseline](benchmarks.md#fetch-orchestration-baseline) records retained measurements.
+Earlier Linux/Windows validation records do not establish runtime support for these new workflow
+paths.
 
 ## Clone Without Checkout
 
@@ -2108,9 +2109,8 @@ CI selects it deliberately. Native Linux/Windows execution of this increment rem
 The 2026-09-24 macOS arm64 run at `9affad69fac53f2c022f47f46b40f8ee7cc588af` used Rust/Cargo 1.98.1
 and Git 2.55.0. Full checks passed 1,146 units, 507 integrations and 19 doctests, including 37 local
 status cases and 35 status integration cases. See the
-[completion record](testing.md#raw-working-tree-status-completion) for checks and cross-compilation
-evidence, and the [baseline](benchmarks.md#raw-working-tree-status-baseline) for representative
-warm-storage measurements. No publication, merge or checkout is part of this increment.
+[baseline](benchmarks.md#raw-working-tree-status-baseline) for representative warm-storage
+measurements. No publication, merge or checkout is part of this increment.
 
 ## Raw Tree Checkout
 
@@ -2212,9 +2212,8 @@ index correctly. An attributes fixture proves the deliberate difference between 
 materialization and Git's CRLF checkout conversion. No upstream implementation or test source was
 used as input.
 
-Run `cargo run --example checkout` for a disposable public lifecycle. See the
-[completion evidence](testing.md#raw-tree-checkout-completion) and
-[benchmark workload](benchmarks.md#raw-tree-checkout-baseline) for validation scope.
+Run `cargo run --example checkout` for a disposable public lifecycle. The
+[benchmark workload](benchmarks.md#raw-tree-checkout-baseline) records the measured scope.
 
 ## Colocation and Operation Metadata
 
