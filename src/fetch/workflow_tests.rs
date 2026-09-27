@@ -83,7 +83,7 @@ fn tag_decisions(
     #[case] expected: FetchUpdateKind,
 ) {
     assert_eq!(
-        update_kind(&name("refs/tags/v1"), old, id(2), force, authorized).unwrap(),
+        update_kind(&name("refs/tags/v1"), old, id(2), force, authorized, true).unwrap(),
         expected
     );
 }
@@ -94,7 +94,14 @@ fn tag_decisions(
 #[case::authorization_only(false, true)]
 fn tag_replacement_requires_both(#[case] force: bool, #[case] authorized: bool) {
     assert!(matches!(
-        update_kind(&name("refs/tags/v1"), Some(id(1)), id(2), force, authorized),
+        update_kind(
+            &name("refs/tags/v1"),
+            Some(id(1)),
+            id(2),
+            force,
+            authorized,
+            true
+        ),
         Err(FetchPlanError::TagReplacement(_))
     ));
 }
@@ -107,11 +114,78 @@ fn remote_tracking_replacement_defers_object_checks() {
             Some(id(1)),
             id(2),
             false,
+            false,
             false
         )
         .unwrap(),
         FetchUpdateKind::Replace
     );
+}
+
+#[test]
+fn additional_tag_namespace_has_exact_boundary() {
+    let spec = "+refs/heads/main:refs/jj/remote-tags/origin/main";
+    let (_root, initial) = request(&[spec]);
+    assert!(matches!(
+        initial.plan(&advertisement()),
+        Err(FetchPlanError::Destination(_))
+    ));
+    let planned = initial.with_tag_destination_namespace(name("refs/jj/remote-tags/origin"));
+    assert_eq!(
+        planned.plan(&advertisement()).unwrap()[0].kind,
+        FetchUpdateKind::Create
+    );
+
+    let spec = "+refs/heads/main:refs/jj/remote-tags/origin-other/main";
+    let (_root, request) = request(&[spec]);
+    let request = request.with_tag_destination_namespace(name("refs/jj/remote-tags/origin"));
+    assert!(matches!(
+        request.plan(&advertisement()),
+        Err(FetchPlanError::Destination(_))
+    ));
+}
+
+#[test]
+fn additional_tag_namespace_requires_force_and_authorization() {
+    let dest = name("refs/jj/remote-tags/origin/v1");
+    let (_root, mut request) = request(&["+refs/heads/main:refs/jj/remote-tags/origin/v1"]);
+    request.snapshot.insert(dest.clone(), Target::Direct(id(2)));
+    request = request.with_tag_destination_namespace(name("refs/jj/remote-tags/origin"));
+    assert!(matches!(
+        request.plan(&advertisement()),
+        Err(FetchPlanError::TagReplacement(_))
+    ));
+    request.authorized_force.insert(dest);
+    assert_eq!(
+        request.plan(&advertisement()).unwrap()[0].kind,
+        FetchUpdateKind::ForcedTag
+    );
+}
+
+#[test]
+fn additional_tag_namespace_prunes_missing_sources_only() {
+    let (_root, mut request) = request(&[
+        "+refs/heads/*:refs/jj/remote-tags/origin/*",
+        "^refs/heads/private",
+    ]);
+    request.snapshot.insert(
+        name("refs/jj/remote-tags/origin/old"),
+        Target::Direct(id(3)),
+    );
+    request
+        .snapshot
+        .insert(name("refs/jj/remote-tags/other/old"), Target::Direct(id(4)));
+    request = request
+        .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+        .with_prune();
+    let plan = request.plan(&advertisement()).unwrap();
+    assert!(plan.iter().any(|update| {
+        update.mapping.destination.as_ref() == Some(&name("refs/jj/remote-tags/origin/old"))
+            && update.kind == FetchUpdateKind::Prune
+    }));
+    assert!(!plan.iter().any(|update| {
+        update.mapping.destination.as_ref() == Some(&name("refs/jj/remote-tags/other/old"))
+    }));
 }
 
 #[test]

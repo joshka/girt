@@ -18,7 +18,8 @@ use crate::{ObjectId, Repository};
 ///
 /// Construct with a named remote's [`crate::remote::Remote::fetch_refspecs`] or an explicit list.
 /// Endpoint selection and credentials remain separate transport arguments. Only `refs/remotes/*`
-/// and `refs/tags/*` destinations are supported; branch and symbolic destinations are rejected.
+/// and `refs/tags/*` destinations are supported by default. A caller may add tag-like namespaces
+/// with [`Self::with_tag_destination_namespace`]. Branch and symbolic destinations are rejected.
 /// Remote-tracking refs accept all validated object kinds. When both old/new tips peel to commits,
 /// non-fast-forward updates require force intent and name authorization; other kind replacements
 /// need neither. Replacing a tag requires both `+` and its name in `authorized_force`.
@@ -40,7 +41,8 @@ use crate::{ObjectId, Repository};
 /// depth response cannot silently drop boundaries belonging to other local references.
 ///
 /// Exact selectors missing from the advertisement are reported while other valid selections
-/// continue. [`Self::with_prune`] permits scoped remote-tracking deletion. Shallow depth changes
+/// continue. [`Self::with_prune`] permits scoped remote-tracking and authorized tag-namespace
+/// deletion. Shallow depth changes
 /// use a conditional metadata lock and are reported separately from object/ref effects.
 ///
 /// This workflow does not write `FETCH_HEAD`, infer tags, clone, check out, edit
@@ -53,6 +55,7 @@ pub struct FetchRequest {
     snapshot: BTreeMap<RefName, Target>,
     authorized_force: BTreeSet<RefName>,
     reflog: Reflog,
+    additional_tag_namespaces: Vec<RefName>,
     prune: bool,
     pub(super) depth: Option<NonZeroU32>,
     shallow_before: Vec<ObjectId>,
@@ -94,9 +97,29 @@ impl FetchRequest {
             snapshot,
             authorized_force,
             reflog,
+            additional_tag_namespaces: Vec::new(),
             prune: false,
             depth: None,
             shallow_before,
+        })
+    }
+
+    /// Allows tag-like destinations below one caller-owned reference namespace.
+    ///
+    /// Only descendants of `namespace` are added; the namespace itself remains unsupported.
+    /// Replacements require both force intent and authorization, as for `refs/tags/*`. When
+    /// pruning is enabled, absent sources can prune these destinations. The caller must choose
+    /// a namespace it owns and keep unrelated references outside it.
+    pub fn with_tag_destination_namespace(mut self, namespace: RefName) -> Self {
+        self.additional_tag_namespaces.push(namespace);
+        self
+    }
+
+    fn additional_tag_destination(&self, name: &RefName) -> bool {
+        self.additional_tag_namespaces.iter().any(|namespace| {
+            name.as_bytes()
+                .strip_prefix(namespace.as_bytes())
+                .is_some_and(|suffix| suffix.starts_with(b"/") && suffix.len() > 1)
         })
     }
 
@@ -107,8 +130,9 @@ impl FetchRequest {
         self
     }
 
-    /// Enables deletion of stale direct remote-tracking destinations owned by these refspecs.
-    /// Exact snapshot values are required at publication. Tags and excluded sources are retained.
+    /// Enables deletion of stale direct remote-tracking and added tag-namespace destinations
+    /// owned by these refspecs. Exact snapshot values are required at publication. Built-in
+    /// `refs/tags/*` destinations and excluded sources are retained.
     pub fn with_prune(mut self) -> Self {
         self.prune = true;
         self
@@ -139,7 +163,9 @@ impl FetchRequest {
                     });
                 };
                 let bytes = name.as_bytes();
-                if !bytes.starts_with(b"refs/remotes/") && !bytes.starts_with(b"refs/tags/") {
+                let tag_destination =
+                    bytes.starts_with(b"refs/tags/") || self.additional_tag_destination(name);
+                if !bytes.starts_with(b"refs/remotes/") && !tag_destination {
                     return Err(FetchPlanError::Destination(name.clone()));
                 }
                 let previous = match self.snapshot.get(name) {
@@ -160,6 +186,7 @@ impl FetchRequest {
                     new,
                     mapping.force,
                     self.authorized_force.contains(name),
+                    tag_destination,
                 )?;
                 Ok(FetchUpdate {
                     mapping,
@@ -181,7 +208,10 @@ impl FetchRequest {
                 .cloned()
                 .collect();
             for (name, target) in &self.snapshot {
-                if !name.as_bytes().starts_with(b"refs/remotes/") || selected.contains(name) {
+                if !(name.as_bytes().starts_with(b"refs/remotes/")
+                    || self.additional_tag_destination(name))
+                    || selected.contains(name)
+                {
                     continue;
                 }
                 let sources = self.specs.prune_sources(name);
@@ -297,11 +327,12 @@ fn update_kind(
     new: ObjectId,
     force: bool,
     authorized: bool,
+    tag_destination: bool,
 ) -> Result<FetchUpdateKind, FetchPlanError> {
     match previous {
         None => Ok(FetchUpdateKind::Create),
         Some(old) if old == new => Ok(FetchUpdateKind::Unchanged),
-        Some(_) if name.as_bytes().starts_with(b"refs/tags/") => {
+        Some(_) if tag_destination => {
             if !force || !authorized {
                 return Err(FetchPlanError::TagReplacement(name.clone()));
             }

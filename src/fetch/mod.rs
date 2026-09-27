@@ -3,8 +3,9 @@
 //! [`FetchRequest`] combines supported refspecs with a destination snapshot and explicit update
 //! authorization. Its local/HTTP/SSH adapters plan from their actual advertisement, then use shared
 //! validation, installation and conditional publication through [`FetchReady::finish`]. Only
-//! remote-tracking and tag destinations are supported; see [`FetchRequest`] for worktree safety
-//! and caller coordination. `FETCH_HEAD` and implicit tags remain caller policy.
+//! remote-tracking and tag destinations are supported by default, with explicit caller-owned
+//! tag namespaces available; see [`FetchRequest`] for worktree safety and caller coordination.
+//! `FETCH_HEAD` and implicit tags remain caller policy.
 //!
 //! The lower-level [`receive`] and [`receive_local`] return a validated [`ReceivedFetch`] without
 //! touching a repository. Install explicitly and choose reference policy yourself, or use

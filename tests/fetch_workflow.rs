@@ -402,6 +402,84 @@ fn prune_refuses_a_concurrent_destination_change() {
 }
 
 #[test]
+fn caller_tag_namespace_fetches_replaces_and_prunes() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let destination = "refs/jj/remote-tags/origin/v1";
+    let specs = ["+refs/tags/*:refs/jj/remote-tags/origin/*"];
+    let prepare = || {
+        request(&repository, &specs, &[destination], Reflog::Preserve)
+            .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+            .with_prune()
+    };
+    let first = receive(prepare(), &source, &KnownHistory::default())
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(first.references.len(), 1);
+    assert_eq!(
+        stored(&repository, destination),
+        Some(Target::Direct(source.tag))
+    );
+
+    source.set("refs/tags/v1", source.second);
+    let second = receive(prepare(), &source, &KnownHistory::default())
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(second.updates[0].kind, FetchUpdateKind::ForcedTag);
+    assert_eq!(
+        stored(&repository, destination),
+        Some(Target::Direct(source.second))
+    );
+
+    git(
+        source.root.path(),
+        &["update-ref", "-d", "refs/tags/v1"],
+        b"",
+    );
+    let last = receive(prepare(), &source, &KnownHistory::default())
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(last.updates[0].kind, FetchUpdateKind::Prune);
+    assert_eq!(stored(&repository, destination), None);
+}
+
+#[test]
+fn caller_tag_namespace_preserves_concurrent_update() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let destination = name("refs/jj/remote-tags/origin/v1");
+    let refs = repository.references().unwrap();
+    refs.update_without_reflog(&destination, Target::Direct(source.first), Expected::Absent)
+        .unwrap();
+    let request = request(
+        &repository,
+        &["+refs/tags/v1:refs/jj/remote-tags/origin/v1"],
+        &["refs/jj/remote-tags/origin/v1"],
+        Reflog::Preserve,
+    )
+    .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"));
+    let ready = receive(request, &source, &KnownHistory::default());
+    refs.update_without_reflog(
+        &destination,
+        Target::Direct(source.second),
+        Expected::Value(Target::Direct(source.first)),
+    )
+    .unwrap();
+    let failure = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(failure.report.installed.is_some());
+    assert!(matches!(
+        *failure.source,
+        FetchFinishFailure::Publication(TransactionError::Prepare { .. })
+    ));
+    assert_eq!(
+        stored(&repository, "refs/jj/remote-tags/origin/v1"),
+        Some(Target::Direct(source.second))
+    );
+}
+
+#[test]
 fn known_only_unchanged_fetch_does_not_write_refs_or_logs() {
     let source = Source::new();
     let (_root, repository) = destination();
