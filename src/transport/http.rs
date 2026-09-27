@@ -1,8 +1,8 @@
 //! Explicit smart-HTTP discovery and RPC exchanges.
 //!
-//! Resolve [`HttpSettings`] from a selected [`Destination`], [`crate::Config`], and explicit
-//! [`HttpEnvironment`], then construct [`HttpRemote::configured`] for fetch or push adapters.
-//! [`HttpRemote::with_credentials`] attaches an application-approved credential session.
+//! Resolve [`HttpSettings`] from a selected [`crate::remote::Destination`], [`crate::Config`], and
+//! explicit [`HttpEnvironment`], then construct [`HttpRemote::configured`] for fetch or push
+//! adapters. [`HttpRemote::with_credentials`] attaches an application-approved credential session.
 //! [`TransportControl`] supplies cancellation and a deadline for owned
 //! waits; the application owns the Tokio runtime and synchronous fetch validation worker.
 //!
@@ -19,182 +19,10 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Url};
 
 use super::TransportControl;
-use crate::Config;
-use crate::config::boolean;
-use crate::remote::{CredentialSession, Destination, Protocol};
+use crate::remote::CredentialSession;
 
-/// Application-supplied HTTP environment. No process-global variables are read by girt.
-#[derive(Default, Clone)]
-pub struct HttpEnvironment {
-    /// `GIT_SSL_CAINFO` PEM file content, read and bounded by the application.
-    pub ssl_ca_info: Option<Vec<u8>>,
-    /// `GIT_SSL_NO_VERIFY`; disabling verification also requires `allow_insecure_tls`.
-    pub ssl_no_verify: Option<bool>,
-    /// `https_proxy`, `http_proxy`, or `all_proxy` selected by the application.
-    pub proxy: Option<String>,
-    /// `no_proxy` selected by the application.
-    pub no_proxy: Option<String>,
-    /// Approved Basic credentials for the selected proxy, never parsed from a proxy URL.
-    pub proxy_credentials: Option<(String, String)>,
-    /// Explicit application authorization for disabling certificate and hostname checks.
-    pub allow_insecure_tls: bool,
-}
-
-impl std::fmt::Debug for HttpEnvironment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpEnvironment").finish_non_exhaustive()
-    }
-}
-
-/// Resolved HTTP policy for one R21 destination. Its Debug output omits URLs and secrets.
-pub struct HttpSettings {
-    url: String,
-    roots: Vec<Vec<u8>>,
-    proxy: Option<String>,
-    no_proxy: Option<String>,
-    proxy_credentials: Option<(String, String)>,
-    verify_tls: bool,
-    follow_initial_redirect: bool,
-}
-
-impl std::fmt::Debug for HttpSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpSettings").finish_non_exhaustive()
-    }
-}
-
-impl HttpSettings {
-    /// Resolves URL-scoped `http.sslVerify`, `http.sslCAInfo`, `http.proxy`, and
-    /// `http.followRedirects` for a selected destination.
-    ///
-    /// Explicit environment values override configuration. CA file bytes are supplied by the
-    /// application, so girt never opens a configured path implicitly. A configured CA path without
-    /// supplied bytes is refused. The application must explicitly authorize disabled verification.
-    /// Proxy userinfo is refused; Basic proxy authentication is supplied by an approved caller.
-    /// URL sections match scheme, host, effective port and component-bounded path; the longest
-    /// matching path wins, then the latest occurrence. Global values use their latest occurrence.
-    /// Only `initial` and `false` redirect policies are accepted. The default is `initial`.
-    pub fn resolve(
-        config: &Config,
-        destination: &Destination,
-        environment: &HttpEnvironment,
-    ) -> Result<Self, HttpError> {
-        if !matches!(destination.protocol(), Protocol::Http | Protocol::Https) {
-            return Err(HttpError::Configuration("HTTP destination"));
-        }
-        let url = std::str::from_utf8(destination.bytes())
-            .map_err(|_| HttpError::Configuration("repository URL encoding"))?
-            .to_owned();
-        let target = Url::parse(&url).map_err(|_| HttpError::Configuration("repository URL"))?;
-        let configured_verify = http_value(config, &target, "sslverify")
-            .map(|value| boolean(value).ok_or(HttpError::Configuration("TLS verification")))
-            .transpose()?;
-        let verify_tls =
-            !environment.ssl_no_verify.unwrap_or(false) && configured_verify.unwrap_or(true);
-        if !verify_tls && !environment.allow_insecure_tls {
-            return Err(HttpError::Configuration(
-                "insecure TLS requires application approval",
-            ));
-        }
-        let ca_configured = http_value(config, &target, "sslcainfo").is_some();
-        if ca_configured && environment.ssl_ca_info.is_none() {
-            return Err(HttpError::Configuration(
-                "TLS CA file requires application input",
-            ));
-        }
-        let roots = environment.ssl_ca_info.iter().cloned().collect();
-        if environment
-            .ssl_ca_info
-            .as_ref()
-            .is_some_and(|ca| ca.len() > 1024 * 1024)
-        {
-            return Err(HttpError::Limit("trust roots"));
-        }
-        let follow_initial_redirect = match http_value(config, &target, "followredirects") {
-            None | Some(Some(b"initial")) => true,
-            Some(Some(b"false")) => false,
-            _ => return Err(HttpError::Configuration("redirect policy")),
-        };
-        let configured_proxy = http_value(config, &target, "proxy")
-            .map(|value| value.ok_or(HttpError::Configuration("proxy")))
-            .transpose()?;
-        let proxy = match (&environment.proxy, configured_proxy) {
-            (Some(value), _) => Some(value.clone()),
-            (None, Some(value)) => Some(
-                std::str::from_utf8(value)
-                    .map_err(|_| HttpError::Configuration("proxy URL encoding"))?
-                    .to_owned(),
-            ),
-            (None, None) => None,
-        };
-        let proxy = proxy.filter(|value| !value.is_empty());
-        if let Some(value) = &proxy {
-            if value.len() > 8192 {
-                return Err(HttpError::Limit("proxy URL"));
-            }
-            let parsed = Url::parse(value).map_err(|_| HttpError::Configuration("proxy URL"))?;
-            if !matches!(parsed.scheme(), "http" | "https")
-                || parsed.host_str().is_none()
-                || !parsed.username().is_empty()
-                || parsed.password().is_some()
-                || parsed.query().is_some()
-                || parsed.fragment().is_some()
-            {
-                return Err(HttpError::Configuration("proxy URL"));
-            }
-        }
-        Ok(Self {
-            url,
-            roots,
-            proxy,
-            no_proxy: environment.no_proxy.clone(),
-            proxy_credentials: environment.proxy_credentials.clone(),
-            verify_tls,
-            follow_initial_redirect,
-        })
-    }
-}
-
-fn http_value<'a>(config: &'a Config, target: &Url, name: &str) -> Option<Option<&'a [u8]>> {
-    let mut selected = None;
-    let mut best_path = 0;
-    let mut scoped = false;
-    for entry in config.entries() {
-        if !entry.section.eq_ignore_ascii_case(b"http")
-            || !entry.name.eq_ignore_ascii_case(name.as_bytes())
-        {
-            continue;
-        }
-        let Some(scope) = entry.subsection.as_deref() else {
-            if !scoped {
-                selected = Some(entry.value.as_deref());
-            }
-            continue;
-        };
-        let Ok(scope) = std::str::from_utf8(scope) else {
-            continue;
-        };
-        let Ok(scope) = Url::parse(scope) else {
-            continue;
-        };
-        let path = scope.path().trim_end_matches('/');
-        if scope.scheme() == target.scheme()
-            && scope.host_str() == target.host_str()
-            && scope.port_or_known_default() == target.port_or_known_default()
-            && scope.username().is_empty()
-            && scope.password().is_none()
-            && target.path().starts_with(path)
-            && (target.path().len() == path.len()
-                || target.path().as_bytes().get(path.len()) == Some(&b'/'))
-            && path.len() >= best_path
-        {
-            selected = Some(entry.value.as_deref());
-            best_path = path.len();
-            scoped = true;
-        }
-    }
-    selected
-}
+mod configuration;
+pub use configuration::{HttpEnvironment, HttpSettings};
 
 /// One repository endpoint and explicit headers, usable with [`crate::fetch::receive_http`] and
 /// [`crate::push::send_http`]. No URL or headers are included in Debug output or transport errors.
@@ -270,16 +98,60 @@ pub enum HttpError {
     Deadline,
 }
 
+/// Configured CA bundles replace platform roots; the explicit legacy constructor adds roots.
+enum TrustRoots<'a> {
+    Configured(&'a [&'a [u8]]),
+    Additional(&'a [&'a [u8]]),
+}
+
+impl TrustRoots<'_> {
+    fn configure(
+        self,
+        builder: reqwest::ClientBuilder,
+    ) -> Result<reqwest::ClientBuilder, HttpError> {
+        let bundles = match self {
+            Self::Configured(bundles) | Self::Additional(bundles) => bundles,
+        };
+        if bundles.is_empty() {
+            return Ok(builder);
+        }
+        let mut certificates = Vec::new();
+        let mut bytes = 0usize;
+        for bundle in bundles {
+            bytes = bytes.saturating_add(bundle.len());
+            if bytes > 1024 * 1024 {
+                return Err(HttpError::Limit("trust roots"));
+            }
+            let parsed = reqwest::Certificate::from_pem_bundle(bundle)
+                .map_err(|_| HttpError::Configuration("trust roots"))?;
+            if parsed.is_empty() {
+                return Err(HttpError::Configuration("empty trust roots"));
+            }
+            certificates.extend(parsed);
+        }
+        Ok(match self {
+            Self::Configured(_) => builder.tls_certs_only(certificates),
+            Self::Additional(_) => builder.tls_certs_merge(certificates),
+        })
+    }
+}
+
 impl HttpRemote {
     /// Builds an HTTP connection from an R21 destination and explicit policy inputs.
     ///
-    /// `HttpSettings::resolve` validates the destination and policy before a request can begin.
+    /// [`HttpSettings::resolve`] validates policy before a request can begin. Supplied CA bundles
+    /// replace platform roots; absent bundles use the rustls platform verifier.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid endpoints, empty/malformed CA bundles and client configuration failures.
+    /// Errors omit supplied URLs, certificates and credentials.
     pub fn configured(settings: HttpSettings) -> Result<Self, HttpError> {
         let roots: Vec<_> = settings.roots.iter().map(Vec::as_slice).collect();
         let mut remote = Self::build(
             &settings.url,
             &[],
-            &roots,
+            TrustRoots::Configured(&roots),
             settings.proxy.as_deref(),
             settings.no_proxy.as_deref(),
             settings.proxy_credentials.as_ref(),
@@ -331,7 +203,8 @@ impl HttpRemote {
     /// Headers may be `Authorization`, `User-Agent`, or application-specific `X-*` fields. Values
     /// must be valid single-line HTTP values; all are marked sensitive. No challenge retry occurs:
     /// supply the complete authorization value before calling. Headers apply to both service paths
-    /// at this URL. Empty headers and roots use anonymous access and platform trust.
+    /// at this URL. Empty headers and roots use anonymous access and platform trust. Supplied PEM
+    /// bundles must contain certificates and total at most 1 MiB.
     ///
     /// # Errors
     ///
@@ -339,13 +212,21 @@ impl HttpRemote {
     /// malformed headers, protocol/routing header overrides and invalid certificates. Errors never
     /// include supplied values. Redirects are rejected even within the same origin.
     pub fn new(url: &str, headers: &[(&str, &str)], roots: &[&[u8]]) -> Result<Self, HttpError> {
-        Self::build(url, headers, roots, None, None, None, true)
+        Self::build(
+            url,
+            headers,
+            TrustRoots::Additional(roots),
+            None,
+            None,
+            None,
+            true,
+        )
     }
 
     fn build(
         url: &str,
         headers: &[(&str, &str)],
-        roots: &[&[u8]],
+        roots: TrustRoots<'_>,
         proxy: Option<&str>,
         no_proxy: Option<&str>,
         proxy_credentials: Option<&(String, String)>,
@@ -401,6 +282,7 @@ impl HttpRemote {
             }
         }
         let mut builder = Client::builder()
+            .tls_backend_rustls()
             .http1_only()
             .http1_max_headers(64)
             .no_proxy()
@@ -426,9 +308,7 @@ impl HttpRemote {
                 configured = configured.basic_auth(username, password);
             }
             if let Some(exclusions) = no_proxy {
-                let exclusions = reqwest::NoProxy::from_string(exclusions)
-                    .ok_or(HttpError::Configuration("proxy exclusions"))?;
-                configured = configured.no_proxy(Some(exclusions));
+                configured = configured.no_proxy(reqwest::NoProxy::from_string(exclusions));
             }
             builder = builder.proxy(configured);
         }
@@ -437,11 +317,7 @@ impl HttpRemote {
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
         }
-        for root in roots {
-            let cert = reqwest::Certificate::from_pem(root)
-                .map_err(|_| HttpError::Configuration("trust root"))?;
-            builder = builder.tls_certs_merge([cert]);
-        }
+        builder = roots.configure(builder)?;
         let client = builder
             .build()
             .map_err(|_| HttpError::Configuration("TLS client"))?;
@@ -800,7 +676,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::remote::{CredentialContext, Prompt, ProtocolEnvironment, Remote};
+    use crate::Config;
+    use crate::remote::{CredentialContext, Destination, Prompt, ProtocolEnvironment, Remote};
 
     fn destination(config: &Config) -> Destination {
         Remote::find(config, b"r")
@@ -854,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_http_policy_uses_longest_component_path_and_environment_proxy_override() {
+    fn scoped_http_policy_uses_longest_component_path_and_configured_proxy_override() {
         let config = Config::parse(b"[remote \"r\"]\nurl = https://example.test/repo/sub\n[http]\nproxy = http://global.test\n[http \"https://example.test/repo\"]\nproxy = http://scoped.test\n[http \"https://example.test/repository\"]\nproxy = http://wrong.test\n").unwrap();
         let resolved =
             HttpSettings::resolve(&config, &destination(&config), &HttpEnvironment::default())
@@ -865,7 +742,7 @@ mod tests {
             ..HttpEnvironment::default()
         };
         let resolved = HttpSettings::resolve(&config, &destination(&config), &environment).unwrap();
-        assert_eq!(resolved.proxy.as_deref(), Some("http://environment.test"));
+        assert_eq!(resolved.proxy.as_deref(), Some("http://scoped.test"));
         assert!(!format!("{environment:?} {resolved:?}").contains("environment.test"));
     }
 

@@ -1,5 +1,7 @@
 //! Real Git http-backend on disposable loopback servers; Python 3 and Git required.
 #![cfg(feature = "http")]
+#[path = "support/connect_proxy.rs"]
+mod connect_proxy;
 #[path = "support/http_git.rs"]
 mod http_git;
 #[path = "support/pack_git.rs"]
@@ -17,8 +19,9 @@ use girt::push::{
     PushLimits, Status,
 };
 use girt::refs::RefName;
+use girt::remote::{ProtocolEnvironment, Remote};
 use girt::transport::TransportControl;
-use girt::transport::http::{HttpError, HttpRemote};
+use girt::transport::http::{HttpEnvironment, HttpError, HttpRemote, HttpSettings};
 use girt::{ObjectId, PackCompression, PackLimits, ReadLimits, Repository};
 use http_git::Server;
 use pack_git::{Fixture, git};
@@ -1606,7 +1609,7 @@ fn https_push_and_fetch_agree_with_git() {
     let (cert, key, ca) = certificates(certs.path());
     let server = Server::new(dest.git_dir(), "", "", Some((&cert, &key)));
     let url = server.url.replace("127.0.0.1", "localhost");
-    let remote = HttpRemote::new(&url, &[], &[&ca]).unwrap();
+    let remote = configured_https(&url, Some(ca), "");
     let id = tip(&f.repo, "refs/heads/main");
     let prepared = prepared(&f, vec![command("refs/heads/main", None, id)], &[]);
     let cancel = AtomicBool::new(false);
@@ -1825,4 +1828,323 @@ fn clone_validation_cancellation_leaves_destination_absent() {
         ))
     ));
     assert!(!path.exists());
+}
+
+fn configured_https(url: &str, ca: Option<Vec<u8>>, policy: &str) -> HttpRemote {
+    let config =
+        girt::Config::parse(format!("[remote \"r\"]\nurl={url}\n{policy}").as_bytes()).unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let environment = HttpEnvironment {
+        ssl_ca_info: ca,
+        ..Default::default()
+    };
+    let settings =
+        HttpSettings::resolve_for_remote(&config, b"r", &destination, &environment).unwrap();
+    HttpRemote::configured(settings).unwrap()
+}
+
+#[rstest]
+#[case::matching_bundle(true, true, Ok(()), 2)]
+#[case::wrong_bundle(false, true, Err(true), 0)]
+#[case::wrong_hostname(true, false, Err(true), 0)]
+fn configured_https_selects_ca_bundle_and_verifies_peer(
+    #[case] trust: bool,
+    #[case] hostname: bool,
+    #[case] expected: Result<(), bool>,
+    #[case] requests: usize,
+) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let certs = tempfile::tempdir().unwrap();
+    let (cert, key, ca) = certificates(certs.path());
+    let other = tempfile::tempdir().unwrap();
+    let (_, _, mut bundle) = certificates(other.path());
+    bundle.extend(trust.then_some(ca).into_iter().flatten());
+    let server = Server::new(fixture.root.path(), "", "", Some((&cert, &key)));
+    let host = ["127.0.0.1", "localhost"][usize::from(hostname)];
+    let url = server.url.replace("127.0.0.1", host);
+    let config = girt::Config::parse(format!("[remote \"r\"]\nurl={url}\n[http]\nsslCAInfo=wrong-file\n[http \"{url}\"]\nsslCAInfo=selected.pem\n").as_bytes()).unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let selected = HttpSettings::configured_ca_info(&config, &destination)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected, b"selected.pem");
+    std::fs::write(certs.path().join("selected.pem"), &bundle).unwrap();
+    let environment = HttpEnvironment {
+        ssl_ca_info: Some(
+            std::fs::read(certs.path().join(std::str::from_utf8(selected).unwrap())).unwrap(),
+        ),
+        ..Default::default()
+    };
+    let remote =
+        HttpRemote::configured(HttpSettings::resolve(&config, &destination, &environment).unwrap())
+            .unwrap();
+    let cancel = AtomicBool::new(false);
+    let result = runtime().block_on(fetch::receive_http(
+        &remote,
+        all,
+        None,
+        FetchLimits::default(),
+        TransportControl {
+            cancel: &cancel,
+            deadline: Some(Instant::now() + Duration::from_secs(15)),
+        },
+    ));
+    assert_eq!(
+        result
+            .map(|_| ())
+            .map_err(|error| matches!(error, FetchError::Http(HttpError::Network))),
+        expected
+    );
+    assert_eq!(server.requests().len(), requests);
+}
+
+#[rstest]
+#[case::empty(b"")]
+#[case::garbage(b"private malformed trust bytes")]
+#[case::truncated(b"-----BEGIN CERTIFICATE-----\nAAAA\n")]
+#[case::invalid_der(b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")]
+fn configured_https_rejects_invalid_ca_before_network(#[case] ca: &[u8]) {
+    let config =
+        girt::Config::parse(b"[remote \"r\"]\nurl=https://example.invalid/repo\n").unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let environment = HttpEnvironment {
+        ssl_ca_info: Some(ca.to_vec()),
+        ..Default::default()
+    };
+    let settings = HttpSettings::resolve(&config, &destination, &environment).unwrap();
+    let error = HttpRemote::configured(settings).unwrap_err();
+    assert!(matches!(error, HttpError::Configuration(_)));
+    assert!(!format!("{error:?} {error}").contains("private"));
+}
+
+#[rstest]
+#[case::proxy(None, true)]
+#[case::bypass(Some("localhost"), false)]
+#[case::empty_exclusions(Some(""), true)]
+fn configured_https_routes_connect_and_honors_exclusions(
+    #[case] no_proxy: Option<&str>,
+    #[case] routed: bool,
+) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let certs = tempfile::tempdir().unwrap();
+    let (cert, key, ca) = certificates(certs.path());
+    let server = Server::new(fixture.root.path(), "", "", Some((&cert, &key)));
+    let url = server.url.replace("127.0.0.1", "localhost");
+    let proxy = connect_proxy::Proxy::new(&url, "Basic cHU6cHA=");
+    let config = girt::Config::parse(
+        format!(
+            "[remote \"r\"]\nurl={url}\nproxy={}\n[http]\nproxy=http://unreachable.invalid:1\n",
+            proxy.url
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let environment = HttpEnvironment {
+        ssl_ca_info: Some(ca),
+        proxy: Some("http://also-unreachable.invalid:1".into()),
+        no_proxy: no_proxy.map(str::to_owned),
+        proxy_credentials: Some(("pu".into(), "pp".into())),
+        ..Default::default()
+    };
+    let settings =
+        HttpSettings::resolve_for_remote(&config, b"r", &destination, &environment).unwrap();
+    let remote = HttpRemote::configured(settings).unwrap();
+    let cancel = AtomicBool::new(false);
+    let result = runtime()
+        .block_on(fetch::receive_http(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl {
+                cancel: &cancel,
+                deadline: Some(Instant::now() + Duration::from_secs(15)),
+            },
+        ))
+        .unwrap();
+    assert!(
+        !result
+            .validate(&cancel, |_| ControlFlow::Continue(()))
+            .unwrap()
+            .wants()
+            .is_empty()
+    );
+    assert_eq!(!proxy.requests().is_empty(), routed);
+    assert_eq!(server.requests(), ["GET", "POST"]);
+}
+
+// Git's executable is the oracle; these scopes/configurations are original fixtures.
+#[rstest]
+#[case::global("https://example.test/repo", "[http]\nsslCAInfo=global\n", "global")]
+#[case::longest(
+    "https://example.test/repo/sub",
+    "[http \"https://example.test/\"]\nsslCAInfo=root\n[http \"https://example.test/repo\"]\nsslCAInfo=path\n",
+    "path"
+)]
+#[case::boundary(
+    "https://example.test/repository",
+    "[http]\nsslCAInfo=global\n[http \"https://example.test/repo\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::default_port(
+    "https://example.test/repo",
+    "[http \"https://EXAMPLE.test:443\"]\nsslCAInfo=port\n",
+    "port"
+)]
+#[case::escape(
+    "https://example.test/repo/sub",
+    "[http \"https://example.test/%72epo\"]\nsslCAInfo=escape\n",
+    "escape"
+)]
+#[case::escaped_separator(
+    "https://example.test/repo%2fsub",
+    "[http]\nsslCAInfo=global\n[http \"https://example.test/repo/sub\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::host_specificity(
+    "https://example.test/repo/sub",
+    "[http \"https://*.test/repo/sub\"]\nsslCAInfo=wild\n[http \"https://example.test\"]\nsslCAInfo=exact\n",
+    "exact"
+)]
+#[case::wildcard(
+    "https://a.example.test/repo",
+    "[http \"https://*.example.test\"]\nsslCAInfo=wild\n",
+    "wild"
+)]
+#[case::wildcard_depth(
+    "https://a.b.example.test/repo",
+    "[http]\nsslCAInfo=global\n[http \"https://*.example.test\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::query_scope(
+    "https://example.test/repo",
+    "[http]\nsslCAInfo=global\n[http \"https://example.test/repo?x\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::fragment_scope(
+    "https://example.test/repo",
+    "[http]\nsslCAInfo=global\n[http \"https://example.test/repo#x\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::double_slash(
+    "https://example.test/repo/x",
+    "[http]\nsslCAInfo=global\n[http \"https://example.test/repo//\"]\nsslCAInfo=wrong\n",
+    "global"
+)]
+#[case::single_slash(
+    "https://example.test/repo",
+    "[http \"https://example.test/repo/\"]\nsslCAInfo=slash\n",
+    "slash"
+)]
+#[case::latest(
+    "https://example.test/repo",
+    "[http \"https://example.test\"]\nsslCAInfo=first\n[http \"https://example.test/\"]\nsslCAInfo=latest\n",
+    "latest"
+)]
+fn ca_url_selection_agrees_with_git(
+    #[case] url: &str,
+    #[case] policy: &str,
+    #[case] expected: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let config =
+        girt::Config::parse(format!("[remote \"r\"]\nurl={url}\n{policy}").as_bytes()).unwrap();
+    let destination = Remote::find(&config, b"r")
+        .unwrap()
+        .unwrap()
+        .fetch_destination(&config, &ProtocolEnvironment::default())
+        .unwrap();
+    let selected = HttpSettings::configured_ca_info(&config, &destination)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected, expected.as_bytes());
+    let observed = git(
+        root.path(),
+        &[
+            "config",
+            "--file",
+            "-",
+            "--get-urlmatch",
+            "http.sslCAInfo",
+            url,
+        ],
+        policy.as_bytes(),
+    );
+    assert_eq!(observed, [selected, b"\n"].concat());
+}
+
+#[test]
+fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    let certs = tempfile::tempdir().unwrap();
+    let (cert, key, ca) = certificates(certs.path());
+    let server = Server::new(fixture.root.path(), "", "", Some((&cert, &key)));
+    let url = server.url.replace("127.0.0.1", "localhost");
+    let proxy = connect_proxy::Proxy::new(&url, "");
+    let remote = configured_https(&url, Some(ca), &format!("[http]\nproxy={}\n", proxy.url));
+    let cancel = AtomicBool::new(false);
+    let advertisement = runtime()
+        .block_on(fetch::discover_http(
+            &remote,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+        ))
+        .unwrap();
+    let output = std::process::Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env(
+            "SYSTEMROOT",
+            std::env::var_os("SYSTEMROOT").unwrap_or_default(),
+        )
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", certs.path().join("absent"))
+        .env("https_proxy", "http://unreachable.invalid:1")
+        .args([
+            "-c",
+            &format!("http.sslCAInfo={}", certs.path().join("ca.pem").display()),
+            "-c",
+            &format!("remote.r.url={url}"),
+            "-c",
+            &format!("remote.r.proxy={}", proxy.url),
+            "-c",
+            "http.proxy=http://also-unreachable.invalid:1",
+            "ls-remote",
+            "r",
+        ])
+        .current_dir(certs.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "Git fixture HTTPS request failed");
+    let expected = tip(&fixture.repo, "refs/heads/main");
+    assert!(
+        advertisement
+            .advertisement
+            .refs
+            .iter()
+            .any(|reference| reference.id == expected)
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains(&expected.to_string())
+    );
+    assert_eq!(proxy.requests(), ["CONNECT", "CONNECT"]);
 }

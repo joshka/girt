@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 #[path = "fixture_process.rs"]
-mod fixture_process;
+pub(super) mod fixture_process;
 use fixture_process::Process;
 
 pub struct Server {

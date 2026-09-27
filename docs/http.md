@@ -57,16 +57,39 @@ budgets; the caller bounds concurrency and aggregate memory.
 ## Endpoint, Authentication and TLS
 
 Resolve a `Destination` with `HttpSettings::resolve(config, destination, environment)`, then
-construct `HttpRemote::configured(settings)`. This reads global and URL-scoped `http.sslVerify`,
-`http.sslCAInfo`, `http.proxy` and `http.followRedirects` from the supplied config snapshot. URL
-sections match scheme, host, effective port and repository path at a component boundary; the longest
-path wins, then the latest occurrence. Explicit `HttpEnvironment` values override CA, verification
-and proxy settings. Girt never reads process environment or configured CA files: the application
-supplies bounded PEM bytes, proxy selection, exclusions and optional approved Basic proxy
-credentials. Configured CA paths without supplied bytes fail before I/O. Disabling certificate and
-hostname verification requires both the effective setting and `allow_insecure_tls` application
-approval. Platform roots remain trusted unless the application changes its TLS policy outside this
-API.
+construct `HttpRemote::configured(settings)`. For a named remote, use
+`HttpSettings::resolve_for_remote(config, name, destination, environment)` so its proxy policy
+participates. Resolution performs no file or network I/O.
+
+Supported settings are `http.sslVerify`, `http.sslCAInfo`, `http.proxy`,
+`http.proxyAuthMethod=basic` and `http.followRedirects`. URL scopes match scheme, host (including
+whole-label `*`), effective port and component-bounded path. More specific hosts, then longer paths,
+then later entries win; unreserved percent escapes are normalized. Selected unsupported HTTP
+settings fail explicitly, including client certificates, pins, CA directories, alternate TLS
+backends and proxy TLS policy.
+
+Certificate-chain and hostname verification are enabled by default. With no CA bytes, reqwest's
+rustls platform verifier uses native trust. Native trust can depend on OS configuration and
+certificate environment variables; girt does not select Git's libcurl backend. Roots, revocation and
+distrust behavior can differ from the installed Git. Default-trust Git parity is not claimed. An
+explicitly supplied CA bundle replaces platform roots for that connection. Bundles are limited to 1
+MiB, may contain multiple certificates, and must contain at least one valid certificate.
+`HttpRemote::new` retains its separate contract of adding supplied roots to platform trust.
+
+The application selects `GIT_SSL_CAINFO` first; otherwise
+`HttpSettings::configured_ca_info(config, destination)` returns the selected configured path bytes.
+The application expands Git path syntax, resolves relative paths against its working directory, and
+loads bounded PEM bytes into `HttpEnvironment::ssl_ca_info`. Girt never opens these paths.
+Configured paths without supplied bytes fail before network I/O. `ssl_no_verify` overrides
+configured verification in both directions. Disabling checks still requires `allow_insecure_tls`
+approval.
+
+Proxy precedence is `remote.<name>.proxy`, URL-scoped/global `http.proxy`, then the proxy selected
+from environment by the caller. An empty configured proxy disables proxying. HTTP proxies support
+HTTPS CONNECT; HTTPS proxies, SOCKS and proxy URL userinfo are rejected. The caller supplies
+approved Basic credentials for the effective proxy and optional `no_proxy` exclusions (reqwest
+host/domain, IP/CIDR and `*` syntax). Empty exclusions mean no bypass. Girt disables automatic proxy
+discovery.
 
 For origin authentication, fill a `remote::CredentialSession` using application-approved helper
 programs or prompting, then call `HttpRemote::with_credentials`. The session must match the exact
@@ -147,12 +170,39 @@ cargo test --features http --test http
 cargo bench --features http --bench http
 ```
 
-TLS tests generate a private one-day CA and localhost certificate in temporary directories. They
-exercise trusted HTTPS fetch/push, untrusted chains and hostname mismatch without changing platform
-trust. Fixtures additionally inject HTTP errors, malformed headers/media types, redirects, truncated
-and stalled bodies. This original HTTP suite is Unix-gated. Later native Linux and Windows HTTP
-selections are recorded with their exact revisions in
-[platform evidence](compatibility.md#platform-and-git-version-validation).
+TLS tests generate private one-day CAs and localhost certificates in temporary directories. They
+exercise configured HTTPS fetch/push, multi-certificate bundles, untrusted chains, hostname
+mismatch, malformed/empty bundles, authenticated CONNECT and proxy bypass without changing platform
+trust. An original fixed-loopback CONNECT relay supports the proxy tests. Git executable
+observations compare URL-scoped selection and an explicit-CA HTTPS discovery through a per-remote
+proxy. Existing fixtures additionally inject HTTP errors, malformed media types, redirects,
+truncated and stalled bodies. These cases establish the stated policy on the tested host, not
+equivalence across TLS backends or platforms.
+
+## Consumer Eligibility
+
+An HTTPS consumer can use the configured API for anonymous or explicitly approved Basic credentials
+with platform trust or a caller-loaded exclusive CA bundle, and optionally an HTTP CONNECT proxy.
+Pass the complete effective config snapshot and the selected remote name; do not strip trust
+settings to make resolution succeed. Capture proxy and Git TLS environment inputs explicitly. In
+particular, keep `SSL_CERT_FILE`, `SSL_CERT_DIR`, `CURL_SSL_BACKEND`,
+CA-directory/client-certificate environment, unsupported authentication and other transport
+overrides outside the admitted contract until their semantics are mapped and tested. An unsupported
+configuration is a preflight decision for the caller; a TLS failure must never trigger disabled
+verification or an automatic retry of a push.
+
+For jj integration, first admit the supported policy before network I/O, construct one configured
+remote for discovery and RPC, retain existing credential/progress/protocol guards, and test fetch
+and push against the same original TLS fixtures. Keep Git fallback for unmapped settings and
+required Git-backend trust behavior. Native default verification alone does not justify removing Git
+fallback.
+
+Configuration rules are based on [Git's HTTP configuration documentation][git-http]. Explicit trust
+replacement uses reqwest's [certificate-root policy][reqwest-trust]. Tests and fixtures are
+original; no upstream Git, gix or libgit2 implementation or test source was used.
+
+[git-http]: https://git-scm.com/docs/git-config#Documentation/git-config.txt-httplturlgt
+[reqwest-trust]: https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html#method.tls_certs_only
 
 ## Dependencies and Scope
 
