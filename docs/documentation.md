@@ -37,6 +37,19 @@ Illustrative revisions grounded in girt's current behavior:
 - Before: "Use nightly. Format Rust." After: "`just fmt-rust` uses nightly rustfmt because
   `rustfmt.toml` enables unstable options."
 
+## Evidence and Handoffs
+
+Keep an artifact when it supports a claim, review, reproduction, or unresolved task. Ask what a
+reader or the next worker would do with it tomorrow. Retain exact revisions, fixture provenance,
+failure records, and logs when they answer that question. Consolidate repetitive status, command
+transcripts, and test-count inventories into a short linked result. Archive superseded evidence with
+an index when readers still need its history; preserve stable links and the original facts.
+
+A handoff should state the delivered behavior, material decisions and limits, the next action, and a
+concise validation reference. Put detailed evidence at the linked source so a reader can inspect it
+without making the handoff a work diary. User guides should explain the current operation and its
+recovery obligations; keep roadmap history in roadmap or evidence pages.
+
 ## Validation
 
 - For final review of substantive prose changes or tone-focused edits, load
