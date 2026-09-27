@@ -212,6 +212,55 @@ impl ReceivedFetch {
         )
     }
 
+    /// Installs a complete transfer while retaining its pack against Git repacking.
+    ///
+    /// Creates an exclusively owned Git `.keep` file before publishing either pack artifact.
+    /// The returned retention must live through the caller's reference publication; explicitly
+    /// release it afterwards. Dropping it, including on an error, leaves the marker on disk for
+    /// recovery. No references are changed. See [`super::FetchRetention`] for the release contract.
+    ///
+    /// Only complete, nonempty transfers without known-local dependencies are supported. Use
+    /// [`super::receive_local`] with empty known history to obtain one. An existing pack or index
+    /// is refused: a collector may already have selected that old artifact for deletion before
+    /// the marker was created. This operation does not protect shallow metadata, HEAD, worktrees,
+    /// or objects outside the received pack. The ordinary installation's trusted-path and
+    /// durability requirements still apply.
+    ///
+    /// # Errors
+    ///
+    /// Returns unsupported input, format, interruption, existing artifact/marker or I/O errors.
+    /// Once a marker is acquired, errors return its retention handle as well as the installation
+    /// cause. Partial pack artifacts remain protected for inspection. Release the returned handle
+    /// only when abandoning that installation or after establishing persistent reference roots.
+    pub fn install_retained(
+        &self,
+        repository: &Repository,
+        snapshot_limits: crate::PackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<(FetchInstalled, super::FetchRetention), super::RetainedFetchError> {
+        let validate = || {
+            check_cancelled(cancel)?;
+            if repository.object_format() != self.format {
+                return Err(FetchError::Unsupported("destination object format differs"));
+            }
+            if !self.dependencies.is_empty() {
+                return Err(FetchError::Unsupported(
+                    "retention requires complete history",
+                ));
+            }
+            if !self.shallow.is_empty()
+                || !repository.shallow_roots().is_empty()
+                || repository.common_dir().join("shallow").try_exists()?
+            {
+                return Err(FetchError::Unsupported("retained shallow installation"));
+            }
+            self.checksum
+                .ok_or(FetchError::Unsupported("retention requires a pack"))
+        };
+        let checksum = validate().map_err(super::RetainedFetchError::before_retention)?;
+        super::retention::install(self, repository, checksum, snapshot_limits, cancel)
+    }
+
     pub(super) fn install_for_workflow(
         &self,
         repository: &Repository,
