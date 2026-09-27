@@ -41,8 +41,8 @@ Illustrative revisions grounded in girt's current behavior:
 
 - For final review of substantive prose changes or tone-focused edits, load
   [Unslop Review](unslop.md). Typo and link corrections do not require that pass.
-- For changed Markdown, follow `.config/rumdl.toml` for 100-column prose. Run `just fmt-md-check`
-  (rumdl); use `just fmt-md` to fix formatting.
+- For changed Markdown, follow `.config/rumdl.toml` for 100-column prose. Run `just docs-check`
+  (rumdl and scoped Vale); use `just fmt-md` to fix formatting.
 - For Rust library contracts and examples, also apply [Rustdoc Standard](rustdoc.md).
 - Report unavailable checks honestly. Recheck after fixes; stop once relevant checks pass and known
   correctness issues are resolved.

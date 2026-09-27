@@ -42,3 +42,7 @@ fmt-md:
 # Check Markdown without changing files.
 fmt-md-check:
     rumdl check .
+
+# Check formatting and calibrated prose rules in the current entry and contributor guides.
+docs-check: fmt-md-check
+    vale README.md CONTRIBUTING.md docs/documentation.md docs/rustdoc.md docs/rust-conventions.md docs/testing.md docs/unslop.md
