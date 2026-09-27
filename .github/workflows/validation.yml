@@ -82,9 +82,9 @@ jobs:
       - name: HTTP-only library
         run: cargo +stable check --locked --lib --no-default-features --features http
       - name: Tracing without network dependencies
-        run: cargo +stable test --locked --no-default-features --features tracing --test tracing -- --test-threads=1
+        run: cargo +stable test --locked --no-default-features --features tracing --test tracing
       - name: Tracing HTTP lifecycle
-        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing -- --test-threads=1
+        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
       - name: Tracing SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
@@ -135,9 +135,9 @@ jobs:
       - name: HTTP-only library
         run: cargo +stable check --locked --lib --no-default-features --features http
       - name: Tracing without network dependencies
-        run: cargo +stable test --locked --no-default-features --features tracing --test tracing -- --test-threads=1
+        run: cargo +stable test --locked --no-default-features --features tracing --test tracing
       - name: Tracing HTTP lifecycle
-        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing -- --test-threads=1
+        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
       - name: Tracing SSH-only library
         run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library

@@ -1,6 +1,6 @@
 //! Original in-memory span recorder: no global subscriber or formatted error capture.
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
@@ -17,11 +17,28 @@ pub struct Span {
     pub initial_fields: BTreeMap<String, String>,
     pub closed: bool,
 }
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Capture(
     pub Arc<Mutex<BTreeMap<u64, Span>>>,
     pub Arc<Mutex<Vec<String>>>,
 );
+impl Default for Capture {
+    fn default() -> Self {
+        // tracing-core 0.1.36 registers a new callsite against the current thread when only
+        // one dispatcher exists. Unsubscribed fixture setup can then cache Interest::never
+        // for a concurrent capture. Keep the multi-dispatcher path active even between tests.
+        // OFF preserves filtering; neither dispatcher is installed as a thread/global default.
+        static DISPATCHERS: OnceLock<[Dispatch; 2]> = OnceLock::new();
+        DISPATCHERS.get_or_init(|| {
+            std::array::from_fn(|_| {
+                Dispatch::new(
+                    Registry::default().with(tracing_subscriber::filter::LevelFilter::OFF),
+                )
+            })
+        });
+        Self(Default::default(), Default::default())
+    }
+}
 impl Capture {
     pub fn events(&self) -> Vec<String> {
         self.1.lock().unwrap().clone()

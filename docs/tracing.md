@@ -117,6 +117,24 @@ Colocation adds `colocation.commit`, with nested index and reference preparation
 Operation metadata uses `operation.inspect` and `operation.cleanup`; cleanup records the number of
 removed nodes. These spans record categorical outcomes without metadata paths or payload bytes.
 
+## Scoped Subscriber Limitation
+
+With tracing-core 0.1.36, a callsite first reached without a subscriber can remain disabled for an
+interested scoped subscriber. This occurs when only one dispatcher is registered: the initial
+interest comes from the registering thread rather than the registered subscriber. Girt's HTTP span
+can therefore be absent even when the download succeeds. This affects production scoped subscribers
+as well as tests; it does not require an async handoff or a level filter. Installing a
+process-global subscriber before operations avoids the demonstrated schedule. Girt leaves that
+policy to the caller.
+
+The test recorder retains two OFF-filtered dispatchers without installing either as a default. This
+keeps tracing-core's multiple-dispatcher registration path active during concurrent fixture setup,
+including intervals with no live capture. The isolated first-poll regression checks capture after an
+unsubscribed HTTP call; parallel lifecycle tests still assert parentage, filtering and worker
+closure. This test workaround does not fix tracing-core for library consumers. A dependency
+correction and native-platform confirmation remain part of
+[B04](jj-roadmap.md#b04--intermittent-tracing-and-split-index-assertions).
+
 ## Cost and Future Instrumentation
 
 Without the feature, tracing calls, fields, context storage and the direct tracing dependency are
