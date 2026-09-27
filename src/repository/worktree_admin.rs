@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use thiserror::Error;
 
 use super::worktree_create::{gitfile_line, path_line, relative_path, validate_path};
-use super::{Repository, metadata_path};
+use super::{Repository, WorktreeLinkStyle, metadata_path};
 
 /// Outcome of an administration operation, including a recoverable partial mutation.
 #[derive(Debug, Error)]
@@ -151,6 +151,19 @@ impl Repository {
         registration: impl AsRef<Path>,
         checkout: impl AsRef<Path>,
     ) -> Result<(), WorktreeAdminError> {
+        self.repair_worktree_with_link_style(registration, checkout, WorktreeLinkStyle::Configured)
+    }
+
+    /// Repairs worktree links with an explicit spelling for this operation.
+    ///
+    /// The same exclusion and partial-failure contract as [`Self::repair_worktree`] applies.
+    /// The direct repository configuration is still validated, but is not changed.
+    pub fn repair_worktree_with_link_style(
+        &self,
+        registration: impl AsRef<Path>,
+        checkout: impl AsRef<Path>,
+        link_style: WorktreeLinkStyle,
+    ) -> Result<(), WorktreeAdminError> {
         let registration = checked_registration(self, registration.as_ref())?;
         let checkout = fs::canonicalize(checkout.as_ref())
             .map_err(|_| WorktreeAdminError::Uncertain(checkout.as_ref().into()))?;
@@ -187,8 +200,9 @@ impl Repository {
             fs::read(&relative).map_err(|_| WorktreeAdminError::Uncertain(relative.clone()))?;
         let config = crate::Config::parse(&config)
             .map_err(|_| WorktreeAdminError::Uncertain(relative.clone()))?;
-        let use_relative = super::extension_boolean(&config, &relative, "relativeworktrees")
+        let configured_relative = super::extension_boolean(&config, &relative, "relativeworktrees")
             .map_err(|_| WorktreeAdminError::Uncertain(relative))?;
+        let use_relative = link_style.uses_relative(configured_relative);
         let forward = if use_relative {
             relative_path(&checkout, &registration)
         } else {

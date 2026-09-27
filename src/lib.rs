@@ -243,8 +243,8 @@ pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repository::{
     ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, OpenError,
     OperationCleanupError, OperationError, OperationLimits, OperationState, Repository,
-    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeError, WorktreeRetirement,
-    WorktreeState,
+    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeError, WorktreeLinkStyle,
+    WorktreeRetirement, WorktreeState,
 };
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

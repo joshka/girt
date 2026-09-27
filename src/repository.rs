@@ -20,6 +20,31 @@ pub use worktree_admin::{WorktreeAdminError, WorktreeRetirement};
 pub use worktree_create::CreateWorktreeError;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 
+/// Link spelling for one worktree creation or repair operation.
+///
+/// An explicit choice affects only the links written by that operation. It does not edit
+/// `extensions.relativeWorktrees` or change the default of later operations.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WorktreeLinkStyle {
+    /// Follow the repository's direct `extensions.relativeWorktrees` setting.
+    #[default]
+    Configured,
+    /// Write relative forward and back links when both paths share a filesystem root.
+    Relative,
+    /// Write absolute forward and back links.
+    Absolute,
+}
+
+impl WorktreeLinkStyle {
+    fn uses_relative(self, configured: bool) -> bool {
+        match self {
+            Self::Configured => configured,
+            Self::Relative => true,
+            Self::Absolute => false,
+        }
+    }
+}
+
 use crate::config::{
     ConfigFile, ConfigInputs, ConfigScope, ResolveError, boolean as config_boolean, integer,
 };

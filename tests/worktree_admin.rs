@@ -5,7 +5,9 @@ use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use girt::refs::{Backend, RefName};
-use girt::{InitKind, ObjectFormat, Repository, WorktreeAdminError, WorktreeRetirement};
+use girt::{
+    InitKind, ObjectFormat, Repository, WorktreeAdminError, WorktreeLinkStyle, WorktreeRetirement,
+};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
@@ -346,6 +348,47 @@ fn repair_rewrites_relative_links_after_checkout_move() {
     let forward = fs::read(moved.join(".git")).unwrap();
     assert!(!forward.starts_with(b"gitdir: /"));
     git(&moved, &["symbolic-ref", "HEAD"]);
+}
+
+#[rstest]
+#[case::force_relative(false, WorktreeLinkStyle::Relative, true)]
+#[case::force_absolute(true, WorktreeLinkStyle::Absolute, false)]
+fn explicit_link_style_overrides_config_for_one_repair(
+    #[case] configured_relative: bool,
+    #[case] style: WorktreeLinkStyle,
+    #[case] expected_relative: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let main = root.path().join("main");
+    let repo = Repository::init(ObjectFormat::Sha256, &main, InitKind::Worktree).unwrap();
+    let config_path = repo.common_dir().join("config");
+    if configured_relative {
+        let mut config = fs::read(&config_path).unwrap();
+        config.extend_from_slice(b"[extensions]\nrelativeWorktrees = true\n");
+        fs::write(&config_path, config).unwrap();
+    }
+    let original_config = fs::read(&config_path).unwrap();
+    let repo = Repository::open(&main).unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo.create_orphan_worktree(&checkout, &branch, 2).unwrap();
+    let registration = linked.git_dir().to_owned();
+    let moved = root.path().join("moved");
+    fs::rename(&checkout, &moved).unwrap();
+    repo.repair_worktree_with_link_style(&registration, &moved, style)
+        .unwrap();
+    let forward = fs::read_to_string(moved.join(".git")).unwrap();
+    let back = fs::read_to_string(registration.join("gitdir")).unwrap();
+    assert_eq!(
+        !Path::new(forward.trim_end().strip_prefix("gitdir: ").unwrap()).is_absolute(),
+        expected_relative
+    );
+    assert_eq!(!Path::new(back.trim_end()).is_absolute(), expected_relative);
+    assert_eq!(fs::read(&config_path).unwrap(), original_config);
+    assert_eq!(
+        git(&moved, &["symbolic-ref", "HEAD"]),
+        b"refs/heads/topic\n"
+    );
 }
 
 #[test]

@@ -5,7 +5,9 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use girt::refs::{Backend, RefName};
-use girt::{CreateWorktreeError, InitKind, ObjectFormat, Repository, WorktreeState};
+use girt::{
+    CreateWorktreeError, InitKind, ObjectFormat, Repository, WorktreeLinkStyle, WorktreeState,
+};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
@@ -106,6 +108,44 @@ fn creates_git_usable_orphan(
         #[cfg(unix)]
         assert!(forward.starts_with(b"gitdir: /"));
     }
+}
+
+#[rstest]
+#[case::force_relative(false, WorktreeLinkStyle::Relative, true)]
+#[case::force_absolute(true, WorktreeLinkStyle::Absolute, false)]
+fn explicit_link_style_overrides_config_for_one_creation(
+    #[case] configured_relative: bool,
+    #[case] style: WorktreeLinkStyle,
+    #[case] expected_relative: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let main = root.path().join("main");
+    let repo = Repository::init(ObjectFormat::Sha256, &main, InitKind::Worktree).unwrap();
+    let config_path = repo.common_dir().join("config");
+    if configured_relative {
+        let mut config = fs::read(&config_path).unwrap();
+        config.extend_from_slice(b"[extensions]\nrelativeWorktrees = true\n");
+        fs::write(&config_path, config).unwrap();
+    }
+    let original_config = fs::read(&config_path).unwrap();
+    let repo = Repository::open(&main).unwrap();
+    let branch = RefName::new(b"refs/heads/topic").unwrap();
+    let checkout = root.path().join("topic");
+    let linked = repo
+        .create_orphan_worktree_with_link_style(&checkout, &branch, 2, style)
+        .unwrap();
+    let forward = fs::read_to_string(checkout.join(".git")).unwrap();
+    let back = fs::read_to_string(linked.git_dir().join("gitdir")).unwrap();
+    assert_eq!(
+        !Path::new(forward.trim_end().strip_prefix("gitdir: ").unwrap()).is_absolute(),
+        expected_relative
+    );
+    assert_eq!(!Path::new(back.trim_end()).is_absolute(), expected_relative);
+    assert_eq!(fs::read(&config_path).unwrap(), original_config);
+    assert_eq!(
+        git(&checkout, &["symbolic-ref", "HEAD"]),
+        b"refs/heads/topic\n"
+    );
 }
 
 #[test]

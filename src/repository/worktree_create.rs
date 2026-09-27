@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
-use super::Repository;
+use super::{Repository, WorktreeLinkStyle};
 use crate::refs::{Backend, RefName, Target};
 
 /// A refusal or partial creation failure. A registered directory in an error is retained.
@@ -87,6 +87,26 @@ impl Repository {
         branch: &RefName,
         max_names: usize,
     ) -> Result<Self, CreateWorktreeError> {
+        self.create_orphan_worktree_with_link_style(
+            destination,
+            branch,
+            max_names,
+            WorktreeLinkStyle::Configured,
+        )
+    }
+
+    /// Registers an unborn worktree with an explicit link spelling for this operation.
+    ///
+    /// The same creation, exclusion and partial-failure contract as
+    /// [`Self::create_orphan_worktree`] applies. The direct repository configuration is still
+    /// validated; selecting a style does not persist a configuration change.
+    pub fn create_orphan_worktree_with_link_style(
+        &self,
+        destination: impl AsRef<Path>,
+        branch: &RefName,
+        max_names: usize,
+        link_style: WorktreeLinkStyle,
+    ) -> Result<Self, CreateWorktreeError> {
         if max_names == 0 {
             return Err(CreateWorktreeError::Limit);
         }
@@ -131,7 +151,9 @@ impl Repository {
             path: config_path.clone(),
             source,
         })?;
-        let relative = super::extension_boolean(&config, &config_path, "relativeworktrees")?;
+        let configured_relative =
+            super::extension_boolean(&config, &config_path, "relativeworktrees")?;
+        let relative = link_style.uses_relative(configured_relative);
         let registrations = self.common_dir().join("worktrees");
         fs::create_dir_all(&registrations).map_err(|e| io_error(&registrations, None, e))?;
         let registration = reserve_name(&registrations, name, max_names)?;
