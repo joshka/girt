@@ -18,8 +18,9 @@ Choose another example for the operation you need:
 - `open_repository -- /path/to/repo <blob-id>` reads a loose blob from an existing repository;
   `packed_repository -- /path/to/repo <object-id>` reads loose or packed object payloads. These
   examples do not modify the supplied repository.
-- `publish_branch` stores commits and advances a branch through HEAD without reflogs; `history`
-  walks commit ancestry; `write_pack` exports and reopens a private pack.
+- `publish_branch` stores commits and advances a branch through HEAD without reflogs;
+  `history -- /path/to/repo <commit-id> [other-commit-id]` walks commit ancestry; `write_pack`
+  exports and reopens a private pack.
 - `fetch_local` and `push_local` demonstrate transport through disposable local Git processes.
 
 Prefix each name with `cargo run --example` to run it. The commands that take a repository path
