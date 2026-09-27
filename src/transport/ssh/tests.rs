@@ -199,3 +199,134 @@ fn rejects_unsupported_configuration(#[case] port: u16, #[case] exe: &str, #[cas
         .is_err()
     );
 }
+
+#[rstest]
+#[case::config_over_legacy(None, Some(b"legacy".as_slice()), "configured")]
+#[case::command_over_config(Some(b"command".as_slice()), Some(b"legacy".as_slice()), "command")]
+#[case::config_without_legacy(None, None, "configured")]
+fn selects_highest_priority_command(
+    #[case] command: Option<&[u8]>,
+    #[case] legacy: Option<&[u8]>,
+    #[case] selected: &str,
+) {
+    let environment = SshEnvironment {
+        git_ssh_command: command.map(Vec::from),
+        git_ssh: legacy.map(Vec::from),
+        approved_command: Some(ApprovedSshCommand {
+            configured: selected.as_bytes().to_vec(),
+            executable: PathBuf::from(format!("/approved/{selected}")),
+            arguments: Vec::new(),
+        }),
+        ..default_environment()
+    };
+    let remote = configured(
+        b"[remote \"r\"]\nurl = host:repo\n[core]\nsshCommand = old\nsshCommand = configured\n",
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        remote.command("git-upload-pack").get_program(),
+        std::ffi::OsStr::new(&format!("/approved/{selected}"))
+    );
+}
+
+#[rstest]
+#[case::command(b"[core]\nsshCommand\n")]
+#[case::variant(b"[ssh]\nvariant\n")]
+fn rejects_selected_valueless_configuration(#[case] setting: &[u8]) {
+    let source = [b"[remote \"r\"]\nurl = host:repo\n".as_slice(), setting].concat();
+    let error = configured(&source, default_environment()).unwrap_err();
+    assert!(matches!(
+        error,
+        SshError::Configuration("SSH configuration requires a value")
+    ));
+}
+
+#[test]
+fn environment_overrides_valueless_configuration() {
+    let environment = SshEnvironment {
+        git_ssh_command: Some(b"approved".to_vec()),
+        git_ssh_variant: Some(b"SSH".to_vec()),
+        approved_command: Some(ApprovedSshCommand {
+            configured: b"approved".to_vec(),
+            executable: "/approved/ssh".into(),
+            arguments: Vec::new(),
+        }),
+        ..default_environment()
+    };
+    let remote = configured(
+        b"[remote \"r\"]\nurl = host:repo\n[core]\nsshCommand\n[ssh]\nvariant\n",
+        environment,
+    )
+    .unwrap();
+    assert_eq!(
+        remote.command("git-upload-pack").get_program(),
+        "/approved/ssh"
+    );
+}
+
+#[rstest]
+#[case::environment_command(Some(Vec::new()), Some(b"legacy".to_vec()), "")]
+#[case::config_command(None, Some(b"legacy".to_vec()), "[core]\nsshCommand =\n")]
+#[case::legacy_command(None, Some(Vec::new()), "")]
+fn empty_command_does_not_fall_through(
+    #[case] command: Option<Vec<u8>>,
+    #[case] legacy: Option<Vec<u8>>,
+    #[case] setting: &str,
+) {
+    let environment = SshEnvironment {
+        git_ssh_command: command,
+        git_ssh: legacy,
+        ..default_environment()
+    };
+    let source = format!("[remote \"r\"]\nurl = host:repo\n{setting}");
+    let error = configured(source.as_bytes(), environment).unwrap_err();
+    assert!(matches!(
+        error,
+        SshError::Configuration("empty SSH command")
+    ));
+}
+
+#[rstest]
+#[case::environment_wins(Some(b"ssh".as_slice()), "plink", true)]
+#[case::environment_refused(Some(b"plink".as_slice()), "ssh", false)]
+#[case::case_insensitive(None, "SSH", true)]
+#[case::auto_is_unsupported(None, "auto", false)]
+#[case::simple_is_unsupported(None, "simple", false)]
+#[case::unknown_is_unsupported(None, "unknown", false)]
+#[case::empty_is_unsupported(Some(b"".as_slice()), "ssh", false)]
+fn variant_selection_is_explicit(
+    #[case] variant: Option<&[u8]>,
+    #[case] setting: &str,
+    #[case] supported: bool,
+) {
+    let environment = SshEnvironment {
+        git_ssh_variant: variant.map(Vec::from),
+        ..default_environment()
+    };
+    let source = format!("[remote \"r\"]\nurl = host:repo\n[ssh]\nvariant = {setting}\n");
+    let result = configured(source.as_bytes(), environment);
+    assert_eq!(result.is_ok(), supported);
+}
+
+#[test]
+fn lower_priority_approval_cannot_authorize_selected_command() {
+    let environment = SshEnvironment {
+        git_ssh: Some(b"legacy".to_vec()),
+        approved_command: Some(ApprovedSshCommand {
+            configured: b"legacy".to_vec(),
+            executable: "/approved/ssh".into(),
+            arguments: Vec::new(),
+        }),
+        ..default_environment()
+    };
+    let error = configured(
+        b"[remote \"r\"]\nurl = host:repo\n[core]\nsshCommand = selected\n",
+        environment,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SshError::Configuration("SSH command approval mismatch")
+    ));
+}

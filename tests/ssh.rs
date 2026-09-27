@@ -2,6 +2,8 @@
 #![cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 #[path = "support/pack_git.rs"]
 mod pack_git;
+#[path = "support/ssh_configuration.rs"]
+mod ssh_configuration;
 #[path = "support/ssh_git.rs"]
 mod ssh_git;
 

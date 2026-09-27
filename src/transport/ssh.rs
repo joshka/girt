@@ -45,9 +45,9 @@ impl std::fmt::Debug for ApprovedSshCommand {
 /// Explicit application environment and trust inputs for a configured SSH destination.
 #[derive(Default)]
 pub struct SshEnvironment {
-    /// `GIT_SSH_COMMAND`, taking precedence over `GIT_SSH` and `core.sshCommand`.
+    /// `GIT_SSH_COMMAND`, taking precedence over `core.sshCommand` and `GIT_SSH`.
     pub git_ssh_command: Option<Vec<u8>>,
-    /// `GIT_SSH`, used when no command override exists.
+    /// `GIT_SSH`, used when neither `GIT_SSH_COMMAND` nor `core.sshCommand` exists.
     pub git_ssh: Option<Vec<u8>>,
     /// `GIT_SSH_VARIANT`, taking precedence over `ssh.variant`.
     pub git_ssh_variant: Option<Vec<u8>>,
@@ -253,6 +253,9 @@ impl SshRemote {
 
     /// Resolves an R21 SSH destination with an explicit command and authentication policy.
     ///
+    /// Commands select `GIT_SSH_COMMAND`, then the last `core.sshCommand`, then `GIT_SSH`,
+    /// then the trusted default executable. Empty commands and selected valueless config keys
+    /// fail rather than falling through. Environment inputs override even valueless config keys.
     /// Only OpenSSH's `ssh` variant is supported. Configured commands require an exact
     /// application-approved mapping; shell snippets are never executed or parsed by girt. The
     /// default executable and config file are likewise supplied by the application. Configured
@@ -272,20 +275,24 @@ impl SshRemote {
         if destination.protocol() != Protocol::Ssh {
             return Err(SshError::Configuration("SSH destination"));
         }
-        let variant = environment
-            .git_ssh_variant
-            .as_deref()
-            .or_else(|| config.values("ssh", None, "variant").last().flatten());
+        let variant = match environment.git_ssh_variant.as_deref() {
+            Some(value) => Some(value),
+            None => configured_value(config, "ssh", "variant")?,
+        };
         if variant.is_some_and(|value| !value.eq_ignore_ascii_case(b"ssh")) {
             return Err(SshError::Configuration("SSH variant"));
         }
-        let selected = environment
-            .git_ssh_command
-            .as_deref()
-            .or(environment.git_ssh.as_deref())
-            .or_else(|| config.values("core", None, "sshcommand").last().flatten());
+        let selected = match environment.git_ssh_command.as_deref() {
+            Some(value) => Some(value),
+            None => {
+                configured_value(config, "core", "sshcommand")?.or(environment.git_ssh.as_deref())
+            }
+        };
         let (executable, arguments) = match selected {
             Some(value) => {
+                if value.is_empty() {
+                    return Err(SshError::Configuration("empty SSH command"));
+                }
                 let approved = environment.approved_command.ok_or(SshError::Configuration(
                     "SSH command requires application approval",
                 ))?;
@@ -419,6 +426,20 @@ impl SshRemote {
         command
     }
 }
+// A present key without a value is invalid, rather than permission to use a lower-priority input.
+fn configured_value<'a>(
+    config: &'a Config,
+    section: &'a str,
+    key: &'a str,
+) -> Result<Option<&'a [u8]>, SshError> {
+    match config.values(section, None, key).last() {
+        Some(None) => Err(SshError::Configuration(
+            "SSH configuration requires a value",
+        )),
+        value => Ok(value.flatten()),
+    }
+}
+
 fn safe_name(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('-')

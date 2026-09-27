@@ -47,16 +47,24 @@ deadline. The environment is cleared except the selected PATH and authentication
 remain caller policy; do not request another Git protocol version. Unsupported service versions are
 rejected before update commands. Connection attempts are limited to one.
 
-The configured constructor selects `GIT_SSH_COMMAND`, then `GIT_SSH`, then `core.sshCommand`. These
-are application-supplied values, never read from the process environment. A selected value must
-exactly match `ApprovedSshCommand::configured`; the application supplies the absolute executable and
-literal argument vector after parsing and approving it. Girt never executes configured shell
-snippets. Approved arguments are trusted application policy and can affect OpenSSH behavior.
-`GIT_SSH_VARIANT` overrides `ssh.variant`; only the `ssh` variant is accepted. An unapproved command
-or variant fails before process creation. The application may supply an agent socket and an askpass
-executable. Askpass enables encrypted-key passphrase prompts while password and keyboard-interactive
-authentication remain disabled. Girt supplies `SSH_AUTH_SOCK` and `SSH_ASKPASS` only when selected;
-neither is discovered globally.
+The configured constructor selects `GIT_SSH_COMMAND`, then the last `core.sshCommand`, then
+`GIT_SSH`. These are application-supplied values, never read from the process environment. A
+selected value must exactly match `ApprovedSshCommand::configured`; the application supplies the
+absolute executable and literal argument vector after parsing and approving it. Girt never executes
+configured shell snippets. `GIT_SSH` denotes an executable path; `GIT_SSH_COMMAND` and
+`core.sshCommand` can contain command arguments in Git. The approval mapping must preserve that
+distinction. Empty commands and selected config keys without values fail before spawning; they never
+select a lower-priority command. Environment overrides bypass even valueless config keys. Approved
+arguments are trusted application policy and can affect OpenSSH behavior.
+
+`GIT_SSH_VARIANT` overrides the last `ssh.variant`; only the case-insensitive `ssh` variant is
+accepted. An absent variant means the caller has selected OpenSSH. Girt does not run Git's automatic
+`-G` probe, infer PuTTY variants from executable names, or treat unknown variant values as `ssh`.
+Explicit `auto`, `simple`, PuTTY variants, and empty or unknown values remain unsupported. An
+unapproved command or variant fails before process creation. The application may supply an agent
+socket and an askpass executable. Askpass enables encrypted-key passphrase prompts while password
+and keyboard-interactive authentication remain disabled. Girt supplies `SSH_AUTH_SOCK` and
+`SSH_ASKPASS` only when selected; neither is discovered globally.
 
 Trust the executable and config. OpenSSH includes and `Match exec` can run local programs; this
 boundary is not a configuration sandbox. OpenSSH's own parsing, algorithm negotiation and platform
@@ -159,6 +167,16 @@ handshake/service/upload/response/exit and cancellation with retained statuses. 
 separately prove local reaping, future-drop cleanup and group isolation. Fault services are not
 claimed as Git interoperability. See [compatibility evidence](compatibility.md#ssh-transport) and
 [benchmark evidence](benchmarks.md#ssh-loopback-baseline).
+
+Original recording-wrapper tests in `tests/support/ssh_configuration.rs` compare command selection
+and endpoint/service arguments against Git 2.55.0 on macOS arm64, without a network connection or
+upstream implementation/test input. The tests use protocol v0 to match girt. Command selection
+follows the [Git environment contract](https://git-scm.com/docs/git#Documentation/git.txt-GITSSH)
+and
+[configuration contract](https://git-scm.com/docs/git-config#Documentation/git-config.txt-coresshCommand).
+These comparisons do not establish transparent SSH policy parity: girt still supplies its explicit
+`-F` file, user and port, clears the environment, and enforces the authentication and trust options
+above. Callers must retain a fallback for ordinary SSH configuration outside that policy.
 
 Configured-path tests cover an SSH URL, command precedence and refusal, a disposable agent and
 encrypted-key askpass authentication, and redacted errors. The existing cancellation, exit, cleanup
