@@ -887,10 +887,30 @@ fn sparse_colocation_preserves_directories_after_other_edits(#[case] format: gir
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
-fn overlapping_split_bitmaps_follow_git_deletion_order(#[case] format: girt::ObjectFormat) {
+fn overlapping_split_bitmaps_follow_git_deletion_order(
+    #[case] format: girt::ObjectFormat,
+    #[values(false, true)] index_is_newer: bool,
+) {
     let (_root, repo) = repository(format);
     seed(&repo);
+    if index_is_newer {
+        let file_mtime = fs::metadata(repo.worktree().unwrap().join("file"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fs::File::options()
+            .write(true)
+            .open(repo.git_dir().join("index"))
+            .unwrap()
+            .set_modified(file_mtime + std::time::Duration::from_secs(60))
+            .unwrap();
+    }
     git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
+    // Ensure a replacement exists even when Git considers the shared entry's stat data clean.
+    git(
+        repo.worktree().unwrap(),
+        &["update-index", "--assume-unchanged", "file"],
+    );
     let original = fs::read(repo.git_dir().join("index")).unwrap();
     let bytes = overlapping_bitmaps(format, &original);
     fs::write(repo.git_dir().join("index"), &bytes).unwrap();
