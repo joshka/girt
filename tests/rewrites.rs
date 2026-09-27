@@ -114,6 +114,73 @@ fn modified_source(
 }
 
 #[rstest]
+fn modified_postimage_reports_preimage_id(#[values("sha1", "sha256")] format: &str) {
+    let f = Fixture::new(format);
+    let before = f.blob(b"foo\n");
+    let after = f.blob(b"bar\n");
+    let old = f.tree(&[("100644", before, b"source")]);
+    let new = f.tree(&[("100644", after, b"source"), ("100644", after, b"target")]);
+    let records = f
+        .objects()
+        .detect_rewrites(
+            Some(old),
+            Some(new),
+            Options {
+                copies: Copies::ModifiedPostimage,
+                ..Options::default()
+            },
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].source_id, before);
+    assert_eq!(records[0].target_id, after);
+    assert_eq!(records[0].similarity, 100);
+    assert_eq!(records[0].kind, Kind::Copy);
+}
+
+#[rstest]
+fn skips_approximate_binary_but_keeps_exact(#[values("sha1", "sha256")] format: &str) {
+    let f = Fixture::new(format);
+    let source = f.blob(b"\0\na\nb\nc\n");
+    let edited = f.blob(b"\0\na\nb\nx\n");
+    let old = f.tree(&[("100644", source, b"old")]);
+    let edited_tree = f.tree(&[("100644", edited, b"new")]);
+    let exact_tree = f.tree(&[("100644", source, b"new")]);
+    let options = Options {
+        approximate_binary: false,
+        candidate_limit: 0,
+        ..Options::default()
+    };
+    let objects = f.objects();
+    let edited_records = objects
+        .detect_rewrites(
+            Some(old),
+            Some(edited_tree),
+            options,
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(edited_records.is_empty());
+    let exact_records = objects
+        .detect_rewrites(
+            Some(old),
+            Some(exact_tree),
+            options,
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(exact_records.len(), 1);
+    assert_eq!(exact_records[0].similarity, 100);
+}
+
+#[rstest]
 fn ties_filter_after_inference(#[values("sha1", "sha256")] format: &str) {
     let f = Fixture::new(format);
     let blob = f.blob(b"same\n");

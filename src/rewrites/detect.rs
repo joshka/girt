@@ -10,7 +10,8 @@ impl Objects {
     ///
     /// Only additions of regular/executable blobs are destinations. Deleted blobs are rename
     /// sources; [`Copies::Modified`] additionally uses preimages of modified blobs, including
-    /// mode-only changes, and permits source reuse. Symlinks, gitlinks and directories are never
+    /// mode-only changes, and permits source reuse. [`Copies::ModifiedPostimage`] scores their
+    /// postimages but reports their preimage IDs. Symlinks, gitlinks and directories are never
     /// results. File/directory replacements use the structural comparison's leaf changes.
     /// Both object formats are supported; candidate blobs are read and verified even for exact IDs.
     ///
@@ -94,6 +95,7 @@ impl Objects {
 struct Candidate<'a> {
     path: &'a [u8],
     value: TreeValue,
+    source_id: ObjectId,
     deleted: bool,
 }
 
@@ -108,11 +110,17 @@ fn candidates<'a>(
         budget.work(1)?;
         if let Some(old) = change.old.filter(|value| is_file(value.mode))
             && (change.new.is_none()
-                || (copies == Copies::Modified && change.new.is_some_and(|v| is_file(v.mode))))
+                || (copies != Copies::Disabled && change.new.is_some_and(|v| is_file(v.mode))))
         {
+            let value = if copies == Copies::ModifiedPostimage {
+                change.new.unwrap_or(old)
+            } else {
+                old
+            };
             sources.push(Candidate {
                 path: &change.path,
-                value: old,
+                value,
+                source_id: old.id,
                 deleted: change.new.is_none(),
             });
         }
@@ -122,6 +130,7 @@ fn candidates<'a>(
             targets.push(Candidate {
                 path: &change.path,
                 value: new,
+                source_id: new.id,
                 deleted: false,
             });
         }
@@ -136,6 +145,12 @@ fn is_file(mode: EntryMode) -> bool {
 struct Blob {
     bytes: Vec<u8>,
     content: Option<Content>,
+}
+
+impl Blob {
+    fn binary(&self) -> bool {
+        self.bytes[..self.bytes.len().min(8000)].contains(&0)
+    }
 }
 
 fn read(objects: &Objects, id: ObjectId, budget: &mut Budget<'_>) -> Result<Blob, Error> {
@@ -186,7 +201,7 @@ impl<'a> Selection<'a> {
     }
 
     fn available(&self, source: usize) -> bool {
-        !self.used_sources[source] || self.options.copies == Copies::Modified
+        !self.used_sources[source] || self.options.copies != Copies::Disabled
     }
 
     fn exact(
@@ -235,11 +250,19 @@ impl<'a> Selection<'a> {
         budget: &mut Budget<'_>,
     ) -> Result<(), Error> {
         let sources: Vec<_> = (0..self.sources.len())
-            .filter(|&s| self.available(s) && !blobs[&self.sources[s].value.id].bytes.is_empty())
+            .filter(|&s| {
+                let blob = &blobs[&self.sources[s].value.id];
+                self.available(s)
+                    && !blob.bytes.is_empty()
+                    && (self.options.approximate_binary || !blob.binary())
+            })
             .collect();
         let targets: Vec<_> = (0..self.targets.len())
             .filter(|&t| {
-                !self.used_targets[t] && !blobs[&self.targets[t].value.id].bytes.is_empty()
+                let blob = &blobs[&self.targets[t].value.id];
+                !self.used_targets[t]
+                    && !blob.bytes.is_empty()
+                    && (self.options.approximate_binary || !blob.binary())
             })
             .collect();
         if sources.is_empty() || targets.is_empty() {
@@ -309,7 +332,7 @@ impl<'a> Selection<'a> {
         self.records.push(Rewrite {
             source: old.path.to_vec(),
             target: new.path.to_vec(),
-            source_id: old.value.id,
+            source_id: old.source_id,
             target_id: new.value.id,
             similarity,
             kind,

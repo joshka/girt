@@ -557,10 +557,11 @@ unaccepted.
 
 ## R35 Bounded Unix Integration Attempt
 
-The [R35 evidence](evidence/r35.md) records the target jj inventory and first local-dependency
-changes. Direct ignore matching now uses girt, and `jj util gc` uses additive repacking with an
-explicit deferred-reclamation result. These are partial milestones: the Git backend, transport,
-worktree operations, exposed gix types and production subprocesses remain to be replaced before
+The [R35 evidence](evidence/r35.md) records the target jj inventory and layered local-dependency
+changes. Direct ignore matching, core object reads and writes, jj keep refs, copy inference and new
+repository setup now use girt. `jj util gc` uses additive repacking with an explicit
+deferred-reclamation result. These are partial milestones: Git import/export and other refs,
+transport, worktree operations, exposed gix types and production subprocesses remain before
 [A19](jj-acceptance.md#a19--final-replacement-gate) can close. B09 is safe for this bounded
 no-deletion path, but full GC equivalence and retained-disk cleanup remain open. Windows maintenance
 stays in B08.

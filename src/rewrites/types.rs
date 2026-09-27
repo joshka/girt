@@ -11,6 +11,9 @@ pub enum Copies {
     /// Also use preimages of modified regular/executable files and reuse deleted sources.
     /// Unchanged files are not candidates; mode-only changes count as modifications.
     Modified,
+    /// Score modified sources by their new blobs, while reporting their old blob identities.
+    /// Deleted sources are still scored by their old blobs and can be reused.
+    ModifiedPostimage,
 }
 
 /// Caller choices for inference, independent of repository configuration.
@@ -28,6 +31,9 @@ pub struct Options {
     /// with no partial results; it never silently reports an incomplete inference as complete.
     /// Zero permits exact detection only if there are no remaining candidate pairs.
     pub candidate_limit: usize,
+    /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
+    /// Exact object-ID matches are still considered (default true).
+    pub approximate_binary: bool,
 }
 
 impl Default for Options {
@@ -37,6 +43,7 @@ impl Default for Options {
             copies: Copies::Disabled,
             track_empty: false,
             candidate_limit: 1000,
+            approximate_binary: true,
         }
     }
 }
