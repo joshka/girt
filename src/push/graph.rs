@@ -45,6 +45,15 @@ impl Graph {
             let object = store
                 .read(id, read)
                 .map_err(|source| Error::Read { id, source })?
+                .or_else(|| {
+                    // Git may name the canonical empty tree without storing its object.
+                    let empty = Object {
+                        kind: ObjectKind::Tree,
+                        format: id.format(),
+                        data: Vec::new(),
+                    };
+                    (id == empty.id()).then_some(empty)
+                })
                 .ok_or(Error::Missing(id))?;
             if expected[&id].is_some_and(|kind| kind != object.kind()) {
                 return Err(Error::Kind(id));

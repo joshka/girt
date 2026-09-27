@@ -122,6 +122,58 @@ fn verify(f: &Fixture, dest: &Repository) {
     }
     git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
 }
+
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let empty_tree = repo.object_format().hash_object(ObjectKind::Tree, b"");
+    assert!(
+        repo.objects(PackLimits::default())
+            .unwrap()
+            .read(empty_tree, ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    let content =
+        format!("tree {empty_tree}\nauthor A <a@b> 0 +0000\ncommitter A <a@b> 0 +0000\n\nempty\n");
+    let commit = git(
+        root.path(),
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        content.as_bytes(),
+    );
+    let commit = std::str::from_utf8(&commit)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let prepared = PreparedPush::new_local(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", None, commit)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let (_dest_root, dest) = destination(true);
+    if format == "sha1" {
+        let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+        assert!(report.all_succeeded());
+    }
+}
 #[rstest]
 #[case::ofs(true)]
 #[case::ref_delta(false)]

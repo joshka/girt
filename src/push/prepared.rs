@@ -36,8 +36,9 @@ impl PreparedPush {
     ///
     /// Follows commit parents/trees, tree entries and typed tag targets; gitlinks name external
     /// submodule commits and are not followed. Branch tips must be commits. No reachable object
-    /// may be missing, even when it is expected to exist remotely. An old branch tip outside the
-    /// new history requires explicit force; it need not be present locally when force is allowed.
+    /// may be missing, except Git's canonical empty tree, even when it is expected to exist
+    /// remotely. An old branch tip outside the new history requires explicit force; it need not
+    /// be present locally when force is allowed.
     /// Unchanged IDs are sent as conditional commands and remain subject to server policy.
     ///
     /// Cancellation is checked between graph steps, pack input checks and hashes, pack writes,
@@ -94,7 +95,9 @@ impl PreparedPush {
     /// Prepares a native local push in the source format.
     ///
     /// This has the same complete-graph, force, exclusion and work bounds as
-    /// [`Self::new_excluding`]. The result can be passed to [`super::send_local`].
+    /// [`Self::new_excluding`]. Git's canonical empty tree is materialized when it is named by a
+    /// commit but absent from source storage. Other missing objects still fail. The result can be
+    /// passed to [`super::send_local`].
     pub fn new_local(
         objects: &Objects,
         commands: Vec<PushCommand>,
