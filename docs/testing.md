@@ -66,6 +66,13 @@ must assess and report its user-visible impact. Newly discovered core required b
 queued and resolved before final integration rather than silently excluded; data loss, corruption
 and unsafe mutation remain blockers.
 
+For multi-capability integration work such as R35, a milestone callback reports progress; it does
+not close the task or pause authorized work. If one boundary needs a human decision or external
+validation, record the decision, impact, safe current behavior and restart criteria in a named
+backlog item, then continue independent implementation. The affected operation must refuse or stay
+explicitly incomplete when data loss, corruption or unsafe mutation remains possible. Report final
+acceptance only after all required gates are resolved.
+
 Review architecture, layering, cohesion, and abstraction debt after approximately ten completed
 items, and earlier when cross-cutting issues accumulate. Record concrete findings and bounded
 remediation tasks; resolve correctness or layering blockers before depending on them. Native CI
