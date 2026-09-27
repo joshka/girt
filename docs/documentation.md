@@ -28,10 +28,10 @@ These preferences are revision signals, not forbidden words or proof of authorsh
 readers must still understand why the behavior exists, when it applies, and what can go wrong.
 Concision must not produce choppy fragments that force readers to supply the connections.
 
-Illustrative revisions grounded in girt's current scaffold:
+Illustrative revisions grounded in girt's current behavior:
 
-- Before: "girt delivers seamless Git interoperability." After: "girt has no Git functionality yet;
-  its public API contains only a placeholder `add` function."
+- Before: "girt supports all Git repositories." After: "girt opens explicitly selected SHA-1
+  repositories with supported files-backend references; unsupported extensions return errors."
 - Before: "This section explores our correctness-first compatibility story." After: "Each supported
   Git feature must preserve Git's formats and semantics."
 - Before: "Use nightly. Format Rust." After: "`just fmt-rust` uses nightly rustfmt because
