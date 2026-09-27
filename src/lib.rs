@@ -1,5 +1,13 @@
 //! An incremental Rust library for Git's data formats and storage.
 //!
+//! # First use
+//!
+//! In the [source checkout](https://github.com/joshka/girt), run
+//! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
+//! [`LooseObjects`] for storage assumptions and the
+//! [contributor guide](https://github.com/joshka/girt/blob/joshka/platform-validation/CONTRIBUTING.md)
+//! for setup and checks.
+//!
 //! # Library contents
 //!
 //! - [`Repository`] and [`OpenError`]: explicit-path opening with local format detection.
