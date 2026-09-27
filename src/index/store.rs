@@ -280,6 +280,21 @@ impl IndexEdit {
         self.index.set_version(version, self.limits)
     }
 
+    /// Discards a standalone index's `TREE` cache under the held lock.
+    ///
+    /// Entry replacement already discards `TREE` when entries change. Use this method when the
+    /// cached tree must be removed even though the entries are unchanged. No bytes are written
+    /// until [`Self::commit`]. An index without extensions is accepted as a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Any extension other than `TREE`, including a split-index `link`, prevents this edit.
+    /// Resource-limit failure also leaves the draft and stored index unchanged. The lock remains
+    /// held after either failure.
+    pub fn invalidate_tree_cache(&mut self) -> Result<(), Error> {
+        self.index.invalidate_tree_cache(self.limits)
+    }
+
     /// Encodes, rechecks the original bytes, writes the owned lock and renames it over `index`.
     ///
     /// Consumes the guard on success or failure. A final exact-byte/presence comparison detects

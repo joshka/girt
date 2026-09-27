@@ -106,6 +106,31 @@ fn reads_git_stat_flags_and_roundtrips_exactly(#[case] format: girt::ObjectForma
 }
 
 #[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn invalidates_git_tree_cache_without_replacing_entries(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    let tree_id = git(root, &["write-tree"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(
+        edit.index()
+            .extensions()
+            .iter()
+            .any(|extension| extension.signature() == *b"TREE")
+    );
+    let entries = edit.index().entries().to_vec();
+    edit.invalidate_tree_cache().unwrap();
+    edit.commit().unwrap();
+
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries(), entries);
+    assert!(index.extensions().is_empty());
+    assert_eq!(git(root, &["write-tree"]), tree_id);
+}
+
+#[rstest]
 #[case::regular_sha1(girt::ObjectFormat::Sha1, Mode::Regular, "100644")]
 #[case::regular_sha256(girt::ObjectFormat::Sha256, Mode::Regular, "100644")]
 #[case::executable_sha1(girt::ObjectFormat::Sha1, Mode::Executable, "100755")]
