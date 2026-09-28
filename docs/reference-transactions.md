@@ -117,3 +117,19 @@ are additional bounded allocations; these limits do not claim a process-wide RSS
 worktrees may hold two independently bounded stacks. Cancellation is cooperative between bounded
 table decodes, not a hard CPU or filesystem latency guarantee. Raising limits or explicit compaction
 is required before a publication that would exceed its resulting-stack budget.
+
+### Reflog Timezone Interoperability
+
+Girt encodes reftable timezone fields as signed minutes, as required by the
+[published format](https://git-scm.com/docs/reftable#_log_record). Git 2.55.0 instead writes and
+interprets these fields as signed decimal `HHMM` values. For example, Git writes `-700` for `-0700`,
+which girt exposes as `offset_minutes = -700`; Git displays a girt-written `-420` (seven hours west
+of UTC) as `-0420`. This affects interpreted reflog timezone offsets in both SHA-1 and SHA-256
+repositories. Stored timestamps, reference targets and raw field preservation are unaffected.
+
+The file has no discriminator for these interpretations, and valid values overlap. Girt preserves
+the specified minute encoding without guessing from the value. UTC is interoperable; callers that
+require accurate non-UTC offsets across Git 2.55.0 and girt must treat this boundary as unsupported.
+The [timezone observations](evidence/r37.md#git-2550-timezone-discrepancy) record both directions
+and fixture provenance. Reassess this limitation when the specification or Git's behavior is
+clarified.

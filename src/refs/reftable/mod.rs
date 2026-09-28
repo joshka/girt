@@ -8,6 +8,11 @@
 //! This codec preserves stored reference and reflog records, including tombstones. Stack
 //! precedence and filesystem publication are separate operations. Binary log timestamps retain
 //! their full unsigned range independently of [`crate::Signature`]'s signed interpretation.
+//!
+//! Timezone fields follow the published format's signed-minute representation. Git 2.55.0 uses
+//! signed decimal `HHMM` instead, so non-UTC reflog timezone interoperability is incomplete. The
+//! stored values cannot identify which interpretation their writer used; this codec does not
+//! guess or convert them. Raw field preservation and reference targets are unaffected.
 
 pub(crate) mod backend;
 mod decode;
