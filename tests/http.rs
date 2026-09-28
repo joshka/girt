@@ -2165,6 +2165,8 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
             TransportControl::new(&cancel),
         ))
         .unwrap();
+    // Schannel otherwise prefers the Windows certificate store over sslCAInfo.
+    // Make this oracle use the fixture CA without disabling peer verification.
     let output = std::process::Command::new("git")
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
@@ -2179,6 +2181,8 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
             "-c",
             &format!("http.sslCAInfo={}", certs.path().join("ca.pem").display()),
             "-c",
+            "http.schannelUseSSLCAInfo=true",
+            "-c",
             &format!("remote.r.url={url}"),
             "-c",
             &format!("remote.r.proxy={}", proxy.url),
@@ -2190,7 +2194,12 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
         .current_dir(certs.path())
         .output()
         .unwrap();
-    assert!(output.status.success(), "Git fixture HTTPS request failed");
+    assert!(
+        output.status.success(),
+        "Git fixture HTTPS request failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     let expected = tip(&fixture.repo, "refs/heads/main");
     assert!(
         advertisement
