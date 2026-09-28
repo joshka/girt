@@ -344,7 +344,7 @@ fn prepare_controlled(
             operation: Some(index),
             source,
         };
-        let chain = if edit.dereference || matches!(edit.reflog, Reflog::Append { .. }) {
+        let chain = if edit.dereference || edit.reflog.append_fields().is_some() {
             resolve(&values, &edit.name).map_err(error)?
         } else {
             vec![edit.name.clone()]
@@ -373,7 +373,7 @@ fn prepare_controlled(
         let new = match &edit.target {
             Some(Target::Direct(id)) => *id,
             None => ObjectId::null(refs.repository.object_format()),
-            Some(Target::Symbolic(target)) if matches!(edit.reflog, Reflog::Append { .. }) => {
+            Some(Target::Symbolic(target)) if edit.reflog.append_fields().is_some() => {
                 let target_chain = resolve(&values, target).map_err(error)?;
                 for dependency in &target_chain {
                     if !chain.contains(dependency) && !used.insert(dependency.clone()) {
@@ -396,13 +396,17 @@ fn prepare_controlled(
         let log_names = match &edit.reflog {
             Reflog::Preserve => Vec::new(),
             Reflog::Delete => vec![name.clone()],
-            Reflog::Append { .. } if edit.dereference => chain,
-            Reflog::Append { .. } => vec![name.clone()],
+            Reflog::AppendIfChanged { .. } if values.get(&name) == edit.target.as_ref() => {
+                Vec::new()
+            }
+            Reflog::Append { .. } | Reflog::AppendIfChanged { .. } if edit.dereference => chain,
+            Reflog::Append { .. } | Reflog::AppendIfChanged { .. } => vec![name.clone()],
         };
         for log_name in &log_names {
             let group = group_mut(&mut groups, &directory(refs, log_name));
             match &edit.reflog {
-                Reflog::Append { committer, message } => {
+                Reflog::Append { committer, message }
+                | Reflog::AppendIfChanged { committer, message } => {
                     group.table.logs.push(LogRecord {
                         name: log_name.clone().into(),
                         update_index: group.table.max_update_index,

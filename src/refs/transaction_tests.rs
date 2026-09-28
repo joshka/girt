@@ -971,3 +971,265 @@ fn failed_log_deletion_reports_published_reference(#[case] format: crate::Object
     assert!(log_path.is_dir());
     clean(&repo);
 }
+
+fn append_if_changed() -> Reflog {
+    let Reflog::Append { committer, message } = log() else {
+        unreachable!()
+    };
+    Reflog::AppendIfChanged { committer, message }
+}
+
+#[rstest]
+#[case::any_unchanged(Expected::Any, 1, 1, 0)]
+#[case::exists_unchanged(Expected::Exists, 1, 1, 0)]
+#[case::any_changed(Expected::Any, 2, 2, 1)]
+#[case::exists_changed(Expected::Exists, 2, 2, 1)]
+fn conditional_append_compares_locked_direct_target(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[case] expected: Expected,
+    #[case] new: u8,
+    #[case] entries: usize,
+    #[case] outcomes: usize,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    refs.transaction(&[operation.clone()]).unwrap();
+    operation.expected = expected;
+    operation.target = Some(Target::Direct(id(format, new)));
+    operation.reflog = append_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert_eq!(result[0].logs.len(), outcomes);
+    assert_eq!(
+        refs.reflog(&name("refs/heads/topic"))
+            .unwrap()
+            .unwrap()
+            .len(),
+        entries
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/topic")).unwrap(),
+        Some(Target::Direct(id(format, new)))
+    );
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_preserves_missing_log_for_unchanged_target(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/topic"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.expected = Expected::Exists;
+    operation.reflog = append_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert!(result[0].logs.is_empty());
+    assert_eq!(refs.reflog(&name("refs/heads/topic")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_creation_records_zero_old_id(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.reflog = append_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert_eq!(
+        result[0].logs,
+        vec![(name("refs/heads/topic"), LogOutcome::Appended)]
+    );
+    let entries = refs.reflog(&name("refs/heads/topic")).unwrap().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].old, id(format, 0));
+    assert_eq!(entries[0].new, id(format, 1));
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_symbolic_to_direct_logs_same_terminal_id_only_at_edited_name(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/main"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let mut operation = edit(format, "HEAD");
+    operation.expected = Expected::Exists;
+    operation.reflog = append_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert_eq!(result[0].logs, vec![(name("HEAD"), LogOutcome::Appended)]);
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Direct(id(format, 1)))
+    );
+    assert_eq!(refs.reflog(&name("refs/heads/main")).unwrap(), None);
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].old, id(format, 1));
+    assert_eq!(entries[0].new, id(format, 1));
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_checks_expectation_even_when_target_is_unchanged(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/topic"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.expected = Expected::Value(Target::Direct(id(format, 2)));
+    operation.reflog = append_if_changed();
+    let error = refs.transaction(&[operation]).unwrap_err();
+    assert!(matches!(
+        error,
+        TransactionError::Prepare {
+            source: ReferenceError::Mismatch { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        refs.read(&name("refs/heads/topic")).unwrap(),
+        Some(Target::Direct(id(format, 1)))
+    );
+    assert_eq!(refs.reflog(&name("refs/heads/topic")).unwrap(), None);
+    clean(&repo);
+}
+
+#[rstest]
+#[case::unchanged_ref("refs/heads/topic.lock", 1)]
+#[case::unchanged_log("logs/refs/heads/topic.lock", 1)]
+#[case::changed_ref("refs/heads/topic.lock", 2)]
+#[case::changed_log("logs/refs/heads/topic.lock", 2)]
+fn conditional_append_refuses_foreign_ref_and_log_locks(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[case] path: &str,
+    #[case] new: u8,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/topic"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let lock = repo.git_dir().join(path);
+    fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    fs::write(&lock, b"foreign").unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.expected = Expected::Any;
+    operation.target = Some(Target::Direct(id(format, new)));
+    operation.reflog = append_if_changed();
+    let error = refs.transaction(&[operation]).unwrap_err();
+    assert!(matches!(
+        error,
+        TransactionError::Prepare {
+            source: ReferenceError::Locked(_),
+            ..
+        }
+    ));
+    assert_eq!(
+        refs.read(&name("refs/heads/topic")).unwrap(),
+        Some(Target::Direct(id(format, 1)))
+    );
+    assert_eq!(refs.reflog(&name("refs/heads/topic")).unwrap(), None);
+    assert_eq!(fs::read(&lock).unwrap(), b"foreign");
+    fs::remove_file(lock).unwrap();
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_skips_unterminated_existing_log_for_unchanged_target(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/topic"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let path = repo.git_dir().join("logs/refs/heads/topic");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"uninterpreted tail").unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.expected = Expected::Any;
+    operation.reflog = append_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert!(result[0].logs.is_empty());
+    assert_eq!(fs::read(&path).unwrap(), b"uninterpreted tail");
+    clean(&repo);
+}
+
+#[rstest]
+fn conditional_append_refuses_unterminated_existing_log_for_changed_target(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/topic"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    let path = repo.git_dir().join("logs/refs/heads/topic");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"uninterpreted tail").unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.expected = Expected::Any;
+    operation.target = Some(Target::Direct(id(format, 2)));
+    operation.reflog = append_if_changed();
+    let error = refs.transaction(&[operation]).unwrap_err();
+    assert!(matches!(
+        error,
+        TransactionError::Prepare {
+            source: ReferenceError::Malformed { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        refs.read(&name("refs/heads/topic")).unwrap(),
+        Some(Target::Direct(id(format, 1)))
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"uninterpreted tail");
+    clean(&repo);
+}
+
+#[rstest]
+fn ordinary_append_still_records_unchanged_target(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    refs.transaction(&[operation.clone()]).unwrap();
+    operation.expected = Expected::Any;
+    refs.transaction(&[operation]).unwrap();
+    let entries = refs.reflog(&name("refs/heads/topic")).unwrap().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].old, id(format, 1));
+    assert_eq!(entries[1].new, id(format, 1));
+    clean(&repo);
+}

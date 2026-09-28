@@ -70,7 +70,8 @@ pub struct RefEditOutcome {
     pub name: RefName,
     /// Reference publication result.
     pub reference: RefOutcome,
-    /// Requested logs in symbolic traversal order; empty for `Preserve`.
+    /// Requested logs in symbolic traversal order; empty for `Preserve` or a skipped
+    /// [`Reflog::AppendIfChanged`].
     pub logs: Vec<(RefName, LogOutcome)>,
 }
 
@@ -225,8 +226,8 @@ impl References<'_> {
                     source,
                 };
                 let chain = self.discover_chain(edit, &packed).map_err(error)?;
-                let new_chain = if let (Some(Target::Symbolic(target)), Reflog::Append { .. }) =
-                    (&edit.target, &edit.reflog)
+                let new_chain = if let Some(Target::Symbolic(target)) = &edit.target
+                    && edit.reflog.append_fields().is_some()
                 {
                     let dependency = RefEdit {
                         name: target.clone(),
@@ -295,7 +296,19 @@ impl References<'_> {
                 };
                 check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
                 let mut logs = Vec::new();
-                if let Reflog::Append { committer, message } = &edit.reflog {
+                let logged_chain = if edit.dereference {
+                    &chain[..]
+                } else {
+                    &chain[..1]
+                };
+                if edit.reflog.append_fields().is_some() {
+                    log_names.extend(logged_chain.iter().map(|(name, _)| name.clone()));
+                }
+                let skip_log =
+                    matches!(edit.reflog, Reflog::AppendIfChanged { .. }) && actual == &edit.target;
+                if let Some((committer, message)) = edit.reflog.append_fields()
+                    && !skip_log
+                {
                     // Discovery includes the old chain for a stored direct replacement. All its
                     // values have now been rechecked under locks; only the edited name is
                     // published.
@@ -312,16 +325,10 @@ impl References<'_> {
                         old,
                         new,
                         committer: committer.clone(),
-                        message: message.clone(),
+                        message: message.to_vec(),
                     };
                     let record = record.encode().map_err(error)?;
-                    let logged_chain = if edit.dereference {
-                        &chain[..]
-                    } else {
-                        &chain[..1]
-                    };
                     for (log_name, _) in logged_chain {
-                        log_names.insert(log_name.clone());
                         logs.push((log_name.clone(), record.clone()));
                     }
                 }
@@ -341,7 +348,9 @@ impl References<'_> {
             for name in log_names {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
                 let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
-                if !operations.iter().any(|op| op.delete_log && op.name == name) {
+                if operations.iter().any(|op| {
+                    !op.delete_log && op.logs.iter().any(|(log_name, _)| log_name == &name)
+                }) {
                     reflog::check_append_tail(&path).map_err(batch_error)?;
                 }
                 log_locks.insert(name, lock);
@@ -381,7 +390,7 @@ impl References<'_> {
         edit: &RefEdit,
         packed: &packed::Packed,
     ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
-        let resolve_old = edit.dereference || matches!(edit.reflog, Reflog::Append { .. });
+        let resolve_old = edit.dereference || edit.reflog.append_fields().is_some();
         let mut chain = Vec::new();
         let mut name = edit.name.clone();
         loop {
@@ -424,7 +433,7 @@ pub(super) fn validate_edit(
             return Err(ReferenceError::Unsupported("resolved symbolic replacement"));
         }
     }
-    if let Reflog::Append { committer, message } = &edit.reflog {
+    if let Some((committer, message)) = edit.reflog.append_fields() {
         reflog::validate(committer, message)?;
     }
     Ok(())

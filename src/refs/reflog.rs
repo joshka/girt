@@ -85,6 +85,35 @@ pub enum Reflog {
         /// Exact bytes; NUL, CR and LF are rejected. No whitespace normalization is performed.
         message: Vec<u8>,
     },
+    /// Append only when the edited destination's stored target changes under transaction locks.
+    ///
+    /// Uses the same identity, terminal old/new IDs and logging scope as [`Self::Append`]. The
+    /// comparison uses the stored target, including whether it is symbolic: replacing symbolic
+    /// `HEAD` with its current terminal ID appends, while repeating that direct ID does not.
+    /// For a dereferenced edit, the comparison applies to the terminal destination.
+    ///
+    /// Expectations and symbolic chains are still checked. Files transactions acquire the same
+    /// reference and log locks even when skipping, but do not read or validate the skipped log's
+    /// existing bytes. An absent log stays absent; malformed or unterminated existing bytes stay
+    /// untouched. The supplied identity and message are always validated. A skipped operation has
+    /// no log outcomes; reference publication follows the ordinary transaction contract.
+    AppendIfChanged {
+        /// Validated like commit construction, additionally requiring nonnegative seconds.
+        committer: Signature,
+        /// Exact bytes; NUL, CR and LF are rejected. No whitespace normalization is performed.
+        message: Vec<u8>,
+    },
+}
+
+impl Reflog {
+    pub(super) fn append_fields(&self) -> Option<(&Signature, &[u8])> {
+        match self {
+            Self::Append { committer, message } | Self::AppendIfChanged { committer, message } => {
+                Some((committer, message))
+            }
+            Self::Preserve | Self::Delete => None,
+        }
+    }
 }
 
 impl ReflogEntry {
