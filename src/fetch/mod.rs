@@ -99,6 +99,9 @@ pub(crate) use discovery::interpret_head;
 pub use discovery::{
     ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
 };
+mod progress;
+pub use progress::ValidationProgress;
+
 mod import;
 mod install;
 mod retention;

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
 use super::import::Imported;
+use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::{ObjectId, Repository};
 
@@ -103,10 +104,11 @@ impl ReceivedFetch {
         known: &KnownHistory,
         shallow: Vec<ObjectId>,
         limits: FetchLimits,
-        cancel: &AtomicBool,
+        observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
+        let cancel = observer.cancel;
         let format = advertisement.object_format()?;
-        let imported = Imported::read_with_known(format, &pack, &known.objects, limits, cancel)?;
+        let imported = Imported::read_observed(format, &pack, &known.objects, limits, observer)?;
         let dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
             &known.objects,
@@ -116,7 +118,7 @@ impl ReceivedFetch {
             cancel,
         )?;
         check_cancelled(cancel)?;
-        Ok(Self {
+        let received = Self {
             format,
             advertisement,
             wants,
@@ -127,7 +129,9 @@ impl ReceivedFetch {
             dependencies,
             shallow,
             limits,
-        })
+        };
+        observer.complete();
+        Ok(received)
     }
 
     /// Server advertisement used to select the transfer; it may already be stale at the server.

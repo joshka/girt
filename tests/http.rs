@@ -2500,13 +2500,27 @@ fn http_fetch_progress_arrives_before_eof_and_validation_replays_notices() {
     server.join().unwrap();
     assert_eq!(notices, [b"receiving\xff\r".to_vec()]);
     let mut replay = Vec::new();
+    let mut validation = Vec::new();
     let _ready = download
-        .validate(&cancel, |bytes| {
-            replay.push(bytes.to_vec());
-            ControlFlow::Continue(())
-        })
+        .validate_with_progress(
+            &cancel,
+            |bytes| {
+                replay.push(bytes.to_vec());
+                ControlFlow::Continue(())
+            },
+            |state| validation.push(state),
+        )
         .unwrap();
     assert_eq!(replay, notices);
+    let completed = validation.last().unwrap();
+    assert!(completed.complete);
+    assert!(completed.objects.0 > 0);
+    assert_eq!(completed.objects.0, completed.objects.1);
+    assert!(
+        validation[..validation.len() - 1]
+            .iter()
+            .all(|state| !state.complete)
+    );
 }
 
 #[rstest]

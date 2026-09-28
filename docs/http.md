@@ -29,6 +29,16 @@ a no-op validation callback when live notices have already been displayed. Neith
 download byte counts or local object-resolution counts. Cancellation remains controlled by
 `TransportControl`, and callbacks should return promptly.
 
+Use `DownloadedFetch::validate_with_progress` or `FetchDownload::validate_with_progress` to observe
+local validation work on that worker. The additional callback receives typed `ValidationProgress`
+snapshots: successfully inflated pack entries, successfully reconstructed deltas, and a completion
+flag. The pack header supplies the entry total; the delta total remains `None` until all entries
+have been decoded. Thin-pack external bases do not inflate the received object or delta counts.
+Phase counts can finish before later index, thin-pack rewrite or connectivity checks fail;
+`complete` becomes true only after all validation and its final cancellation check succeed. Counts
+do not describe network bytes or installed references. The observer is advisory, and the existing
+cancellation flag and sideband callback retain control.
+
 Move the downloaded result into a caller-managed bounded blocking worker for large operations.
 Validation can outlive the initiating scope, remote, control and caller's Arc. Even a bounded 512
 MiB decode budget can take substantial time. Bound waiting downloads and aggregate retained bytes as

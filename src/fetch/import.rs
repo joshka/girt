@@ -2,8 +2,10 @@
 //! connectivity is checked. Storage-format primitives remain in the pack module.
 
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::atomic::AtomicBool;
 
+use super::progress::ValidationObserver;
 use super::{FetchError, FetchLimits, check_cancelled};
 use crate::pack::delta::{apply, byte, charge, size};
 use crate::pack::index::{verify_hash, word};
@@ -31,6 +33,7 @@ impl Imported {
         Self::read_with_known(format, data, &HashMap::new(), limits, cancel)
     }
 
+    #[cfg(test)]
     pub fn read_with_known(
         format: crate::ObjectFormat,
         data: &[u8],
@@ -38,6 +41,23 @@ impl Imported {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
+        Self::read_observed(
+            format,
+            data,
+            known,
+            limits,
+            &mut ValidationObserver::new(cancel, &mut |_| {}),
+        )
+    }
+
+    pub fn read_observed(
+        format: crate::ObjectFormat,
+        data: &[u8],
+        known: &HashMap<ObjectId, Object>,
+        limits: FetchLimits,
+        observer: &mut ValidationObserver<'_>,
+    ) -> Result<Self, FetchError> {
+        let cancel = observer.cancel;
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -73,6 +93,7 @@ impl Imported {
             let mut input = &data[12..end];
             let mut entries = Vec::new();
             let mut remaining = limits.max_decode_bytes;
+            observer.decoding(count);
             for _ in 0..count {
                 check_cancelled(cancel)?;
                 let offset = end - input.len();
@@ -99,12 +120,24 @@ impl Imported {
                     crc: crc32fast::hash(&data[offset..entry_end]),
                     resolved: None,
                 });
+                observer.decoded();
             }
             if !input.is_empty() {
                 return Err(Error::Corrupt("trailing pack entries").into());
             }
-            let (objects, external) =
-                resolve(format, &mut entries, known, limits, &mut remaining, cancel)?;
+            let deltas = entries
+                .iter()
+                .filter(|entry| !matches!(entry.base, Base::Kind(_)))
+                .count();
+            observer.resolving(deltas);
+            let (objects, external) = resolve(
+                format,
+                &mut entries,
+                known,
+                limits,
+                &mut remaining,
+                observer,
+            )?;
             #[cfg(feature = "tracing")]
             span.record("decoded_bytes", limits.max_decode_bytes - remaining)
                 .record("objects", objects.len());
@@ -237,8 +270,9 @@ fn resolve(
     known: &HashMap<ObjectId, Object>,
     limits: FetchLimits,
     remaining: &mut usize,
-    cancel: &AtomicBool,
+    observer: &mut ValidationObserver<'_>,
 ) -> Result<(HashMap<ObjectId, Object>, bool), FetchError> {
+    let cancel = observer.cancel;
     let offsets: HashMap<_, _> = entries
         .iter()
         .enumerate()
@@ -325,6 +359,9 @@ fn resolve(
             identities.insert(id, depth);
             entries[i].resolved = Some((id, depth));
             entries[i].payload.clear();
+            if depth != 0 {
+                observer.resolved_delta();
+            }
         }
         if before == objects.len() {
             let missing = entries.iter().find_map(|entry| match entry.base {
@@ -380,6 +417,157 @@ mod tests {
                 entry(3, b"", b"one"),
             ],
         )
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn delta_progress_completion_follows_connectivity(#[case] format: ObjectFormat) {
+        let cancel = AtomicBool::new(false);
+        let mut snapshots = Vec::new();
+        let advertisement = super::super::Advertisement {
+            refs: vec![],
+            capabilities: vec![format!("object-format={format}").into_bytes()],
+        };
+        let received = super::super::ReceivedFetch::validate_known(
+            advertisement,
+            vec![ObjectId::for_blob(format, b"two")],
+            forward_ref_pack(format),
+            &super::super::KnownHistory::default(),
+            vec![],
+            FetchLimits::default(),
+            &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
+        )
+        .unwrap();
+        assert_eq!(received.object_count(), 2);
+        assert_eq!(
+            snapshots.last(),
+            Some(&super::super::ValidationProgress {
+                objects: (2, 2),
+                deltas: Some((1, 1)),
+                complete: true
+            })
+        );
+        assert!(
+            snapshots[..snapshots.len() - 1]
+                .iter()
+                .all(|state| !state.complete)
+        );
+    }
+
+    #[rstest]
+    #[case::before_resolution(0)]
+    #[case::after_resolution(1)]
+    fn delta_progress_cancellation_never_completes(#[case] stop_at: u64) {
+        let format = ObjectFormat::Sha1;
+        let cancel = AtomicBool::new(false);
+        let mut snapshots = Vec::new();
+        let advertisement = super::super::Advertisement {
+            refs: vec![],
+            capabilities: vec![],
+        };
+        let result = super::super::ReceivedFetch::validate_known(
+            advertisement,
+            vec![ObjectId::for_blob(format, b"two")],
+            forward_ref_pack(format),
+            &super::super::KnownHistory::default(),
+            vec![],
+            FetchLimits::default(),
+            &mut ValidationObserver::new(&cancel, &mut |state| {
+                snapshots.push(state);
+                if state.deltas == Some((stop_at, 1)) {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }),
+        );
+        assert!(matches!(result, Err(FetchError::Cancelled)));
+        assert!(snapshots.iter().all(|state| !state.complete));
+    }
+
+    #[test]
+    fn entry_decode_failure_counts_only_inflated_entries() {
+        let bytes = pack(
+            ObjectFormat::Sha1,
+            &[entry(3, b"", b"one"), vec![0x33, 1, 2, 3]],
+        );
+        let cancel = AtomicBool::new(false);
+        let mut snapshots = Vec::new();
+        let result = Imported::read_observed(
+            ObjectFormat::Sha1,
+            &bytes,
+            &HashMap::new(),
+            FetchLimits::default(),
+            &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            snapshots.last(),
+            Some(&super::super::ValidationProgress {
+                objects: (1, 2),
+                deltas: None,
+                complete: false
+            })
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn delta_progress_counts_actual_resolution_once(#[case] format: ObjectFormat) {
+        let mut snapshots = Vec::new();
+        let cancel = AtomicBool::new(false);
+        let imported = Imported::read_observed(
+            format,
+            &forward_ref_pack(format),
+            &HashMap::new(),
+            FetchLimits::default(),
+            &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
+        )
+        .unwrap();
+        assert_eq!(imported.objects.len(), 2);
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|state| (state.objects, state.deltas))
+                .collect::<Vec<_>>(),
+            [
+                ((0, 2), None),
+                ((1, 2), None),
+                ((2, 2), None),
+                ((2, 2), Some((0, 1))),
+                ((2, 2), Some((1, 1))),
+            ]
+        );
+        assert!(snapshots.iter().all(|state| !state.complete));
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn malformed_delta_never_reports_resolved_work(#[case] format: ObjectFormat) {
+        let bytes = pack(
+            format,
+            &[
+                entry(3, b"", b"one"),
+                entry(
+                    7,
+                    ObjectId::for_blob(format, b"one").as_bytes(),
+                    b"\x03\x03\0",
+                ),
+            ],
+        );
+        let mut snapshots = Vec::new();
+        let cancel = AtomicBool::new(false);
+        let result = Imported::read_observed(
+            format,
+            &bytes,
+            &HashMap::new(),
+            FetchLimits::default(),
+            &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
+        );
+        assert!(matches!(result, Err(FetchError::Pack(Error::Corrupt(_)))));
+        assert_eq!(snapshots.last().unwrap().deltas, Some((0, 1)));
+        assert!(snapshots.iter().all(|state| !state.complete));
     }
 
     #[rstest]
@@ -764,8 +952,10 @@ mod git_format_tests {
         let full = imported.complete_pack.unwrap();
         assert!(full.len() > pack.len());
         assert!(crate::pack::Pack::open(format, &imported.index, full).is_ok());
+        let mut failed_snapshots = Vec::new();
+        let cancel = AtomicBool::new(false);
         assert!(matches!(
-            Imported::read_with_known(
+            Imported::read_observed(
                 format,
                 &pack,
                 &known,
@@ -773,10 +963,14 @@ mod git_format_tests {
                     max_pack_bytes: pack.len(),
                     ..FetchLimits::default()
                 },
-                &AtomicBool::new(false)
+                &mut ValidationObserver::new(&cancel, &mut |state| failed_snapshots.push(state))
             ),
             Err(FetchError::Index(crate::PackWriteError::Limit(_)))
         ));
+        assert!(failed_snapshots.iter().all(|state| !state.complete));
+        let resolved = failed_snapshots.last().unwrap().deltas.unwrap();
+        assert!(resolved.0 > 0);
+        assert_eq!(resolved.0, resolved.1);
     }
 
     /// Original CLI observations; no upstream implementation or test source is used.
@@ -854,11 +1048,14 @@ mod git_format_tests {
         let root = tempfile::tempdir().unwrap();
         let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
         let (pack, records) = received(&repo, option);
-        let imported = Imported::read(
+        let mut snapshots = Vec::new();
+        let cancel = AtomicBool::new(false);
+        let imported = Imported::read_observed(
             format,
             &pack,
+            &HashMap::new(),
             FetchLimits::default(),
-            &AtomicBool::new(false),
+            &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         )
         .unwrap();
         assert_eq!(imported.objects.len(), records.len());
@@ -893,6 +1090,19 @@ mod git_format_tests {
             })
             .collect();
         assert!(!delta_offsets.is_empty());
+        let last = snapshots.last().unwrap();
+        assert_eq!(last.objects, (records.len() as u64, records.len() as u64));
+        assert_eq!(
+            last.deltas,
+            Some((delta_offsets.len() as u64, delta_offsets.len() as u64))
+        );
+        assert!(
+            snapshots
+                .windows(2)
+                .all(|pair| pair[0].objects.0 <= pair[1].objects.0
+                    && pair[0].deltas <= pair[1].deltas)
+        );
+        assert!(snapshots.iter().all(|state| !state.complete));
         assert!(
             delta_offsets
                 .iter()

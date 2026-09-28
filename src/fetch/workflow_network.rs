@@ -36,10 +36,29 @@ impl FetchDownload {
         cancel: &AtomicBool,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<FetchReady, FetchWorkflowError> {
+        self.validate_with_progress(cancel, progress, |_| {})
+    }
+
+    /// Validates with local object/delta snapshots before installation or reference publication.
+    ///
+    /// Uses [`DownloadedFetch::validate_with_progress`]'s phase-count, completion, cancellation
+    /// and sideband-replay contracts. The observer runs on the calling validation worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::validate`]'s errors; earlier snapshots do not establish valid objects.
+    pub fn validate_with_progress(
+        self,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        observe: impl FnMut(super::ValidationProgress),
+    ) -> Result<FetchReady, FetchWorkflowError> {
         Ok(FetchReady {
             request: self.request,
             updates: self.updates,
-            received: self.downloaded.validate(cancel, progress)?,
+            received: self
+                .downloaded
+                .validate_with_progress(cancel, progress, observe)?,
         })
     }
 }

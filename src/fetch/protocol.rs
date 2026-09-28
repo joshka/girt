@@ -339,7 +339,27 @@ pub(super) fn response(
     known: &KnownHistory,
     limits: FetchLimits,
     cancel: &AtomicBool,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+) -> Result<ReceivedFetch, Error> {
+    response_observed(
+        wire,
+        advertisement,
+        negotiation,
+        known,
+        limits,
+        progress,
+        &mut super::progress::ValidationObserver::new(cancel, &mut |_| {}),
+    )
+}
+
+pub(super) fn response_observed(
+    wire: &mut Wire<'_, impl Read>,
+    advertisement: Advertisement,
+    negotiation: Negotiation,
+    known: &KnownHistory,
+    limits: FetchLimits,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observer: &mut super::progress::ValidationObserver<'_>,
 ) -> Result<ReceivedFetch, Error> {
     let shallow = read_response_prefix(wire, &negotiation, limits)?;
     let mut pack = Vec::new();
@@ -368,7 +388,7 @@ pub(super) fn response(
         known,
         shallow,
         limits,
-        cancel,
+        observer,
     )
 }
 
