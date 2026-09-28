@@ -7,7 +7,43 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 use super::{Repository, WorktreeLinkStyle};
+use crate::SharedPermissions;
 use crate::refs::{Backend, RefName, Target};
+
+/// Selected file synchronization during orphan-worktree creation.
+///
+/// Uses full file flush on macOS and `File::sync_all` elsewhere. Directory entries are not
+/// synchronized; success is not a power-loss durability guarantee.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WorktreeDurability {
+    /// Synchronize the selected index lock before publication.
+    pub index: bool,
+    /// Synchronize private reftable files and reference placeholders. Files-backend unborn HEAD
+    /// creation does not perform reference synchronization, matching the qualified operation.
+    pub references: bool,
+}
+
+/// Explicit policy captured by the caller before creating an orphan worktree.
+///
+/// No environment or effective configuration is read for these fields. The caller owns source
+/// selection and any transformation of private configuration. Defaults preserve the existing
+/// creation API's private-index, umask and unsynchronized behavior.
+#[derive(Clone, Debug, Default)]
+pub struct OrphanWorktreeOptions {
+    /// Link spelling for this operation; does not enable repository extensions.
+    pub link_style: WorktreeLinkStyle,
+    /// Selected index path, or the new registration's private `index` when absent.
+    /// Relative overrides resolve against the process current directory.
+    pub index_path: Option<PathBuf>,
+    /// Limits for reading and replacing the selected index.
+    pub index_limits: crate::index::Limits,
+    /// Captured, transformed contents for the new `config.worktree`, if any.
+    pub private_config: Option<Vec<u8>>,
+    /// Mode adjustment for shared metadata; registration and link files retain ordinary umask.
+    pub shared_permissions: SharedPermissions,
+    /// Selected file synchronization before completion.
+    pub durability: WorktreeDurability,
+}
 
 /// A refusal or partial creation failure. A registered directory in an error is retained.
 #[derive(Debug, Error)]
@@ -37,6 +73,15 @@ pub enum CreateWorktreeError {
     /// Empty index encoding failed before creation.
     #[error(transparent)]
     Index(#[from] crate::index::Error),
+    /// Selected index read, lock or publication failed. Partial registration is retained.
+    #[error("cannot initialize worktree index: {source}")]
+    IndexStorage {
+        /// Reserved registration, if any.
+        registration: Option<PathBuf>,
+        /// Original guarded-storage error, including cleanup failures.
+        #[source]
+        source: crate::index::StorageError,
+    },
     /// Private reftable encoding failed before creation.
     #[error(transparent)]
     Reftable(#[from] crate::refs::reftable::Error),
@@ -48,6 +93,17 @@ pub enum CreateWorktreeError {
         /// Reserved registration, if any.
         registration: Option<PathBuf>,
         /// OS cause.
+        #[source]
+        source: io::Error,
+    },
+    /// A created reference file could not be synchronized. The file and registration remain.
+    #[error("created worktree file {path} could not be synchronized: {source}")]
+    Synchronize {
+        /// File whose contents were written but whose requested synchronization failed.
+        path: PathBuf,
+        /// Registration retained for inspection.
+        registration: PathBuf,
+        /// Synchronization cause.
         #[source]
         source: io::Error,
     },
@@ -107,6 +163,62 @@ impl Repository {
         max_names: usize,
         link_style: WorktreeLinkStyle,
     ) -> Result<Self, CreateWorktreeError> {
+        self.create_orphan_worktree_with_options(
+            destination,
+            branch,
+            max_names,
+            OrphanWorktreeOptions {
+                link_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Creates an orphan worktree with caller-captured index, private-config and file policies.
+    ///
+    /// Uses the existing branch, path, link and exclusion rules. The selected index is read under
+    /// its ordinary lock and replaced with an empty standalone draft; missing shared dependencies
+    /// fail without publication. A selected symlink is replaced without writing its referent.
+    /// Private configuration bytes are copied, not reread or transformed. No hook is run.
+    ///
+    /// Shared permissions affect the worktrees root, refs/reftable directories, HEAD, selected
+    /// index and private table files. Registration, link and private-config modes retain umask.
+    /// Permission validation precedes creation; this is not Git's exact partial-effect timing.
+    /// Non-Unix hosts currently support only the umask permission policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns existing creation refusals, guarded index errors and explicit permission/sync
+    /// failures. Later errors retain the registration and any completed files for inspection;
+    /// there is no rollback or fallback. File sync does not make directory entries crash durable.
+    ///
+    /// ```no_run
+    /// use girt::refs::RefName;
+    /// use girt::{OrphanWorktreeOptions, Repository, SharedPermissions, WorktreeDurability};
+    /// let repository = Repository::open("main")?;
+    /// let options = OrphanWorktreeOptions {
+    ///     shared_permissions: SharedPermissions::Group,
+    ///     durability: WorktreeDurability {
+    ///         index: true,
+    ///         references: true,
+    ///     },
+    ///     ..Default::default()
+    /// };
+    /// let branch = RefName::new(b"refs/heads/new-work")?;
+    /// let linked = repository.create_orphan_worktree_with_options("linked", &branch, 128, options)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn create_orphan_worktree_with_options(
+        &self,
+        destination: impl AsRef<Path>,
+        branch: &RefName,
+        max_names: usize,
+        options: OrphanWorktreeOptions,
+    ) -> Result<Self, CreateWorktreeError> {
+        options
+            .shared_permissions
+            .validate()
+            .map_err(|source| io_error(destination.as_ref(), None, source))?;
         if max_names == 0 {
             return Err(CreateWorktreeError::Limit);
         }
@@ -134,8 +246,8 @@ impl Repository {
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             Err(e) => return Err(io_error(&destination, None, e)),
         }
-        let index = crate::index::Index::empty(self.object_format())
-            .encode(crate::index::Limits::default())?;
+        let empty_index = crate::index::Index::empty(self.object_format());
+        empty_index.encode(options.index_limits)?;
         let table = if self.reference_backend() == Backend::Reftable {
             Some(
                 initial_head_table(self.object_format(), branch)
@@ -153,9 +265,13 @@ impl Repository {
         })?;
         let configured_relative =
             super::extension_boolean(&config, &config_path, "relativeworktrees")?;
-        let relative = link_style.uses_relative(configured_relative);
+        let relative = options.link_style.uses_relative(configured_relative);
         let registrations = self.common_dir().join("worktrees");
         fs::create_dir_all(&registrations).map_err(|e| io_error(&registrations, None, e))?;
+        options
+            .shared_permissions
+            .apply_directory(&registrations)
+            .map_err(|source| io_error(&registrations, None, source))?;
         let registration = reserve_name(&registrations, name, max_names)?;
         (|| {
             let forward = if relative {
@@ -174,36 +290,91 @@ impl Repository {
                 &path_line(&backlink),
                 &registration,
             )?;
+            let refs = registration.join("refs");
+            create_dir(&refs, &registration)?;
+            options
+                .shared_permissions
+                .apply_directory(&refs)
+                .map_err(|source| io_error(&refs, Some(&registration), source))?;
+            let reference_sync = table.is_some() && options.durability.references;
             if let Some(table) = table {
-                create_dir(&registration.join("reftable"), &registration)?;
-                write_file(
+                let tables = registration.join("reftable");
+                create_dir(&tables, &registration)?;
+                options
+                    .shared_permissions
+                    .apply_directory(&tables)
+                    .map_err(|source| io_error(&tables, Some(&registration), source))?;
+                write_shared_file(
                     &registration.join("reftable/initial.ref"),
                     &table,
                     &registration,
+                    options.shared_permissions,
+                    reference_sync,
                 )?;
-                write_file(
+                write_shared_file(
                     &registration.join("reftable/tables.list"),
                     b"initial.ref\n",
                     &registration,
+                    options.shared_permissions,
+                    reference_sync,
                 )?;
-                create_dir(&registration.join("refs"), &registration)?;
-                write_file(
+                write_shared_file(
                     &registration.join("refs/heads"),
                     b"this repository uses the reftable format\n",
                     &registration,
+                    options.shared_permissions,
+                    reference_sync,
                 )?;
-                write_file(
+                write_shared_file(
                     &registration.join("HEAD"),
                     b"ref: refs/heads/.invalid\n",
                     &registration,
+                    options.shared_permissions,
+                    reference_sync,
                 )?;
             } else {
                 let mut head = b"ref: ".to_vec();
                 head.extend_from_slice(branch.as_bytes());
                 head.push(b'\n');
-                write_file(&registration.join("HEAD"), &head, &registration)?;
+                write_shared_file(
+                    &registration.join("HEAD"),
+                    &head,
+                    &registration,
+                    options.shared_permissions,
+                    false,
+                )?;
             }
-            write_file(&registration.join("index"), &index, &registration)?;
+            if let Some(bytes) = &options.private_config {
+                write_file(&registration.join("config.worktree"), bytes, &registration)?;
+            }
+            let index_path = options
+                .index_path
+                .as_deref()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| registration.join("index"));
+            let mut index_edit = self
+                .edit_index_at_with_options(
+                    &index_path,
+                    options.index_limits,
+                    crate::index::EditOptions {
+                        resolve_split: true,
+                        follow_symlink: true,
+                    },
+                )
+                .map_err(|source| CreateWorktreeError::IndexStorage {
+                    registration: Some(registration.clone()),
+                    source,
+                })?;
+            index_edit.replace_index(empty_index)?;
+            index_edit
+                .commit_with_options(crate::index::IndexCommitOptions {
+                    shared_permissions: options.shared_permissions,
+                    sync: options.durability.index,
+                })
+                .map_err(|source| CreateWorktreeError::IndexStorage {
+                    registration: Some(registration.clone()),
+                    source,
+                })?;
             create_dir(&destination, &registration)?;
             write_file(
                 &destination.join(".git"),
@@ -364,5 +535,86 @@ mod tests {
             path_line(Path::new(r"\\?\UNC\server\share\repo")),
             b"\\\\server\\share\\repo\n"
         );
+    }
+}
+
+fn write_shared_file(
+    path: &Path,
+    bytes: &[u8],
+    registration: &Path,
+    permissions: SharedPermissions,
+    sync: bool,
+) -> Result<(), CreateWorktreeError> {
+    write_shared_file_with_sync(
+        path,
+        bytes,
+        registration,
+        permissions,
+        sync,
+        crate::file_policy::sync_file,
+    )
+}
+
+fn write_shared_file_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    registration: &Path,
+    permissions: SharedPermissions,
+    sync: bool,
+    synchronize: impl FnOnce(&std::fs::File) -> io::Result<()>,
+) -> Result<(), CreateWorktreeError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|source| io_error(path, Some(registration), source))?;
+    file.write_all(bytes)
+        .map_err(|source| io_error(path, Some(registration), source))?;
+    permissions
+        .apply_file(&file)
+        .map_err(|source| io_error(path, Some(registration), source))?;
+    if sync {
+        synchronize(&file).map_err(|source| CreateWorktreeError::Synchronize {
+            path: path.into(),
+            registration: registration.into(),
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::disabled(false)]
+    #[case::requested(true)]
+    fn reference_file_sync_failure_retains_registration(#[case] requested: bool) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("table.ref");
+        let called = std::cell::Cell::new(false);
+        let result = write_shared_file_with_sync(
+            &path,
+            b"retained table",
+            root.path(),
+            SharedPermissions::Umask,
+            requested,
+            |_| {
+                called.set(true);
+                Err(io::Error::other("injected synchronization failure"))
+            },
+        );
+        assert_eq!(called.get(), requested);
+        if requested {
+            assert!(
+                matches!(result, Err(CreateWorktreeError::Synchronize { registration, .. }) if registration == root.path())
+            );
+        } else {
+            result.unwrap();
+        }
+        assert_eq!(fs::read(path).unwrap(), b"retained table");
     }
 }

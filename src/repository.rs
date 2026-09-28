@@ -18,7 +18,7 @@ pub use operation::{OperationCleanupError, OperationError, OperationLimits, Oper
 pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
 pub use worktree_admin::{WorktreeAdminError, WorktreeRetirement};
-pub use worktree_create::CreateWorktreeError;
+pub use worktree_create::{CreateWorktreeError, OrphanWorktreeOptions, WorktreeDurability};
 pub use worktree_repair::WorktreeRepair;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 

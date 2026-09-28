@@ -490,3 +490,50 @@ fn symlink_split_lookup_never_uses_referent_parent(
         assert!(fs::symlink_metadata(fixture.path).unwrap().is_symlink());
     }
 }
+
+#[rstest]
+fn synchronization_failure_precedes_index_publication(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let fixture = Fixture::new(format);
+    let original = fixture.write(&populated(format));
+    let mut edit = fixture.edit();
+    edit.replace_index(Index::empty(format)).unwrap();
+    let error = edit
+        .publish_with_policy(
+            IndexCommitOptions {
+                sync: true,
+                ..Default::default()
+            },
+            |_| Err(io::Error::other("injected sync failure")),
+            |_, _| panic!("must not publish after failed sync"),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StorageError::Io {
+            operation: "synchronize index lock",
+            ..
+        }
+    ));
+    assert_eq!(fs::read(&fixture.path).unwrap(), original);
+    edit.abort().unwrap();
+}
+
+#[rstest]
+fn invalid_commit_mode_preserves_index_and_cleans_lock(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let fixture = Fixture::new(format);
+    let original = fixture.write(&populated(format));
+    let edit = fixture.edit();
+    assert!(
+        edit.commit_with_options(IndexCommitOptions {
+            shared_permissions: crate::SharedPermissions::Exact(0o444),
+            sync: false
+        })
+        .is_err()
+    );
+    assert_eq!(fs::read(&fixture.path).unwrap(), original);
+    assert!(!fixture.path.with_extension("index.lock").exists());
+}

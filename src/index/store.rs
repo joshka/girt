@@ -7,6 +7,18 @@ use thiserror::Error;
 use super::{Entry, Error, Index, Limits};
 use crate::Repository;
 
+/// Prepublication policy for an index lock file.
+///
+/// Defaults preserve ordinary umask behavior and do not synchronize. Synchronization uses macOS
+/// full file flush or `File::sync_all` elsewhere; directory entries are not synchronized.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IndexCommitOptions {
+    /// Permissions applied to the owned lock before publication.
+    pub shared_permissions: crate::SharedPermissions,
+    /// Synchronize the complete lock file before its final snapshot checks and rename.
+    pub sync: bool,
+}
+
 /// Explicit storage admission for a caller-selected index edit.
 ///
 /// Defaults retain standalone, regular-file-only admission. These options do not select an index
@@ -82,9 +94,11 @@ impl LeafSnapshot {
 /// outside this contract.
 ///
 /// Publication uses a same-directory rename, with atomic replacement where the host filesystem
-/// supports it. No fsync or crash durability is promised. No shared-repository permission policy
-/// is implemented; lock creation uses ordinary OS defaults and umask. No worktree files or objects
-/// are written. Index storage does not depend on the reference backend.
+/// supports it. Default [`Self::commit`] uses ordinary OS creation modes and umask, without file
+/// synchronization. [`Self::commit_with_options`] can adjust the lock's shared permissions and
+/// synchronize it before rename, using full file flush on macOS or `File::sync_all` elsewhere.
+/// Directory entries are not synchronized; no crash or power-loss durability is promised. No
+/// worktree files or objects are written. Index storage does not depend on the reference backend.
 #[derive(Debug)]
 pub struct IndexEdit {
     destination: PathBuf,
@@ -622,7 +636,21 @@ impl IndexEdit {
     /// Encoding, precondition, write, timestamp and rename failures preserve the destination's
     /// bytes, apart from independent concurrent changes. The acquired lock is cleaned on failure
     /// where possible. Successful return reports publication, not crash durability.
-    pub fn commit(mut self) -> Result<(), StorageError> {
+    pub fn commit(self) -> Result<(), StorageError> {
+        self.commit_with_options(IndexCommitOptions::default())
+    }
+
+    /// Publishes with explicit lock-file permissions and optional file synchronization.
+    ///
+    /// Permission and synchronization failures occur before rename and preserve the selected
+    /// destination. Existing snapshot/lock checks and cleanup behavior remain in force. Successful
+    /// file synchronization does not promise directory-entry or power-loss durability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::commit`]'s errors plus invalid/unsupported mode and file-sync failures.
+    /// Exact modes are validated before writing the lock. No synchronization failure is ignored.
+    pub fn commit_with_options(mut self, options: IndexCommitOptions) -> Result<(), StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -633,7 +661,7 @@ impl IndexEdit {
         );
 
         let operation = || {
-            if let Err(operation) = self.publish() {
+            if let Err(operation) = self.publish_with_options(options) {
                 return Err(with_cleanup(operation, self.abort()));
             }
             Ok(())
@@ -687,13 +715,37 @@ impl IndexEdit {
     }
 
     pub(crate) fn publish(&mut self) -> Result<(), StorageError> {
-        self.publish_with_rename(|from, to| fs::rename(from, to))
+        self.publish_with_options(IndexCommitOptions::default())
     }
 
+    fn publish_with_options(&mut self, options: IndexCommitOptions) -> Result<(), StorageError> {
+        self.publish_with_policy(options, crate::file_policy::sync_file, |from, to| {
+            fs::rename(from, to)
+        })
+    }
+
+    #[cfg(test)]
     fn publish_with_rename(
         &mut self,
         rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
     ) -> Result<(), StorageError> {
+        self.publish_with_policy(
+            IndexCommitOptions::default(),
+            crate::file_policy::sync_file,
+            rename,
+        )
+    }
+
+    fn publish_with_policy(
+        &mut self,
+        options: IndexCommitOptions,
+        sync: impl FnOnce(&File) -> io::Result<()>,
+        rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
+    ) -> Result<(), StorageError> {
+        options
+            .shared_permissions
+            .validate()
+            .map_err(|source| io_error("validate index permissions", &self.lock_path, source))?;
         let bytes = self
             .index
             .encode(self.limits)
@@ -703,6 +755,15 @@ impl IndexEdit {
             })?;
         self.check_original()?;
         self.write_lock(&bytes)?;
+        let file = self.file.as_ref().expect("unpublished guard owns its file");
+        options
+            .shared_permissions
+            .apply_file(file)
+            .map_err(|source| io_error("set index permissions", &self.lock_path, source))?;
+        if options.sync {
+            sync(file)
+                .map_err(|source| io_error("synchronize index lock", &self.lock_path, source))?;
+        }
         self.check_original()?;
         self.check_lock_identity()?;
         drop(self.file.take());

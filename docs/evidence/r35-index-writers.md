@@ -38,6 +38,13 @@ The canonical lock file remains unchanged (reported digest prefix `86bda001`). M
 storage is a terminal, nondestructive error. Sparse expansion before additions prevents duplicate
 entries. Missing shared storage does not reproduce the observed destructive compatibility behavior.
 
-Actual dependency-feature pruning and native platform qualification are separate gates. Removing
-these writers does not imply that repository bootstrap or all index-related dependency paths have
-been removed.
+## Dependency Feature Acceptance
+
+Accepted jj `11926b51` also removes the production index feature dependency. CLI dependencies
+decrease from 421 to 418 and library dependencies from 264 to 261, removing `gix-index`,
+`gix-bitmap` and `filetime`. Across the two accepted pruning increments, the counts decrease from
+431 to 418 and 274 to 261 respectively. The canonical lock file remains unchanged.
+
+The coordinating lane reports 23 configuration parity cases, six retained eager errors, path and
+initialization checks, plus production and all-target strict gates passed. Repository bootstrap
+still uses `gix`. Native platform qualification and remaining dependency removal are separate gates.

@@ -45,6 +45,15 @@ empty linked checkout; `repair_worktree` repairs links to an identified checkout
 `prune_worktree` removes a retired registration only after explicit retirement confirmation. These
 operations require caller coordination and can retain partial state after failure.
 
+`create_orphan_worktree_with_options` accepts captured private configuration, a selected index path,
+index limits, shared permissions and index/reference file synchronization. It reuses the guarded
+index writer, copies private configuration bytes verbatim and preserves existing wrappers' default
+policies. The caller supplies effective configuration and transforms private settings before
+calling; creation does not read ambient policy or run hooks. Selected synchronization uses full file
+flush on macOS and `File::sync_all` elsewhere, without directory-entry or power-loss guarantees.
+Non-Unix shared permission modes other than ordinary umask remain unsupported. See
+[orphan policy evidence](evidence/r35-orphan-policy.md) for the observed scope and remaining gates.
+
 For a newly published gitfile, `RepositoryLocation::prepare_worktree_repair` captures the exact
 registration without opening repository storage or configuration. Keep the source gitfile, publish
 it with a no-clobber hard link, then call `WorktreeRepair::repair(destination)`. Repair preserves
