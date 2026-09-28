@@ -2166,7 +2166,9 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
         ))
         .unwrap();
     // Schannel otherwise prefers the Windows certificate store over sslCAInfo.
-    // Make this oracle use the fixture CA without disabling peer verification.
+    // Make this oracle use the fixture CA. Its disposable certificates have no
+    // revocation service, so disable only Schannel's revocation check here;
+    // certificate-chain and hostname verification remain enabled.
     let output = std::process::Command::new("git")
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
@@ -2182,6 +2184,8 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
             &format!("http.sslCAInfo={}", certs.path().join("ca.pem").display()),
             "-c",
             "http.schannelUseSSLCAInfo=true",
+            "-c",
+            "http.schannelCheckRevoke=false",
             "-c",
             &format!("remote.r.url={url}"),
             "-c",
