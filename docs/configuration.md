@@ -64,7 +64,10 @@ so rewrites cannot repair them. Callers persisting the original destination can 
 `Config::contains_section` retains empty headers through parsing and include resolution. Runtime
 assignments also imply section existence. Section names ignore ASCII case; quoted subsection bytes
 remain exact. This query does not expose physical section identity or source ownership, and entry
-ordering and provenance are unchanged.
+ordering and provenance are unchanged. `Config::subsection_names` returns all named subsections,
+including empty headers and runtime assignments, sorted and deduplicated by exact bytes. Bare
+sections are omitted; empty subsection names are included. `Remote::names` and `RemoteUrls::names`
+keep their entries-only, first-entry ordering contract.
 
 ## Inputs and Precedence
 

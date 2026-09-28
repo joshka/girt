@@ -539,6 +539,54 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn subsection_names_include_inherited_headers_and_runtime_assignments() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("child"),
+            b"[remote \"empty\"]\n[remote \"duplicate\"]\n",
+        )
+        .unwrap();
+        let environment = Config::from_environment(
+            |name| match name {
+                "GIT_CONFIG_COUNT" => Some(b"2".to_vec()),
+                "GIT_CONFIG_KEY_0" => Some(b"remote.runtime.url".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(Vec::new()),
+                "GIT_CONFIG_KEY_1" => Some(b"remote.duplicate.url".to_vec()),
+                "GIT_CONFIG_VALUE_1" => Some(b"repo".to_vec()),
+                _ => None,
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            environment.subsection_names("REMOTE"),
+            [b"duplicate".as_slice(), b"runtime"]
+        );
+        let mut input = ConfigInputs {
+            environment: Some(environment),
+            command: Some(
+                Config::parse(b"[include]\npath=~/child\npath=~/child\n[remote \"command\"]\n")
+                    .unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.context.home = Some(root.path().into());
+        let config = Config::resolve(&input).unwrap();
+        assert_eq!(
+            config.subsection_names("remote"),
+            [b"command".as_slice(), b"duplicate", b"empty", b"runtime"]
+        );
+        assert_eq!(
+            config
+                .entries()
+                .iter()
+                .filter(|entry| entry.section == b"remote")
+                .count(),
+            2
+        );
+    }
+
     #[rstest]
     #[case::empty(b"", false)]
     #[case::header(b"[ReMoTe \"Name\"]", true)]

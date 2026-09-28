@@ -221,6 +221,39 @@ impl Config {
         })
     }
 
+    /// Lists every subsection of a section, once, sorted by exact subsection bytes.
+    ///
+    /// Includes empty headers and sections implied by environment assignments. Section names
+    /// ignore ASCII case; subsection bytes retain case, non-UTF-8 bytes and the empty name.
+    /// Headers without a subsection are excluded. This query does not expose source ownership,
+    /// physical section occurrences or precedence order.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[remote \"z\"]\nurl=repo\n[remote \"a\"]\n")?;
+    /// assert_eq!(config.subsection_names("REMOTE"), [b"a".as_slice(), b"z"]);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn subsection_names(&self, section: &str) -> Vec<&[u8]> {
+        let headers = self
+            .sections
+            .iter()
+            .map(|header| (header.section.as_slice(), header.subsection.as_deref()));
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| (entry.section.as_slice(), entry.subsection.as_deref()));
+        let names: std::collections::BTreeSet<_> = headers
+            .chain(entries)
+            .filter_map(|(name, subsection)| {
+                name.eq_ignore_ascii_case(section.as_bytes())
+                    .then_some(subsection)
+                    .flatten()
+            })
+            .collect();
+        names.into_iter().collect()
+    }
+
     /// Returns all occurrences, preserving order and distinguishing implicit from empty values.
     /// Names use ASCII case folding; subsection bytes are exact. No key-string splitting is done.
     pub fn values<'a>(
@@ -259,6 +292,7 @@ impl Config {
 
     pub(crate) fn append(&mut self, other: &Self) {
         self.entries.extend_from_slice(&other.entries);
+        self.sections.extend_from_slice(&other.sections);
     }
 
     /// Returns occurrences in source or resolved precedence order.
@@ -407,6 +441,54 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    #[rstest]
+    #[case::absent(b"", vec![])]
+    #[case::bare(b"[remote]", vec![])]
+    #[case::empty_header(b"[remote \"a\"]", vec![b"a".as_slice()])]
+    #[case::empty_name(b"[remote \"\"]", vec![b"".as_slice()])]
+    #[case::section_case(b"[REMOTE \"a\"]\n[Remote \"a\"]", vec![b"a".as_slice()])]
+    #[case::subsection_case(b"[remote \"a\"]\n[remote \"A\"]", vec![b"A".as_slice(), b"a"])]
+    #[case::non_utf8(b"[remote \"\xff\"]\n[remote \"a\"]", vec![b"a".as_slice(), b"\xff"])]
+    #[case::entries_and_empty(b"[remote \"z\"]\nurl=repo\n[remote \"a\"]\n[remote \"z\"]", vec![b"a".as_slice(), b"z"])]
+    #[case::other_section(b"[url \"a\"]\ninsteadOf=b", vec![])]
+    fn complete_subsection_names(#[case] bytes: &[u8], #[case] expected: Vec<&[u8]>) {
+        assert_eq!(
+            Config::parse(bytes).unwrap().subsection_names("remote"),
+            expected
+        );
+    }
+
+    #[test]
+    fn append_preserves_empty_headers_and_entry_order() {
+        let mut config = Config::parse(b"[remote \"z\"]\nurl=first\n").unwrap();
+        config.append(&Config::parse(b"[remote \"a\"]\n[remote \"z\"]\nurl=second\n").unwrap());
+        assert!(config.contains_section("remote", Some(b"a")));
+        assert_eq!(config.subsection_names("remote"), [b"a".as_slice(), b"z"]);
+        assert_eq!(
+            config
+                .values("remote", Some(b"z"), "url")
+                .collect::<Vec<_>>(),
+            [Some(b"first".as_slice()), Some(b"second".as_slice())]
+        );
+    }
+
+    #[test]
+    fn legacy_remote_names_stay_in_first_entry_order() {
+        let config = Config::parse(b"[remote \"empty\"]\n[remote \"z\"]\nurl=repo\n[remote \"a\"]\nurl=repo\n[remote \"z\"]\nfetch=HEAD").unwrap();
+        assert_eq!(
+            crate::remote::Remote::names(&config),
+            [b"z".as_slice(), b"a"]
+        );
+        assert_eq!(
+            crate::remote::RemoteUrls::names(&config),
+            [b"z".as_slice(), b"a"]
+        );
+        assert_eq!(
+            config.subsection_names("remote"),
+            [b"a".as_slice(), b"empty", b"z"]
+        );
+    }
+
     #[rstest]
     #[case::quote(b"[core]\nx = \" a # ; \" ; comment\n", b" a # ; ")]
     #[case::continuation(b"[core]\nx = ab\\\ncd\n", b"abcd")]
