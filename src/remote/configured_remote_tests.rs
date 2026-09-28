@@ -504,3 +504,24 @@ fn refspec_error_precedes_invalid_rewritten_path() {
         Err(ConfiguredRemoteError::Refspec { key: "fetch", .. })
     ));
 }
+
+#[test]
+fn configured_file_spaces_preserve_storage_and_rewrite_matching() {
+    let config = Config::parse(b"[remote \"origin\"]\nurl=\"file:///repo  name \"\n[url \"file:///new place/\"]\ninsteadOf=\"file:///repo  \"\n").unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record.fetch_urls().next(),
+        Some(b"file:///repo  name ".as_slice())
+    );
+    let remote = ConfiguredRemote::find(&config, b"origin").unwrap().unwrap();
+    assert_eq!(
+        remote.fetch_url(),
+        Some(b"file:///new place/name ".as_slice())
+    );
+    assert_eq!(
+        crate::remote::rewrite_configured_url(&config, b"file:///repo  name ").unwrap(),
+        b"file:///new place/name "
+    );
+}

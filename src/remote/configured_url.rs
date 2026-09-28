@@ -30,6 +30,7 @@ pub enum ConfiguredUrlError {
 /// ASCII network hosts are lowercased and numeric ports lose leading zeroes; explicit default
 /// ports and ordinary dot path segments are retained. File-host case is preserved. An HTTP(S)
 /// URL without a path gains `/`. Local paths can contain non-UTF-8 bytes and spaces.
+/// File URL paths also retain literal spaces, without encoding or trimming them.
 /// Percent spelling and case in paths are retained. HTTP(S)/SSH path escapes must be complete hex
 /// pairs whose decoded bytes form UTF-8; file/scp path percent sequences remain uninterpreted.
 ///
@@ -54,6 +55,10 @@ pub enum ConfiguredUrlError {
 /// assert_eq!(
 ///     normalize_configured_url(b"https://HOST/a%2fb")?,
 ///     b"https://host/a%2fb"
+/// );
+/// assert_eq!(
+///     normalize_configured_url(b"file:///repo name ")?,
+///     b"file:///repo name "
 /// );
 /// assert_eq!(
 ///     normalize_configured_url(b""),
@@ -150,7 +155,10 @@ fn file_url(bytes: &[u8], start: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
     {
         return Err(ConfiguredUrlError::Unsupported);
     }
-    plain_path(&rest[slash..])?;
+    // Literal file-path spaces are preserved; all other path checks remain shared.
+    for part in rest[slash..].split(|byte| *byte == b' ') {
+        plain_path(part)?;
+    }
     // File authorities are preserved, unlike the network host case normalization.
     Ok(bytes.to_vec())
 }
@@ -374,6 +382,39 @@ mod tests {
     #[case::ipv6(b"https://[::1]/a%20b")]
     #[case::scheme(b"HTTPS://HOST/a%20b")]
     fn percent_paths_do_not_expand_other_syntax(#[case] input: &[u8]) {
+        assert_eq!(
+            crate::remote::normalize_configured_url(input),
+            Err(ConfiguredUrlError::Unsupported)
+        );
+    }
+    // Original gix 0.87.1 public URL oracle: file path spaces serialize byte-for-byte.
+    #[rstest]
+    #[case::ordinary(b"file:///tmp/repo name")]
+    #[case::authority_case(b"file://HOST/repo name")]
+    #[case::leading(b"file:/// repo")]
+    #[case::trailing(b"file:///repo ")]
+    #[case::repeated(b"file:///repo  name")]
+    #[case::only_space(b"file:/// ")]
+    #[case::components(b"file:///a b/c d")]
+    #[case::percent(b"file:///a%20b c")]
+    #[case::literal_percent(b"file:///a%GG b")]
+    fn file_path_spaces_remain_literal(#[case] input: &[u8]) {
+        assert_eq!(
+            crate::remote::normalize_configured_url(input).unwrap(),
+            input
+        );
+    }
+
+    #[rstest]
+    #[case::authority(b"file://bad host/repo")]
+    #[case::tab(b"file:///a\tb")]
+    #[case::newline(b"file:///a\nb")]
+    #[case::nul(b"file:///a\0b")]
+    #[case::encoding(b"file:///a\xff b")]
+    #[case::ssh(b"ssh://host/repo name")]
+    #[case::http(b"https://host/repo name")]
+    #[case::scp(b"host:repo name")]
+    fn file_spaces_do_not_change_other_boundaries(#[case] input: &[u8]) {
         assert_eq!(
             crate::remote::normalize_configured_url(input),
             Err(ConfiguredUrlError::Unsupported)
