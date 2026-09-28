@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::sync::atomic::AtomicBool;
 
+use super::lock_wait::check_cancelled;
 use super::store::{
     Lock, check_expected, conflicts, io_error, read_optional, remove_loose, validate_target,
 };
 use super::{
-    Expected, RefName, ReferenceError, References, Reflog, ReflogEntry, Target, packed, reflog,
+    Expected, FilesTransactionOptions, LockWait, RefName, ReferenceError, References, Reflog,
+    ReflogEntry, Target, packed, reflog,
 };
 use crate::ObjectId;
 
@@ -176,6 +179,97 @@ impl References<'_> {
         result
     }
 
+    /// Applies a files-only transaction with cancellable, per-acquisition lock waits.
+    ///
+    /// Holds the packed lock first, then reference locks in name-byte order, then reflog locks
+    /// in name-byte order. Each packed/reference acquisition gets its own configured budget;
+    /// earlier locks remain held. Reflog contention always fails immediately. This sorted order
+    /// need not match another writer's edit order, so contention timing can differ.
+    ///
+    /// Cancellation is checked before acquisitions, during waits at intervals of at most 20 ms
+    /// excluding scheduling/filesystem delays, and after preparation before publication. Callers
+    /// choosing [`LockWait::UntilCancelled`] must arrange cancellation if an unbounded wait is
+    /// unacceptable. Cancellation does not interrupt publication once it starts.
+    ///
+    /// Uses the same locked rechecks, expected values, cleanup and publication as
+    /// [`Self::transaction`]. It never refreshes preconditions or retries preparation/publication.
+    /// No configuration or environment is read. Existing transaction methods still fail
+    /// immediately on contention.
+    ///
+    /// # Errors
+    ///
+    /// Reftable returns [`TransactionError::Prepare`] with [`ReferenceError::Unsupported`] before
+    /// effects. Cancellation, timeout and other preparation failures preserve ref/log contents.
+    /// Publication failures retain their effects in [`TransactionError::Publish`]; never retry
+    /// them without inspecting current state.
+    ///
+    /// ```no_run
+    /// use std::sync::atomic::AtomicBool;
+    /// use std::time::Duration;
+    /// use girt::refs::{FilesTransactionOptions, LockWait};
+    /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
+    /// let options = FilesTransactionOptions {
+    ///     reference_lock_wait: LockWait::For(Duration::from_millis(100)),
+    ///     packed_refs_lock_wait: LockWait::For(Duration::from_secs(1)),
+    /// };
+    /// repo.references()?.transaction_files_with_options(edits, options, &AtomicBool::new(false))?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn transaction_files_with_options(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt", "refs.transaction", outcome = "incomplete",
+            failure_class = tracing::field::Empty, effects = tracing::field::Empty,
+            edits = edits.len(),
+        );
+        let operation = || {
+            if self.repository.reference_backend() != super::Backend::Files {
+                return Err(TransactionError::Prepare {
+                    operation: None,
+                    source: ReferenceError::Unsupported(
+                        "files transaction options require files backend",
+                    ),
+                });
+            }
+            check_cancelled(cancel).map_err(|source| TransactionError::Prepare {
+                operation: None,
+                source,
+            })?;
+            if edits.is_empty() {
+                return Ok(Vec::new());
+            }
+            for (index, edit) in edits.iter().enumerate() {
+                validate_edit(self.repository.object_format(), edit).map_err(|source| {
+                    TransactionError::Prepare {
+                        operation: Some(index),
+                        source,
+                    }
+                })?;
+            }
+            let prepared = self.prepare_files_transaction_with_options(edits, options, cancel)?;
+            check_cancelled(cancel).map_err(|source| TransactionError::Prepare {
+                operation: None,
+                source,
+            })?;
+            prepared.publish()
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = operation();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::transaction(error, &span)
+        });
+        result
+    }
+
     pub(crate) fn prepare_transaction(
         &self,
         edits: &[RefEdit],
@@ -193,6 +287,19 @@ impl References<'_> {
         &self,
         edits: &[RefEdit],
     ) -> Result<Prepared, TransactionError> {
+        self.prepare_files_transaction_with_options(
+            edits,
+            FilesTransactionOptions::default(),
+            &AtomicBool::new(false),
+        )
+    }
+
+    fn prepare_files_transaction_with_options(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Prepared, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -207,8 +314,12 @@ impl References<'_> {
                 operation: None,
                 source,
             };
-            let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))
-                .map_err(batch_error)?;
+            let packed_lock = Lock::acquire_wait(
+                self.repository.common_dir().join("packed-refs"),
+                options.packed_refs_lock_wait,
+                cancel,
+            )
+            .map_err(batch_error)?;
             let bytes = read_optional(&packed_lock.destination)
                 .map_err(batch_error)?
                 .unwrap_or_default();
@@ -269,7 +380,12 @@ impl References<'_> {
                     .map_err(batch_error)?;
                 locks.insert(
                     name.clone(),
-                    Lock::acquire(self.path(&name).map_err(batch_error)?).map_err(batch_error)?,
+                    Lock::acquire_wait(
+                        self.path(&name).map_err(batch_error)?,
+                        options.reference_lock_wait,
+                        cancel,
+                    )
+                    .map_err(batch_error)?,
                 );
             }
             let mut operations = Vec::new();
@@ -349,7 +465,8 @@ impl References<'_> {
             let mut log_locks = BTreeMap::new();
             for name in log_names {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
-                let lock = Lock::acquire(path).map_err(batch_error)?;
+                let lock =
+                    Lock::acquire_wait(path, LockWait::Immediate, cancel).map_err(batch_error)?;
                 log_locks.insert(name, lock);
             }
             for (operation, edit) in operations.iter_mut().zip(edits) {

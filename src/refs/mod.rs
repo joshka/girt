@@ -22,6 +22,7 @@
 
 mod enumerate;
 mod imported;
+mod lock_wait;
 mod name;
 mod packed;
 mod reflog;
@@ -34,6 +35,7 @@ pub use imported::{
     ImportedRecord, ImportedReflog, ReflogFields, ReflogInterpretationError, ReflogLimits,
     ReflogReadEnd,
 };
+pub use lock_wait::{FilesTransactionOptions, LockWait};
 pub use name::{InvalidRefName, RefName};
 pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
 pub use store::{Backend, Expected, ReferenceError, References, Resolution, Target};

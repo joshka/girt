@@ -20,6 +20,20 @@ cycles, depth beyond 32 hops, namespace overlaps, malformed data and predicate f
 content changes. Empty parent directories can remain. Contention returns immediately; callers must
 re-read before choosing any retry policy.
 
+`transaction_files_with_options` adds caller-selected waits for files storage. Each packed or
+reference lock gets a fresh `LockWait` budget: `Immediate`, `For(Duration)` or `UntilCancelled`.
+`FilesTransactionOptions` defaults both policies to `Immediate`; existing transaction methods keep
+that behavior. Reflog locks always fail immediately, and reftable rejects these files-only options
+before effects. Configuration conversion belongs to the caller.
+
+Waiting retries only an existing lock, using a monotonic budget and sleeps capped at 20 ms.
+Cancellation is checked during waits, before acquisitions and before publication; callers using
+`UntilCancelled` must provide a cancellation policy. Filesystem calls and scheduling can exceed the
+budget. Earlier locks stay held while later locks wait, and native name-byte acquisition order
+remains unchanged. Another writer using input order can therefore have different contention timing.
+Stored chains and expected values are rechecked under locks without refreshing preconditions.
+Publication starts once, runs without cancellation interruption and is never retried.
+
 Packed deletion publishes first, removing all selected records while preserving unrelated bytes.
 Refs then publish in input order, each followed by its requested log effects. Loose values shadow
 packed values. Deleting a shadow removes both so the older packed value cannot reappear. Readers can

@@ -1306,3 +1306,6 @@ fn existing_append_accepts_empty_log_and_selects_each_symbolic_chain_log(
     );
     clean(&repo);
 }
+
+#[path = "transaction_wait_tests.rs"]
+mod waits;
