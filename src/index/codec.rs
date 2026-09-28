@@ -336,6 +336,32 @@ impl Index {
         Ok(())
     }
 
+    pub(super) fn discard_resolve_undo(&mut self, limits: Limits) -> Result<(), Error> {
+        if let Some(extension) = self
+            .extensions
+            .iter()
+            .find(|extension| !matches!(&extension.signature, b"TREE" | b"REUC"))
+        {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        if !self
+            .extensions
+            .iter()
+            .any(|extension| extension.signature == *b"REUC")
+        {
+            self.encoded_len(limits)?;
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement
+            .extensions
+            .retain(|extension| extension.signature != *b"REUC");
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(super) fn invalidate_tree_cache(&mut self, limits: Limits) -> Result<(), Error> {
         if let Some(extension) = self
             .extensions
@@ -1232,6 +1258,108 @@ mod dual_format_tests {
         let bytes = index.encode(Limits::default()).unwrap();
         let mut parsed = Index::parse(format, &bytes, Limits::default()).unwrap();
         parsed.invalidate_entry_offsets(Limits::default()).unwrap();
+        assert_eq!(parsed.original.as_deref(), Some(bytes.as_slice()));
+    }
+    fn resolve_undo_fixture(
+        format: ObjectFormat,
+        version: Version,
+        flags: bool,
+        payload: &[u8],
+    ) -> Index {
+        let mut index = cached_index(format, flags);
+        index.original = None;
+        index.version = version;
+        index
+            .extensions
+            .retain(|e| matches!(&e.signature, b"TREE" | b"REUC"));
+        index.extensions[1].data = payload.to_vec();
+        for stage in [Stage::Base, Stage::Ours, Stage::Theirs] {
+            let mut entry = Entry::new(
+                b"unmerged".to_vec(),
+                Mode::Regular,
+                ObjectId::for_blob(format, b"conflict"),
+            );
+            entry.stage = stage;
+            index.entries.push(entry);
+        }
+        let bytes = index.encode(Limits::default()).unwrap();
+        Index::parse(format, &bytes, Limits::default()).unwrap()
+    }
+
+    #[rstest]
+    #[case::v2(Version::V2, false)]
+    #[case::v3(Version::V3, true)]
+    #[case::v4(Version::V4, true)]
+    fn discard_resolve_undo_preserves_index_semantics(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+        #[case] version: Version,
+        #[case] flags: bool,
+        #[values(b"".as_slice(), b"unterminated".as_slice(), b"path\0invalid-mode\0\xff".as_slice())]
+        payload: &[u8],
+    ) {
+        let mut index = resolve_undo_fixture(format, version, flags, payload);
+        let entries = index.entries.clone();
+        let tree = index.extensions[0].clone();
+        index.discard_resolve_undo(Limits::default()).unwrap();
+        assert_eq!(index.entries(), entries);
+        assert_eq!(index.version(), version);
+        assert_eq!(index.extensions(), [tree]);
+        assert!(index.original.is_none());
+        let bytes = index.encode(Limits::default()).unwrap();
+        assert_eq!(
+            Index::parse(format, &bytes, Limits::default()).unwrap(),
+            index
+        );
+    }
+
+    #[rstest]
+    fn discard_resolve_undo_rejects_unsupported_extensions_atomically(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+        #[values(*b"EOIE", *b"IEOT", *b"link", *b"sdir", *b"UNTR", *b"FSMN", *b"TEST")]
+        signature: [u8; 4],
+    ) {
+        let mut index = resolve_undo_fixture(format, Version::V4, true, b"opaque");
+        index.extensions.push(Extension {
+            signature,
+            data: Vec::new(),
+        });
+        let before = index.clone();
+        assert_eq!(
+            index.discard_resolve_undo(Limits::default()),
+            Err(Error::ExtensionPreventsEdit(signature))
+        );
+        assert_eq!(index, before);
+        assert_eq!(index.original, before.original);
+    }
+
+    #[rstest]
+    fn discard_resolve_undo_limits_are_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = resolve_undo_fixture(format, Version::V4, true, b"opaque");
+        let before = index.clone();
+        assert!(matches!(
+            index.discard_resolve_undo(Limits {
+                max_bytes: 0,
+                ..Default::default()
+            }),
+            Err(Error::Limit(_))
+        ));
+        assert_eq!(index, before);
+        assert_eq!(index.original, before.original);
+    }
+
+    #[rstest]
+    fn discard_resolve_undo_absent_preserves_original(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+        #[values(false, true)] tree: bool,
+    ) {
+        let mut index = resolve_undo_fixture(format, Version::V4, true, b"opaque");
+        index.original = None;
+        index.extensions.retain(|e| tree && e.signature == *b"TREE");
+        let bytes = index.encode(Limits::default()).unwrap();
+        let mut parsed = Index::parse(format, &bytes, Limits::default()).unwrap();
+        parsed.discard_resolve_undo(Limits::default()).unwrap();
         assert_eq!(parsed.original.as_deref(), Some(bytes.as_slice()));
     }
 }

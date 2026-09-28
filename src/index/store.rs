@@ -375,6 +375,35 @@ impl IndexEdit {
         self.index.invalidate_entry_offsets(self.limits)
     }
 
+    /// Discards a standalone index's resolve-undo (`REUC`) information under the held lock.
+    ///
+    /// Preserves entries, stat words, flags, version and `TREE` payloads. Resolve-undo payloads
+    /// are discarded opaquely, without interpreting or repairing them. Use this only when the
+    /// caller's operation intentionally forgets previous conflict resolutions. An absent `REUC`
+    /// retains the original encoding. Publication remains explicit through [`Self::commit`].
+    ///
+    /// # Errors
+    ///
+    /// Any extension other than `TREE` or `REUC`, including split `link`, prevents this edit.
+    /// Call [`Self::invalidate_entry_offsets`] first if `EOIE` or `IEOT` is present. Extension
+    /// and output-limit errors preserve the draft and storage; the lock remains held. This does
+    /// not relax the extension policies of entry replacement or tree-cache invalidation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use girt::{Repository, index::Limits};
+    /// # let repository = Repository::open("project")?;
+    /// let mut edit = repository.edit_index(Limits::default())?;
+    /// edit.invalidate_entry_offsets()?;
+    /// edit.discard_resolve_undo()?;
+    /// edit.commit()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn discard_resolve_undo(&mut self) -> Result<(), Error> {
+        self.index.discard_resolve_undo(self.limits)
+    }
+
     /// Discards a standalone index's `TREE` cache under the held lock.
     ///
     /// Entry replacement already discards `TREE` when entries change. Use this method when the

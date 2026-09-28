@@ -1216,3 +1216,31 @@ fn git_alternate_leaf_symlink_behavior_is_outside_native_admission(
             .is_empty()
     );
 }
+
+#[rstest]
+fn discard_resolve_undo_matches_git_without_changing_entries_or_tree(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    let id = ObjectId::for_blob(format, b"hello\n");
+    let records = format!(
+        "0 {}\tfile\n100644 {id} 1\tfile\n100644 {id} 2\tfile\n",
+        ObjectId::null(format)
+    );
+    input(root, &["update-index", "--index-info"], records.as_bytes());
+    git(root, &["add", "file"]);
+    let tree = git(root, &["write-tree"]);
+    let entries = git(root, &["ls-files", "--stage", "--debug"]);
+    assert!(!git(root, &["ls-files", "--resolve-undo"]).is_empty());
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.invalidate_entry_offsets().unwrap();
+    let before = edit.index().entries().to_vec();
+    edit.discard_resolve_undo().unwrap();
+    assert_eq!(edit.index().entries(), before);
+    edit.commit().unwrap();
+    assert!(git(root, &["ls-files", "--resolve-undo"]).is_empty());
+    assert_eq!(git(root, &["ls-files", "--stage", "--debug"]), entries);
+    assert_eq!(git(root, &["write-tree"]), tree);
+}

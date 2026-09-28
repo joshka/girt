@@ -697,3 +697,36 @@ fn alternate_relative_path_uses_current_directory_once() {
     );
     assert!(repo.read_index(Limits::default()).unwrap().is_none());
 }
+
+#[rstest]
+fn discard_resolve_undo_requires_offsets_first_and_explicit_commit(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let mut bytes = add_extension(&repo, b"TREE", b"opaque tree");
+    bytes.truncate(bytes.len() - format.digest_len());
+    bytes.extend_from_slice(b"REUC\0\0\0\x03badEOIE\0\0\0\x00IEOT\0\0\0\x00");
+    bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
+    let path = repo.git_dir().join("index");
+    fs::write(&path, &bytes).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let before = edit.index().clone();
+    assert_eq!(
+        edit.discard_resolve_undo(),
+        Err(Error::ExtensionPreventsEdit(*b"EOIE"))
+    );
+    assert_eq!(edit.index(), &before);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    edit.invalidate_entry_offsets().unwrap();
+    edit.discard_resolve_undo().unwrap();
+    assert_eq!(edit.index().entries(), before.entries());
+    assert_eq!(edit.index().extensions().len(), 1);
+    assert_eq!(edit.index().extensions()[0].signature(), *b"TREE");
+    assert_eq!(edit.index().extensions()[0].data(), b"opaque tree");
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    edit.commit().unwrap();
+    let result = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(result.entries(), before.entries());
+    assert_eq!(result.extensions()[0].data(), b"opaque tree");
+    assert_eq!(result.extensions().len(), 1);
+}

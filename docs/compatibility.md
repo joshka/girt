@@ -2048,6 +2048,14 @@ encoding; failures preserve the draft. Optional cache payloads may be malformed 
 interpreted, but normal outer framing, entry and checksum validation still precedes editing.
 Publication remains explicit through `commit`.
 
+`IndexEdit::discard_resolve_undo` explicitly removes `REUC` when the caller intends to forget old
+conflict resolutions. It preserves entries, stat words, flags, version and `TREE` bytes, and retains
+the original encoding when `REUC` is absent. Only `TREE` and `REUC` are admitted; remove offset
+accelerators first with `invalidate_entry_offsets`. Other extensions, including split `link`, and
+output-limit failures leave the draft and storage unchanged. Payloads are discarded opaquely; normal
+index framing and checksum validation still applies. Entry replacement and tree-cache invalidation
+retain their existing extension policies. Publication still requires `commit`.
+
 `Repository::read_index_at` and `edit_index_at` accept an explicit standalone index path without
 consulting `GIT_INDEX_FILE`. Relative paths resolve once against the process current directory;
 publication appends `.lock` to the complete filename beside the selected index. No other index path
