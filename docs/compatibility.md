@@ -1550,6 +1550,18 @@ for inspection, identified in the structured error. There is no automatic rollba
 crash-durability guarantee. The caller must exclude concurrent branch/worktree administration and
 destination replacement.
 
+`RepositoryMetadata::create_orphan_worktree_with_options` performs the same creation using the
+observed repository layout and returns a `RepositoryLocation`. It never reads shallow history;
+malformed or directory-valued `shallow` files therefore do not block this operation. Existing
+`Repository` creation methods still reopen the result fully and can report a retained registration
+when that opening fails. Relevant reference storage and direct configuration remain validated.
+
+The source default index is ignored. An explicit selected index is locked and validated before
+creating the worktrees root, registration or destination. Invalid files, directories and absent
+split dependencies fail without those effects. An error after lock acquisition explicitly aborts the
+guard; a cleanup failure reports both errors and preserves a replacement lock. Index publication
+still checks primary and shared snapshots. Later creation failures retain completed files.
+
 ## Linked Worktree Administration
 
 `Repository::repair_worktree` accepts a registration and its existing checkout after a move. It

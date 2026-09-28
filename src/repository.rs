@@ -238,9 +238,10 @@ impl RepositoryLocation {
 /// Immutable repository layout, format and effective configuration observed during bootstrap.
 ///
 /// Created by [`RepositoryLocation::read_metadata_with_config`]. This value provides no object,
-/// reference, index or shallow-history operations. Validation matches girt's opening bootstrap;
-/// it does not establish trust, validate every Git runtime setting or freeze filesystem identity.
-/// Full opening separately observes shallow roots; it does not reuse this snapshot.
+/// general reference, index or shallow-history operations. Its explicit orphan-worktree creation
+/// method uses layout metadata without reading shallow history. Validation matches girt's opening
+/// bootstrap; it does not establish trust, validate every Git runtime setting or freeze filesystem
+/// identity. Full opening separately observes shallow roots; it does not reuse this snapshot.
 #[derive(Clone, Debug)]
 pub struct RepositoryMetadata {
     git_dir: PathBuf,

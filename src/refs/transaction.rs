@@ -158,7 +158,7 @@ impl References<'_> {
                 return Ok(Vec::new());
             }
             for (index, edit) in edits.iter().enumerate() {
-                validate_edit(self.repository.object_format(), edit).map_err(|source| {
+                validate_edit(self.object_format, edit).map_err(|source| {
                     TransactionError::Prepare {
                         operation: Some(index),
                         source,
@@ -279,7 +279,7 @@ impl References<'_> {
             edits = edits.len(),
         );
         let operation = || {
-            if self.repository.reference_backend() != super::Backend::Files {
+            if self.reference_backend != super::Backend::Files {
                 return Err(TransactionError::Prepare {
                     operation: None,
                     source: ReferenceError::Unsupported(
@@ -305,7 +305,7 @@ impl References<'_> {
                         ),
                     });
                 }
-                validate_edit(self.repository.object_format(), edit).map_err(|source| {
+                validate_edit(self.object_format, edit).map_err(|source| {
                     TransactionError::Prepare {
                         operation: Some(index),
                         source,
@@ -335,7 +335,7 @@ impl References<'_> {
         &self,
         edits: &[RefEdit],
     ) -> Result<PreparedBackend, TransactionError> {
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             super::reftable::backend::prepare(self, edits).map(PreparedBackend::Reftable)
         } else {
             self.prepare_files_transaction(edits)
@@ -378,7 +378,7 @@ impl References<'_> {
                 source,
             };
             let packed_lock = Lock::acquire_wait(
-                self.repository.common_dir().join("packed-refs"),
+                self.common_dir.join("packed-refs"),
                 options.packed_refs_lock_wait,
                 cancel,
             )
@@ -386,12 +386,8 @@ impl References<'_> {
             let bytes = read_optional(&packed_lock.destination)
                 .map_err(batch_error)?
                 .unwrap_or_default();
-            let packed = packed::parse(
-                self.repository.object_format(),
-                &bytes,
-                &packed_lock.destination,
-            )
-            .map_err(batch_error)?;
+            let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)
+                .map_err(batch_error)?;
             let mut plans = Vec::new();
             let mut names = BTreeSet::new();
             for (index, edit) in edits.iter().enumerate() {
@@ -497,7 +493,7 @@ impl References<'_> {
                     // Resolved mode includes the terminal old value; stored mode has only the
                     // edited name. Every discovered value was rechecked under its lock.
                     let old = log_id(
-                        self.repository.object_format(),
+                        self.object_format,
                         chain.last().unwrap().1.as_ref(),
                         identity,
                     )
@@ -505,8 +501,7 @@ impl References<'_> {
                     let new_target = new_chain
                         .last()
                         .map_or(edit.target.as_ref(), |(_, value)| value.as_ref());
-                    let new = log_id(self.repository.object_format(), new_target, identity)
-                        .map_err(error)?;
+                    let new = log_id(self.object_format, new_target, identity).map_err(error)?;
                     let record = ReflogEntry {
                         old,
                         new,
@@ -558,11 +553,8 @@ impl References<'_> {
             let mut replacement = bytes;
             for operation in &operations {
                 if operation.packed_removed {
-                    replacement = packed::without_ref(
-                        self.repository.object_format(),
-                        &replacement,
-                        &operation.name,
-                    );
+                    replacement =
+                        packed::without_ref(self.object_format, &replacement, &operation.name);
                 }
             }
             Ok(Prepared {

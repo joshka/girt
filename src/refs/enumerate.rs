@@ -23,7 +23,7 @@ impl References<'_> {
         cancel: &AtomicBool,
     ) -> Result<Option<Target>, ReferenceError> {
         let name = RefName::new(b"HEAD").expect("HEAD is a valid name");
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             if cancel.load(Ordering::Relaxed) {
                 return Err(ReferenceError::Cancelled);
             }
@@ -40,7 +40,7 @@ impl References<'_> {
         };
         let path = self.path(&name)?;
         read_limited(&path, &mut budget)?
-            .map(|bytes| parse_loose(self.repository.object_format(), &bytes, &path))
+            .map(|bytes| parse_loose(self.object_format, &bytes, &path))
             .transpose()
     }
 
@@ -149,7 +149,7 @@ impl References<'_> {
         if let Some(budget) = budget.as_deref_mut() {
             budget.check()?;
         }
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             let result = super::reftable::backend::list(self, namespace)?;
             if let Some(budget) = budget.as_deref_mut() {
                 budget.check()?;
@@ -160,9 +160,9 @@ impl References<'_> {
             return Ok(result);
         }
         let packed = if let Some(budget) = budget.as_deref_mut() {
-            let path = self.repository.common_dir().join("packed-refs");
+            let path = self.common_dir.join("packed-refs");
             let bytes = read_limited(&path, budget)?.unwrap_or_default();
-            super::packed::parse(self.repository.object_format(), &bytes, &path)?
+            super::packed::parse(self.object_format, &bytes, &path)?
         } else {
             self.packed()?
         };
@@ -174,10 +174,10 @@ impl References<'_> {
             .filter(|(name, _)| selected(name.as_bytes(), namespace))
             .map(|(name, id)| (name, Target::Direct(id)))
             .collect();
-        let separate = self.repository.git_dir() != self.repository.common_dir();
+        let separate = self.git_dir != self.common_dir;
         collect_loose(
-            self.repository.object_format(),
-            self.repository.common_dir(),
+            self.object_format,
+            self.common_dir,
             namespace,
             if separate {
                 LooseScope::Shared
@@ -189,8 +189,8 @@ impl References<'_> {
         )?;
         if separate {
             collect_loose(
-                self.repository.object_format(),
-                self.repository.git_dir(),
+                self.object_format,
+                self.git_dir,
                 namespace,
                 LooseScope::Private,
                 &mut entries,

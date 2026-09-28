@@ -182,7 +182,7 @@ fn invalid_exact_mode_refuses_before_creation(#[case] mode: u16) {
 }
 
 #[rstest]
-fn invalid_redirected_index_is_retained_with_registration(
+fn invalid_redirected_index_refuses_before_registration(
     #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
 ) {
     let (root, repo) = repository(format, Backend::Files);
@@ -200,14 +200,200 @@ fn invalid_redirected_index_is_retained_with_registration(
         )
         .unwrap_err();
     let girt::CreateWorktreeError::IndexStorage {
-        registration: Some(registration),
-        ..
+        registration: None, ..
     } = error
     else {
         panic!("unexpected error: {error}")
     };
-    assert!(registration.is_dir());
+    assert!(!repo.common_dir().join("worktrees").exists());
     assert_eq!(fs::read(selected).unwrap(), b"invalid original");
     assert!(!root.path().join("alternate.index.lock").exists());
+    assert!(!root.path().join("linked").exists());
+}
+
+#[rstest]
+#[case::malformed(false)]
+#[case::directory(true)]
+fn metadata_creation_ignores_shallow_and_default_index(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Backend::Files, Backend::Reftable)] backend: Backend,
+    #[case] directory: bool,
+) {
+    let (root, repo) = repository(format, backend);
+    for name in ["shallow", "index"] {
+        let path = repo.git_dir().join(name);
+        if directory {
+            fs::create_dir(&path).unwrap();
+        } else {
+            fs::write(&path, b"invalid original").unwrap();
+        }
+    }
+    assert!(Repository::open(root.path().join("main")).is_err());
+    let metadata = girt::RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    let linked = metadata
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions::default(),
+        )
+        .unwrap();
+    let observed = linked
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    assert_eq!(observed.object_format(), format);
+    assert_eq!(observed.reference_backend(), backend);
+    let index = fs::read(linked.git_dir().join("index")).unwrap();
+    assert_eq!(
+        index,
+        Index::empty(format).encode(Limits::default()).unwrap()
+    );
+    for name in ["shallow", "index"] {
+        let path = repo.git_dir().join(name);
+        if directory {
+            assert!(path.is_dir());
+        } else {
+            assert_eq!(fs::read(path).unwrap(), b"invalid original");
+        }
+    }
+    assert!(
+        linked
+            .open_with_config(&girt::config::ConfigInputs::default())
+            .is_err()
+    );
+}
+
+#[rstest]
+fn full_repository_creation_still_reopens_shallow(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Backend::Files, Backend::Reftable)] backend: Backend,
+) {
+    let (root, repo) = repository(format, backend);
+    fs::write(repo.common_dir().join("shallow"), b"invalid original").unwrap();
+    let error = repo
+        .create_orphan_worktree(root.path().join("linked"), &branch(), 4)
+        .unwrap_err();
+    let girt::CreateWorktreeError::Open { registration, .. } = error else {
+        panic!("{error}")
+    };
+    assert!(registration.join("index").is_file());
+    assert!(root.path().join("linked/.git").is_file());
+}
+
+#[rstest]
+#[case::malformed("malformed")]
+#[case::directory("directory")]
+#[case::locked("locked")]
+fn metadata_selected_index_refuses_before_publication(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Backend::Files, Backend::Reftable)] backend: Backend,
+    #[case] kind: &str,
+) {
+    let (root, repo) = repository(format, backend);
+    let selected = root.path().join("selected");
+    match kind {
+        "directory" => fs::create_dir(&selected).unwrap(),
+        "locked" => fs::write(root.path().join("selected.lock"), b"other owner").unwrap(),
+        _ => fs::write(&selected, b"invalid original").unwrap(),
+    }
+    let metadata = girt::RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    let error = metadata
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        girt::CreateWorktreeError::IndexStorage {
+            registration: None,
+            ..
+        }
+    ));
+    assert!(!repo.common_dir().join("worktrees").exists());
+    assert!(!root.path().join("linked").exists());
+    match kind {
+        "directory" => assert!(selected.is_dir()),
+        "locked" => assert_eq!(
+            fs::read(root.path().join("selected.lock")).unwrap(),
+            b"other owner"
+        ),
+        _ => assert_eq!(fs::read(selected).unwrap(), b"invalid original"),
+    }
+    if kind != "locked" {
+        assert!(!root.path().join("selected.lock").exists());
+    }
+}
+
+#[rstest]
+fn metadata_reference_refusals_precede_creation(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(false, true)] existing: bool,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    fs::write(repo.common_dir().join("packed-refs"), b"invalid original\n").unwrap();
+    if existing {
+        fs::write(
+            repo.common_dir().join("refs/heads/policy-fixture"),
+            format!("{}\n", "1".repeat(format.digest_len() * 2)),
+        )
+        .unwrap();
+    }
+    let metadata = girt::RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    let error = metadata
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions::default(),
+        )
+        .unwrap_err();
+    if existing {
+        assert!(matches!(error, girt::CreateWorktreeError::ExistingBranch));
+    } else {
+        assert!(matches!(error, girt::CreateWorktreeError::References(_)));
+    }
+    assert!(!repo.common_dir().join("worktrees").exists());
+    assert!(!root.path().join("linked").exists());
+}
+
+#[rstest]
+fn selected_index_lock_is_released_when_registration_fails(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Backend::Files, Backend::Reftable)] backend: Backend,
+) {
+    let (root, repo) = repository(format, backend);
+    let selected = root.path().join("selected");
+    let original = Index::empty(format).encode(Limits::default()).unwrap();
+    fs::write(&selected, &original).unwrap();
+    fs::create_dir_all(repo.common_dir().join("worktrees/linked")).unwrap();
+    let error = repo
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            1,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(error, girt::CreateWorktreeError::Limit));
+    assert_eq!(fs::read(selected).unwrap(), original);
+    assert!(!root.path().join("selected.lock").exists());
     assert!(!root.path().join("linked").exists());
 }

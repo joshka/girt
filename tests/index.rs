@@ -1356,3 +1356,46 @@ fn make_standalone_rejects_deleted_shared_precondition(#[case] format: girt::Obj
     assert_eq!(fs::read(primary).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
 }
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn orphan_creation_missing_selected_split_dependency_precedes_registration(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo) = split_fixture(format);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    let shared = repo
+        .git_dir()
+        .join(format!("sharedindex.{}", index.shared_index_id().unwrap()));
+    fs::remove_file(shared).unwrap();
+    let selected = repo.git_dir().join("index");
+    let original = fs::read(&selected).unwrap();
+    let metadata = girt::RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    let branch = girt::refs::RefName::new(b"refs/heads/new-orphan").unwrap();
+    let error = metadata
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch,
+            4,
+            girt::OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        girt::CreateWorktreeError::IndexStorage {
+            registration: None,
+            source: StorageError::MissingShared(_)
+        }
+    ));
+    assert_eq!(fs::read(selected).unwrap(), original);
+    assert!(!repo.git_dir().join("index.lock").exists());
+    assert!(!repo.common_dir().join("worktrees").exists());
+    assert!(!root.path().join("linked").exists());
+}

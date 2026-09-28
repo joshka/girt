@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::{Entry, Error, Index, Limits};
-use crate::Repository;
+use crate::{ObjectFormat, Repository};
 
 /// Prepublication policy for an index lock file.
 ///
@@ -331,6 +331,18 @@ impl Repository {
         limits: Limits,
         options: EditOptions,
     ) -> Result<IndexEdit, StorageError> {
+        IndexEdit::acquire(self.object_format(), destination, limits, options)
+    }
+}
+
+impl IndexEdit {
+    pub(crate) fn acquire(
+        format: ObjectFormat,
+        destination: PathBuf,
+        limits: Limits,
+        options: EditOptions,
+    ) -> Result<IndexEdit, StorageError> {
+        let destination = absolute_index_path(&destination)?;
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -371,7 +383,7 @@ impl Repository {
                 original: None,
                 leaf: None,
                 shared: None,
-                index: Index::empty(self.object_format()),
+                index: Index::empty(format),
                 limits,
                 published: false,
             };
@@ -383,7 +395,7 @@ impl Repository {
                     read_selected_bytes(&edit.destination, limits, options.follow_symlink)?;
                 if let Some(bytes) = &edit.original {
                     (edit.index, edit.shared) = parse_storage(
-                        self.object_format(),
+                        format,
                         &edit.destination,
                         bytes,
                         limits,

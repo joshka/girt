@@ -33,7 +33,7 @@ impl References<'_> {
         if edits.is_empty() {
             return Ok(Vec::new());
         }
-        if self.repository.reference_backend() == crate::refs::Backend::Reftable {
+        if self.reference_backend == crate::refs::Backend::Reftable {
             prepare_controlled(self, edits, cancel)?.publish_controlled(cancel)
         } else {
             self.transaction(edits)
@@ -52,9 +52,9 @@ impl References<'_> {
 
 fn directory(refs: &References<'_>, name: &RefName) -> PathBuf {
     let root = if name.per_worktree() {
-        refs.repository.git_dir()
+        refs.git_dir
     } else {
-        refs.repository.common_dir()
+        refs.common_dir
     };
     root.join("reftable")
 }
@@ -62,7 +62,7 @@ fn directory(refs: &References<'_>, name: &RefName) -> PathBuf {
 fn snapshot(refs: &References<'_>, root: &std::path::Path) -> Result<Snapshot, ReferenceError> {
     Snapshot::read(
         root,
-        refs.repository.object_format(),
+        refs.object_format,
         refs.reftable_limits,
         &AtomicBool::new(false),
     )
@@ -123,7 +123,7 @@ pub(crate) fn imported_reflog(
 ) -> Result<Option<crate::refs::ImportedReflog>, ReferenceError> {
     let snapshot = Snapshot::read(
         &directory(refs, name),
-        refs.repository.object_format(),
+        refs.object_format,
         refs.reftable_limits,
         cancel,
     )?;
@@ -154,12 +154,7 @@ pub(crate) fn imported_reflog_names(
 ) -> Result<Vec<RefName>, ReferenceError> {
     let mut names = BTreeSet::new();
     for root in directories(refs) {
-        let snapshot = Snapshot::read(
-            &root,
-            refs.repository.object_format(),
-            refs.reftable_limits,
-            cancel,
-        )?;
+        let snapshot = Snapshot::read(&root, refs.object_format, refs.reftable_limits, cancel)?;
         for record in snapshot.table.logs {
             if record.value.is_none() {
                 continue;
@@ -245,8 +240,8 @@ pub(crate) fn single(
 
 fn directories(refs: &References<'_>) -> BTreeSet<PathBuf> {
     [
-        refs.repository.common_dir().join("reftable"),
-        refs.repository.git_dir().join("reftable"),
+        refs.common_dir.join("reftable"),
+        refs.git_dir.join("reftable"),
     ]
     .into_iter()
     .collect()
@@ -284,32 +279,27 @@ fn prepare_controlled(
         source,
     };
     for (index, edit) in edits.iter().enumerate() {
-        crate::refs::transaction::validate_edit(refs.repository.object_format(), edit).map_err(
-            |source| TransactionError::Prepare {
+        crate::refs::transaction::validate_edit(refs.object_format, edit).map_err(|source| {
+            TransactionError::Prepare {
                 operation: Some(index),
                 source,
-            },
-        )?;
+            }
+        })?;
     }
     let mut groups = Vec::new();
     // Lock both roots in deterministic path order, even when only the symbolic chain crosses roots.
     for root in directories(refs) {
         stack::cancelled(cancel).map_err(batch)?;
         let lock = Lock::acquire(root.join("tables.list")).map_err(batch)?;
-        let snapshot = Snapshot::read(
-            &root,
-            refs.repository.object_format(),
-            refs.reftable_limits,
-            cancel,
-        )
-        .map_err(batch)?;
+        let snapshot = Snapshot::read(&root, refs.object_format, refs.reftable_limits, cancel)
+            .map_err(batch)?;
         let next = snapshot
             .table
             .max_update_index
             .checked_add(1)
             .ok_or_else(|| batch(super::Error::Limit("update index exhausted").into()))?;
         let table = Table {
-            format: refs.repository.object_format(),
+            format: refs.object_format,
             min_update_index: next,
             max_update_index: next,
             references: Vec::new(),
@@ -369,10 +359,10 @@ fn prepare_controlled(
         {
             return Err(error(ReferenceError::Conflict(directory(refs, &name))));
         }
-        let old = terminal_id(&values, &chain, refs.repository.object_format());
+        let old = terminal_id(&values, &chain, refs.object_format);
         let new = match &edit.target {
             Some(Target::Direct(id)) => *id,
-            None => ObjectId::null(refs.repository.object_format()),
+            None => ObjectId::null(refs.object_format),
             Some(Target::Symbolic(target)) if edit.reflog.append_fields().is_some() => {
                 let target_chain = resolve(&values, target).map_err(error)?;
                 for dependency in &target_chain {
@@ -382,9 +372,9 @@ fn prepare_controlled(
                         )));
                     }
                 }
-                terminal_id(&values, &target_chain, refs.repository.object_format())
+                terminal_id(&values, &target_chain, refs.object_format)
             }
-            Some(Target::Symbolic(_)) => ObjectId::null(refs.repository.object_format()),
+            Some(Target::Symbolic(_)) => ObjectId::null(refs.object_format),
         };
         let group = group_mut(&mut groups, &directory(refs, &name));
         group.table.references.push(RefRecord {

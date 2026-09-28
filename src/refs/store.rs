@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use super::{RefName, packed};
-use crate::{ObjectId, Repository};
+use crate::{ObjectFormat, ObjectId, Repository};
 
 /// A reference store using the opened [`Repository`]'s configured backend.
 ///
@@ -54,7 +54,10 @@ use crate::{ObjectId, Repository};
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
     pub(super) reftable_limits: super::reftable::StackLimits,
-    pub(super) repository: &'a Repository,
+    pub(crate) git_dir: &'a Path,
+    pub(crate) common_dir: &'a Path,
+    pub(crate) object_format: ObjectFormat,
+    pub(crate) reference_backend: Backend,
 }
 
 /// On-disk reference storage selected by repository configuration.
@@ -172,13 +175,30 @@ pub enum ReferenceError {
 
 impl<'a> References<'a> {
     pub(crate) fn new(repository: &'a Repository) -> Result<Self, ReferenceError> {
+        Self::from_layout(
+            repository.git_dir(),
+            repository.common_dir(),
+            repository.object_format(),
+            repository.reference_backend(),
+        )
+    }
+
+    pub(crate) fn from_layout(
+        git_dir: &'a Path,
+        common_dir: &'a Path,
+        object_format: ObjectFormat,
+        reference_backend: Backend,
+    ) -> Result<Self, ReferenceError> {
         if !cfg!(any(unix, windows)) {
             return Err(ReferenceError::Unsupported(
                 "reference storage on this platform",
             ));
         }
         Ok(Self {
-            repository,
+            git_dir,
+            common_dir,
+            object_format,
+            reference_backend,
             reftable_limits: super::reftable::StackLimits::default(),
         })
     }
@@ -197,12 +217,12 @@ impl<'a> References<'a> {
     /// Reports I/O, malformed loose/packed data, unsupported packed traits, and filesystem
     /// symlinks.
     pub fn read(&self, name: &RefName) -> Result<Option<Target>, ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::read(self, name);
         }
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
-            return parse_loose(self.repository.object_format(), &bytes, &path).map(Some);
+            return parse_loose(self.object_format, &bytes, &path).map(Some);
         }
         if name.per_worktree() {
             return Ok(None);
@@ -281,18 +301,18 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, Some(target), expected, false)
                 .map(|_| ());
         }
-        validate_expected(self.repository.object_format(), &expected)?;
+        validate_expected(self.object_format, &expected)?;
         if name.as_bytes() == b"HEAD"
             && matches!(&target, Target::Symbolic(next) if next.as_bytes() == b"HEAD")
         {
             return Err(ReferenceError::InvalidHeadTarget);
         }
-        validate_target(self.repository.object_format(), &target)?;
-        let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        validate_target(self.object_format, &target)?;
+        let _packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let packed = self.packed()?;
         self.check_packed_namespace(name, &packed)?;
         let mut lock = Lock::acquire(self.path(name)?)?;
@@ -321,7 +341,7 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(
                 self,
                 name,
@@ -331,10 +351,10 @@ impl<'a> References<'a> {
             )
             .map(|outcome| outcome.name);
         }
-        validate_expected(self.repository.object_format(), &expected)?;
+        validate_expected(self.object_format, &expected)?;
         let target = Target::Direct(id);
-        validate_target(self.repository.object_format(), &target)?;
-        let _packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        validate_target(self.object_format, &target)?;
+        let _packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let packed = self.packed()?;
         let (current, actual, mut locks) = self.lock_resolution(name, &packed)?;
         check_expected(actual, expected)?;
@@ -374,22 +394,18 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, false).map(|_| ());
         }
-        validate_expected(self.repository.object_format(), &expected)?;
-        let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        validate_expected(self.object_format, &expected)?;
+        let packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
-        let packed = packed::parse(
-            self.repository.object_format(),
-            &bytes,
-            &packed_lock.destination,
-        )?;
+        let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)?;
         self.check_packed_namespace(name, &packed)?;
         let lock = Lock::acquire(self.path(name)?)?;
         check_expected(self.read_locked(name, &packed)?, expected)?;
         delete_locked(
-            self.repository.object_format(),
+            self.object_format,
             &packed_lock,
             &lock,
             name,
@@ -414,22 +430,18 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, true)
                 .map(|outcome| outcome.name);
         }
-        validate_expected(self.repository.object_format(), &expected)?;
-        let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))?;
+        validate_expected(self.object_format, &expected)?;
+        let packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
         let bytes = read_optional(&packed_lock.destination)?.unwrap_or_default();
-        let packed = packed::parse(
-            self.repository.object_format(),
-            &bytes,
-            &packed_lock.destination,
-        )?;
+        let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)?;
         let (current, actual, locks) = self.lock_resolution(name, &packed)?;
         check_expected(actual, expected)?;
         delete_locked(
-            self.repository.object_format(),
+            self.object_format,
             &packed_lock,
             locks.last().unwrap(),
             &current,
@@ -473,7 +485,7 @@ impl<'a> References<'a> {
     ) -> Result<Option<Target>, ReferenceError> {
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
-            return parse_loose(self.repository.object_format(), &bytes, &path).map(Some);
+            return parse_loose(self.object_format, &bytes, &path).map(Some);
         }
         Ok(packed
             .get(name)
@@ -483,16 +495,16 @@ impl<'a> References<'a> {
     }
 
     pub(super) fn packed(&self) -> Result<packed::Packed, ReferenceError> {
-        let path = self.repository.common_dir().join("packed-refs");
+        let path = self.common_dir.join("packed-refs");
         let bytes = read_optional(&path)?.unwrap_or_default();
-        packed::parse(self.repository.object_format(), &bytes, &path)
+        packed::parse(self.object_format, &bytes, &path)
     }
 
     pub(super) fn path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
         let base = if name.per_worktree() {
-            self.repository.git_dir()
+            self.git_dir
         } else {
-            self.repository.common_dir()
+            self.common_dir
         };
         #[cfg(unix)]
         let relative = {
