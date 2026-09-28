@@ -18,9 +18,11 @@ bytes; no upstream implementation or test source was read.
 The temporary probe sources and results are in `/tmp/r35-legacy-native-profile`: `probe.rs`,
 `includes.py` and `include-results.txt`. All 14 native differential cases pass against these same
 original fixtures; `differential.py` and `differential-results.txt` retain the comparison. The
-public option models placement only. It does not claim wholesale opener compatibility or change
-repository metadata readers. Source profiles, trust, platform qualification and consumer removal of
-the old fresh opener remain separate work.
+public option models placement only. It does not claim wholesale opener compatibility.
+`RepositoryLocation::read_metadata_with_config_and_include_placement` explicitly selects this policy
+for ordinary metadata reading. Existing metadata, full-open and command-layout methods retain their
+default placement; direct bootstrap, layout and trust obligations are unchanged. Source profiles,
+trust, platform qualification and consumer removal of the old fresh opener remain separate work.
 
 ## Validation Scope
 
@@ -29,3 +31,7 @@ runtime input replay, empty/repeated headers, later-layer `hasconfig` matching a
 A budget matrix compares both modes' admission and first-error locations under byte, entry and depth
 limits. Temporary placement slots are bounded by the existing entry and section budgets; config
 values are moved rather than cloned during placement.
+
+Both-format metadata fixtures exercise inherited, local, private, environment and command scopes,
+unchanged default readers and first-error include ancestry. The new entry point adds no source
+selection or ambient environment reads.

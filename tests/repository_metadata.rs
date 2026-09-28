@@ -221,3 +221,135 @@ fn reftable_bootstrap_retains_head_context_and_explicit_open_limits(
         Err(OpenError::References(_))
     ));
 }
+
+#[rstest]
+fn explicit_include_placement_preserves_metadata_and_layer_scopes(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use girt::config::{ConfigFile, ConfigScope, IncludePlacement};
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+    let source = |name: &str| {
+        let directory = root.path().join(name);
+        fs::create_dir(&directory).unwrap();
+        for child in ["a", "b"] {
+            fs::write(
+                directory.join(child),
+                format!("[policy]\nvalue={name}-{child}\n"),
+            )
+            .unwrap();
+        }
+        format!(
+            "[include]\npath={}\npath={}\n",
+            directory.join("a").display(),
+            directory.join("b").display()
+        )
+    };
+    let mut inputs = ConfigInputs::default();
+    for (name, scope) in [
+        ("system", ConfigScope::System),
+        ("global", ConfigScope::Global),
+    ] {
+        let path = root.path().join(format!("{name}-config"));
+        fs::write(&path, source(name)).unwrap();
+        inputs.files.push(ConfigFile {
+            path,
+            scope,
+            optional: false,
+        });
+    }
+    let common_config = repo.common_dir().join("config");
+    let mut bytes = fs::read(&common_config).unwrap();
+    bytes.extend_from_slice(b"[extensions]\nworktreeConfig=true\n");
+    bytes.extend_from_slice(source("local").as_bytes());
+    fs::write(&common_config, &bytes).unwrap();
+    fs::write(repo.git_dir().join("config.worktree"), source("worktree")).unwrap();
+    inputs.environment = Some(Config::parse(source("environment").as_bytes()).unwrap());
+    inputs.command = Some(Config::parse(b"[policy]\nvalue=command\n").unwrap());
+    let location = RepositoryLocation::at_git_dir(repo.git_dir()).unwrap();
+    let placed = location
+        .read_metadata_with_config_and_include_placement(
+            &inputs,
+            IncludePlacement::AfterSectionReverse,
+        )
+        .unwrap();
+    let normal = location.read_metadata_with_config(&inputs).unwrap();
+    let opened = location.open_with_config(&inputs).unwrap();
+    let command = location
+        .read_metadata_for_command(&inputs, root.path(), None)
+        .unwrap();
+    let values = |config: &Config| {
+        config
+            .entries()
+            .iter()
+            .filter(|entry| entry.section == b"policy")
+            .map(|entry| {
+                (
+                    entry.value.clone().unwrap(),
+                    entry.origin.as_ref().unwrap().scope,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut expected = Vec::new();
+    for (name, scope) in [
+        ("system", ConfigScope::System),
+        ("global", ConfigScope::Global),
+        ("local", ConfigScope::Local),
+        ("worktree", ConfigScope::Worktree),
+        ("environment", ConfigScope::Environment),
+    ] {
+        for child in ["b", "a"] {
+            expected.push((format!("{name}-{child}").into_bytes(), scope));
+        }
+    }
+    expected.push((b"command".to_vec(), ConfigScope::Command));
+    assert_eq!(values(placed.config()), expected);
+    for pair in expected[..10].as_chunks_mut::<2>().0 {
+        pair.swap(0, 1);
+    }
+    assert_eq!(values(normal.config()), expected);
+    assert_eq!(values(opened.config()), expected);
+    assert_eq!(values(command.config()), expected);
+    assert_eq!(placed.object_format(), normal.object_format());
+    assert_eq!(placed.reference_backend(), normal.reference_backend());
+    assert_eq!(placed.worktree(), normal.worktree());
+    assert_eq!(placed.is_bare(), normal.is_bare());
+    assert_eq!(fs::read(common_config).unwrap(), bytes);
+}
+
+#[rstest]
+fn metadata_include_placement_preserves_first_error_and_origin(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    use girt::config::IncludePlacement;
+
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+    let mut config = fs::read(repo.common_dir().join("config")).unwrap();
+    config.extend_from_slice(b"[include]\npath=a\npath=b\n");
+    fs::write(repo.common_dir().join("config"), config).unwrap();
+    fs::write(repo.common_dir().join("a"), "[include]\npath=c\n").unwrap();
+    fs::write(repo.common_dir().join("b"), "[broken-b").unwrap();
+    fs::write(repo.common_dir().join("c"), "[broken-c").unwrap();
+    let location = RepositoryLocation::at_git_dir(repo.git_dir()).unwrap();
+    let inputs = ConfigInputs::default();
+    let OpenError::Resolve(normal) = location.read_metadata_with_config(&inputs).unwrap_err()
+    else {
+        panic!("expected include failure")
+    };
+    let OpenError::Resolve(placed) = location
+        .read_metadata_with_config_and_include_placement(
+            &inputs,
+            IncludePlacement::AfterSectionReverse,
+        )
+        .unwrap_err()
+    else {
+        panic!("expected include failure")
+    };
+    assert_eq!(normal.location, placed.location);
+    assert_eq!(normal.included_from, placed.included_from);
+    assert_eq!(placed.location.path, Some(repo.common_dir().join("c")));
+    assert_eq!(placed.included_from.len(), 2);
+}

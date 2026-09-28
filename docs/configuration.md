@@ -136,7 +136,9 @@ followed by its included child blocks in reverse directive order, recursively. V
 visits directives forward and depth-first, so placement does not change which source error wins.
 Origins, conditional matching and resource accounting remain unchanged. Already-resolved input
 sections have their members gathered together in this mode. The default `Config::resolve` expands
-includes at their directives; repository openers retain that default. This option does not select
+includes at their directives. `RepositoryLocation::read_metadata_with_config_and_include_placement`
+selects placement for ordinary metadata reading; existing metadata, full-open and command-layout
+methods retain the default. Direct bootstrap validation is unchanged. This option does not select
 sources or reproduce another opener's trust and parsing rules.
 
 ## Bootstrap, Bounds and Refresh

@@ -105,6 +105,7 @@ impl RepositoryLocation {
                 cwd,
                 worktree_override,
             }),
+            IncludePlacement::InPlace,
         )
     }
 }

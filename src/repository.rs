@@ -49,7 +49,8 @@ impl WorktreeLinkStyle {
 }
 
 use crate::config::{
-    ConfigFile, ConfigInputs, ConfigScope, ResolveError, boolean as config_boolean, integer,
+    ConfigFile, ConfigInputs, ConfigScope, IncludePlacement, ResolveError,
+    boolean as config_boolean, integer,
 };
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
@@ -154,11 +155,47 @@ impl RepositoryLocation {
         &self,
         inputs: &ConfigInputs,
     ) -> Result<RepositoryMetadata, OpenError> {
+        self.read_metadata_with_config_and_include_placement(inputs, IncludePlacement::InPlace)
+    }
+
+    /// Reads ordinary repository metadata with explicit effective include placement.
+    ///
+    /// Uses the layout, trust obligations and direct format validation of
+    /// [`Self::read_metadata_with_config`]. Only effective configuration placement changes;
+    /// direct bootstrap configuration and source selection do not. Full opening and command-layout
+    /// reading retain their default in-place resolution. See
+    /// [`Config::resolve_with_include_placement`](crate::Config::resolve_with_include_placement).
+    ///
+    /// # Errors
+    ///
+    /// Reports the same bootstrap, source and budget failures as
+    /// [`Self::read_metadata_with_config`]. Includes are validated forward and depth-first
+    /// regardless of placement. No files are written.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use girt::RepositoryLocation;
+    /// use girt::config::{ConfigInputs, IncludePlacement};
+    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let metadata = location.read_metadata_with_config_and_include_placement(
+    ///     &ConfigInputs::default(),
+    ///     IncludePlacement::AfterSectionReverse,
+    /// )?;
+    /// assert_eq!(metadata.git_dir(), location.git_dir());
+    /// # Ok::<(), girt::OpenError>(())
+    /// ```
+    pub fn read_metadata_with_config_and_include_placement(
+        &self,
+        inputs: &ConfigInputs,
+        placement: IncludePlacement,
+    ) -> Result<RepositoryMetadata, OpenError> {
         RepositoryMetadata::read_location(
             self,
             inputs,
             crate::refs::reftable::StackLimits::default(),
             None,
+            placement,
         )
     }
 
@@ -320,6 +357,7 @@ impl RepositoryMetadata {
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
         command: Option<command_layout::CommandWorktree<'_>>,
+        placement: IncludePlacement,
     ) -> Result<Self, OpenError> {
         let RepositoryLocation {
             git_dir,
@@ -441,7 +479,7 @@ impl RepositoryMetadata {
             let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
             (worktree, bare, false)
         };
-        let config = Config::resolve(&inputs)?;
+        let config = Config::resolve_with_include_placement(&inputs, placement)?;
         Ok(Self {
             git_dir,
             common_dir,
@@ -668,7 +706,13 @@ impl Repository {
             object_format,
             reference_backend,
             worktree_config_conflict: _,
-        } = RepositoryMetadata::read_location(location, inputs, reference_limits, None)?;
+        } = RepositoryMetadata::read_location(
+            location,
+            inputs,
+            reference_limits,
+            None,
+            IncludePlacement::InPlace,
+        )?;
         let shallow = ShallowRoots::read(
             common_dir.join("shallow"),
             object_format,
