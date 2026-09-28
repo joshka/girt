@@ -19,6 +19,13 @@ objects, references or shallow roots, establish trust, or freeze filesystem iden
 the stored selection; it never substitutes a nested repository. Ordinary convenience opening retains
 its checkout-root behavior.
 
+`location.read_metadata_with_config(&inputs)` returns an immutable `RepositoryMetadata` snapshot of
+layout, format and resolved configuration. It shares full opening's HEAD, layout, direct format and
+extension validation, including reftable HEAD reads for conditional includes. It checks object and
+reference directory markers without reading object contents, the index or shallow roots. Full
+opening still validates shallow roots afterward with its existing limit. Metadata loading does not
+establish trust or validate every Git runtime setting, and a later full open reads a fresh snapshot.
+
 Discovery recognizes explicit `.git` entries and bare metadata with `HEAD`, `objects` and `refs`, or
 linked metadata with `HEAD` and `commondir`. A lone ordinary `HEAD` or `objects` entry and partial
 bare metadata allow ancestor search. Recognized malformed candidates still return errors.

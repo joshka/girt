@@ -15,7 +15,13 @@ fn exact_directory_does_not_select_nested_repository(
     let location = RepositoryLocation::at_git_dir(outer.git_dir()).unwrap();
     let nested = Repository::init(format, outer.git_dir().join(".git"), InitKind::Bare).unwrap();
     fs::write(nested.git_dir().join("config"), b"[broken").unwrap();
+    let metadata = location
+        .read_metadata_with_config(&ConfigInputs::default())
+        .unwrap();
     let opened = location.open_with_config(&ConfigInputs::default()).unwrap();
+    assert_eq!(metadata.git_dir(), opened.git_dir());
+    assert_eq!(metadata.common_dir(), opened.common_dir());
+    assert_eq!(metadata.worktree(), opened.worktree());
     assert_eq!(opened.git_dir(), outer.git_dir());
     assert_eq!(opened.object_format(), format);
     assert!(Repository::open(outer.git_dir()).is_err());
@@ -31,7 +37,13 @@ fn ordinary_metadata_and_checkout_are_distinct(
     let repository =
         Repository::init(format, root.path().join("checkout"), InitKind::Worktree).unwrap();
     let location = RepositoryLocation::at_git_dir(repository.git_dir()).unwrap();
+    let metadata = location
+        .read_metadata_with_config(&ConfigInputs::default())
+        .unwrap();
     let opened = location.open_with_config(&ConfigInputs::default()).unwrap();
+    assert_eq!(metadata.git_dir(), opened.git_dir());
+    assert_eq!(metadata.common_dir(), opened.common_dir());
+    assert_eq!(metadata.worktree(), opened.worktree());
     assert_eq!(opened.worktree(), repository.worktree());
     let checkout = RepositoryLocation::at_git_dir(repository.worktree().unwrap()).unwrap();
     assert_ne!(checkout.git_dir(), location.git_dir());
@@ -94,7 +106,13 @@ fn gitfile_and_commondir_selection_survive_indirection_changes(
     );
     // The stored selection must not be redirected by later edits to commondir.
     fs::write(private.join("commondir"), b"../missing\n").unwrap();
+    let metadata = location
+        .read_metadata_with_config(&ConfigInputs::default())
+        .unwrap();
     let opened = location.open_with_config(&ConfigInputs::default()).unwrap();
+    assert_eq!(metadata.git_dir(), opened.git_dir());
+    assert_eq!(metadata.common_dir(), opened.common_dir());
+    assert_eq!(metadata.worktree(), opened.worktree());
     assert_eq!(opened.common_dir(), common.git_dir());
     assert_eq!(opened.object_format(), format);
 }
@@ -165,7 +183,12 @@ fn logical_alias_includes_and_explicit_environment_are_retained(
     });
     let before: BTreeMap<_, _> = std::env::vars_os().collect();
     let location = RepositoryLocation::at_git_dir(&alias).unwrap();
+    let metadata = location.read_metadata_with_config(&inputs).unwrap();
     let opened = location.open_with_config(&inputs).unwrap();
+    assert_eq!(
+        metadata.config().value("demo", None, "value"),
+        Some(Some(b"alias".as_slice()))
+    );
     assert_eq!(
         opened.config().value("demo", None, "value"),
         Some(Some(b"alias".as_slice()))
@@ -173,6 +196,10 @@ fn logical_alias_includes_and_explicit_environment_are_retained(
     assert_eq!(location.git_dir(), repository.git_dir());
     assert_eq!(before, std::env::vars_os().collect());
     fs::write(included, b"[demo]\nvalue=changed\n").unwrap();
+    assert_eq!(
+        metadata.config().value("demo", None, "value"),
+        Some(Some(b"alias".as_slice()))
+    );
     assert_eq!(
         opened.config().value("demo", None, "value"),
         Some(Some(b"alias".as_slice()))
@@ -199,7 +226,13 @@ fn git_separate_metadata_location_matches_explicit_git_directory(
         b"",
     );
     let location = RepositoryLocation::at_git_dir(root.path().join("checkout/.git")).unwrap();
+    let metadata = location
+        .read_metadata_with_config(&ConfigInputs::default())
+        .unwrap();
     let opened = location.open_with_config(&ConfigInputs::default()).unwrap();
+    assert_eq!(metadata.git_dir(), opened.git_dir());
+    assert_eq!(metadata.common_dir(), opened.common_dir());
+    assert_eq!(metadata.worktree(), opened.worktree());
     let observed = layout_git::git(
         root.path(),
         &["--git-dir=metadata", "rev-parse", "--show-object-format"],

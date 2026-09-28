@@ -116,6 +116,46 @@ impl RepositoryLocation {
         Repository::open_location(self, inputs, crate::refs::reftable::StackLimits::default())
     }
 
+    /// Reads layout, format and effective configuration without opening repository storage.
+    ///
+    /// Uses the selected directories and retained aliases. Validates HEAD and layout markers,
+    /// direct repository format/extensions, worktree settings and configuration inputs using the
+    /// same bootstrap as [`Self::open_with_config`]. Reftable HEAD is read with default stack
+    /// limits to supply branch-conditional include context. Object directory existence is checked,
+    /// but object contents, index and shallow metadata are not read.
+    ///
+    /// The caller supplies trust policy before this call. No ambient environment is read and no
+    /// repository is reselected. The returned configuration is a snapshot, not a filesystem lock
+    /// or a guarantee that all Git runtime settings are supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpenError`] for bootstrap layout, format, HEAD, configuration or I/O failures.
+    /// Configuration uses the supplied budgets; other metadata retains [`Repository::open`]'s
+    /// allocation contract. No files are written. Shallow validation is deferred to full opening.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use girt::RepositoryLocation;
+    /// use girt::config::ConfigInputs;
+    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let metadata = location.read_metadata_with_config(&ConfigInputs::default())?;
+    /// assert_eq!(metadata.git_dir(), location.git_dir());
+    /// println!("{}", metadata.object_format());
+    /// # Ok::<(), girt::OpenError>(())
+    /// ```
+    pub fn read_metadata_with_config(
+        &self,
+        inputs: &ConfigInputs,
+    ) -> Result<RepositoryMetadata, OpenError> {
+        RepositoryMetadata::read_location(
+            self,
+            inputs,
+            crate::refs::reftable::StackLimits::default(),
+        )
+    }
+
     fn resolve(path: &Path, exact: bool) -> Result<Self, OpenError> {
         let input = path;
         let metadata = match fs::metadata(input) {
@@ -189,6 +229,181 @@ impl RepositoryLocation {
             common_dir,
             logical_git_dir,
             inferred_worktree,
+        })
+    }
+}
+
+/// Immutable repository layout, format and effective configuration observed during bootstrap.
+///
+/// Created by [`RepositoryLocation::read_metadata_with_config`]. This value provides no object,
+/// reference, index or shallow-history operations. Validation matches girt's opening bootstrap;
+/// it does not establish trust, validate every Git runtime setting or freeze filesystem identity.
+/// Full opening separately observes shallow roots; it does not reuse this snapshot.
+#[derive(Clone, Debug)]
+pub struct RepositoryMetadata {
+    git_dir: PathBuf,
+    common_dir: PathBuf,
+    object_dir: PathBuf,
+    worktree: Option<PathBuf>,
+    bare: bool,
+    config: Config,
+    format_version: u32,
+    object_format: ObjectFormat,
+    reference_backend: crate::refs::Backend,
+}
+
+impl RepositoryMetadata {
+    /// Selected canonical private Git directory containing HEAD.
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
+    }
+    /// Selected canonical common metadata directory.
+    pub fn common_dir(&self) -> &Path {
+        &self.common_dir
+    }
+    /// Shared object directory whose existence was checked, without reading its contents.
+    pub fn object_dir(&self) -> &Path {
+        &self.object_dir
+    }
+    /// Known checkout root; `None` means bare or unknown. See [`Repository::worktree`].
+    pub fn worktree(&self) -> Option<&Path> {
+        self.worktree.as_deref()
+    }
+    /// Whether layout bootstrap declares a bare repository, independently of checkout availability.
+    pub fn is_bare(&self) -> bool {
+        self.bare
+    }
+    /// Direct common configuration's accepted repository format version (0 or 1).
+    pub fn format_version(&self) -> u32 {
+        self.format_version
+    }
+    /// Object format selected from direct common configuration.
+    pub fn object_format(&self) -> ObjectFormat {
+        self.object_format
+    }
+    /// Reference storage selected from direct common configuration.
+    pub fn reference_backend(&self) -> crate::refs::Backend {
+        self.reference_backend
+    }
+    /// Resolved configuration snapshot, including source provenance and explicit caller inputs.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    fn read_location(
+        location: &RepositoryLocation,
+        inputs: &ConfigInputs,
+        reference_limits: crate::refs::reftable::StackLimits,
+    ) -> Result<Self, OpenError> {
+        let RepositoryLocation {
+            git_dir,
+            common_dir,
+            logical_git_dir,
+            inferred_worktree,
+        } = location.clone();
+        if !exists(&git_dir.join("HEAD"))? {
+            if inferred_worktree.is_some() || exists(&git_dir.join("objects"))? {
+                return Err(malformed(&git_dir, "missing HEAD marker"));
+            }
+            return Err(OpenError::NotFound(git_dir.clone()));
+        }
+        validate_head(&git_dir.join("HEAD"))?;
+        let object_dir = common_dir.join("objects");
+        require_directory(&object_dir)?;
+        require_directory(&common_dir.join("refs"))?;
+        let config_path = common_dir.join("config");
+        let bytes = if exists(&config_path)? {
+            read_config(&config_path, inputs.limits.bytes)?
+        } else {
+            Vec::new()
+        };
+        let config = Config::parse(&bytes).map_err(|source| OpenError::Config {
+            path: config_path.clone(),
+            source,
+        })?;
+        let (format_version, object_format) = validate_config(&config, &config_path)?;
+        let reference_backend = match config.value("extensions", None, "refstorage") {
+            Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
+            _ => crate::refs::Backend::Files,
+        };
+        let mut inputs = inputs.clone();
+        inputs.context.git_dirs.push(git_dir.clone());
+        if let Some(logical_git_dir) = logical_git_dir {
+            inputs.context.git_dirs.push(logical_git_dir);
+        }
+        let head = read(&git_dir.join("HEAD"))?;
+        let head = head.strip_suffix(b"\n").unwrap_or(&head);
+        let head = head.strip_suffix(b"\r").unwrap_or(head);
+        inputs.context.branch = if reference_backend == crate::refs::Backend::Reftable {
+            let snapshot = crate::refs::reftable::Snapshot::read(
+                &git_dir.join("reftable"),
+                object_format,
+                reference_limits,
+                &std::sync::atomic::AtomicBool::new(false),
+            )?;
+            snapshot
+                .table
+                .references
+                .into_iter()
+                .find(|record| record.name.as_bytes() == b"HEAD")
+                .and_then(|record| match record.target {
+                    Some(crate::refs::Target::Symbolic(name)) => name
+                        .as_bytes()
+                        .strip_prefix(b"refs/heads/")
+                        .map(<[u8]>::to_vec),
+                    _ => None,
+                })
+        } else {
+            head.strip_prefix(b"ref: refs/heads/").map(<[u8]>::to_vec)
+        };
+        inputs.files.push(ConfigFile {
+            path: config_path.clone(),
+            scope: ConfigScope::Local,
+            optional: true,
+        });
+        let worktree_config_enabled = extension_boolean(&config, &config_path, "worktreeconfig")?;
+        let mut layout_config = if git_dir != common_dir && !worktree_config_enabled {
+            Config::parse(b"").expect("empty configuration")
+        } else {
+            config.clone()
+        };
+        if worktree_config_enabled {
+            let worktree_path = git_dir.join("config.worktree");
+            if exists(&worktree_path)? {
+                let worktree_config =
+                    Config::parse(&read_config(&worktree_path, inputs.limits.bytes)?).map_err(
+                        |source| OpenError::Config {
+                            path: worktree_path.clone(),
+                            source,
+                        },
+                    )?;
+                layout_config.append(&worktree_config);
+            }
+            inputs.files.push(ConfigFile {
+                path: worktree_path,
+                scope: ConfigScope::Worktree,
+                optional: true,
+            });
+        }
+        let worktree = resolve_worktree(
+            &git_dir,
+            &common_dir,
+            inferred_worktree,
+            &layout_config,
+            &config_path,
+        )?;
+        let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
+        let config = Config::resolve(&inputs)?;
+        Ok(Self {
+            git_dir,
+            common_dir,
+            object_dir,
+            worktree,
+            bare,
+            config,
+            format_version,
+            object_format,
+            reference_backend,
         })
     }
 }
@@ -393,105 +608,17 @@ impl Repository {
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
     ) -> Result<Self, OpenError> {
-        let RepositoryLocation {
+        let RepositoryMetadata {
             git_dir,
             common_dir,
-            logical_git_dir,
-            inferred_worktree,
-        } = location.clone();
-        if !exists(&git_dir.join("HEAD"))? {
-            if inferred_worktree.is_some() || exists(&git_dir.join("objects"))? {
-                return Err(malformed(&git_dir, "missing HEAD marker"));
-            }
-            return Err(OpenError::NotFound(git_dir.clone()));
-        }
-        validate_head(&git_dir.join("HEAD"))?;
-        let object_dir = common_dir.join("objects");
-        require_directory(&object_dir)?;
-        require_directory(&common_dir.join("refs"))?;
-        let config_path = common_dir.join("config");
-        let bytes = if exists(&config_path)? {
-            read_config(&config_path, inputs.limits.bytes)?
-        } else {
-            Vec::new()
-        };
-        let config = Config::parse(&bytes).map_err(|source| OpenError::Config {
-            path: config_path.clone(),
-            source,
-        })?;
-        let (format_version, object_format) = validate_config(&config, &config_path)?;
-        let reference_backend = match config.value("extensions", None, "refstorage") {
-            Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
-            _ => crate::refs::Backend::Files,
-        };
-        let mut inputs = inputs.clone();
-        inputs.context.git_dirs.push(git_dir.clone());
-        if let Some(logical_git_dir) = logical_git_dir {
-            inputs.context.git_dirs.push(logical_git_dir);
-        }
-        let head = read(&git_dir.join("HEAD"))?;
-        let head = head.strip_suffix(b"\n").unwrap_or(&head);
-        let head = head.strip_suffix(b"\r").unwrap_or(head);
-        inputs.context.branch = if reference_backend == crate::refs::Backend::Reftable {
-            let snapshot = crate::refs::reftable::Snapshot::read(
-                &git_dir.join("reftable"),
-                object_format,
-                reference_limits,
-                &std::sync::atomic::AtomicBool::new(false),
-            )?;
-            snapshot
-                .table
-                .references
-                .into_iter()
-                .find(|record| record.name.as_bytes() == b"HEAD")
-                .and_then(|record| match record.target {
-                    Some(crate::refs::Target::Symbolic(name)) => name
-                        .as_bytes()
-                        .strip_prefix(b"refs/heads/")
-                        .map(<[u8]>::to_vec),
-                    _ => None,
-                })
-        } else {
-            head.strip_prefix(b"ref: refs/heads/").map(<[u8]>::to_vec)
-        };
-        inputs.files.push(ConfigFile {
-            path: config_path.clone(),
-            scope: ConfigScope::Local,
-            optional: true,
-        });
-        let worktree_config_enabled = extension_boolean(&config, &config_path, "worktreeconfig")?;
-        let mut layout_config = if git_dir != common_dir && !worktree_config_enabled {
-            Config::parse(b"").expect("empty configuration")
-        } else {
-            config.clone()
-        };
-        if worktree_config_enabled {
-            let worktree_path = git_dir.join("config.worktree");
-            if exists(&worktree_path)? {
-                let worktree_config =
-                    Config::parse(&read_config(&worktree_path, inputs.limits.bytes)?).map_err(
-                        |source| OpenError::Config {
-                            path: worktree_path.clone(),
-                            source,
-                        },
-                    )?;
-                layout_config.append(&worktree_config);
-            }
-            inputs.files.push(ConfigFile {
-                path: worktree_path,
-                scope: ConfigScope::Worktree,
-                optional: true,
-            });
-        }
-        let worktree = resolve_worktree(
-            &git_dir,
-            &common_dir,
-            inferred_worktree,
-            &layout_config,
-            &config_path,
-        )?;
-        let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
-        let config = Config::resolve(&inputs)?;
+            object_dir,
+            worktree,
+            bare,
+            config,
+            format_version,
+            object_format,
+            reference_backend,
+        } = RepositoryMetadata::read_location(location, inputs, reference_limits)?;
         let shallow = ShallowRoots::read(
             common_dir.join("shallow"),
             object_format,
