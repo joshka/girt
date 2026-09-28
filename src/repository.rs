@@ -1,5 +1,6 @@
 //! Repository location, opening, and creation.
 mod colocation;
+mod command_layout;
 mod discover;
 mod init;
 mod operation;
@@ -61,6 +62,8 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 pub struct RepositoryLocation {
     git_dir: PathBuf,
     common_dir: PathBuf,
+    object_dir: Option<PathBuf>,
+    common_dir_redirected: bool,
     logical_git_dir: Option<PathBuf>,
     inferred_worktree: Option<PathBuf>,
 }
@@ -155,10 +158,20 @@ impl RepositoryLocation {
             self,
             inputs,
             crate::refs::reftable::StackLimits::default(),
+            None,
         )
     }
 
     fn resolve(path: &Path, exact: bool) -> Result<Self, OpenError> {
+        Self::resolve_storage(path, exact, None, None)
+    }
+
+    fn resolve_storage(
+        path: &Path,
+        exact: bool,
+        common_override: Option<&Path>,
+        object_override: Option<&Path>,
+    ) -> Result<Self, OpenError> {
         let input = path;
         let metadata = match fs::metadata(input) {
             Ok(metadata) => metadata,
@@ -167,7 +180,11 @@ impl RepositoryLocation {
             }
             Err(source) => return Err(io_error(input, source)),
         };
-        let logical_input = std::path::absolute(input).map_err(|error| io_error(input, error))?;
+        let logical_input = if input.is_absolute() {
+            input.to_path_buf()
+        } else {
+            std::path::absolute(input).map_err(|error| io_error(input, error))?
+        };
         let logical_git_dir = if !exact && metadata.is_dir() && logical_input.join(".git").is_dir()
         {
             Some(logical_input.join(".git"))
@@ -219,16 +236,20 @@ impl RepositoryLocation {
             validate_head(&git_dir.join("HEAD"))?;
         }
         let common_file = git_dir.join("commondir");
-        let common_dir = if exists(&common_file)? {
+        let (common_dir, common_dir_redirected) = if let Some(common) = common_override {
+            (canonical(common)?, true)
+        } else if exists(&common_file)? {
             let relative = metadata_path(&common_file, &read(&common_file)?)?;
-            canonical(&git_dir.join(relative))?
+            (canonical(&git_dir.join(relative))?, true)
         } else {
-            git_dir.clone()
+            (git_dir.clone(), false)
         };
         require_directory(&common_dir)?;
         Ok(Self {
             git_dir,
             common_dir,
+            object_dir: object_override.map(Path::to_path_buf),
+            common_dir_redirected,
             logical_git_dir,
             inferred_worktree,
         })
@@ -253,6 +274,7 @@ pub struct RepositoryMetadata {
     format_version: u32,
     object_format: ObjectFormat,
     reference_backend: crate::refs::Backend,
+    worktree_config_conflict: bool,
 }
 
 impl RepositoryMetadata {
@@ -297,10 +319,13 @@ impl RepositoryMetadata {
         location: &RepositoryLocation,
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
+        command: Option<command_layout::CommandWorktree<'_>>,
     ) -> Result<Self, OpenError> {
         let RepositoryLocation {
             git_dir,
             common_dir,
+            object_dir,
+            common_dir_redirected,
             logical_git_dir,
             inferred_worktree,
         } = location.clone();
@@ -311,7 +336,7 @@ impl RepositoryMetadata {
             return Err(OpenError::NotFound(git_dir.clone()));
         }
         validate_head(&git_dir.join("HEAD"))?;
-        let object_dir = common_dir.join("objects");
+        let object_dir = object_dir.unwrap_or_else(|| common_dir.join("objects"));
         require_directory(&object_dir)?;
         require_directory(&common_dir.join("refs"))?;
         let config_path = common_dir.join("config");
@@ -324,6 +349,16 @@ impl RepositoryMetadata {
             path: config_path.clone(),
             source,
         })?;
+        if command.is_some()
+            && config
+                .value("core", None, "repositoryformatversion")
+                .is_none()
+        {
+            return Err(unsupported(
+                &config_path,
+                "command layout without repository format version",
+            ));
+        }
         let (format_version, object_format) = validate_config(&config, &config_path)?;
         let reference_backend = match config.value("extensions", None, "refstorage") {
             Some(Some(b"reftable")) => crate::refs::Backend::Reftable,
@@ -365,7 +400,12 @@ impl RepositoryMetadata {
             optional: true,
         });
         let worktree_config_enabled = extension_boolean(&config, &config_path, "worktreeconfig")?;
-        let mut layout_config = if git_dir != common_dir && !worktree_config_enabled {
+        let ignore_common_layout = if command.is_some() {
+            common_dir_redirected
+        } else {
+            git_dir != common_dir && !worktree_config_enabled
+        };
+        let mut layout_config = if ignore_common_layout {
             Config::parse(b"").expect("empty configuration")
         } else {
             config.clone()
@@ -388,14 +428,19 @@ impl RepositoryMetadata {
                 optional: true,
             });
         }
-        let worktree = resolve_worktree(
-            &git_dir,
-            &common_dir,
-            inferred_worktree,
-            &layout_config,
-            &config_path,
-        )?;
-        let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
+        let (worktree, bare, worktree_config_conflict) = if let Some(command) = command {
+            command.resolve(&git_dir, &layout_config, &config_path)?
+        } else {
+            let worktree = resolve_worktree(
+                &git_dir,
+                &common_dir,
+                inferred_worktree,
+                &layout_config,
+                &config_path,
+            )?;
+            let bare = boolean(&layout_config, &config_path, "bare")?.unwrap_or(worktree.is_none());
+            (worktree, bare, false)
+        };
         let config = Config::resolve(&inputs)?;
         Ok(Self {
             git_dir,
@@ -407,6 +452,7 @@ impl RepositoryMetadata {
             format_version,
             object_format,
             reference_backend,
+            worktree_config_conflict,
         })
     }
 }
@@ -621,7 +667,8 @@ impl Repository {
             format_version,
             object_format,
             reference_backend,
-        } = RepositoryMetadata::read_location(location, inputs, reference_limits)?;
+            worktree_config_conflict: _,
+        } = RepositoryMetadata::read_location(location, inputs, reference_limits, None)?;
         let shallow = ShallowRoots::read(
             common_dir.join("shallow"),
             object_format,

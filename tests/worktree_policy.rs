@@ -397,3 +397,58 @@ fn selected_index_lock_is_released_when_registration_fails(
     assert!(!root.path().join("selected.lock").exists());
     assert!(!root.path().join("linked").exists());
 }
+
+#[test]
+fn command_storage_selection_creates_metadata_worktree_without_reading_shallow() {
+    let (root, private) = repository(ObjectFormat::Sha1, Backend::Files);
+    let common = Repository::init_with_backend(
+        ObjectFormat::Sha1,
+        root.path().join("selected-common"),
+        InitKind::Bare,
+        Backend::Files,
+    )
+    .unwrap();
+    let objects = root.path().join("selected-objects");
+    fs::rename(common.object_dir(), &objects).unwrap();
+    fs::create_dir(private.git_dir().join("commondir")).unwrap();
+    let shallow = b"invalid shallow boundary\n";
+    fs::write(common.common_dir().join("shallow"), shallow).unwrap();
+    let inputs = girt::config::ConfigInputs::default();
+    let location = girt::RepositoryLocation::at_git_dir_with_storage(
+        private.git_dir(),
+        Some(common.common_dir()),
+        Some(&objects),
+    )
+    .unwrap();
+    let metadata = location
+        .read_metadata_for_command(&inputs, root.path(), None)
+        .unwrap();
+    assert_eq!(metadata.object_dir(), objects);
+    let destination = root.path().join("linked");
+    let linked = metadata
+        .create_orphan_worktree_with_options(
+            &destination,
+            &branch(),
+            4,
+            OrphanWorktreeOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(linked.common_dir(), common.common_dir());
+    assert_eq!(
+        linked.git_dir(),
+        common.common_dir().join("worktrees/linked")
+    );
+    assert_eq!(
+        fs::read(linked.git_dir().join("HEAD")).unwrap(),
+        b"ref: refs/heads/policy-fixture\n"
+    );
+    let from_checkout = girt::RepositoryLocation::at_git_dir(destination.join(".git")).unwrap();
+    assert_eq!(from_checkout.git_dir(), linked.git_dir());
+    assert_eq!(
+        fs::read(common.common_dir().join("shallow")).unwrap(),
+        shallow
+    );
+    assert!(!common.common_dir().join("objects").exists());
+    assert!(!private.common_dir().join("worktrees").exists());
+    assert!(private.git_dir().join("commondir").is_dir());
+}
