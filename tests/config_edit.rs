@@ -411,3 +411,37 @@ fn inert_nul_comments_survive_resolution_and_edit(
     assert_eq!(git(dir.path(), &["config", "--get", "x.next"]), b"b\n");
     assert_eq!(repo.object_format(), reopened.object_format());
 }
+
+#[test]
+fn grouped_append_matches_git_and_preserves_original_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let before = b"[demo]\nvalue=old\nimplicit\n# retained\n";
+    let mut document = Document::parse(before).unwrap();
+    document
+        .append_section(
+            "demo",
+            None,
+            &[("value", b""), ("value", b" #quoted;\t\"\\\n ")],
+        )
+        .unwrap();
+    assert!(document.as_bytes().starts_with(before));
+    std::fs::write(root.path().join("config"), document.as_bytes()).unwrap();
+    assert_eq!(
+        git(
+            root.path(),
+            &[
+                "config",
+                "--file",
+                "config",
+                "--null",
+                "--get-all",
+                "demo.value"
+            ]
+        ),
+        b"old\0\0 #quoted;\t\"\\\n \0"
+    );
+    assert_eq!(
+        document.config().value("demo", None, "implicit"),
+        Some(None)
+    );
+}

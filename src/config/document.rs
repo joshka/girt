@@ -97,16 +97,40 @@ impl Document {
         name: &str,
         value: &[u8],
     ) -> Result<(), ConfigError> {
+        self.append_section(section, subsection, &[(name, value)])
+    }
+
+    /// Appends one section with ordered explicit assignments at EOF.
+    ///
+    /// Existing bytes and include ordering are preserved. Values use canonical quoting and LF;
+    /// empty values remain explicit. An empty entry list appends an empty section. Like
+    /// [`Self::append`], this creates a new header even if the section already exists.
+    ///
+    /// # Errors
+    ///
+    /// Invalid section/key names, NUL values or newlines in subsections leave the entire document
+    /// unchanged, including when a later assignment is invalid.
+    pub fn append_section(
+        &mut self,
+        section: &str,
+        subsection: Option<&[u8]>,
+        entries: &[(&str, &[u8])],
+    ) -> Result<(), ConfigError> {
         let mut addition = header(section.as_bytes(), subsection)?;
-        addition.extend_from_slice(b"\n\t");
-        addition.extend_from_slice(name.as_bytes());
-        addition.extend_from_slice(b" = ");
-        addition.extend(quote(value, false)?);
         addition.push(b'\n');
-        // Parse the fragment independently so a name cannot inject additional syntax.
-        let parsed = Config::parse(&addition)?;
-        if parsed.entries().len() != 1 || parsed.entries()[0].name != name.as_bytes() {
-            return Err(invalid("invalid variable name"));
+        for &(name, value) in entries {
+            if !name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            {
+                return Err(invalid("invalid variable name"));
+            }
+            addition.push(b'\t');
+            addition.extend_from_slice(name.as_bytes());
+            addition.extend_from_slice(b" = ");
+            addition.extend(quote(value, false)?);
+            addition.push(b'\n');
         }
         let mut bytes = self.bytes.clone();
         // A blank separator also terminates a trailing backslash-newline continuation.
@@ -297,6 +321,70 @@ mod tests {
             Some(Some(b" \n\t\x08\"\\#;\xff ".as_slice()))
         );
         assert!(document.as_bytes().starts_with(input));
+    }
+
+    #[test]
+    fn append_section_preserves_order_and_explicit_empty_values() {
+        let before = b"# keep\r\n[remote \"origin\"]\r\nurl=old\r\nimplicit\r\n";
+        let mut document = Document::parse(before).unwrap();
+        document
+            .append_section(
+                "remote",
+                Some(b"origin"),
+                &[
+                    ("url", b""),
+                    ("url", b"new"),
+                    ("fetch", b"+refs/heads/*:refs/remotes/origin/*"),
+                ],
+            )
+            .unwrap();
+        assert!(document.as_bytes().starts_with(before));
+        assert_eq!(
+            document
+                .config()
+                .values("remote", Some(b"origin"), "url")
+                .collect::<Vec<_>>(),
+            [
+                Some(b"old".as_slice()),
+                Some(b"".as_slice()),
+                Some(b"new".as_slice())
+            ]
+        );
+        assert_eq!(
+            document
+                .config()
+                .value("remote", Some(b"origin"), "implicit"),
+            Some(None)
+        );
+        assert_eq!(&document.as_bytes()[before.len()..], b"\n[remote \"origin\"]\n\turl = \"\"\n\turl = \"new\"\n\tfetch = \"+refs/heads/*:refs/remotes/origin/*\"\n");
+    }
+
+    #[rstest]
+    #[case::key("bad=name", b"value")]
+    #[case::value("url", b"bad\0value")]
+    fn append_section_invalid_later_entry_retains_bytes(#[case] name: &str, #[case] value: &[u8]) {
+        let before = b"[core]\nx=yes\n";
+        let mut document = Document::parse(before).unwrap();
+        assert!(
+            document
+                .append_section(
+                    "remote",
+                    Some(b"origin"),
+                    &[("url", b"valid"), (name, value)]
+                )
+                .is_err()
+        );
+        assert_eq!(document.as_bytes(), before);
+    }
+
+    #[test]
+    fn append_empty_section() {
+        let mut document = Document::parse(b"").unwrap();
+        document
+            .append_section("remote", Some(b"origin"), &[])
+            .unwrap();
+        assert_eq!(document.as_bytes(), b"[remote \"origin\"]\n");
+        assert!(document.config().entries().is_empty());
     }
 
     #[test]
