@@ -13,9 +13,9 @@ URLs, and helper schemes use separate transport paths; SSH has no Git-executable
 
 `SshRemote::openssh` instead keeps ordinary OpenSSH configuration policy with explicit executable
 approval and a complete caller-supplied environment. It preserves absent URL user and port values.
-The session still uses pipes and a separate process group; interactive terminal compatibility
-remains unestablished. See [ordinary OpenSSH policy](#ordinary-openssh-policy) before admitting a
-consumer configuration.
+The session uses pipes and a separate process group. An explicit foreground terminal attachment
+supports local prompts with caller-owned job control. See
+[ordinary OpenSSH policy](#ordinary-openssh-policy) before admitting a consumer configuration.
 
 ## Endpoints and Configuration
 
@@ -103,21 +103,64 @@ askpass, display settings or credentials. `GIT_PROTOCOL` must be absent or `vers
 a protocol v0 advertisement is supported. Production girt starts the approved SSH executable, never
 a local Git executable; Git services remain on the server.
 
-This mode preserves launch choices, not full interactive Git behavior. The session owns a new
-process group, pipes protocol stdin/stdout, and drains and discards stderr. `/dev/tty` prompts can
-be unavailable to that group; askpass can operate through the supplied environment. SSH errors stay
-sanitized and bounded by the caller's deadline, so applications cannot display discarded prompts or
-infer host-key versus authentication failures. Consumer integrations must establish their prompt
-requirements before admitting a configuration. No authentication, host-key or prompting options are
-silently disabled. A launched failure is never retried automatically: trust, authentication, proxy
-and local-command effects may already have occurred. Multiplexed or daemonized processes outside the
-owned group are not cleaned up by girt.
+Without a terminal attachment, the new process group can make `/dev/tty` prompts inaccessible;
+askpass can operate through the supplied environment. Applications can opt into raw local stderr and
+[foreground terminal leasing](#foreground-terminal-leasing). Consumer integrations still own job
+control and display policy. A launched failure is terminal for that attempt: authentication, trust,
+proxy or local-command effects may already have occurred; never automatically retry through another
+transport.
 
 Original recording executables compare ordinary argv with the installed Git executable under
 protocol v0, including omitted and explicit user/port, scp syntax and IPv6. Disposable OpenSSH tests
 verify config-selected user, port, identity and trust, rejection of unknown/changed keys, and the
 existing cancellation/reaping boundary. These are bounded compatibility observations rather than
 proof of ordinary interactive SSH parity.
+
+## Foreground Terminal Leasing
+
+`ForegroundTerminal::prepare(OwnedFd)` returns a non-cloneable attachment and `TerminalEvents`. The
+descriptor must be read/write and identify the caller's foreground controlling terminal with
+`TOSTOP` disabled. Preparation only validates; it does not change the terminal or launch a process.
+Wrap the attachment in `Arc` and pass it to `SshRemote::with_terminal`. Sequential remotes may share
+it; concurrent terminal sessions in the same process are rejected. Restricted SSH constructors
+cannot attach a terminal. `SshRemote::has_terminal` reports the selected mode.
+
+The caller must exclusively coordinate terminal I/O, job control and child reaping, including other
+threads and libraries. Every launch rechecks foreground ownership and snapshots the full terminal
+attributes and caller process group. Before executing SSH, the child establishes its owned process
+group and takes the terminal foreground while temporarily blocking SIGTTOU on its thread. The
+parent's restoration guard is armed before spawn. Protocol stdin/stdout remain pipes; `/dev/tty`
+prompts use the controlling terminal. OpenSSH authentication, host-key, environment and command
+selection policies are unchanged.
+
+The caller polls `TerminalEvents::try_next_stop` independently of blocked display work. On a child
+stop, girt stops its owned group and restores caller attributes and foreground before publishing a
+single bounded `StoppedTerminal` permit. The permit reports the stopping signal. The caller decides
+how to suspend its own job and wait for a shell foreground resume. `permit.resume()` grants
+permission only after checking caller foreground ownership; the transport rechecks before restoring
+SSH attributes, transferring foreground and continuing the child group. A background resume is
+rejected. Girt does not install a process-global signal handler or suspend the caller itself.
+
+Dropping a permit or its event receiver cancels the active operation. Cancellation does not wait for
+a held permit. Old permits cannot affect a later session. `try_next_stop` returns `None` between
+sessions; the operation future and caller cancellation control own completion and coordinator
+teardown. Cancellation and explicit absolute deadlines continue while suspended. Girt adds no
+default interactive timeout; applications must choose prompt deadlines explicitly.
+
+Cleanup kills the owned group, restores the terminal and reaps the reserved leader before releasing
+the lease. Stops and abnormal cleanup discard queued terminal input so unfinished password input
+cannot become caller input. Clean exit preserves type-ahead only when echo and caller-compatible
+input modes have been restored; a clean exit leaving private input mode also discards input. Input
+flushing is immediate and does not wait for terminal output to drain. Once a stop has returned the
+terminal to the caller, cancelled or rejected resume leaves a shell or another job's terminal state
+alone. Partial resume failures re-arm restoration before the first mutation.
+
+Restoration depends on a live terminal and OS permission; a hung-up descriptor or abrupt termination
+of the caller cannot guarantee it. Descendants that escape the process group remain excluded.
+Display observers must return promptly; an interactive consumer should use bounded, nonblocking
+forwarding and explicit cancellation on overflow so display backpressure cannot prevent stop
+observation. Push cancellation preserves received acknowledgement evidence and never authorizes an
+automatic retry.
 
 ## Runtime, Bounds and Cleanup
 
@@ -258,8 +301,12 @@ branches/tags, deltas and history exclusion, literal path quoting, unknown/chang
 authentication failure, mixed ref rejection and cancellation after a real ref update. Original fault
 services cover malformed framing, wire limits, diagnostics floods, stalled
 handshake/service/upload/response/exit and cancellation with retained statuses. Process tests
-separately prove local reaping, future-drop cleanup and group isolation. Fault services are not
-claimed as Git interoperability. See [compatibility evidence](compatibility.md#ssh-transport) and
+separately prove local reaping, future-drop cleanup and group isolation. Original disposable-PTY
+fixtures exercise foreground handoff, prompt input, full attribute restoration, stops during each
+I/O phase, resume permission, cancellation, input flushing and clean type-ahead. They re-execute the
+test in a new session and never use the invoking user's terminal; current native evidence is macOS
+arm64. Fault services are not claimed as Git interoperability. See
+[compatibility evidence](compatibility.md#ssh-transport) and
 [benchmark evidence](benchmarks.md#ssh-loopback-baseline).
 
 Original recording-wrapper tests in `tests/support/ssh_configuration.rs` compare command selection
@@ -280,10 +327,12 @@ consumer endpoint with native quoting, process containment, console and cancella
 
 ## Dependencies and Deferred Work
 
-No new crate or version requirement is added. `ssh` enables the existing optional Tokio dependency
-(MIT), including its `net` feature for `AsyncFd`; existing rustix (Apache-2.0 OR MIT) supplies Unix
-process and descriptor operations. Core-only builds remain runtime-free. OpenSSH is an external
-caller-selected executable with its own distribution notices, not linked or vendored code.
+`ssh` enables the existing optional Tokio dependency (MIT), including its `net` feature for
+`AsyncFd`. Existing rustix (Apache-2.0 OR MIT) supplies Unix process, descriptor and terminal
+operations. The optional `libc = "0.2"` dependency (MIT OR Apache-2.0) supplies portable
+thread-local signal-mask and pre-exec handoff calls on macOS/Linux. Core-only builds remain
+runtime-free. OpenSSH is an external caller-selected executable with its own distribution notices,
+not linked or vendored code.
 
 Supported Git scope uses SHA-1/SHA-256 protocol v0 and non-thin push packs. Windows SSH, proxy/jump
 hosts, connection reuse, broader URL/refspec/remote policy, protocol v2, shallow/partial

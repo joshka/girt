@@ -14,12 +14,14 @@
 
 mod openssh;
 mod process;
+mod terminal;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub use openssh::OpenSshOptions;
 pub(crate) use process::Session;
+pub use terminal::{ForegroundTerminal, StoppedTerminal, TerminalEvents};
 
 use super::TransportControl;
 use crate::Config;
@@ -111,6 +113,9 @@ impl std::fmt::Debug for SshEnvironment {
 /// the future kills/reaps the local SSH process group; remote mutations cannot be rolled back or
 /// guaranteed stopped. Prefer cancellation followed by awaiting a push's classified outcome.
 /// Callers must not globally reap these children. Descendants escaping the group are excluded.
+/// [`Self::with_terminal`] opts ordinary OpenSSH into foreground terminal leasing; its paired
+/// [`TerminalEvents`] must be driven independently of blocked display work. No default deadline
+/// is added, including while waiting for input or a resume permit.
 ///
 /// Stderr is drained and discarded by default to prevent blockage and credential/path leakage.
 /// [`crate::fetch::discover_ssh_with_diagnostics`] explicitly opts into raw local stderr delivery.
@@ -127,6 +132,7 @@ pub struct SshRemote {
     executable: PathBuf,
     arguments: Vec<String>,
     policy: LaunchPolicy,
+    terminal: Option<std::sync::Arc<ForegroundTerminal>>,
 }
 
 enum LaunchPolicy {
@@ -242,6 +248,7 @@ impl SshRemote {
             path: path.into(),
             executable: executable.into(),
             arguments: Vec::new(),
+            terminal: None,
             policy: LaunchPolicy::Restricted {
                 config: config.into(),
                 agent_socket: None,
@@ -326,13 +333,40 @@ impl SshRemote {
         Ok(remote)
     }
 
+    /// Attaches exclusive foreground terminal ownership to an ordinary OpenSSH remote.
+    ///
+    /// The paired terminal event receiver must remain alive and be polled while the operation
+    /// runs. See [`ForegroundTerminal`] for job-control and cleanup responsibilities. This opts in
+    /// to local terminal access without changing OpenSSH authentication or host-key policy.
+    ///
+    /// # Errors
+    ///
+    /// Rejects restricted launch policy and replacing an existing terminal attachment.
+    pub fn with_terminal(
+        mut self,
+        terminal: std::sync::Arc<ForegroundTerminal>,
+    ) -> Result<Self, SshError> {
+        if !matches!(self.policy, LaunchPolicy::OpenSsh(_)) || self.terminal.is_some() {
+            return Err(SshError::Configuration(
+                "terminal requires ordinary OpenSSH policy",
+            ));
+        }
+        self.terminal = Some(terminal);
+        Ok(self)
+    }
+
+    /// Returns whether this remote uses an explicit foreground terminal attachment.
+    pub fn has_terminal(&self) -> bool {
+        self.terminal.is_some()
+    }
+
     pub(crate) fn connect(
         &self,
         service: &str,
         control: TransportControl<'_>,
     ) -> Result<Session, SshError> {
         control.check()?;
-        Session::spawn(&mut self.command(service))
+        Session::spawn_with_terminal(&mut self.command(service), self.terminal.as_deref())
     }
 
     fn command(&self, service: &str) -> Command {

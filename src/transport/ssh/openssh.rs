@@ -50,8 +50,9 @@ impl SshRemote {
     /// The caller owns the complete environment and must approve these effects.
     ///
     /// Protocol pipes, discarded stderr and process-group cleanup use the same session owner as
-    /// [`Self::configured`]. A controlling-terminal prompt may be inaccessible from that process
-    /// group; interactive terminal parity is not promised. Askpass can use the supplied
+    /// [`Self::configured`]. Without an explicit [`Self::with_terminal`] attachment, a controlling
+    /// terminal prompt may be inaccessible from that process group. Terminal leasing requires
+    /// caller-owned job control; see [`super::ForegroundTerminal`]. Askpass can use the supplied
     /// environment. Do not automatically retry after a launched failure: authentication and
     /// trust side effects may already have occurred. Only Git protocol v0 is supported.
     ///
@@ -102,6 +103,7 @@ impl SshRemote {
             executable,
             arguments,
             policy: LaunchPolicy::OpenSsh(options.environment),
+            terminal: None,
         })
     }
 }

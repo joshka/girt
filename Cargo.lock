@@ -496,6 +496,7 @@ dependencies = [
  "criterion",
  "flate2",
  "futures-util",
+ "libc",
  "reqwest",
  "rstest",
  "rustix",
