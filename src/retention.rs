@@ -194,9 +194,11 @@ impl Repository {
     /// completion. The caller supplies cutoffs in place of Git's `gc.pruneExpire`,
     /// `gc.reflogExpire`, and `gc.reflogExpireUnreachable` configuration. Scans are synchronous
     /// and do not coordinate concurrent writers. The default cutoffs retain all reflog entries
-    /// and all existing loose objects. The executor must rescan under an exclusion boundary
-    /// that covers ref, reflog, index, worktree, loose-object and pack publication before using
-    /// this report for mutation.
+    /// and all existing loose objects. Valid registered private metadata remains a root even when
+    /// its checkout is missing or now points to another registration. Malformed or unrelated
+    /// registration metadata makes the scan incomplete. The executor must rescan under an exclusion
+    /// boundary that covers ref, reflog, index, worktree, loose-object and pack publication
+    /// before using this report for mutation.
     ///
     /// ```no_run
     /// use std::sync::atomic::AtomicBool;
@@ -312,27 +314,22 @@ fn collect_roots(
     {
         return Err("gc.recentObjectsHook is unsupported by retention planning".into());
     }
-    let mut directories = vec![repository.common_dir().to_path_buf()];
+    let mut repositories =
+        vec![Repository::open(repository.common_dir()).map_err(|e| e.to_string())?];
     let mut reflog_bytes = 0u64;
     let mut seen_logs = BTreeSet::new();
     let linked = repository
         .worktrees(policy.max_entries, cancel)
         .map_err(|e| e.to_string())?;
     for entry in linked {
-        if matches!(
-            entry.state,
-            crate::WorktreeState::Invalid(_) | crate::WorktreeState::Inaccessible(_)
-        ) {
-            return Err(format!(
-                "invalid worktree registration: {}",
-                entry.git_dir.display()
-            ));
-        }
-        directories.push(entry.git_dir);
-    }
-    for directory in directories {
         check(cancel)?;
-        let repo = Repository::open(&directory).map_err(|e| e.to_string())?;
+        let retained = repository
+            .open_retained_worktree(&entry.git_dir)
+            .map_err(|e| e.to_string())?;
+        repositories.push(retained);
+    }
+    for repo in repositories {
+        check(cancel)?;
         if repo
             .config()
             .value("extensions", None, "preciousObjects")

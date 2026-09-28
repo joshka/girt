@@ -29,6 +29,7 @@ fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
         .env("GIT_COMMITTER_NAME", "A")
         .env("GIT_COMMITTER_EMAIL", "a@example.com")
         .env("GIT_COMMITTER_DATE", "@1700000000 +0000")
+        .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1340,4 +1341,217 @@ fn recent_loose_object_and_pack_are_protected() {
     assert!(plan.strong_roots.contains(&blob));
     assert!(plan.required.contains(&blob));
     assert!(!plan.protected_packs.is_empty());
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn retained_registration_roots_survive_checkout_reuse(#[case] format: &str) {
+    let (root, repo, first, head) = fixture_format(format);
+    fs::remove_file(root.path().join("logs/refs/heads/deleted")).unwrap();
+    let checkout = root.path().join("retained");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &head.to_string(),
+        ],
+        b"",
+    );
+    let private = Repository::open(&checkout).unwrap();
+    let tree = git(root.path(), &["mktree"], b"");
+    let reference = git(root.path(), &["commit-tree", &tree], b"private reference");
+    let history = git(root.path(), &["commit-tree", &tree], b"private history");
+    git(
+        &checkout,
+        &["update-ref", "refs/worktree/saved", &reference],
+        b"",
+    );
+    fs::create_dir_all(private.git_dir().join("logs")).unwrap();
+    fs::write(
+        private.git_dir().join("logs/HEAD"),
+        format!("{history} {head} A <a@example.com> 1700000000 +0000\tretained\n"),
+    )
+    .unwrap();
+    let blob = git(
+        &checkout,
+        &["hash-object", "-w", "--stdin"],
+        b"private index",
+    );
+    git(
+        &checkout,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{blob},staged"),
+        ],
+        b"",
+    );
+    // Keep the old registration in Git's recognized namespace, protected from ordinary prune.
+    fs::write(private.git_dir().join("locked"), b"retained metadata\n").unwrap();
+    fs::remove_file(checkout.join(".git")).unwrap();
+    let new_checkout = root.path().join("replacement");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            new_checkout.to_str().unwrap(),
+            &first.to_string(),
+        ],
+        b"",
+    );
+    let replacement = Repository::open(&new_checkout).unwrap();
+    fs::rename(new_checkout.join(".git"), checkout.join(".git")).unwrap();
+    fs::write(
+        replacement.git_dir().join("gitdir"),
+        format!("{}\n", checkout.join(".git").display()),
+    )
+    .unwrap();
+    assert_ne!(replacement.git_dir(), private.git_dir());
+    git(root.path(), &["worktree", "prune", "--expire=now"], b"");
+    let git_roots = git(root.path(), &["rev-list", "--all", "--reflog"], b"");
+    assert!(git_roots.lines().any(|line| line == head.to_string()));
+    assert!(git_roots.lines().any(|line| line == history));
+    // Git's common-directory --all omits this private ref; its owning metadata still exposes it.
+    assert_eq!(
+        git(
+            private.git_dir(),
+            &["rev-parse", "refs/worktree/saved"],
+            b""
+        ),
+        reference
+    );
+    assert!(git(private.git_dir(), &["ls-files", "--stage"], b"").contains(&blob));
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.strong_roots.contains(&head));
+    assert!(plan.strong_roots.contains(&reference.parse().unwrap()));
+    assert!(plan.strong_roots.contains(&blob.parse().unwrap()));
+    assert!(plan.roots.contains(&history.parse().unwrap()));
+}
+
+#[rstest::rstest]
+#[case::missing_common("commondir", None)]
+#[case::malformed_common("commondir", Some(b"\n".as_slice()))]
+#[case::missing_backlink("gitdir", None)]
+#[case::malformed_backlink("gitdir", Some(b"bad\npath\n".as_slice()))]
+#[case::missing_head("HEAD", None)]
+#[case::malformed_head("HEAD", Some(b"invalid\n".as_slice()))]
+fn retained_registration_corruption_blocks_scan(
+    #[case] name: &str,
+    #[case] replacement: Option<&[u8]>,
+) {
+    let (root, repo, _, head) = fixture();
+    let checkout = root.path().join("retained");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &head.to_string(),
+        ],
+        b"",
+    );
+    let private = Repository::open(&checkout).unwrap();
+    fs::remove_file(checkout.join(".git")).unwrap();
+    let path = private.git_dir().join(name);
+    fs::remove_file(&path).unwrap();
+    if let Some(bytes) = replacement {
+        fs::write(path, bytes).unwrap();
+    }
+    let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
+    assert!(!plan.is_complete());
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::registration(None)]
+#[case::head(Some("HEAD"))]
+#[case::backlink(Some("gitdir"))]
+#[case::common(Some("commondir"))]
+fn retained_registration_symlink_blocks_scan(#[case] name: Option<&str>) {
+    let (root, repo, _, head) = fixture();
+    let checkout = root.path().join("retained");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &head.to_string(),
+        ],
+        b"",
+    );
+    let private = Repository::open(&checkout).unwrap();
+    let path = name.map_or_else(
+        || private.git_dir().to_path_buf(),
+        |name| private.git_dir().join(name),
+    );
+    let saved = root.path().join("saved-metadata");
+    fs::rename(&path, &saved).unwrap();
+    std::os::unix::fs::symlink(&saved, path).unwrap();
+    let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
+    assert!(!plan.is_complete());
+}
+
+#[test]
+fn retained_registration_unrelated_common_blocks_scan() {
+    let (root, repo, _, head) = fixture();
+    let (foreign, _, _, _) = fixture();
+    let checkout = root.path().join("retained");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &head.to_string(),
+        ],
+        b"",
+    );
+    let private = Repository::open(&checkout).unwrap();
+    fs::write(
+        private.git_dir().join("commondir"),
+        format!("{}\n", foreign.path().display()),
+    )
+    .unwrap();
+    let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
+    assert!(!plan.is_complete());
+}
+
+#[test]
+fn retained_registration_unreadable_metadata_blocks_scan() {
+    let (root, repo, _, head) = fixture();
+    let checkout = root.path().join("retained");
+    git(
+        root.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            checkout.to_str().unwrap(),
+            &head.to_string(),
+        ],
+        b"",
+    );
+    let private = Repository::open(&checkout).unwrap();
+    let backlink = private.git_dir().join("gitdir");
+    fs::remove_file(&backlink).unwrap();
+    fs::create_dir(backlink).unwrap();
+    let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
+    assert!(!plan.is_complete());
 }
