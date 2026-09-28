@@ -299,7 +299,8 @@ impl RepositoryLocation {
 /// general reference, index or shallow-history operations. Its explicit orphan-worktree creation
 /// method uses layout metadata without reading shallow history. Validation matches girt's opening
 /// bootstrap; it does not establish trust, validate every Git runtime setting or freeze filesystem
-/// identity. Full opening separately observes shallow roots; it does not reuse this snapshot.
+/// identity. [`Self::open_storage`] reuses this snapshot and separately observes current shallow
+/// roots.
 #[derive(Clone, Debug)]
 pub struct RepositoryMetadata {
     git_dir: PathBuf,
@@ -350,6 +351,71 @@ impl RepositoryMetadata {
     /// Resolved configuration snapshot, including source provenance and explicit caller inputs.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Opens storage from this captured layout and configuration, reading current shallow roots.
+    ///
+    /// Does not reselect paths, reread configuration or repeat bootstrap validation. The returned
+    /// repository retains the captured object format and reference backend. Its shallow snapshot
+    /// comes from the captured common directory, with the same 16 MiB limit as ordinary opening.
+    /// Objects, indexes and references remain live storage and can fail when subsequently accessed.
+    /// This operation neither establishes trust nor locks filesystem identities against
+    /// replacement.
+    ///
+    /// The metadata remains reusable after success or failure. Each call observes shallow roots
+    /// anew; repositories returned by earlier calls keep their own shallow snapshots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpenError::Shallow`] if current shallow metadata cannot be read or parsed. No
+    /// repository files are changed, and callers can repair the shallow file and retry this
+    /// snapshot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::config::ConfigInputs;
+    /// use girt::{InitKind, ObjectFormat, Repository, RepositoryLocation};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let initialized = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let location = RepositoryLocation::at_git_dir(initialized.git_dir())?;
+    /// let metadata = location.read_metadata_with_config(&ConfigInputs::default())?;
+    /// let repository = metadata.open_storage()?;
+    /// assert_eq!(repository.git_dir(), metadata.git_dir());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn open_storage(&self) -> Result<Repository, OpenError> {
+        let shallow = self.read_shallow()?;
+        Ok(self.clone().into_storage(shallow))
+    }
+
+    fn read_shallow(&self) -> Result<ShallowRoots, OpenError> {
+        Ok(ShallowRoots::read(
+            self.common_dir.join("shallow"),
+            self.object_format,
+            16 * 1024 * 1024,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?)
+    }
+
+    fn into_storage(self, shallow: ShallowRoots) -> Repository {
+        Repository {
+            git_dir: self.git_dir,
+            common_dir: self.common_dir,
+            object_dir: self.object_dir,
+            worktree: self.worktree,
+            bare: self.bare,
+            config: self.config,
+            format_version: self.format_version,
+            object_format: self.object_format,
+            shallow,
+            reference_backend: self.reference_backend,
+        }
     }
 
     fn read_location(
@@ -695,42 +761,15 @@ impl Repository {
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
     ) -> Result<Self, OpenError> {
-        let RepositoryMetadata {
-            git_dir,
-            common_dir,
-            object_dir,
-            worktree,
-            bare,
-            config,
-            format_version,
-            object_format,
-            reference_backend,
-            worktree_config_conflict: _,
-        } = RepositoryMetadata::read_location(
+        let metadata = RepositoryMetadata::read_location(
             location,
             inputs,
             reference_limits,
             None,
             IncludePlacement::InPlace,
         )?;
-        let shallow = ShallowRoots::read(
-            common_dir.join("shallow"),
-            object_format,
-            16 * 1024 * 1024,
-            &std::sync::atomic::AtomicBool::new(false),
-        )?;
-        Ok(Self {
-            git_dir,
-            common_dir,
-            object_dir,
-            worktree,
-            bare,
-            config,
-            format_version,
-            object_format,
-            shallow,
-            reference_backend,
-        })
+        let shallow = metadata.read_shallow()?;
+        Ok(metadata.into_storage(shallow))
     }
 
     /// Immutable shallow boundaries captured when this handle was opened or refreshed.

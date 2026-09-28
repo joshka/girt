@@ -32,6 +32,10 @@ fn metadata_does_not_read_shallow_files(
     assert_eq!(metadata.object_format(), format);
     assert_eq!(metadata.reference_backend(), repo.reference_backend());
     assert!(matches!(
+        metadata.open_storage(),
+        Err(OpenError::Shallow(_))
+    ));
+    assert!(matches!(
         location.open_with_config(&ConfigInputs::default()),
         Err(OpenError::Shallow(_))
     ));
@@ -352,4 +356,93 @@ fn metadata_include_placement_preserves_first_error_and_origin(
     assert_eq!(normal.included_from, placed.included_from);
     assert_eq!(placed.location.path, Some(repo.common_dir().join("c")));
     assert_eq!(placed.included_from.len(), 2);
+}
+
+// These original lifecycle fixtures mutate bootstrap inputs after capture. They test snapshot
+// reuse rather than compatibility with another implementation's opening policy.
+#[rstest]
+fn storage_open_preserves_captured_bootstrap(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(girt::refs::Backend::Files, girt::refs::Backend::Reftable)]
+    backend: girt::refs::Backend,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init_with_backend(
+        format,
+        root.path().join("repo"),
+        InitKind::Worktree,
+        backend,
+    )
+    .unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(repo.common_dir().join("config"))
+        .unwrap()
+        .write_all(b"[include]\npath=included\n")
+        .unwrap();
+    fs::write(
+        repo.common_dir().join("included"),
+        b"[demo]\nvalue=captured\n",
+    )
+    .unwrap();
+    let inputs = ConfigInputs {
+        command: Some(Config::parse(b"[demo]\ncommand=retained\n").unwrap()),
+        ..Default::default()
+    };
+    let location = RepositoryLocation::at_git_dir(repo.git_dir()).unwrap();
+    let metadata = location.read_metadata_with_config(&inputs).unwrap();
+    fs::write(repo.common_dir().join("config"), b"[broken").unwrap();
+    fs::write(repo.common_dir().join("included"), b"[broken").unwrap();
+    fs::write(repo.git_dir().join("HEAD"), b"invalid").unwrap();
+    fs::write(repo.git_dir().join("commondir"), b"missing-directory").unwrap();
+    let opened = metadata.open_storage().unwrap();
+    assert_eq!(opened.git_dir(), metadata.git_dir());
+    assert_eq!(opened.common_dir(), metadata.common_dir());
+    assert_eq!(opened.object_dir(), metadata.object_dir());
+    assert_eq!(opened.worktree(), metadata.worktree());
+    assert_eq!(opened.is_bare(), metadata.is_bare());
+    assert_eq!(opened.format_version(), metadata.format_version());
+    assert_eq!(opened.object_format(), format);
+    assert_eq!(opened.reference_backend(), backend);
+    // Includes source provenance and physical occurrence metadata, not only effective values.
+    assert_eq!(
+        format!("{:?}", opened.config()),
+        format!("{:?}", metadata.config())
+    );
+    assert_eq!(
+        opened.config().value("demo", None, "value"),
+        Some(Some(b"captured".as_slice()))
+    );
+    assert!(location.open_with_config(&inputs).is_err());
+    assert!(RepositoryLocation::at_git_dir(repo.git_dir()).is_err());
+}
+
+#[rstest]
+fn storage_open_retries_shallow_without_refreshing_bootstrap(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+    let shallow = repo.common_dir().join("shallow");
+    fs::write(&shallow, b"invalid\n").unwrap();
+    let metadata = RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&ConfigInputs::default())
+        .unwrap();
+    assert!(matches!(
+        metadata.open_storage(),
+        Err(OpenError::Shallow(_))
+    ));
+    let id = repo
+        .loose_objects()
+        .write_blob(b"declared boundary")
+        .unwrap();
+    fs::write(repo.common_dir().join("config"), b"[broken").unwrap();
+    fs::write(&shallow, format!("{id}\n")).unwrap();
+    let opened = metadata.open_storage().unwrap();
+    assert_eq!(opened.shallow_roots().iter().collect::<Vec<_>>(), vec![id]);
+    fs::remove_file(shallow).unwrap();
+    let later = metadata.open_storage().unwrap();
+    assert_eq!(later.shallow_roots().iter().len(), 0);
+    assert!(opened.shallow_roots().contains(id));
 }
