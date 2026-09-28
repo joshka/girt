@@ -325,6 +325,46 @@ fn configured_refspecs(
         .collect()
 }
 
+/// Applies one ordinary `insteadOf` rewrite to a validated configured destination.
+///
+/// Normalizes the supplied URL before matching prefixes. The longest matching prefix wins;
+/// the first occurrence wins equal-length ties. An implicit or empty prefix matches every URL.
+/// The replacement is normalized and validated once, without recursively applying rewrites.
+/// `pushInsteadOf` entries are ignored: this function has no push fallback policy.
+///
+/// Reads only the supplied snapshot, without filesystem, environment or network access. It does
+/// not authorize a transport or check repository existence. Returned bytes may contain private
+/// paths or credentials. To persist the original destination after validating its rewrite, retain
+/// the separate result of [`super::normalize_configured_url`].
+///
+/// # Errors
+///
+/// Uses the bounded syntax of [`super::normalize_configured_url`]. Invalid original URLs fail
+/// before prefix matching, so a rewrite cannot repair them. Invalid replacement URLs also fail.
+/// [`ConfiguredUrlError::Unsupported`] requests compatibility handling, not rejection as malformed.
+/// Error values omit URL contents.
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::rewrite_configured_url;
+/// let config = Config::parse(b"[url \"ssh://HOST/\"]\ninsteadOf=https://host/\n")?;
+/// assert_eq!(
+///     rewrite_configured_url(&config, b"https://HOST/repo")?,
+///     b"ssh://host/repo"
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn rewrite_configured_url(
+    config: &Config,
+    bytes: &[u8],
+) -> Result<Vec<u8>, ConfiguredUrlError> {
+    let original = normalize(bytes)?;
+    match rewrite(config, &original, "insteadof") {
+        Some(rewritten) => normalize(&rewritten),
+        None => Ok(original),
+    }
+}
+
 fn rewrite_urls(
     config: &Config,
     urls: &[UrlOccurrence],

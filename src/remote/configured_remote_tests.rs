@@ -302,3 +302,90 @@ fn included_invalid_tag_then_implicit_requires_compatibility() {
         ConfiguredRemoteError::UnsupportedTagOptionInheritance,
     );
 }
+
+// Prefix selection was characterized with original public-gix 0.87.1 add-remote probes.
+// Additional cases exercise the native byte-path and single-rewrite contracts.
+#[rstest]
+#[case::no_match(b"", b"https://HOST:00443/repo", b"https://host:443/repo")]
+#[case::ordinary(b"[url \"rewritten/\"]\ninsteadOf=raw", b"rawrepo", b"rewritten/repo")]
+#[case::normalized_match(
+    b"[url \"changed/\"]\ninsteadOf=https://host:443/",
+    b"https://HOST:00443/repo",
+    b"changed/repo"
+)]
+#[case::raw_does_not_match(
+    b"[url \"changed/\"]\ninsteadOf=https://HOST:00443/",
+    b"https://HOST:00443/repo",
+    b"https://host:443/repo"
+)]
+#[case::longest(
+    b"[url \"short/\"]\ninsteadOf=raw\n[url \"long/\"]\ninsteadOf=rawrepo",
+    b"rawrepo",
+    b"long/"
+)]
+#[case::first_tie(
+    b"[url \"first/\"]\ninsteadOf=raw\n[url \"second/\"]\ninsteadOf=raw",
+    b"rawrepo",
+    b"first/repo"
+)]
+#[case::empty_prefix(b"[url \"prefix/\"]\ninsteadOf=", b"repo", b"prefix/repo")]
+#[case::implicit_prefix(b"[url \"prefix/\"]\ninsteadOf", b"repo", b"prefix/repo")]
+#[case::push_ignored(b"[url \"push/\"]\npushInsteadOf=raw", b"rawrepo", b"rawrepo")]
+#[case::invalid_push_ignored(b"[url \"host:\"]\npushInsteadOf=raw", b"raw", b"raw")]
+#[case::output_normalized(
+    b"[url \"ssh://HOST:00022/\"]\ninsteadOf=raw",
+    b"rawrepo",
+    b"ssh://host:22/repo"
+)]
+#[case::not_recursive(
+    b"[url \"second/\"]\ninsteadOf=first/\n[url \"third/\"]\ninsteadOf=second/",
+    b"first/repo",
+    b"second/repo"
+)]
+#[case::local_bytes(b"[url \"/new/\"]\ninsteadOf=/old/", b"/old/\xff", b"/new/\xff")]
+fn ordinary_url_rewrite(#[case] body: &[u8], #[case] input: &[u8], #[case] expected: &[u8]) {
+    let config = Config::parse(body).unwrap();
+    assert_eq!(
+        crate::remote::rewrite_configured_url(&config, input).unwrap(),
+        expected
+    );
+}
+
+#[rstest]
+#[case::empty_original(b"[url \"valid\"]\ninsteadOf=", b"", ConfiguredUrlError::MissingPath)]
+#[case::invalid_original(
+    b"[url \"valid\"]\ninsteadOf=host:",
+    b"host:",
+    ConfiguredUrlError::MissingPath
+)]
+#[case::invalid_replacement(
+    b"[url \"host:\"]\ninsteadOf=raw",
+    b"raw",
+    ConfiguredUrlError::MissingPath
+)]
+#[case::empty_replacement(b"[url \"\"]\ninsteadOf=raw", b"raw", ConfiguredUrlError::MissingPath)]
+#[case::unsupported_original(
+    b"[url \"valid\"]\ninsteadOf=foo::repo",
+    b"foo::repo",
+    ConfiguredUrlError::Unsupported
+)]
+#[case::unsupported_replacement(
+    b"[url \"foo::repo\"]\ninsteadOf=raw",
+    b"raw",
+    ConfiguredUrlError::Unsupported
+)]
+#[case::private_replacement(
+    b"[url \"https://user:secret@host/repo\"]\ninsteadOf=raw",
+    b"raw",
+    ConfiguredUrlError::Unsupported
+)]
+fn ordinary_url_rewrite_errors(
+    #[case] body: &[u8],
+    #[case] input: &[u8],
+    #[case] expected: ConfiguredUrlError,
+) {
+    let config = Config::parse(body).unwrap();
+    let error = crate::remote::rewrite_configured_url(&config, input).unwrap_err();
+    assert_eq!(error, expected);
+    assert!(!format!("{error:?}: {error}").contains("secret"));
+}

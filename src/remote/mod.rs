@@ -36,7 +36,9 @@ mod url;
 
 pub use config::{Remote, RemoteError, RemoteUrls};
 pub use configured_refspec::{ConfiguredRefspec, ConfiguredRefspecError, ConfiguredRefspecKind};
-pub use configured_remote::{ConfiguredRemote, ConfiguredRemoteError, ConfiguredRemoteRecord};
+pub use configured_remote::{
+    ConfiguredRemote, ConfiguredRemoteError, ConfiguredRemoteRecord, rewrite_configured_url,
+};
 pub use configured_url::{ConfiguredUrlError, normalize_configured_url};
 pub use credential::{
     Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,

@@ -47,6 +47,12 @@ contract, without rewrites or source access. An empty destination is an error he
 belong to configuration interpretation. The returned bytes may contain private information, while
 errors omit input values.
 
+`rewrite_configured_url` normalizes one URL, applies the longest ordinary `insteadOf` prefix, and
+validates the replacement. The first equal-length prefix wins; empty and implicit prefixes match
+every URL. Rewrites run once and ignore `pushInsteadOf`. Invalid original URLs fail before matching,
+so rewrites cannot repair them. Callers persisting the original destination can retain
+`normalize_configured_url` output and use the rewrite result only for validation.
+
 `Config::contains_section` retains empty headers through parsing and include resolution. Runtime
 assignments also imply section existence. Section names ignore ASCII case; quoted subsection bytes
 remain exact. This query does not expose physical section identity or source ownership, and entry
