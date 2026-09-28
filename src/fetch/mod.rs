@@ -49,7 +49,13 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::{receive_ssh, receive_ssh_with_depth};
+pub use ssh::{receive_ssh, receive_ssh_with_depth, receive_ssh_with_progress};
+
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+mod live_progress;
 
 #[cfg(feature = "http")]
 mod http;

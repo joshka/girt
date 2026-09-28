@@ -1,9 +1,21 @@
 use std::sync::atomic::AtomicBool;
 
-use super::{PreparedPush, PushError, PushFailure, PushReport, protocol};
+use super::live_progress::LiveProgress;
+use super::{PreparedPush, PushAdvertisement, PushError, PushFailure, PushReport, protocol};
 use crate::packet::Wire;
 use crate::transport::TransportControl;
 use crate::transport::ssh::SshRemote;
+
+/// Outcome of an SSH push whose caller inspected the live receive-pack advertisement.
+#[derive(Debug)]
+pub enum SshPushOutcome {
+    /// The caller declined. Only a protocol flush was sent; the session exited successfully.
+    /// Authentication, trust or proxy side effects may already have occurred. Do not automatically
+    /// retry or start another transport solely because no update command was sent.
+    Declined,
+    /// The accepted operation completed with a report; inspect every reference status.
+    Sent(PushReport),
+}
 
 /// Sends a synchronously prepared push through one async SSH receive-pack session.
 ///
@@ -32,6 +44,45 @@ pub async fn send_ssh(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
 ) -> Result<PushReport, PushError> {
+    match send_ssh_checked_with_progress(remote, prepared, control, |_| true, |_| {}, |_| {})
+        .await?
+    {
+        SshPushOutcome::Sent(report) => Ok(report),
+        SshPushOutcome::Declined => unreachable!("unconditional SSH push cannot decline"),
+    }
+}
+
+/// Sends an SSH push after checking the live advertisement, with separate local and remote output.
+///
+/// After bounded advertisement and capability validation, `should_send` inspects the live tips.
+/// Returning false sends only an empty selection flush, closes stdin and awaits the same session's
+/// exit. Returning true preserves [`send_ssh`]'s exact old-value commands; the receiver must still
+/// enforce them because advertised refs can change. Neither outcome permits an automatic retry.
+///
+/// `diagnostics` receives raw local stderr according to
+/// [`crate::fetch::discover_ssh_with_diagnostics`]'s display and redaction contract. Call
+/// [`PreparedPush::with_progress`] to request sideband; when negotiated, `progress` receives each
+/// complete channel-2 payload once, in order, before response completion. Malformed/terminal
+/// framing stops notices and the final parser determines the result. No bytes beyond the status
+/// budget reach the progress callback. Progress is retained in the bounded report even on
+/// uncertainty. Both callbacks must return promptly; they do not select retry or transport
+/// outcomes.
+///
+/// # Errors
+///
+/// Preflight, decline-cleanup and failures before attempting update bytes are
+/// [`PushError::NotSent`]. Authentication or trust effects may still have occurred. After update
+/// transmission starts, failures retain acknowledgement evidence in [`PushError::Uncertain`].
+/// Complete receiver rejections are returned in [`SshPushOutcome::Sent`] and must be inspected per
+/// reference.
+pub async fn send_ssh_checked_with_progress(
+    remote: &SshRemote,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+    should_send: impl FnOnce(&PushAdvertisement) -> bool,
+    mut diagnostics: impl FnMut(&[u8]),
+    mut progress: impl FnMut(&[u8]),
+) -> Result<SshPushOutcome, PushError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -51,7 +102,11 @@ pub async fn send_ssh(
             .map_err(|e| PushError::NotSent(e.into()))?;
         let preflight = async {
             let bytes = session
-                .advertise(prepared.limits.max_advertisement_bytes, control)
+                .advertise_with_diagnostics(
+                    prepared.limits.max_advertisement_bytes,
+                    control,
+                    &mut diagnostics,
+                )
                 .await?;
             let mut reader = bytes.as_slice();
             let mut wire = Wire {
@@ -59,12 +114,30 @@ pub async fn send_ssh(
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            let caps = protocol::advertise(&mut wire, prepared)?;
+            let (caps, advertisement) = protocol::advertise_with_refs(&mut wire, prepared)?;
             wire.end()?;
             control.check()?;
-            Ok::<_, PushFailure>(caps)
+            Ok::<_, PushFailure>((caps, advertisement))
         };
-        let caps = preflight.await.map_err(PushError::NotSent)?;
+        let (caps, advertisement) = preflight.await.map_err(PushError::NotSent)?;
+        if !should_send(&advertisement) {
+            let (body, result, _) = session
+                .exchange_with_diagnostics(
+                    b"0000",
+                    &[],
+                    prepared.limits.max_status_bytes,
+                    control,
+                    &mut diagnostics,
+                )
+                .await;
+            result.map_err(|error| PushError::NotSent(error.into()))?;
+            if !body.is_empty() {
+                return Err(PushError::NotSent(PushFailure::Protocol(
+                    "trailing declined response bytes",
+                )));
+            }
+            return Ok(SshPushOutcome::Declined);
+        }
         let negotiated = prepared
             .request_for(caps.report_v2, caps.sideband)
             .map_err(PushError::NotSent)?;
@@ -74,12 +147,19 @@ pub async fn send_ssh(
         } else {
             negotiated.as_ref()
         };
+        let mut sideband = LiveProgress::default();
         let (body, result, written) = session
-            .exchange(
+            .exchange_observed(
                 request,
                 &prepared.pack,
                 prepared.limits.max_status_bytes,
                 control,
+                &mut diagnostics,
+                &mut |bytes| {
+                    if caps.sideband && !prepared.commands.is_empty() {
+                        sideband.observe(bytes, &mut progress);
+                    }
+                },
             )
             .await;
         if prepared.commands.is_empty() {
@@ -89,7 +169,7 @@ pub async fn send_ssh(
                     "trailing response bytes",
                 )));
             }
-            return Ok(report);
+            return Ok(SshPushOutcome::Sent(report));
         }
         if written == 0
             && let Err(cause) = result
@@ -112,7 +192,7 @@ pub async fn send_ssh(
         )
         .and_then(|()| wire.end().map_err(PushFailure::from));
         match result.map_err(PushFailure::from).and(parsed) {
-            Ok(()) => Ok(report),
+            Ok(()) => Ok(SshPushOutcome::Sent(report)),
             Err(cause) => Err(PushError::Uncertain {
                 cause,
                 report: Box::new(report),
@@ -126,7 +206,7 @@ pub async fn send_ssh(
     #[cfg(feature = "tracing")]
     crate::trace::finish(&span, &result, |error| crate::trace::push(error, &span));
     #[cfg(feature = "tracing")]
-    if let Ok(report) = &result {
+    if let Ok(SshPushOutcome::Sent(report)) = &result {
         crate::trace::push_report(&span, report);
     }
 

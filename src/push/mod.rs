@@ -25,12 +25,19 @@
 //! transport and keep authentication approval or rejection under application control.
 //! `send_http_checked` lets an HTTP caller inspect validated receive-pack tips and decline a
 //! whole batch before POST. A decision does not reserve those tips; the receiver still checks each
-//! command's expected old value.
+//! command's expected old value. `send_ssh_checked_with_progress` provides the same inspection
+//! boundary in one SSH session, closing a declined session with only a protocol flush.
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::send_ssh;
+pub use ssh::{SshPushOutcome, send_ssh, send_ssh_checked_with_progress};
+
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+mod live_progress;
 
 #[cfg(feature = "http")]
 mod http;

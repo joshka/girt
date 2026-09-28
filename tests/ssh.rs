@@ -10,6 +10,8 @@ mod ssh_diagnostics;
 mod ssh_git;
 #[path = "support/ssh_openssh.rs"]
 mod ssh_openssh;
+#[path = "support/ssh_transfer_observers.rs"]
+mod ssh_transfer_observers;
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;

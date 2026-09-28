@@ -86,6 +86,7 @@ impl Session {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn advertise(
         &mut self,
         limit: usize,
@@ -118,6 +119,7 @@ impl Session {
         result
     }
 
+    #[cfg(test)]
     pub(crate) async fn exchange(
         &mut self,
         request: &[u8],
@@ -137,6 +139,20 @@ impl Session {
         control: TransportControl<'_>,
         diagnostics: &mut impl FnMut(&[u8]),
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
+        self.exchange_observed(request, pack, limit, control, diagnostics, &mut |_| {})
+            .await
+    }
+
+    // Observes the retained prefix after each bounded read; observers neither own nor copy it.
+    pub(crate) async fn exchange_observed(
+        &mut self,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+        observe: &mut impl FnMut(&[u8]),
+    ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
         let mut written = 0;
         let input = self.input.take().expect("one request per session");
@@ -145,7 +161,7 @@ impl Session {
             // no longer consuming input. Retain received status bytes even when writing fails.
             tokio::try_join!(
                 write_request(input, request, pack, &mut written),
-                read_body(&mut self.output, &mut body, limit)
+                read_body(&mut self.output, &mut body, limit, observe)
             )?;
             Ok(())
         };
@@ -281,6 +297,7 @@ async fn read_body(
     output: &mut AsyncFd<ChildStdout>,
     body: &mut Vec<u8>,
     limit: usize,
+    observe: &mut impl FnMut(&[u8]),
 ) -> Result<(), SshError> {
     let mut bytes = [0; 8192];
     loop {
@@ -290,6 +307,7 @@ async fn read_body(
         }
         let keep = count.min(limit.saturating_sub(body.len()));
         body.extend_from_slice(&bytes[..keep]);
+        observe(body);
         if keep != count {
             return Err(SshError::Limit);
         }

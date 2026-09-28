@@ -177,8 +177,41 @@ Every SSH child starts in a new local process group. Completion, failure, droppe
 unwinding kill that group before reaping its leader. Callers must not install a handler that reaps
 these children. Descendants escaping the group and elevated processes are outside the guarantee.
 Remote services are not members of the local group: terminating SSH cannot roll back refs or promise
-that a remote hook has stopped. Stderr is continuously drained and discarded, including during
-upload and exit waits, so an undrained diagnostic sink cannot block an operation.
+that a remote hook has stopped. Stderr is continuously drained during upload and exit waits and is
+discarded unless the caller explicitly supplies a diagnostic observer. Observers must return
+promptly so they do not block service I/O or cancellation.
+
+## Live Output and Checked Pushes
+
+`FetchRequest::receive_ssh_with_progress` accepts separate local-diagnostic and remote-notice
+callbacks while retaining the existing publication plan and owned `FetchDownload`. The lower-level
+`fetch::receive_ssh_with_progress` takes `FetchOptions` for wire limits and optional depth. Local
+stderr follows the discovery diagnostic contract above. Remote notices are complete channel-2
+payloads, delivered once in wire order after validating the negotiation prefix, including shallow
+boundaries when requested. They borrow the retained wire response without adding a transcript.
+Validation remains authoritative and replays remote notices; pass a no-op notice callback to
+`validate_with_progress` when they were already displayed. Local object/delta validation progress
+remains a separate callback on the caller's synchronous worker.
+
+`push::send_ssh_checked_with_progress` borrows `PreparedPush` and invokes a predicate with validated
+live advertised tips before writing update commands. A false predicate sends only `0000`, closes
+stdin, and awaits the same SSH session's exit. Successful cleanup returns
+`SshPushOutcome::Declined`; cleanup failure returns `NotSent`. Neither authorizes automatic
+fallback: authentication, host-key, proxy or local-command effects may already have occurred. A true
+predicate retains the prepared commands' expected old values for the server to enforce after the
+advertisement becomes stale.
+
+Call `PreparedPush::with_progress` to request push sideband. When negotiated, the remote observer
+receives complete channel-2 payloads before the final report. Local stderr remains a separate
+observer. Partial channel-2 packets, bytes outside the response budget, and packets after malformed
+or terminal framing are not delivered. The authoritative parser still determines success or
+uncertainty, and the bounded report retains complete notices and valid acknowledgement prefixes.
+Display callbacks have no result that requests retry or changes publication classification.
+
+Existing SSH receive/send functions supply no-op observers and retain their result types. All
+callbacks run synchronously on the caller's async task, must return promptly, and receive untrusted
+bytes. Local diagnostics can contain secrets; remote notices never prove successful publication. No
+callback changes terminal ownership, authentication policy or automatic-retry behavior.
 
 ## Results and Recovery
 
