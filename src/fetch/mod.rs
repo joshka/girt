@@ -10,7 +10,10 @@
 //!   marker through caller-controlled reference publication.
 //! - [`FetchRequest`] captures a destination snapshot, refspecs, force authorization, and reflog
 //!   policy. Its adapters return [`FetchReady`]; [`FetchReady::finish`] installs objects and
-//!   conditionally publishes selected refs.
+//!   conditionally publishes selected refs. [`FetchReady::install_retained`] instead holds a
+//!   shallow lock and pack retention while the caller checks installed objects, before
+//!   [`RetainedFetchReady::finish`] publishes boundaries and refs. This supports self-contained
+//!   complete or initial depth-limited transfers into a nonshallow destination.
 //!
 //! HTTP and SSH downloads keep network I/O separate from synchronous pack validation. Callers
 //! bound worker concurrency and join validation work before dropping its owned result.
@@ -83,7 +86,7 @@ mod workflow;
 mod worktree;
 pub use workflow::{
     FetchFinishError, FetchFinishFailure, FetchPlanError, FetchReady, FetchReport, FetchRequest,
-    FetchUpdate, FetchUpdateKind, FetchWorkflowError,
+    FetchUpdate, FetchUpdateKind, FetchWorkflowError, RetainedFetchFinishError, RetainedFetchReady,
 };
 
 mod connectivity;

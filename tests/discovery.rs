@@ -612,3 +612,301 @@ fn git_v2_populated_ls_refs_resolves_head(#[case] format: ObjectFormat) {
     assert_eq!(discovered.object_format, format);
     assert!(matches!(discovered.head, RemoteHead::Symbolic { id: actual, .. } if actual == id));
 }
+
+fn retained_fixture(
+    format: ObjectFormat,
+) -> (tempfile::TempDir, tempfile::TempDir, Repository, ObjectId) {
+    let source = repository(format);
+    let first = commit(&source);
+    let tip = child_commit(&source, first);
+    let destination = repository(format);
+    let repo = Repository::open(destination.path()).unwrap();
+    (source, destination, repo, tip)
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn retained_shallow_phase_holds_lock_until_publication(#[case] format: ObjectFormat) {
+    let (source, destination, repo, tip) = retained_fixture(format);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let competitor = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let cancel = AtomicBool::new(false);
+    let direct = ready
+        .received()
+        .install_retained(&repo, PackLimits::default(), &cancel)
+        .unwrap_err();
+    assert!(matches!(
+        *direct.source,
+        FetchError::Unsupported("retained shallow installation")
+    ));
+    assert!(direct.retention.is_none());
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    assert!(marker.exists());
+    assert!(destination.path().join("shallow.lock").exists());
+    assert!(!destination.path().join("shallow").exists());
+    assert!(!destination.path().join("refs/remotes/origin/main").exists());
+    assert!(installed.report().installed.is_some());
+    assert!(!installed.report().shallow_published);
+    assert_eq!(installed.updates().len(), 1);
+    assert_eq!(
+        repo.objects(PackLimits::default())
+            .unwrap()
+            .read(tip, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .kind(),
+        girt::ObjectKind::Commit
+    );
+    let blocked = competitor
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap_err();
+    assert!(matches!(
+        *blocked.source,
+        girt::fetch::FetchFinishFailure::Shallow(_)
+    ));
+    assert!(blocked.retention.is_none());
+    assert!(marker.exists());
+    let (report, retention) = installed.finish(&cancel).unwrap();
+    assert!(report.shallow_published);
+    assert_eq!(report.references.len(), 1);
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert_eq!(
+        git(
+            destination.path(),
+            &["rev-list", "--count", "refs/remotes/origin/main"],
+            b"",
+            None
+        ),
+        b"1\n"
+    );
+    git(destination.path(), &["fsck", "--full"], b"", None);
+    retention.release().unwrap();
+    assert!(!marker.exists());
+}
+
+#[test]
+fn retained_complete_depth_response_uses_same_staged_workflow() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 4);
+    assert!(ready.received().shallow_roots().is_empty());
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    assert!(destination.path().join("shallow.lock").exists());
+    let (report, retention) = installed.finish(&cancel).unwrap();
+    assert!(!report.shallow_published);
+    assert_eq!(report.references.len(), 1);
+    assert_eq!(
+        git(
+            destination.path(),
+            &["rev-list", "--count", "refs/remotes/origin/main"],
+            b"",
+            None
+        ),
+        b"2\n"
+    );
+    retention.release().unwrap();
+}
+
+#[test]
+fn retained_workflow_rejects_changed_shallow_snapshot_before_pack_writes() {
+    let (source, destination, repo, tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    std::fs::write(destination.path().join("shallow"), format!("{tip}\n")).unwrap();
+    let error = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Shallow(girt::fetch::FetchShallowError::Changed)
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert_eq!(
+        std::fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(!destination.path().join("shallow.lock").exists());
+}
+
+#[test]
+fn retained_workflow_rejects_captured_shallow_destination() {
+    let (source, destination, repo, tip) = retained_fixture(ObjectFormat::Sha1);
+    publish_depth(&source, &repo, &KnownHistory::default(), 1);
+    let reopened = Repository::open(destination.path()).unwrap();
+    let known = KnownHistory::new(
+        &reopened.objects(PackLimits::default()).unwrap(),
+        &[tip],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let ready = receive_depth(&source, &reopened, &known, 2);
+    let error = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Installation(FetchError::Unsupported(
+            "retained workflow requires an initially nonshallow destination"
+        ))
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert_eq!(
+        std::fs::read_to_string(destination.path().join("shallow")).unwrap(),
+        format!("{tip}\n")
+    );
+}
+
+#[test]
+fn retained_workflow_leaves_existing_shallow_lock_untouched() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let lock = destination.path().join("shallow.lock");
+    std::fs::write(&lock, b"foreign").unwrap();
+    let error = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Shallow(_)
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert_eq!(std::fs::read(lock).unwrap(), b"foreign");
+    assert_eq!(
+        std::fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn retained_workflow_rejects_existing_pack_before_retention() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let duplicate = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let (_report, retention) = installed.into_recovery();
+    let marker = retention.path().to_owned();
+    retention.release().unwrap();
+    let error = duplicate
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Installation(FetchError::Existing(_))
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert!(!marker.exists());
+    assert!(!destination.path().join("shallow").exists());
+    assert!(!destination.path().join("shallow.lock").exists());
+}
+
+#[test]
+fn retained_workflow_cancellation_after_installation_preserves_marker() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    let error = installed.finish(&AtomicBool::new(true)).unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::BeforePublication(FetchError::Cancelled)
+    ));
+    assert!(error.report.installed.is_some());
+    assert!(!error.report.shallow_published);
+    assert!(error.retention.is_some());
+    drop(error);
+    assert!(marker.exists());
+    assert!(!destination.path().join("shallow").exists());
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert!(!destination.path().join("refs/remotes/origin/main").exists());
+}
+
+#[test]
+fn retained_workflow_boundary_publication_failure_preserves_pack() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    std::fs::create_dir(destination.path().join("shallow")).unwrap();
+    let error = installed.finish(&cancel).unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Shallow(_)
+    ));
+    assert!(error.report.installed.is_some());
+    assert!(!error.report.shallow_published);
+    assert!(error.retention.is_some());
+    drop(error);
+    assert!(marker.exists());
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert!(!destination.path().join("refs/remotes/origin/main").exists());
+}
+
+#[test]
+fn retained_workflow_ref_failure_preserves_published_boundary_and_marker() {
+    let (source, destination, repo, tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    let lock = destination.path().join("refs/remotes/origin/main.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"foreign").unwrap();
+    let error = installed.finish(&cancel).unwrap_err();
+    assert!(matches!(
+        *error.source,
+        girt::fetch::FetchFinishFailure::Publication(_)
+    ));
+    assert!(error.report.installed.is_some());
+    assert!(error.report.shallow_published);
+    assert!(error.report.references.is_empty());
+    assert!(error.retention.is_some());
+    drop(error);
+    assert!(marker.exists());
+    assert_eq!(
+        std::fs::read_to_string(destination.path().join("shallow")).unwrap(),
+        format!("{tip}\n")
+    );
+    assert_eq!(std::fs::read(lock).unwrap(), b"foreign");
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert!(!destination.path().join("refs/remotes/origin/main").exists());
+}
+
+#[test]
+fn dropping_retained_phase_preserves_marker_without_publishing() {
+    let (source, destination, repo, _tip) = retained_fixture(ObjectFormat::Sha1);
+    let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    drop(installed);
+    assert!(marker.exists());
+    assert!(!destination.path().join("shallow.lock").exists());
+    assert!(!destination.path().join("shallow").exists());
+    assert!(!destination.path().join("refs/remotes/origin/main").exists());
+}

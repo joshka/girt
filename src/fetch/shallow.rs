@@ -20,6 +20,7 @@ pub enum FetchShallowError {
     Io(#[from] io::Error),
 }
 
+#[derive(Debug)]
 pub(super) struct Lock {
     path: PathBuf,
     lock_path: PathBuf,

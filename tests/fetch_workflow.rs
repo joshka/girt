@@ -316,8 +316,28 @@ fn missing_exact_source_does_not_discard_valid_update() {
     assert_eq!(stored(&git_repository, "refs/remotes/origin/missing"), None);
 }
 
-#[test]
-fn prune_deletes_only_owned_missing_remote_tracking_refs() {
+fn finish_plain(ready: FetchReady) -> girt::fetch::FetchReport {
+    ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+}
+
+fn finish_retained(ready: FetchReady) -> girt::fetch::FetchReport {
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let (report, retention) = installed.finish(&cancel).unwrap();
+    retention.release().unwrap();
+    report
+}
+
+#[rstest]
+#[case::ordinary(finish_plain)]
+#[case::retained(finish_retained)]
+fn prune_deletes_only_owned_missing_remote_tracking_refs(
+    #[case] finish: fn(FetchReady) -> girt::fetch::FetchReport,
+) {
     let source = Source::new();
     let (_root, repository) = destination();
     let stale = name("refs/remotes/origin/gone");
@@ -342,9 +362,7 @@ fn prune_deletes_only_owned_missing_remote_tracking_refs() {
         &source,
         &KnownHistory::default(),
     );
-    let report = ready
-        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
-        .unwrap();
+    let report = finish(ready);
     assert!(
         report
             .updates
@@ -1071,8 +1089,12 @@ fn missing_known_dependency_prevents_publication() {
     assert_eq!(stored(&repository, "refs/remotes/origin/other"), None);
 }
 
-#[test]
-fn explicit_reflog_identity_is_used_only_for_changed_refs() {
+#[rstest]
+#[case::ordinary(finish_plain)]
+#[case::retained(finish_retained)]
+fn explicit_reflog_identity_is_used_only_for_changed_refs(
+    #[case] finish: fn(FetchReady) -> girt::fetch::FetchReport,
+) {
     let source = Source::new();
     let (_root, repository) = destination();
     let committer = girt::Signature {
@@ -1095,9 +1117,7 @@ fn explicit_reflog_identity_is_used_only_for_changed_refs() {
         &source,
         &KnownHistory::default(),
     );
-    let report = ready
-        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
-        .unwrap();
+    let report = finish(ready);
     let log = repository
         .references()
         .unwrap()
@@ -1338,4 +1358,79 @@ fn installed_graph_verification_budget_is_explicit() {
         FetchFinishFailure::BeforePublication(girt::fetch::FetchError::Limit(_))
     ));
     assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+}
+
+#[test]
+fn retained_workflow_rejects_known_dependencies_before_acquiring_marker() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let specs = ["refs/heads/main:refs/remotes/origin/main"];
+    fetch(&repository, &source, &specs);
+    let known = KnownHistory::new(
+        &repository.objects(PackLimits::default()).unwrap(),
+        &[source.first],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    source.set("refs/heads/main", source.second);
+    let ready = receive(
+        request(&repository, &specs, &[], Reflog::Preserve),
+        &source,
+        &known,
+    );
+    let before = fs::read_dir(repository.object_dir().join("pack"))
+        .unwrap()
+        .count();
+    let error = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::Installation(girt::fetch::FetchError::Unsupported(
+            "retention requires complete history"
+        ))
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert!(!repository.common_dir().join("shallow.lock").exists());
+    assert_eq!(
+        fs::read_dir(repository.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        before
+    );
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/main"),
+        Some(Target::Direct(source.first))
+    );
+}
+
+#[test]
+fn retained_workflow_rejects_empty_transfer_without_effects() {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let ready = receive(
+        request(&repository, &[], &[], Reflog::Preserve),
+        &source,
+        &KnownHistory::default(),
+    );
+    let error = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::Installation(girt::fetch::FetchError::Unsupported(
+            "retention requires a pack"
+        ))
+    ));
+    assert!(error.retention.is_none());
+    assert!(error.report.installed.is_none());
+    assert!(!repository.common_dir().join("shallow.lock").exists());
+    assert_eq!(
+        fs::read_dir(repository.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
 }

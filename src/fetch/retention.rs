@@ -95,7 +95,7 @@ pub(super) fn install(
     })
 }
 
-fn install_with(
+pub(super) fn install_with(
     repository: &Repository,
     checksum: ObjectId,
     publish: impl FnOnce() -> Result<FetchInstalled, FetchError>,

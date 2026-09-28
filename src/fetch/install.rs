@@ -223,7 +223,8 @@ impl ReceivedFetch {
     /// [`super::receive_local`] with empty known history to obtain one. An existing pack or index
     /// is refused: a collector may already have selected that old artifact for deletion before
     /// the marker was created. This operation does not protect shallow metadata, HEAD, worktrees,
-    /// or objects outside the received pack. The ordinary installation's trusted-path and
+    /// or objects outside the received pack. Use [`super::FetchReady::install_retained`] for a
+    /// coordinated initial shallow transfer. The ordinary installation's trusted-path and
     /// durability requirements still apply.
     ///
     /// # Errors
@@ -238,27 +239,38 @@ impl ReceivedFetch {
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
     ) -> Result<(FetchInstalled, super::FetchRetention), super::RetainedFetchError> {
-        let validate = || {
-            check_cancelled(cancel)?;
-            if repository.object_format() != self.format {
-                return Err(FetchError::Unsupported("destination object format differs"));
-            }
-            if !self.dependencies.is_empty() {
-                return Err(FetchError::Unsupported(
-                    "retention requires complete history",
-                ));
-            }
+        let checksum = self
+            .retention_checksum(repository, cancel)
+            .map_err(super::RetainedFetchError::before_retention)?;
+        let reject_shallow = || {
             if !self.shallow.is_empty()
                 || !repository.shallow_roots().is_empty()
                 || repository.common_dir().join("shallow").try_exists()?
             {
                 return Err(FetchError::Unsupported("retained shallow installation"));
             }
-            self.checksum
-                .ok_or(FetchError::Unsupported("retention requires a pack"))
+            Ok(())
         };
-        let checksum = validate().map_err(super::RetainedFetchError::before_retention)?;
+        reject_shallow().map_err(super::RetainedFetchError::before_retention)?;
         super::retention::install(self, repository, checksum, snapshot_limits, cancel)
+    }
+
+    pub(super) fn retention_checksum(
+        &self,
+        repository: &Repository,
+        cancel: &AtomicBool,
+    ) -> Result<ObjectId, FetchError> {
+        check_cancelled(cancel)?;
+        if repository.object_format() != self.format {
+            return Err(FetchError::Unsupported("destination object format differs"));
+        }
+        if !self.dependencies.is_empty() {
+            return Err(FetchError::Unsupported(
+                "retention requires complete history",
+            ));
+        }
+        self.checksum
+            .ok_or(FetchError::Unsupported("retention requires a pack"))
     }
 
     pub(super) fn install_for_workflow(

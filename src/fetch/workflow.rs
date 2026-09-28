@@ -481,6 +481,86 @@ impl FetchReady {
         &self.received
     }
 
+    /// Installs a self-contained pack under retention before publishing shallow metadata or refs.
+    ///
+    /// Supports complete transfers and initial depth-limited transfers into a destination whose
+    /// captured shallow roots are empty. Known-local dependencies and empty transfers are refused.
+    /// Holds the conditional shallow lock from installation through the returned phase's
+    /// publication, including depth requests whose response has no boundaries. An existing pack or
+    /// index is refused because a collector may already have selected it for removal.
+    ///
+    /// The returned phase permits caller-specific object checks before any shallow or reference
+    /// publication. Call [`RetainedFetchReady::finish`] to publish, or
+    /// [`RetainedFetchReady::into_recovery`] to abandon the phase with its effects and retention.
+    /// Dropping the phase releases its shallow lock but leaves the retention marker on disk.
+    /// The caller still owns the GC and HEAD/worktree exclusions on [`FetchRequest`]; retention
+    /// protects only this newly installed pack. No references or reflogs change in this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, shallow-lock, or installation failures with completed effects. Once
+    /// retention is acquired, errors retain its handle; a failed installation can leave partial
+    /// pack artifacts even when the report has no successful installation. Do not retry through
+    /// another fetch implementation after acquiring retention without inspecting those effects.
+    pub fn install_retained(
+        mut self,
+        limits: FetchUpdateLimits,
+        cancel: &AtomicBool,
+    ) -> Result<RetainedFetchReady, RetainedFetchFinishError> {
+        let mut report = self.take_report();
+        let prepare = || {
+            if !self.request.shallow_before.is_empty() {
+                return Err(FetchFinishFailure::Installation(FetchError::Unsupported(
+                    "retained workflow requires an initially nonshallow destination",
+                ))
+                .into());
+            }
+            let checksum = self
+                .received
+                .retention_checksum(&self.request.repository, cancel)
+                .map_err(FetchFinishFailure::Installation)?;
+            let shallow_lock = self.lock_shallow(true, cancel)?;
+            Ok((checksum, shallow_lock))
+        };
+        let (checksum, shallow_lock) = match prepare() {
+            Ok(prepared) => prepared,
+            Err(source) => {
+                return Err(RetainedFetchFinishError {
+                    report: Box::new(report),
+                    source,
+                    retention: None,
+                });
+            }
+        };
+        let installation =
+            super::retention::install_with(&self.request.repository, checksum, || {
+                self.received.install_for_workflow(
+                    &self.request.repository,
+                    limits.snapshot,
+                    cancel,
+                    shallow_lock.is_some(),
+                )
+            });
+        let (installed, retention) = match installation {
+            Ok(result) => result,
+            Err(error) => {
+                return Err(RetainedFetchFinishError {
+                    report: Box::new(report),
+                    source: FetchFinishFailure::Installation(*error.source).into(),
+                    retention: error.retention,
+                });
+            }
+        };
+        report.installed = Some(installed);
+        Ok(RetainedFetchReady {
+            ready: self,
+            report,
+            limits,
+            shallow_lock,
+            retention,
+        })
+    }
+
     /// Installs validated objects and shallow metadata, then publishes changed destinations.
     ///
     /// Rechecks known-local dependencies during installation, installed selected-tip readability,
@@ -519,20 +599,7 @@ impl FetchReady {
         );
 
         let operation = || {
-            let mut report = FetchReport {
-                updates: std::mem::take(&mut self.updates),
-                pack_bytes: self.received.pack_bytes(),
-                objects: self.received.object_count(),
-                installed: None,
-                references: Vec::new(),
-                shallow_published: false,
-                missing: self
-                    .request
-                    .specs
-                    .map_advertisement_with_missing(self.received.advertisement())
-                    .expect("validated fetch mapping")
-                    .1,
-            };
+            let mut report = self.take_report();
             let result = self.install_publish(limits, cancel, &mut report);
             match result {
                 Ok(()) => Ok(report),
@@ -560,6 +627,42 @@ impl FetchReady {
         cancel: &AtomicBool,
         report: &mut FetchReport,
     ) -> Result<(), Box<FetchFinishFailure>> {
+        let mut shallow_lock = self.lock_shallow(false, cancel)?;
+        report.installed = Some(
+            self.received
+                .install_for_workflow(
+                    &self.request.repository,
+                    limits.snapshot,
+                    cancel,
+                    shallow_lock.is_some(),
+                )
+                .map_err(FetchFinishFailure::Installation)?,
+        );
+        self.publish_installed(limits, cancel, &mut shallow_lock, report)
+    }
+
+    fn take_report(&mut self) -> FetchReport {
+        FetchReport {
+            updates: std::mem::take(&mut self.updates),
+            pack_bytes: self.received.pack_bytes(),
+            objects: self.received.object_count(),
+            installed: None,
+            references: Vec::new(),
+            shallow_published: false,
+            missing: self
+                .request
+                .specs
+                .map_advertisement_with_missing(self.received.advertisement())
+                .expect("validated fetch mapping")
+                .1,
+        }
+    }
+
+    fn lock_shallow(
+        &self,
+        retained: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Option<super::shallow::Lock>, Box<FetchFinishFailure>> {
         let resulting_roots = self.received.shallow_roots();
         if self.received.wants().is_empty() && self.request.shallow_before != resulting_roots {
             return Err(FetchFinishFailure::Safety(FetchPlanError::Shallow).into());
@@ -567,8 +670,8 @@ impl FetchReady {
         if self.request.depth.is_none() && self.request.shallow_before != resulting_roots {
             return Err(FetchFinishFailure::Safety(FetchPlanError::Shallow).into());
         }
-        let mut shallow_lock =
-            if !self.request.shallow_before.is_empty() || !resulting_roots.is_empty() {
+        let shallow_lock =
+            if retained || !self.request.shallow_before.is_empty() || !resulting_roots.is_empty() {
                 Some(
                     super::shallow::Lock::acquire(
                         self.request.repository.common_dir(),
@@ -581,16 +684,17 @@ impl FetchReady {
             } else {
                 None
             };
-        report.installed = Some(
-            self.received
-                .install_for_workflow(
-                    &self.request.repository,
-                    limits.snapshot,
-                    cancel,
-                    shallow_lock.is_some(),
-                )
-                .map_err(FetchFinishFailure::Installation)?,
-        );
+        Ok(shallow_lock)
+    }
+
+    fn publish_installed(
+        &self,
+        limits: FetchUpdateLimits,
+        cancel: &AtomicBool,
+        shallow_lock: &mut Option<super::shallow::Lock>,
+        report: &mut FetchReport,
+    ) -> Result<(), Box<FetchFinishFailure>> {
+        let resulting_roots = self.received.shallow_roots();
         if !self.received.wants().is_empty() && self.request.shallow_before != resulting_roots {
             let objects = self
                 .request
@@ -619,7 +723,7 @@ impl FetchReady {
                 .into());
             }
         }
-        if let Some(lock) = &mut shallow_lock {
+        if let Some(lock) = shallow_lock {
             report.shallow_published = lock
                 .publish(resulting_roots)
                 .map_err(FetchFinishFailure::Shallow)?;
@@ -685,6 +789,93 @@ impl FetchReady {
             .map_err(FetchFinishFailure::Publication)?;
         Ok(())
     }
+}
+
+/// An installed pack retained through caller validation and shallow/reference publication.
+///
+/// Owns the same shallow lock acquired before installation. No shallow metadata, refs, or reflogs
+/// have changed yet. Read [`Self::updates`] and installed objects to apply caller-specific checks,
+/// then consume this phase with [`Self::finish`] or [`Self::into_recovery`]. Dropping it releases
+/// the lock but deliberately leaves its Git `.keep` marker for recovery.
+#[derive(Debug)]
+#[must_use = "publish references or recover the retained installation explicitly"]
+pub struct RetainedFetchReady {
+    ready: FetchReady,
+    report: FetchReport,
+    limits: FetchUpdateLimits,
+    shallow_lock: Option<super::shallow::Lock>,
+    retention: super::FetchRetention,
+}
+
+impl RetainedFetchReady {
+    /// Original planned updates, before final object-kind and ancestry validation.
+    pub fn updates(&self) -> &[FetchUpdate] {
+        &self.report.updates
+    }
+
+    /// Completed installation effects; shallow and reference publication have not started.
+    pub fn report(&self) -> &FetchReport {
+        &self.report
+    }
+
+    /// Owned pack retention, available for recording its recovery path.
+    pub fn retention(&self) -> &super::FetchRetention {
+        &self.retention
+    }
+
+    /// Publishes shallow boundaries and conditional refs while holding the installation's lock.
+    ///
+    /// Performs the same installed-object, ancestry, worktree and reference checks as
+    /// [`FetchReady::finish`], without installing again or reacquiring the shallow lock.
+    /// Returns retention for explicit release after persistent roots are established. Source-only
+    /// callers must establish their own roots before releasing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns completed installation/shallow effects, exact transaction failure details, and
+    /// retention. Objects and published boundaries remain on failure; dropping the error leaves
+    /// the marker intact. No rollback or retry occurs. See [`FetchReady::finish`] for the
+    /// reference transaction's cancellation and partial-publication contract.
+    pub fn finish(
+        mut self,
+        cancel: &AtomicBool,
+    ) -> Result<(FetchReport, super::FetchRetention), RetainedFetchFinishError> {
+        let result = self.ready.publish_installed(
+            self.limits,
+            cancel,
+            &mut self.shallow_lock,
+            &mut self.report,
+        );
+        match result {
+            Ok(()) => Ok((self.report, self.retention)),
+            Err(source) => Err(RetainedFetchFinishError {
+                report: Box::new(self.report),
+                source,
+                retention: Some(self.retention),
+            }),
+        }
+    }
+
+    /// Abandons publication and releases the shallow lock, preserving effects and pack retention.
+    ///
+    /// No shallow metadata or references have changed. The caller can retain the returned marker
+    /// while inspecting objects, or explicitly release it when abandoning the installation.
+    pub fn into_recovery(self) -> (FetchReport, super::FetchRetention) {
+        (self.report, self.retention)
+    }
+}
+
+/// Retained workflow failure with completed effects and ownership of any acquired marker.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub struct RetainedFetchFinishError {
+    /// Completed effects. No successful installation does not exclude partial pack artifacts.
+    pub report: Box<FetchReport>,
+    /// Failed phase, including exact partial reference and reflog effects on transaction failure.
+    #[source]
+    pub source: Box<FetchFinishFailure>,
+    /// Acquired retention; dropping this error leaves its marker on disk for recovery.
+    pub retention: Option<super::FetchRetention>,
 }
 
 /// One advertised source and its proposed local effect, preserving refspec order.

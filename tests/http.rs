@@ -142,10 +142,32 @@ fn http_depth_fetch_reports_boundary(#[case] format: girt::ObjectFormat) {
     assert_eq!(notices, replay);
 }
 
+fn finish_depth(ready: fetch::FetchReady, cancel: &AtomicBool) -> fetch::FetchReport {
+    ready
+        .finish(fetch::FetchUpdateLimits::default(), cancel)
+        .unwrap()
+}
+
+fn finish_depth_retained(ready: fetch::FetchReady, cancel: &AtomicBool) -> fetch::FetchReport {
+    let installed = ready
+        .install_retained(fetch::FetchUpdateLimits::default(), cancel)
+        .unwrap();
+    assert!(installed.retention().path().exists());
+    assert!(!installed.report().shallow_published);
+    let (report, retention) = installed.finish(cancel).unwrap();
+    retention.release().unwrap();
+    report
+}
+
 #[rstest]
-#[case::sha1(girt::ObjectFormat::Sha1)]
-#[case::sha256(girt::ObjectFormat::Sha256)]
-fn http_workflow_publishes_depth_and_tracking_ref(#[case] format: girt::ObjectFormat) {
+#[case::sha1(girt::ObjectFormat::Sha1, finish_depth)]
+#[case::sha256(girt::ObjectFormat::Sha256, finish_depth)]
+#[case::retained_sha1(girt::ObjectFormat::Sha1, finish_depth_retained)]
+#[case::retained_sha256(girt::ObjectFormat::Sha256, finish_depth_retained)]
+fn http_workflow_publishes_depth_and_tracking_ref(
+    #[case] format: girt::ObjectFormat,
+    #[case] finish: fn(fetch::FetchReady, &AtomicBool) -> fetch::FetchReport,
+) {
     let fixture = Fixture::new(format, true, 8);
     let server = Server::new(fixture.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
@@ -173,11 +195,10 @@ fn http_workflow_publishes_depth_and_tracking_ref(#[case] format: girt::ObjectFo
             TransportControl::new(&cancel),
         ))
         .unwrap();
-    let report = download
+    let ready = download
         .validate(&cancel, |_| ControlFlow::Continue(()))
-        .unwrap()
-        .finish(fetch::FetchUpdateLimits::default(), &cancel)
         .unwrap();
+    let report = finish(ready, &cancel);
     let opened = Repository::open(path).unwrap();
     assert!(report.shallow_published);
     assert_eq!(
