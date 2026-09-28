@@ -280,6 +280,22 @@ impl IndexEdit {
         self.index.set_version(version, self.limits)
     }
 
+    /// Discards standalone entry-offset accelerators (`EOIE` and `IEOT`) under the held lock.
+    ///
+    /// Preserves entries, stat words, flags, framing version and opaque `TREE`/`REUC`/`sdir`
+    /// payloads. Both offset caches must be removed: canonical re-encoding can change entry byte
+    /// boundaries even when version and logical entries are unchanged. With neither cache present,
+    /// the original encoding is retained. Publication remains explicit through [`Self::commit`].
+    ///
+    /// # Errors
+    ///
+    /// Other extensions, including split-index `link`, prevent this bounded rewrite. Extension or
+    /// output-limit failures leave the snapshot and storage unchanged. Cache payloads are not
+    /// interpreted or repaired; they are discarded.
+    pub fn invalidate_entry_offsets(&mut self) -> Result<(), Error> {
+        self.index.invalidate_entry_offsets(self.limits)
+    }
+
     /// Discards a standalone index's `TREE` cache under the held lock.
     ///
     /// Entry replacement already discards `TREE` when entries change. Use this method when the

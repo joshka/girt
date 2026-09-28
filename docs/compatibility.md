@@ -2040,6 +2040,14 @@ optional extensions block edits. Identical entry replacement retains every exten
 byte. Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split
 and sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
 
+`IndexEdit::invalidate_entry_offsets` explicitly removes standalone `EOIE` and `IEOT` accelerators
+without changing entries, stat data, flags, framing version or `TREE`/`REUC`/`sdir` payloads. Both
+offset extensions are removed because canonical re-encoding may change entry byte boundaries. Other
+extensions, including split `link`, block this bounded edit. Absent caches preserve the original
+encoding; failures preserve the draft. Optional cache payloads may be malformed and are not
+interpreted, but normal outer framing, entry and checksum validation still precedes editing.
+Publication remains explicit through `commit`.
+
 `Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
 always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
 `GIT_INDEX_FILE` and configuration overrides are ignored. `edit_index` creates `index.lock`

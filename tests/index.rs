@@ -1030,3 +1030,85 @@ fn split_framing_conversion_discards_tree_but_preserves_git_entries(
     assert_eq!(git(work, &["ls-files", "--stage", "-v"]), listing);
     assert_eq!(git(work, &["write-tree"]), tree);
 }
+
+// Original EOIE encoding follows https://git-scm.com/docs/index-format#_end_of_index_entry.
+// Optional malformed payload cases deliberately keep the outer index and checksum valid.
+fn index_with_eoie(
+    format: girt::ObjectFormat,
+    original: &[u8],
+    malformed: Option<&[u8]>,
+) -> Vec<u8> {
+    use sha1::Digest;
+    let checksum = |bytes: &[u8]| match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(bytes).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(bytes).to_vec(),
+    };
+    let index = Index::parse(format, original, Limits::default()).unwrap();
+    assert!(!index.extensions().iter().any(|e| e.signature() == *b"EOIE"));
+    let mut headers = Vec::new();
+    let extension_bytes: usize = index
+        .extensions()
+        .iter()
+        .map(|e| {
+            headers.extend_from_slice(&e.signature());
+            headers.extend_from_slice(&(e.data().len() as u32).to_be_bytes());
+            8 + e.data().len()
+        })
+        .sum();
+    let end = original.len() - format.digest_len();
+    let mut payload = ((end - extension_bytes) as u32).to_be_bytes().to_vec();
+    payload.extend(checksum(&headers));
+    let payload = malformed.unwrap_or(&payload);
+    let mut bytes = original[..end].to_vec();
+    bytes.extend_from_slice(b"EOIE");
+    bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes.extend(checksum(&bytes));
+    bytes
+}
+
+#[rstest]
+#[case::valid(None)]
+#[case::empty(Some(b"".as_slice()))]
+#[case::truncated(Some(b"\xff\0".as_slice()))]
+fn discard_entry_offsets_git_oracle(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+    #[values(false, true)] tree_cache: bool,
+    #[case] malformed: Option<&[u8]>,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    git(work, &["update-index", "--assume-unchanged", "file"]);
+    git(work, &["update-index", "--skip-worktree", "file"]);
+    git(work, &["update-index", "--index-version=4"]);
+    let tree = git(work, &["write-tree"]);
+    let listing = git(work, &["ls-files", "--stage", "--debug"]);
+    if !tree_cache {
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        edit.invalidate_tree_cache().unwrap();
+        edit.commit().unwrap();
+    }
+    let index_path = repo.git_dir().join("index");
+    let original = fs::read(&index_path).unwrap();
+    let bytes = index_with_eoie(format, &original, malformed);
+    fs::write(&index_path, &bytes).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let entries = edit.index().entries().to_vec();
+    let semantic_extensions = edit
+        .index()
+        .extensions()
+        .iter()
+        .filter(|e| e.signature() != *b"EOIE")
+        .cloned()
+        .collect::<Vec<_>>();
+    edit.invalidate_entry_offsets().unwrap();
+    assert_eq!(fs::read(&index_path).unwrap(), bytes);
+    assert_eq!(edit.index().version(), girt::index::Version::V4);
+    assert_eq!(edit.index().entries(), entries);
+    assert_eq!(edit.index().extensions(), semantic_extensions);
+    edit.commit().unwrap();
+    assert_eq!(fs::read(index_path).unwrap(), original);
+    assert_eq!(git(work, &["ls-files", "--stage", "--debug"]), listing);
+    assert_eq!(git(work, &["write-tree"]), tree);
+}

@@ -308,6 +308,34 @@ impl Index {
         Ok(())
     }
 
+    pub(super) fn invalidate_entry_offsets(&mut self, limits: Limits) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"TREE" | b"REUC" | b"sdir" | b"EOIE" | b"IEOT"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        if !self
+            .extensions
+            .iter()
+            .any(|extension| matches!(&extension.signature, b"EOIE" | b"IEOT"))
+        {
+            self.encoded_len(limits)?;
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement
+            .extensions
+            .retain(|extension| !matches!(&extension.signature, b"EOIE" | b"IEOT"));
+        // Canonical encoding can move entry boundaries even without changing the version.
+        replacement.original = None;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(super) fn invalidate_tree_cache(&mut self, limits: Limits) -> Result<(), Error> {
         if let Some(extension) = self
             .extensions
@@ -1119,5 +1147,91 @@ mod dual_format_tests {
                 .collect::<Vec<_>>(),
             [*b"TREE", *b"sdir"]
         );
+    }
+    #[rstest]
+    fn discard_entry_offsets_retains_semantics(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, true);
+        index.original = None;
+        index
+            .extensions
+            .retain(|e| !matches!(&e.signature, b"UNTR" | b"FSMN"));
+        let bytes = index.encode(Limits::default()).unwrap();
+        let mut index = Index::parse(format, &bytes, Limits::default()).unwrap();
+        let entries = index.entries.clone();
+        let retained = index
+            .extensions
+            .iter()
+            .filter(|e| matches!(&e.signature, b"TREE" | b"REUC"))
+            .cloned()
+            .collect::<Vec<_>>();
+        index.invalidate_entry_offsets(Limits::default()).unwrap();
+        assert_eq!(index.version(), Version::V4);
+        assert_eq!(index.entries(), entries);
+        assert_eq!(index.extensions(), retained);
+        assert!(index.original.is_none());
+        let encoded = index.encode(Limits::default()).unwrap();
+        assert_eq!(
+            Index::parse(format, &encoded, Limits::default()).unwrap(),
+            index
+        );
+    }
+
+    #[rstest]
+    #[case::unknown(*b"TEST")]
+    #[case::split(*b"link")]
+    #[case::untracked(*b"UNTR")]
+    #[case::fsmonitor(*b"FSMN")]
+    fn discard_entry_offsets_refusal_is_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+        #[case] signature: [u8; 4],
+    ) {
+        let mut index = cached_index(format, false);
+        index.original = None;
+        index
+            .extensions
+            .retain(|e| matches!(&e.signature, b"TREE" | b"EOIE"));
+        index.extensions.push(Extension {
+            signature,
+            data: vec![],
+        });
+        let before = index.encode(Limits::default()).unwrap();
+        assert_eq!(
+            index.invalidate_entry_offsets(Limits::default()),
+            Err(Error::ExtensionPreventsEdit(signature))
+        );
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    fn discard_entry_offsets_limits_are_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, false);
+        index.original = None;
+        index
+            .extensions
+            .retain(|e| matches!(&e.signature, b"TREE" | b"EOIE"));
+        let before = index.encode(Limits::default()).unwrap();
+        assert!(matches!(
+            index.invalidate_entry_offsets(Limits {
+                max_bytes: 0,
+                ..Default::default()
+            }),
+            Err(Error::Limit(_))
+        ));
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    fn discard_entry_offsets_without_cache_preserves_original(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let index = Index::new(format, vec![], Limits::default()).unwrap();
+        let bytes = index.encode(Limits::default()).unwrap();
+        let mut parsed = Index::parse(format, &bytes, Limits::default()).unwrap();
+        parsed.invalidate_entry_offsets(Limits::default()).unwrap();
+        assert_eq!(parsed.original.as_deref(), Some(bytes.as_slice()));
     }
 }
