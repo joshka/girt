@@ -49,6 +49,12 @@ pub enum ConfiguredRemoteError {
     /// The last explicit tag option is neither `--tags` nor `--no-tags`.
     #[error("remote tagOpt must be --tags or --no-tags")]
     TagOption,
+    /// A final implicit tag option follows an explicit value in an unknown physical section.
+    ///
+    /// Section-local inheritance cannot be recovered from flattened entries. Use compatibility
+    /// handling for the whole remote, even when both occurrences came from the same section.
+    #[error("unsupported remote tagOpt inheritance across configuration sections")]
+    UnsupportedTagOptionInheritance,
     /// A URL in the supported syntax is malformed.
     #[error("remote {key}, occurrence {occurrence}, rewritten={rewritten}: {source}")]
     Url {
@@ -89,8 +95,9 @@ impl ConfiguredRemote {
     /// Resolves one remote without filesystem, environment, or network access.
     ///
     /// Returns `None` for absent or URL-free remotes, **after** validation. Thus a URL-free remote
-    /// with an invalid tag option or refspec still fails. Only the last tag option matters; an
-    /// implicit last option clears preceding options. Empty explicit tag options are invalid.
+    /// with an invalid tag option or refspec still fails. A final implicit tag option following
+    /// any explicit tag option requires compatibility handling before other validation, since
+    /// inheritance depends on physical sections. Empty explicit tag options are invalid.
     /// Refspecs retain configuration order and duplicates, leaving selection policy to callers.
     ///
     /// Ordinary `insteadOf` rewrites match canonical URL bytes. The longest prefix wins, with the
@@ -203,7 +210,9 @@ impl ConfiguredRemoteRecord {
     ///
     /// Validates the last tag option, surviving fetch URLs, surviving push URLs, all fetch
     /// refspecs, then all push refspecs. Uses the supported syntax and whole-record compatibility
-    /// boundary of [`ConfiguredRemote`]. Rewrites are neither read nor validated.
+    /// boundary of [`ConfiguredRemote`]. A final implicit tag option after any explicit one
+    /// returns [`ConfiguredRemoteError::UnsupportedTagOptionInheritance`] before other validation.
+    /// Rewrites are neither read nor validated.
     ///
     /// ```
     /// use girt::Config;
@@ -217,7 +226,12 @@ impl ConfiguredRemoteRecord {
         if !config.contains_section("remote", Some(name)) {
             return Ok(None);
         }
-        let tag_option = match config.value("remote", Some(name), "tagopt") {
+        let mut tag_options = config.values("remote", Some(name), "tagopt");
+        let last_tag_option = tag_options.next_back();
+        if last_tag_option == Some(None) && tag_options.any(|value| value.is_some()) {
+            return Err(ConfiguredRemoteError::UnsupportedTagOptionInheritance);
+        }
+        let tag_option = match last_tag_option {
             None | Some(None) => None,
             Some(Some(b"--tags")) => Some(b"--tags".as_slice()),
             Some(Some(b"--no-tags")) => Some(b"--no-tags".as_slice()),

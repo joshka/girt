@@ -12,7 +12,10 @@ when a caller needs display URLs without parsing refspecs. Try `cargo run --exam
 selecting a transport. It checks the last tag option, all surviving fetch URLs, all surviving push
 URLs, fetch refspecs, push refspecs, and then URL rewrites. Only after validation does it return
 `None` for an inactive remote. Errors identify the key, original occurrence and rewrite stage
-without printing URL contents.
+without printing URL contents. A final implicit `tagOpt` following any explicit `tagOpt` returns
+`UnsupportedTagOptionInheritance` before URL validation. Its meaning depends on physical section
+boundaries, which the snapshot does not retain. Use whole-remote compatibility handling for this
+result, including when both values occur in one section.
 
 Implicit and empty URL values reset earlier URLs. An implicit fetch refspec instead selects `HEAD`;
 refspecs retain occurrence order and duplicates. Ordinary prefix rewrites match supported serialized

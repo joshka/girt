@@ -38,8 +38,8 @@ fn find(body: &[u8]) -> Result<Option<ConfiguredRemote>, ConfiguredRemoteError> 
     Some(b"first".as_slice()),
     Some(b"pushfirst".as_slice())
 )]
-#[case::tag_cleared(
-    b"[remote \"origin\"]\ntagOpt=bad\ntagOpt\nurl=good",
+#[case::tag_implicit(
+    b"[remote \"origin\"]\ntagOpt\ntagOpt\nurl=good",
     Some(b"good".as_slice()),
     Some(b"good".as_slice())
 )]
@@ -188,7 +188,7 @@ fn configured_record_retains_inactive_existence(#[case] body: &[u8], #[case] exi
 #[case::absent(b"", None)]
 #[case::tags(b"tagOpt=--tags", Some(b"--tags".as_slice()))]
 #[case::last(b"tagOpt=--tags\ntagOpt=--no-tags", Some(b"--no-tags".as_slice()))]
-#[case::cleared(b"tagOpt=bad\ntagOpt", None)]
+#[case::implicit(b"tagOpt\ntagOpt", None)]
 fn configured_record_tag_option(#[case] body: &[u8], #[case] expected: Option<&[u8]>) {
     let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
     let record = ConfiguredRemoteRecord::find(&config, b"origin")
@@ -254,4 +254,51 @@ fn configured_record_preserves_error_order(#[case] body: &[u8], #[case] key: &st
         error => panic!("unexpected error: {error}"),
     };
     assert_eq!(actual, key);
+}
+
+#[rstest]
+#[case::same_section(b"tagOpt=--tags\ntagOpt")]
+#[case::same_section_invalid(b"tagOpt=bad\ntagOpt")]
+#[case::different_sections(b"tagOpt=--tags\n[remote \"origin\"]\ntagOpt")]
+#[case::different_sections_invalid(b"tagOpt=bad\n[remote \"origin\"]\ntagOpt")]
+#[case::explicit_empty(b"tagOpt=\ntagOpt")]
+#[case::non_utf8(b"tagOpt=\xff\ntagOpt")]
+#[case::before_invalid_url(b"tagOpt=bad\ntagOpt\nurl=host:")]
+#[case::before_unsupported_url(b"tagOpt=bad\ntagOpt\nurl=foo::repo")]
+fn implicit_tag_after_explicit_requires_whole_remote_compatibility(#[case] body: &[u8]) {
+    let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
+    assert_eq!(
+        ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err(),
+        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
+    );
+    assert_eq!(
+        ConfiguredRemote::find(&config, b"origin").unwrap_err(),
+        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
+    );
+}
+
+#[test]
+fn included_invalid_tag_then_implicit_requires_compatibility() {
+    let root = tempfile::tempdir().unwrap();
+    let child = root.path().join("child");
+    std::fs::write(&child, b"[remote \"origin\"]\ntagOpt=bad\n").unwrap();
+    let parent = root.path().join("parent");
+    std::fs::write(
+        &parent,
+        b"[include]\npath=child\n[remote \"origin\"]\ntagOpt\nurl=host:\n",
+    )
+    .unwrap();
+    let config = Config::resolve(&crate::config::ConfigInputs {
+        files: vec![crate::config::ConfigFile {
+            path: parent,
+            scope: crate::config::ConfigScope::Global,
+            optional: false,
+        }],
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err(),
+        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
+    );
 }
