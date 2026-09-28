@@ -80,6 +80,80 @@ pub async fn send_ssh_checked_with_progress(
     prepared: &PreparedPush,
     control: TransportControl<'_>,
     should_send: impl FnOnce(&PushAdvertisement) -> bool,
+    diagnostics: impl FnMut(&[u8]),
+    progress: impl FnMut(&[u8]),
+) -> Result<SshPushOutcome, PushError> {
+    send_selected(
+        remote,
+        prepared,
+        control,
+        |advertisement, offered| {
+            // Retain the checked sender's all-command validation before its boolean callback.
+            offered.validate(prepared, &prepared.commands, control.cancel)?;
+            Ok(should_send(advertisement).then(|| prepared.commands.clone()))
+        },
+        diagnostics,
+        progress,
+    )
+    .await
+}
+
+/// Sends only selected prepared commands through one SSH receive-pack session.
+///
+/// After bounded advertisement parsing and object-format validation, `select` returns prepared
+/// destination names to submit. Each name must occur once and belong to [`PreparedPush::commands`].
+/// Selection preserves original command order and exact expected/new IDs, regardless of callback
+/// order. Required report-status, delete-refs and push-options capabilities are checked for the
+/// submitted subset after selection. The receiver still enforces each command's expected old ID.
+///
+/// A nondeletion selection borrows the original prepared pack without copying or recompression;
+/// the pack may contain objects for omitted commands and retains its receiver-root requirements.
+/// Empty and deletion-only selections send no pack. Empty selection sends only a flush, closes
+/// stdin, awaits exit and returns [`SshPushOutcome::Sent`] with an empty report. This function
+/// never returns [`SshPushOutcome::Declined`]. Normal and uncertain reports contain only submitted
+/// refs.
+///
+/// `diagnostics` and `progress` follow [`send_ssh_checked_with_progress`]'s raw-output, retention
+/// and prompt-callback contracts. Selection itself must also return promptly. Authentication,
+/// trust and proxy effects may precede selection; no outcome authorizes an automatic retry.
+///
+/// # Errors
+///
+/// Invalid or duplicate selections, missing required capabilities and failures before attempted
+/// update bytes return [`PushError::NotSent`] after local session cleanup. Once transmission
+/// starts, failures return [`PushError::Uncertain`] with submitted-command acknowledgement
+/// evidence. Empty-selection cleanup failures are `NotSent`; complete receiver rejection remains a
+/// report.
+pub async fn send_ssh_selected_with_progress(
+    remote: &SshRemote,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+    select: impl FnOnce(&PushAdvertisement) -> Vec<crate::refs::RefName>,
+    diagnostics: impl FnMut(&[u8]),
+    progress: impl FnMut(&[u8]),
+) -> Result<SshPushOutcome, PushError> {
+    send_selected(
+        remote,
+        prepared,
+        control,
+        |advertisement, offered| {
+            offered.validate_format(prepared.format)?;
+            prepared.selected_commands(select(advertisement)).map(Some)
+        },
+        diagnostics,
+        progress,
+    )
+    .await
+}
+
+async fn send_selected(
+    remote: &SshRemote,
+    prepared: &PreparedPush,
+    control: TransportControl<'_>,
+    select: impl FnOnce(
+        &PushAdvertisement,
+        &protocol::AdvertisedCapabilities,
+    ) -> Result<Option<Vec<super::PushCommand>>, PushFailure>,
     mut diagnostics: impl FnMut(&[u8]),
     mut progress: impl FnMut(&[u8]),
 ) -> Result<SshPushOutcome, PushError> {
@@ -114,13 +188,14 @@ pub async fn send_ssh_checked_with_progress(
                 remaining: prepared.limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            let (caps, advertisement) = protocol::advertise_with_refs(&mut wire, prepared)?;
+            let (caps, advertisement) = protocol::advertise_for_selection(&mut wire, prepared)?;
             wire.end()?;
             control.check()?;
             Ok::<_, PushFailure>((caps, advertisement))
         };
-        let (caps, advertisement) = preflight.await.map_err(PushError::NotSent)?;
-        if !should_send(&advertisement) {
+        let (offered, advertisement) = preflight.await.map_err(PushError::NotSent)?;
+        let commands = select(&advertisement, &offered).map_err(PushError::NotSent)?;
+        let Some(commands) = commands else {
             let (body, result, _) = session
                 .exchange_with_diagnostics(
                     b"0000",
@@ -137,12 +212,15 @@ pub async fn send_ssh_checked_with_progress(
                 )));
             }
             return Ok(SshPushOutcome::Declined);
-        }
-        let negotiated = prepared
-            .request_for(caps.report_v2, caps.sideband)
+        };
+        let caps = offered
+            .validate(prepared, &commands, control.cancel)
             .map_err(PushError::NotSent)?;
-        let mut report = PushReport::pending(&prepared.commands);
-        let request = if prepared.commands.is_empty() {
+        let negotiated = prepared
+            .selected_request(&commands, caps.report_v2, caps.sideband, control.cancel)
+            .map_err(PushError::NotSent)?;
+        let mut report = PushReport::pending(&commands);
+        let request: &[u8] = if commands.is_empty() {
             b"0000"
         } else {
             negotiated.as_ref()
@@ -151,18 +229,22 @@ pub async fn send_ssh_checked_with_progress(
         let (body, result, written) = session
             .exchange_observed(
                 request,
-                &prepared.pack,
+                if commands.iter().all(super::PushCommand::deletes) {
+                    &[]
+                } else {
+                    &prepared.pack
+                },
                 prepared.limits.max_status_bytes,
                 control,
                 &mut diagnostics,
                 &mut |bytes| {
-                    if caps.sideband && !prepared.commands.is_empty() {
+                    if caps.sideband && !commands.is_empty() {
                         sideband.observe(bytes, &mut progress);
                     }
                 },
             )
             .await;
-        if prepared.commands.is_empty() {
+        if commands.is_empty() {
             result.map_err(|e| PushError::NotSent(e.into()))?;
             if !body.is_empty() {
                 return Err(PushError::NotSent(PushFailure::Protocol(

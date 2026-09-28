@@ -670,3 +670,402 @@ fn depth_fetch_observers_preserve_real_git_shallow_response(#[case] format: Obje
     assert!(!notices.is_empty());
     assert_eq!(notices, replay);
 }
+
+fn selected_advertisement(format: ObjectFormat, caps: &str) -> Vec<u8> {
+    [
+        packet(
+            format!(
+                "{} capabilities^{{}}\0object-format={format} {caps}\n",
+                ObjectId::null(format)
+            )
+            .as_bytes(),
+        ),
+        b"0000".to_vec(),
+    ]
+    .concat()
+}
+
+fn selection_prepared(format: ObjectFormat) -> push::PreparedPush {
+    let source = super::Fixture::new(format, false, 2);
+    let id = super::tip(&source.repo, "refs/heads/main");
+    push::PreparedPush::new(
+        &source.repo.objects(girt::PackLimits::default()).unwrap(),
+        vec![
+            super::command("refs/heads/main", Some(id), id),
+            super::command("refs/heads/other", None, id),
+            super::command("refs/heads/delete", Some(id), ObjectId::null(format)),
+        ],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+}
+
+fn names(names: &[&str]) -> Vec<girt::refs::RefName> {
+    names
+        .iter()
+        .map(|name| girt::refs::RefName::new(*name).unwrap())
+        .collect()
+}
+
+fn selected_status(names: &[&str]) -> Vec<u8> {
+    let mut bytes = packet(b"unpack ok\n");
+    for name in names {
+        bytes.extend(packet(format!("ok {name}\n").as_bytes()));
+    }
+    bytes.extend(b"0000");
+    bytes
+}
+
+fn encoded_selected(prepared: &push::PreparedPush, positions: &[usize], caps: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for (index, position) in positions.iter().enumerate() {
+        let command = &prepared.commands()[*position];
+        let old = command
+            .expected
+            .unwrap_or(ObjectId::null(command.new.format()));
+        let cap = if index == 0 {
+            format!("\0{caps}")
+        } else {
+            String::new()
+        };
+        bytes.extend(packet(
+            format!(
+                "{old} {} {}{cap}",
+                command.new,
+                std::str::from_utf8(command.name.as_bytes()).unwrap()
+            )
+            .as_bytes(),
+        ));
+    }
+    bytes.extend(b"0000");
+    bytes
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1, "report-status")]
+#[case::sha256(ObjectFormat::Sha256, "report-status object-format=sha256")]
+fn selected_push_preserves_original_order_and_exact_ids(
+    #[case] format: ObjectFormat,
+    #[case] caps: &str,
+) {
+    let peer = Peer::new(
+        &selected_advertisement(format, "report-status"),
+        &selected_status(&["refs/heads/main", "refs/heads/other"]),
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(format);
+    let cancel = AtomicBool::new(false);
+    let outcome = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(&["refs/heads/other", "refs/heads/main"]),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap();
+    let SshPushOutcome::Sent(report) = outcome else {
+        panic!("selected push declined")
+    };
+    assert!(report.all_succeeded());
+    assert_eq!(
+        report
+            .refs
+            .iter()
+            .map(|entry| entry.command.name.clone())
+            .collect::<Vec<_>>(),
+        names(&["refs/heads/main", "refs/heads/other"])
+    );
+    let prefix = encoded_selected(&prepared, &[0, 1], caps);
+    let request = peer.request();
+    assert!(request.starts_with(&prefix));
+    assert!(request[prefix.len()..].starts_with(b"PACK"));
+    assert_eq!(request.len() - prefix.len(), prepared.pack_bytes());
+    peer.assert_reaped();
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1, "report-status")]
+#[case::sha256(ObjectFormat::Sha256, "report-status object-format=sha256")]
+fn selected_deletion_omits_original_mixed_pack(#[case] format: ObjectFormat, #[case] caps: &str) {
+    let peer = Peer::new(
+        &selected_advertisement(format, "report-status delete-refs"),
+        &selected_status(&["refs/heads/delete"]),
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(format);
+    assert!(prepared.pack_bytes() > 0);
+    let cancel = AtomicBool::new(false);
+    let outcome = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(&["refs/heads/delete"]),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap();
+    assert!(
+        matches!(outcome, SshPushOutcome::Sent(report) if report.all_succeeded() && report.refs.len() == 1 && report.refs[0].command.deletes())
+    );
+    assert_eq!(peer.request(), encoded_selected(&prepared, &[2], caps));
+    peer.assert_reaped();
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn selected_empty_omits_pack_options_and_command_capability_checks(#[case] format: ObjectFormat) {
+    let peer = Peer::new(&selected_advertisement(format, ""), &[], &[], "none");
+    let prepared = selection_prepared(format)
+        .with_push_options(vec![b"option".to_vec()])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let outcome = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| vec![],
+            |_| {},
+            |_| {},
+        ))
+        .unwrap();
+    assert!(matches!(outcome, SshPushOutcome::Sent(report) if report.refs.is_empty()));
+    assert_eq!(peer.request(), b"0000");
+    peer.assert_reaped();
+}
+
+#[rstest]
+#[case::unknown(&["refs/heads/unknown"], "selected destination was not prepared")]
+#[case::duplicate(&["refs/heads/main", "refs/heads/main"], "duplicate selected destination")]
+fn invalid_selected_names_send_no_commands_and_reap(
+    #[case] selected: &[&str],
+    #[case] expected: &str,
+) {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, "report-status delete-refs"),
+        &[],
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(selected),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(error, PushError::NotSent(PushFailure::Command(message)) if message == expected)
+    );
+    assert!(
+        std::fs::read(peer.root.path().join("request"))
+            .unwrap_or_default()
+            .is_empty()
+    );
+    peer.assert_reaped();
+}
+
+#[rstest]
+#[case::status("", &["refs/heads/other"], "report-status is required")]
+#[case::deletion("report-status", &["refs/heads/delete"], "delete-refs is required")]
+#[case::options("report-status delete-refs", &["refs/heads/other"], "push-options is required")]
+fn selected_commands_require_only_their_capabilities(
+    #[case] caps: &str,
+    #[case] selected: &[&str],
+    #[case] expected: &str,
+) {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, caps),
+        &[],
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1)
+        .with_push_options(vec![b"option".to_vec()])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(selected),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(error, PushError::NotSent(PushFailure::Unsupported(message)) if message == expected)
+    );
+    peer.assert_reaped();
+}
+
+#[test]
+fn selected_nonempty_preserves_push_options_after_subset_flush() {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, "report-status push-options"),
+        &selected_status(&["refs/heads/other"]),
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1)
+        .with_push_options(vec![b"option\xff".to_vec()])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let outcome = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(&["refs/heads/other"]),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap();
+    assert!(
+        matches!(outcome, SshPushOutcome::Sent(report) if report.all_succeeded() && report.refs.len() == 1)
+    );
+    let prefix = [
+        encoded_selected(&prepared, &[1], "report-status push-options"),
+        packet(b"option\xff"),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    assert!(peer.request().starts_with(&prefix));
+    peer.assert_reaped();
+}
+
+#[test]
+fn selected_uncertainty_retains_only_submitted_acknowledgements() {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, "report-status"),
+        &selected_status(&["refs/heads/other"]),
+        &[],
+        "exit-direct",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| names(&["refs/heads/other"]),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    let PushError::Uncertain { report, cause } = error else {
+        panic!("not uncertain")
+    };
+    assert!(matches!(cause, PushFailure::Ssh(SshError::Exit(Some(42)))));
+    assert_eq!(report.refs.len(), 1);
+    assert_eq!(report.refs[0].command.name, names(&["refs/heads/other"])[0]);
+    assert_eq!(report.refs[0].status, Some(push::Status::Ok));
+    peer.assert_reaped();
+}
+
+#[test]
+fn selected_callback_cancellation_sends_no_updates() {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, "report-status"),
+        &[],
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| {
+                cancel.store(true, Ordering::Relaxed);
+                names(&["refs/heads/other"])
+            },
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    assert!(matches!(error, PushError::NotSent(PushFailure::Cancelled)));
+    assert!(
+        std::fs::read(peer.root.path().join("request"))
+            .unwrap_or_default()
+            .is_empty()
+    );
+    peer.assert_reaped();
+}
+
+#[test]
+fn legacy_checked_push_validates_all_commands_before_predicate() {
+    let peer = Peer::new(
+        &selected_advertisement(ObjectFormat::Sha1, "report-status"),
+        &[],
+        &[],
+        "none",
+    );
+    let prepared = selection_prepared(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_checked_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| panic!("legacy predicate preceded required capability validation"),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PushError::NotSent(PushFailure::Unsupported("delete-refs is required"))
+    ));
+    peer.assert_reaped();
+}
+
+#[test]
+fn selected_push_validates_format_before_selection() {
+    // SHA-1 width with a SHA-256 capability is inconsistent even for an empty selection.
+    let advertisement = [
+        packet(
+            format!(
+                "{} capabilities^{{}}\0object-format=sha256\n",
+                ObjectId::null(ObjectFormat::Sha1)
+            )
+            .as_bytes(),
+        ),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    let peer = Peer::new(&advertisement, &[], &[], "none");
+    let prepared = selection_prepared(ObjectFormat::Sha1);
+    let cancel = AtomicBool::new(false);
+    let error = super::runtime()
+        .block_on(push::send_ssh_selected_with_progress(
+            &peer.remote,
+            &prepared,
+            control(&cancel),
+            |_| panic!("inconsistent advertisement reached selection"),
+            |_| {},
+            |_| {},
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PushError::NotSent(PushFailure::Unsupported("object format"))
+    ));
+    peer.assert_reaped();
+}

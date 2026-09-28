@@ -244,6 +244,18 @@ fallback: authentication, host-key, proxy or local-command effects may already h
 predicate retains the prepared commands' expected old values for the server to enforce after the
 advertisement becomes stale.
 
+`push::send_ssh_selected_with_progress` lets the callback choose a subset of prepared destination
+names in the same session. Names must be unique and belong to the prepared command list; submitted
+commands retain their original order and exact old/new IDs. Format validation precedes selection,
+and the submitted subset determines required report-status, delete-refs and push-options
+capabilities. A nondeletion subset borrows the prepared pack unchanged, potentially including
+objects for omitted commands, and retains that pack's receiver-root requirements. Deletion-only
+selection sends no pack. Empty selection sends only a flush, omits push options, awaits clean exit
+and returns `Sent` with an empty report; this API never returns `Declined`. Successful and uncertain
+reports contain only submitted refs. Omitted refs are caller observations, not receiver-confirmed
+updates. Invalid selection and cleanup failures before update transmission are `NotSent` and do not
+authorize automatic retry or fallback.
+
 Call `PreparedPush::with_progress` to request push sideband. When negotiated, the remote observer
 receives complete channel-2 payloads before the final report. Local stderr remains a separate
 observer. Partial channel-2 packets, bytes outside the response budget, and packets after malformed

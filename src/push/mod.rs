@@ -31,7 +31,9 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::{SshPushOutcome, send_ssh, send_ssh_checked_with_progress};
+pub use ssh::{
+    SshPushOutcome, send_ssh, send_ssh_checked_with_progress, send_ssh_selected_with_progress,
+};
 
 #[cfg(any(
     feature = "http",

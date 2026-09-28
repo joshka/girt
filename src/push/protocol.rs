@@ -183,6 +183,66 @@ pub(super) fn advertise_with_refs(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
 ) -> Result<(Capabilities, PushAdvertisement), Error> {
+    let (offered, advertisement) = advertise_for_selection(wire, prepared)?;
+    let caps = offered.validate(prepared, &prepared.commands, wire.cancel)?;
+    Ok((caps, advertisement))
+}
+
+pub(super) struct AdvertisedCapabilities {
+    format: crate::ObjectFormat,
+    report_status: bool,
+    report_v2: bool,
+    sideband: bool,
+    delete_refs: bool,
+    push_options: bool,
+    roots: HashSet<ObjectId>,
+}
+
+impl AdvertisedCapabilities {
+    pub fn validate_format(&self, format: crate::ObjectFormat) -> Result<(), Error> {
+        if self.format != format {
+            return Err(Error::Unsupported("object format"));
+        }
+        Ok(())
+    }
+
+    pub fn validate(
+        &self,
+        prepared: &PreparedPush,
+        commands: &[super::PushCommand],
+        cancel: &AtomicBool,
+    ) -> Result<Capabilities, Error> {
+        if !commands.is_empty() && !self.report_status && !self.report_v2 {
+            return Err(Error::Unsupported("report-status is required"));
+        }
+        self.validate_format(prepared.format)?;
+        if commands.iter().any(super::PushCommand::deletes) && !self.delete_refs {
+            return Err(Error::Unsupported("delete-refs is required"));
+        }
+        if !commands.is_empty() && prepared.has_options && !self.push_options {
+            return Err(Error::Unsupported("push-options is required"));
+        }
+        // The reused pack can depend on any exclusion root retained during preparation. A
+        // deletion-only or empty selection sends no pack and needs no such evidence.
+        if commands.iter().any(|command| !command.deletes()) {
+            for &id in &prepared.receiver_roots {
+                check_cancelled(cancel)?;
+                if !self.roots.contains(&id) {
+                    return Err(Error::KnowledgeChanged(id));
+                }
+            }
+        }
+        Ok(Capabilities {
+            report_v2: self.report_v2,
+            sideband: self.sideband && prepared.progress,
+        })
+    }
+}
+
+pub(super) fn advertise_for_selection(
+    wire: &mut Wire<'_, impl Read>,
+    prepared: &PreparedPush,
+) -> Result<(AdvertisedCapabilities, PushAdvertisement), Error> {
     let mut refs = HashMap::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
@@ -251,30 +311,15 @@ pub(super) fn advertise_with_refs(
     if count == 0 {
         return Err(Error::Protocol("missing advertisement"));
     }
-    if !prepared.commands.is_empty() && !report_status && !report_v2 {
-        return Err(Error::Unsupported("report-status is required"));
-    }
-    if advertised_format != prepared.format {
-        return Err(Error::Unsupported("object format"));
-    }
-    if prepared.commands.iter().any(super::PushCommand::deletes) && !delete_refs {
-        return Err(Error::Unsupported("delete-refs is required"));
-    }
-    if prepared.has_options && !push_options {
-        return Err(Error::Unsupported("push-options is required"));
-    }
-    for &id in &prepared.receiver_roots {
-        check_cancelled(wire.cancel)?;
-        if !roots.contains(&id) {
-            return Err(Error::KnowledgeChanged(id));
-        }
-    }
-    // Every command carries its exact old ID. The receiver checks that value under its ref
-    // transaction, allowing a stale command to fail without suppressing independent commands.
     Ok((
-        Capabilities {
+        AdvertisedCapabilities {
+            format: advertised_format,
+            report_status,
             report_v2,
-            sideband: sideband && prepared.progress,
+            sideband,
+            delete_refs,
+            push_options,
+            roots,
         },
         PushAdvertisement { refs },
     ))

@@ -314,6 +314,51 @@ impl PreparedPush {
         self
     }
 
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(super) fn selected_commands(
+        &self,
+        names: Vec<crate::refs::RefName>,
+    ) -> Result<Vec<PushCommand>, Error> {
+        let mut selected: HashSet<_> = names.iter().collect();
+        if selected.len() != names.len() {
+            return Err(Error::Command("duplicate selected destination"));
+        }
+        let mut commands = Vec::new();
+        for command in &self.commands {
+            if selected.remove(&command.name) {
+                commands.push(command.clone());
+            }
+        }
+        if !selected.is_empty() {
+            return Err(Error::Command("selected destination was not prepared"));
+        }
+        Ok(commands)
+    }
+
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(super) fn selected_request(
+        &self,
+        commands: &[PushCommand],
+        report_v2: bool,
+        sideband: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, Error> {
+        let options = if commands.is_empty() {
+            &[]
+        } else {
+            self.options.as_slice()
+        };
+        encode_commands(
+            self.format,
+            commands,
+            options,
+            self.limits,
+            cancel,
+            report_v2,
+            sideband,
+        )
+    }
+
     pub(super) fn request_for(
         &self,
         report_v2: bool,
