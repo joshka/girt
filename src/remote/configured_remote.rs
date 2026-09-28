@@ -46,13 +46,13 @@ impl std::fmt::Debug for ConfiguredRemote {
 /// is reported only when reached in validation order; preceding malformed values still win.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 pub enum ConfiguredRemoteError {
-    /// The last explicit tag option is neither `--tags` nor `--no-tags`.
+    /// The selected explicit tag option is neither `--tags` nor `--no-tags`.
     #[error("remote tagOpt must be --tags or --no-tags")]
     TagOption,
-    /// A final implicit tag option follows an explicit value in an unknown physical section.
+    /// Retained for compatibility with callers of earlier releases.
     ///
-    /// Section-local inheritance cannot be recovered from flattened entries. Use compatibility
-    /// handling for the whole remote, even when both occurrences came from the same section.
+    /// Configuration snapshots now retain physical section membership, so neither
+    /// [`ConfiguredRemote::find`] nor [`ConfiguredRemoteRecord::find`] emits this variant.
     #[error("unsupported remote tagOpt inheritance across configuration sections")]
     UnsupportedTagOptionInheritance,
     /// A URL in the supported syntax is malformed.
@@ -95,9 +95,9 @@ impl ConfiguredRemote {
     /// Resolves one remote without filesystem, environment, or network access.
     ///
     /// Returns `None` for absent or URL-free remotes, **after** validation. Thus a URL-free remote
-    /// with an invalid tag option or refspec still fails. A final implicit tag option following
-    /// any explicit tag option requires compatibility handling before other validation, since
-    /// inheritance depends on physical sections. Empty explicit tag options are invalid.
+    /// with an invalid tag option or refspec still fails. The final tag option in each physical
+    /// section participates only when explicit; the newest participating section wins. An implicit
+    /// final option skips its section, including earlier values there. Explicit empty values fail.
     /// Refspecs retain configuration order and duplicates, leaving selection policy to callers.
     ///
     /// Ordinary `insteadOf` rewrites match canonical URL bytes. The longest prefix wins, with the
@@ -208,10 +208,9 @@ impl ConfiguredRemoteRecord {
     ///
     /// # Errors
     ///
-    /// Validates the last tag option, surviving fetch URLs, surviving push URLs, all fetch
+    /// Validates the selected tag option, surviving fetch URLs, surviving push URLs, all fetch
     /// refspecs, then all push refspecs. Uses the supported syntax and whole-record compatibility
-    /// boundary of [`ConfiguredRemote`]. A final implicit tag option after any explicit one
-    /// returns [`ConfiguredRemoteError::UnsupportedTagOptionInheritance`] before other validation.
+    /// boundary of [`ConfiguredRemote`], including its physical-section tag-option selection.
     /// Rewrites are neither read nor validated.
     ///
     /// ```
@@ -226,15 +225,25 @@ impl ConfiguredRemoteRecord {
         if !config.contains_section("remote", Some(name)) {
             return Ok(None);
         }
-        let mut tag_options = config.values("remote", Some(name), "tagopt");
-        let last_tag_option = tag_options.next_back();
-        if last_tag_option == Some(None) && tag_options.any(|value| value.is_some()) {
-            return Err(ConfiguredRemoteError::UnsupportedTagOptionInheritance);
-        }
-        let tag_option = match last_tag_option {
-            None | Some(None) => None,
-            Some(Some(b"--tags")) => Some(b"--tags".as_slice()),
-            Some(Some(b"--no-tags")) => Some(b"--no-tags".as_slice()),
+        let selected_tag_option = config
+            .section_occurrences()
+            .filter(|section| {
+                section.name().eq_ignore_ascii_case(b"remote") && section.subsection() == Some(name)
+            })
+            .filter_map(|section| {
+                section
+                    .entry_indices()
+                    .iter()
+                    .rev()
+                    .map(|&index| &config.entries()[index])
+                    .find(|entry| entry.name.eq_ignore_ascii_case(b"tagopt"))
+                    .and_then(|entry| entry.value.as_deref())
+            })
+            .last();
+        let tag_option = match selected_tag_option {
+            None => None,
+            Some(b"--tags") => Some(b"--tags".as_slice()),
+            Some(b"--no-tags") => Some(b"--no-tags".as_slice()),
             _ => return Err(ConfiguredRemoteError::TagOption),
         };
         let fetch = configured_urls(config, name, "url")?;
@@ -270,7 +279,7 @@ impl ConfiguredRemoteRecord {
         &self.push_refspecs
     }
 
-    /// Last validated `--tags` or `--no-tags`; absent or implicit last values return `None`.
+    /// Selected `--tags` or `--no-tags`, or `None` if every section lacks an explicit final value.
     pub fn tag_option(&self) -> Option<&[u8]> {
         self.tag_option
     }

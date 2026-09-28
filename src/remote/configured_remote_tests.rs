@@ -256,29 +256,56 @@ fn configured_record_preserves_error_order(#[case] body: &[u8], #[case] key: &st
     assert_eq!(actual, key);
 }
 
+// Original public-gix 0.87.1 whole-remote fixtures qualified section-local tag selection.
 #[rstest]
-#[case::same_section(b"tagOpt=--tags\ntagOpt")]
-#[case::same_section_invalid(b"tagOpt=bad\ntagOpt")]
-#[case::different_sections(b"tagOpt=--tags\n[remote \"origin\"]\ntagOpt")]
-#[case::different_sections_invalid(b"tagOpt=bad\n[remote \"origin\"]\ntagOpt")]
-#[case::explicit_empty(b"tagOpt=\ntagOpt")]
-#[case::non_utf8(b"tagOpt=\xff\ntagOpt")]
-#[case::before_invalid_url(b"tagOpt=bad\ntagOpt\nurl=host:")]
-#[case::before_unsupported_url(b"tagOpt=bad\ntagOpt\nurl=foo::repo")]
-fn implicit_tag_after_explicit_requires_whole_remote_compatibility(#[case] body: &[u8]) {
-    let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
-    assert_eq!(
-        ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err(),
-        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
-    );
-    assert_eq!(
-        ConfiguredRemote::find(&config, b"origin").unwrap_err(),
-        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
+#[case::same_section(b"tagOpt=--tags\ntagOpt", None)]
+#[case::same_section_invalid(b"tagOpt=bad\ntagOpt", None)]
+#[case::different_sections(b"tagOpt=--tags\n[remote \"origin\"]\ntagOpt", Some(b"--tags".as_slice()))]
+#[case::masked_bad(b"tagOpt=bad\n[remote \"origin\"]\ntagOpt=--no-tags", Some(b"--no-tags".as_slice()))]
+#[case::explicit_empty_masked(b"tagOpt=\ntagOpt", None)]
+#[case::non_utf8_masked(b"tagOpt=\xff\ntagOpt", None)]
+#[case::case_fold(b"TAGOPT=--tags\n[REMOTE \"origin\"]\ntagopt", Some(b"--tags".as_slice()))]
+fn implicit_tag_skips_only_its_physical_section(
+    #[case] body: &[u8],
+    #[case] expected: Option<&[u8]>,
+) {
+    let config = Config::parse(&[b"[remote \"origin\"]\nurl=repo\n", body].concat()).unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.tag_option(), expected);
+    assert!(
+        ConfiguredRemote::find(&config, b"origin")
+            .unwrap()
+            .is_some()
     );
 }
 
+#[rstest]
+#[case::winning_bad(b"tagOpt=bad\n[remote \"origin\"]\ntagOpt", "tag")]
+#[case::winning_empty(b"tagOpt=\n[remote \"origin\"]\ntagOpt", "tag")]
+#[case::winning_non_utf8(b"tagOpt=\xff\n[remote \"origin\"]\ntagOpt", "tag")]
+#[case::masked_bad_url(b"tagOpt=bad\ntagOpt\nurl=host:", "url")]
+#[case::masked_bad_unsupported(b"tagOpt=bad\ntagOpt\nurl=foo::repo", "unsupported")]
+#[case::masked_bad_spec(b"tagOpt=bad\ntagOpt\nfetch=bad?", "fetch")]
+fn physical_tag_selection_preserves_validation_order(#[case] body: &[u8], #[case] expected: &str) {
+    let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
+    let error = ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err();
+    assert_eq!(
+        ConfiguredRemote::find(&config, b"origin").unwrap_err(),
+        error
+    );
+    let actual = match error {
+        ConfiguredRemoteError::TagOption => "tag",
+        ConfiguredRemoteError::Url { key, .. } | ConfiguredRemoteError::Refspec { key, .. } => key,
+        ConfiguredRemoteError::UnsupportedUrlSyntax { .. } => "unsupported",
+        error => panic!("unexpected error: {error}"),
+    };
+    assert_eq!(actual, expected);
+}
+
 #[test]
-fn included_invalid_tag_then_implicit_requires_compatibility() {
+fn included_invalid_tag_then_implicit_still_fails_first() {
     let root = tempfile::tempdir().unwrap();
     let child = root.path().join("child");
     std::fs::write(&child, b"[remote \"origin\"]\ntagOpt=bad\n").unwrap();
@@ -299,8 +326,92 @@ fn included_invalid_tag_then_implicit_requires_compatibility() {
     .unwrap();
     assert_eq!(
         ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err(),
-        ConfiguredRemoteError::UnsupportedTagOptionInheritance,
+        ConfiguredRemoteError::TagOption,
     );
+}
+
+#[rstest]
+#[case::child_implicit(
+    b"[remote \"origin\"]\ntagOpt=--tags\n[include]\npath=child\n",
+    b"[remote \"origin\"]\ntagOpt\n",
+    b"--tags"
+)]
+#[case::repeated_child(
+    b"[include]\npath=child\npath=child\n[remote \"origin\"]\ntagOpt\n",
+    b"[remote \"origin\"]\ntagOpt=--tags\n[remote \"origin\"]\ntagOpt\n",
+    b"--tags"
+)]
+#[case::resumed_include(
+    b"[include]\npath=child\nunused=after\n[remote \"origin\"]\ntagOpt\n",
+    b"[remote \"origin\"]\ntagOpt=--no-tags\n",
+    b"--no-tags"
+)]
+#[case::local_masks_child(
+    b"[include]\npath=child\n[remote \"origin\"]\ntagOpt=--tags\n",
+    b"[remote \"origin\"]\ntagOpt=bad\n",
+    b"--tags"
+)]
+fn included_tag_sections_keep_their_membership(
+    #[case] parent: &[u8],
+    #[case] child: &[u8],
+    #[case] expected: &[u8],
+) {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("child"), child).unwrap();
+    let path = root.path().join("parent");
+    std::fs::write(&path, parent).unwrap();
+    let config = Config::resolve(&crate::config::ConfigInputs {
+        files: vec![crate::config::ConfigFile {
+            path,
+            scope: crate::config::ConfigScope::Global,
+            optional: false,
+        }],
+        ..Default::default()
+    })
+    .unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.tag_option(), Some(expected));
+    assert!(
+        ConfiguredRemote::find(&config, b"origin")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[rstest]
+#[case::implicit(b"tagOpt", Some(b"--tags".as_slice()))]
+#[case::masked_bad(b"tagOpt=bad\ntagOpt", Some(b"--tags".as_slice()))]
+#[case::explicit(b"tagOpt=--no-tags", Some(b"--no-tags".as_slice()))]
+#[case::empty(b"tagOpt=", None)]
+fn runtime_tag_sections_follow_the_same_selection(
+    #[case] command: &[u8],
+    #[case] expected: Option<&[u8]>,
+) {
+    let environment = Config::from_environment(
+        |key| match key {
+            "GIT_CONFIG_COUNT" => Some(b"1".to_vec()),
+            "GIT_CONFIG_KEY_0" => Some(b"remote.origin.tagOpt".to_vec()),
+            "GIT_CONFIG_VALUE_0" => Some(b"--tags".to_vec()),
+            _ => None,
+        },
+        1,
+    )
+    .unwrap();
+    let command = Config::parse(&[b"[remote \"origin\"]\n", command].concat()).unwrap();
+    let config = Config::resolve(&crate::config::ConfigInputs {
+        environment: Some(environment),
+        command: Some(command),
+        ..Default::default()
+    })
+    .unwrap();
+    let result = ConfiguredRemoteRecord::find(&config, b"origin");
+    if let Some(expected) = expected {
+        assert_eq!(result.unwrap().unwrap().tag_option(), Some(expected));
+    } else {
+        assert_eq!(result.unwrap_err(), ConfiguredRemoteError::TagOption);
+    }
 }
 
 // Prefix selection was characterized with original public-gix 0.87.1 add-remote probes.

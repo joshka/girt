@@ -9,13 +9,14 @@ when a caller needs display URLs without parsing refspecs. Try `cargo run --exam
 ## Validating Configured Remotes
 
 `ConfiguredRemote::find` validates a named remote from an existing snapshot without opening files or
-selecting a transport. It checks the last tag option, all surviving fetch URLs, all surviving push
-URLs, fetch refspecs, push refspecs, and then URL rewrites. Only after validation does it return
-`None` for an inactive remote. Errors identify the key, original occurrence and rewrite stage
-without printing URL contents. A final implicit `tagOpt` following any explicit `tagOpt` returns
-`UnsupportedTagOptionInheritance` before URL validation. Its meaning depends on physical section
-boundaries, which the snapshot does not retain. Use whole-remote compatibility handling for this
-result, including when both values occur in one section.
+selecting a transport. It checks the selected tag option, all surviving fetch URLs, all surviving
+push URLs, fetch refspecs, push refspecs, and then URL rewrites. Only after validation does it
+return `None` for an inactive remote. Errors identify the key, original occurrence and rewrite stage
+without printing URL contents. For `tagOpt`, only the final value in each physical section
+participates. An implicit final value skips that section, including earlier explicit values there;
+the newest section with an explicit final value wins. Explicit empty values are invalid. Included
+sections retain their own membership and encounter order. The public
+`UnsupportedTagOptionInheritance` variant remains for compatibility but is no longer emitted.
 
 Implicit and empty URL values reset earlier URLs. An implicit fetch refspec instead selects `HEAD`;
 refspecs retain occurrence order and duplicates. Ordinary prefix rewrites match supported serialized
@@ -74,7 +75,7 @@ keep their entries-only, first-entry ordering contract.
 Repeated and empty headers survive. Every include visit receives new identities, even for a cached
 file; an outer section resumes with its original identity after an include returns. Members can
 therefore be noncontiguous in the flat entry stream. Environment assignments each form a synthetic
-occurrence, while parsed command inputs retain their headers. Appending configuration rebases member
+occurrence, while parsed command inputs retain their headers. Appending configuration adjusts member
 indices and preserves empty headers. These snapshot identities do not authorize source edits; use
 `Document` for direct-file editing. Scalar and multi-value lookup retain their existing flat-entry
 semantics, and interpretation of implicit values remains the consumer's policy.
