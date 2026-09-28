@@ -287,6 +287,7 @@ fn options_preparation_reuses_partial_publication_without_retry() {
             &[edit(format, "refs/tags/a"), edit(format, "refs/tags/b")],
             options(LockWait::UntilCancelled),
             &AtomicBool::new(false),
+            LogIdentity::Resolved,
         )
         .unwrap();
     fs::create_dir(repo.git_dir().join("refs/tags/b")).unwrap();

@@ -1309,3 +1309,6 @@ fn existing_append_accepts_empty_log_and_selects_each_symbolic_chain_log(
 
 #[path = "transaction_wait_tests.rs"]
 mod waits;
+
+#[path = "transaction_stored_tests.rs"]
+mod stored;
