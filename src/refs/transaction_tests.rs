@@ -979,6 +979,13 @@ fn append_if_changed() -> Reflog {
     Reflog::AppendIfChanged { committer, message }
 }
 
+fn append_existing_if_changed() -> Reflog {
+    let Reflog::Append { committer, message } = log() else {
+        unreachable!()
+    };
+    Reflog::AppendExistingIfChanged { committer, message }
+}
+
 #[rstest]
 #[case::any_unchanged(Expected::Any, 1, 1, 0)]
 #[case::exists_unchanged(Expected::Exists, 1, 1, 0)]
@@ -990,6 +997,7 @@ fn conditional_append_compares_locked_direct_target(
     #[case] new: u8,
     #[case] entries: usize,
     #[case] outcomes: usize,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -997,7 +1005,7 @@ fn conditional_append_compares_locked_direct_target(
     refs.transaction(&[operation.clone()]).unwrap();
     operation.expected = expected;
     operation.target = Some(Target::Direct(id(format, new)));
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let result = refs.transaction(&[operation]).unwrap();
     assert_eq!(result[0].logs.len(), outcomes);
     assert_eq!(
@@ -1017,6 +1025,7 @@ fn conditional_append_compares_locked_direct_target(
 #[rstest]
 fn conditional_append_preserves_missing_log_for_unchanged_target(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -1028,7 +1037,7 @@ fn conditional_append_preserves_missing_log_for_unchanged_target(
     .unwrap();
     let mut operation = edit(format, "refs/heads/topic");
     operation.expected = Expected::Exists;
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let result = refs.transaction(&[operation]).unwrap();
     assert!(result[0].logs.is_empty());
     assert_eq!(refs.reflog(&name("refs/heads/topic")).unwrap(), None);
@@ -1087,6 +1096,7 @@ fn conditional_append_symbolic_to_direct_logs_same_terminal_id_only_at_edited_na
 #[rstest]
 fn conditional_append_checks_expectation_even_when_target_is_unchanged(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -1098,7 +1108,7 @@ fn conditional_append_checks_expectation_even_when_target_is_unchanged(
     .unwrap();
     let mut operation = edit(format, "refs/heads/topic");
     operation.expected = Expected::Value(Target::Direct(id(format, 2)));
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let error = refs.transaction(&[operation]).unwrap_err();
     assert!(matches!(
         error,
@@ -1124,6 +1134,7 @@ fn conditional_append_refuses_foreign_ref_and_log_locks(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
     #[case] path: &str,
     #[case] new: u8,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -1139,7 +1150,7 @@ fn conditional_append_refuses_foreign_ref_and_log_locks(
     let mut operation = edit(format, "refs/heads/topic");
     operation.expected = Expected::Any;
     operation.target = Some(Target::Direct(id(format, new)));
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let error = refs.transaction(&[operation]).unwrap_err();
     assert!(matches!(
         error,
@@ -1161,6 +1172,7 @@ fn conditional_append_refuses_foreign_ref_and_log_locks(
 #[rstest]
 fn conditional_append_skips_unterminated_existing_log_for_unchanged_target(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -1175,7 +1187,7 @@ fn conditional_append_skips_unterminated_existing_log_for_unchanged_target(
     fs::write(&path, b"uninterpreted tail").unwrap();
     let mut operation = edit(format, "refs/heads/topic");
     operation.expected = Expected::Any;
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let result = refs.transaction(&[operation]).unwrap();
     assert!(result[0].logs.is_empty());
     assert_eq!(fs::read(&path).unwrap(), b"uninterpreted tail");
@@ -1185,6 +1197,7 @@ fn conditional_append_skips_unterminated_existing_log_for_unchanged_target(
 #[rstest]
 fn conditional_append_refuses_unterminated_existing_log_for_changed_target(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+    #[values(append_if_changed(), append_existing_if_changed())] policy: Reflog,
 ) {
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
@@ -1200,7 +1213,7 @@ fn conditional_append_refuses_unterminated_existing_log_for_changed_target(
     let mut operation = edit(format, "refs/heads/topic");
     operation.expected = Expected::Any;
     operation.target = Some(Target::Direct(id(format, 2)));
-    operation.reflog = append_if_changed();
+    operation.reflog = policy;
     let error = refs.transaction(&[operation]).unwrap_err();
     assert!(matches!(
         error,
@@ -1231,5 +1244,65 @@ fn ordinary_append_still_records_unchanged_target(
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].old, id(format, 1));
     assert_eq!(entries[1].new, id(format, 1));
+    clean(&repo);
+}
+
+#[rstest]
+fn existing_append_does_not_create_logs_for_new_or_changed_references(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    let mut operation = edit(format, "refs/heads/topic");
+    operation.reflog = append_existing_if_changed();
+    let result = refs.transaction(&[operation.clone()]).unwrap();
+    assert!(result[0].logs.is_empty());
+    assert!(!refs.has_reflog(&operation.name).unwrap());
+    operation.expected = Expected::Exists;
+    operation.target = Some(Target::Direct(id(format, 2)));
+    let result = refs.transaction(&[operation]).unwrap();
+    assert!(result[0].logs.is_empty());
+    assert_eq!(
+        refs.read(&name("refs/heads/topic")).unwrap(),
+        Some(Target::Direct(id(format, 2)))
+    );
+    assert!(!refs.has_reflog(&name("refs/heads/topic")).unwrap());
+    clean(&repo);
+}
+
+#[rstest]
+fn existing_append_accepts_empty_log_and_selects_each_symbolic_chain_log(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_temp, repo) = fixture(format);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(
+        &name("refs/heads/main"),
+        Target::Direct(id(format, 1)),
+        Expected::Absent,
+    )
+    .unwrap();
+    fs::create_dir_all(repo.git_dir().join("logs")).unwrap();
+    fs::write(repo.git_dir().join("logs/HEAD"), b"").unwrap();
+    let mut operation = edit(format, "HEAD");
+    operation.dereference = true;
+    operation.expected = Expected::Exists;
+    operation.target = Some(Target::Direct(id(format, 2)));
+    operation.reflog = append_existing_if_changed();
+    let result = refs.transaction(&[operation]).unwrap();
+    assert_eq!(result[0].logs, vec![(name("HEAD"), LogOutcome::Appended)]);
+    assert!(!refs.has_reflog(&name("refs/heads/main")).unwrap());
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].old, id(format, 1));
+    assert_eq!(entries[0].new, id(format, 2));
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        Some(Target::Direct(id(format, 2)))
+    );
     clean(&repo);
 }

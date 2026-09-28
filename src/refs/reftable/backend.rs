@@ -393,20 +393,42 @@ fn prepare_controlled(
             target: edit.target.clone(),
             peeled: None,
         });
-        let log_names = match &edit.reflog {
+        let mut log_names = match &edit.reflog {
             Reflog::Preserve => Vec::new(),
             Reflog::Delete => vec![name.clone()],
-            Reflog::AppendIfChanged { .. } if values.get(&name) == edit.target.as_ref() => {
+            Reflog::AppendIfChanged { .. } | Reflog::AppendExistingIfChanged { .. }
+                if values.get(&name) == edit.target.as_ref() =>
+            {
                 Vec::new()
             }
-            Reflog::Append { .. } | Reflog::AppendIfChanged { .. } if edit.dereference => chain,
-            Reflog::Append { .. } | Reflog::AppendIfChanged { .. } => vec![name.clone()],
+            Reflog::Append { .. }
+            | Reflog::AppendIfChanged { .. }
+            | Reflog::AppendExistingIfChanged { .. }
+                if edit.dereference =>
+            {
+                chain
+            }
+            Reflog::Append { .. }
+            | Reflog::AppendIfChanged { .. }
+            | Reflog::AppendExistingIfChanged { .. } => vec![name.clone()],
         };
+        if matches!(edit.reflog, Reflog::AppendExistingIfChanged { .. }) {
+            log_names.retain(|log_name| {
+                let group = group_mut(&mut groups, &directory(refs, log_name));
+                group
+                    .snapshot
+                    .table
+                    .logs
+                    .iter()
+                    .any(|record| record.name == *log_name && record.value.is_some())
+            });
+        }
         for log_name in &log_names {
             let group = group_mut(&mut groups, &directory(refs, log_name));
             match &edit.reflog {
                 Reflog::Append { committer, message }
-                | Reflog::AppendIfChanged { committer, message } => {
+                | Reflog::AppendIfChanged { committer, message }
+                | Reflog::AppendExistingIfChanged { committer, message } => {
                     group.table.logs.push(LogRecord {
                         name: log_name.clone().into(),
                         update_index: group.table.max_update_index,

@@ -71,7 +71,7 @@ pub struct RefEditOutcome {
     /// Reference publication result.
     pub reference: RefOutcome,
     /// Requested logs in symbolic traversal order; empty for `Preserve` or a skipped
-    /// [`Reflog::AppendIfChanged`].
+    /// conditional append policy.
     pub logs: Vec<(RefName, LogOutcome)>,
 }
 
@@ -304,8 +304,10 @@ impl References<'_> {
                 if edit.reflog.append_fields().is_some() {
                     log_names.extend(logged_chain.iter().map(|(name, _)| name.clone()));
                 }
-                let skip_log =
-                    matches!(edit.reflog, Reflog::AppendIfChanged { .. }) && actual == &edit.target;
+                let skip_log = matches!(
+                    edit.reflog,
+                    Reflog::AppendIfChanged { .. } | Reflog::AppendExistingIfChanged { .. }
+                ) && actual == &edit.target;
                 if let Some((committer, message)) = edit.reflog.append_fields()
                     && !skip_log
                 {
@@ -347,13 +349,26 @@ impl References<'_> {
             let mut log_locks = BTreeMap::new();
             for name in log_names {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
-                let lock = Lock::acquire(path.clone()).map_err(batch_error)?;
-                if operations.iter().any(|op| {
-                    !op.delete_log && op.logs.iter().any(|(log_name, _)| log_name == &name)
-                }) {
-                    reflog::check_append_tail(&path).map_err(batch_error)?;
-                }
+                let lock = Lock::acquire(path).map_err(batch_error)?;
                 log_locks.insert(name, lock);
+            }
+            for (operation, edit) in operations.iter_mut().zip(edits) {
+                if matches!(edit.reflog, Reflog::AppendExistingIfChanged { .. }) {
+                    // Presence is a transaction decision, never a caller's pre-read.
+                    let mut existing = Vec::new();
+                    for (name, record) in std::mem::take(&mut operation.logs) {
+                        if self.has_reflog(&name).map_err(batch_error)? {
+                            existing.push((name, record));
+                        }
+                    }
+                    operation.logs = existing;
+                }
+                if !operation.delete_log {
+                    for (name, _) in &operation.logs {
+                        reflog::check_append_tail(&log_locks[name].destination)
+                            .map_err(batch_error)?;
+                    }
+                }
             }
             let mut replacement = bytes;
             for operation in &operations {

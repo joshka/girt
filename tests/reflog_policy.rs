@@ -258,3 +258,281 @@ fn conditional_append_unchanged_target_does_not_create_log_matching_git(
             .unwrap()
     );
 }
+
+fn existing_edit(reference: &str, target: ObjectId, expected: Expected) -> RefEdit {
+    let mut operation = edit(reference, target, expected);
+    let Reflog::AppendIfChanged { committer, message } = operation.reflog else {
+        unreachable!()
+    };
+    operation.reflog = Reflog::AppendExistingIfChanged { committer, message };
+    operation
+}
+
+fn git_existing_update(root: &std::path::Path, reference: &str, target: ObjectId) {
+    git::git(
+        root,
+        &[
+            "-c",
+            "core.logAllRefUpdates=false",
+            "update-ref",
+            "--no-deref",
+            "-m",
+            "conditional update",
+            reference,
+            &target.to_string(),
+        ],
+        b"",
+    );
+}
+
+#[rstest]
+fn existing_append_never_creates_missing_logs_matching_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let (root, repo, first, second) = fixture(format, backend);
+    let (oracle_root, oracle, _, _) = fixture(format, backend);
+    let refs = repo.references().unwrap();
+    let oracle_refs = oracle.references().unwrap();
+    let created = refs
+        .transaction(&[existing_edit("refs/heads/main", first, Expected::Absent)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "refs/heads/main", first);
+    assert!(created[0].logs.is_empty());
+    assert!(!refs.has_reflog(&name("refs/heads/main")).unwrap());
+    // Detaching a symbolic HEAD at the same terminal ID changes its stored target,
+    // but absence of the HEAD log still forbids creating it.
+    let detached = refs
+        .transaction(&[existing_edit("HEAD", first, Expected::Exists)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", first);
+    assert!(detached[0].logs.is_empty());
+    let advanced = refs
+        .transaction(&[existing_edit("HEAD", second, Expected::Any)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", second);
+    assert!(advanced[0].logs.is_empty());
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        oracle_refs.read(&name("HEAD")).unwrap()
+    );
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap(),
+        oracle_refs.reflog(&name("HEAD")).unwrap()
+    );
+    assert!(!refs.has_reflog(&name("HEAD")).unwrap());
+    assert!(!root.path().join("logs/HEAD").exists());
+}
+
+#[rstest]
+fn existing_append_records_changes_and_skips_noops_matching_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let (root, repo, first, second) = fixture(format, backend);
+    let (oracle_root, oracle, _, _) = fixture(format, backend);
+    git_update(root.path(), "HEAD", first);
+    git_update(oracle_root.path(), "HEAD", first);
+    let refs = repo.references().unwrap();
+    let oracle_refs = oracle.references().unwrap();
+    let advanced = refs
+        .transaction(&[existing_edit("HEAD", second, Expected::Exists)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", second);
+    assert_eq!(
+        advanced[0].logs,
+        vec![(name("HEAD"), girt::refs::LogOutcome::Appended)]
+    );
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap(),
+        oracle_refs.reflog(&name("HEAD")).unwrap()
+    );
+    let before = refs.reflog(&name("HEAD")).unwrap();
+    let unchanged = refs
+        .transaction(&[existing_edit("HEAD", second, Expected::Any)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", second);
+    assert!(unchanged[0].logs.is_empty());
+    assert_eq!(refs.reflog(&name("HEAD")).unwrap(), before);
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap(),
+        oracle_refs.reflog(&name("HEAD")).unwrap()
+    );
+}
+
+#[rstest]
+fn existing_append_does_not_revive_deleted_logs_matching_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let (root, repo, first, second) = fixture(format, backend);
+    let (oracle_root, oracle, _, _) = fixture(format, backend);
+    git_update(root.path(), "refs/heads/main", first);
+    git_update(oracle_root.path(), "refs/heads/main", first);
+    let refs = repo.references().unwrap();
+    refs.transaction(&[RefEdit {
+        name: name("refs/heads/main"),
+        dereference: false,
+        target: None,
+        expected: Expected::Exists,
+        reflog: Reflog::Delete,
+    }])
+    .unwrap();
+    git::git(
+        oracle_root.path(),
+        &["update-ref", "-d", "refs/heads/main"],
+        b"",
+    );
+    let result = refs
+        .transaction(&[existing_edit("refs/heads/main", second, Expected::Absent)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "refs/heads/main", second);
+    assert!(result[0].logs.is_empty());
+    assert!(!refs.has_reflog(&name("refs/heads/main")).unwrap());
+    assert_eq!(
+        refs.reflog(&name("refs/heads/main")).unwrap(),
+        oracle
+            .references()
+            .unwrap()
+            .reflog(&name("refs/heads/main"))
+            .unwrap()
+    );
+}
+
+#[rstest]
+#[case::files("files", "logs/HEAD.lock")]
+#[case::reftable("reftable", "reftable/tables.list.lock")]
+fn existing_append_requires_locks_even_when_log_is_absent(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] backend: &str,
+    #[case] lock: &str,
+) {
+    let (root, repo, first, _) = fixture(format, backend);
+    let refs = repo.references().unwrap();
+    let before = refs.read(&name("HEAD")).unwrap();
+    let lock = root.path().join(lock);
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"foreign lock").unwrap();
+    let err = refs
+        .transaction(&[existing_edit("HEAD", first, Expected::Exists)])
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        girt::refs::TransactionError::Prepare {
+            source: girt::refs::ReferenceError::Locked(_),
+            ..
+        }
+    ));
+    assert_eq!(refs.read(&name("HEAD")).unwrap(), before);
+    assert!(!refs.has_reflog(&name("HEAD")).unwrap());
+    assert_eq!(std::fs::read(lock).unwrap(), b"foreign lock");
+}
+
+#[rstest]
+fn existing_append_detaches_head_with_existing_history_matching_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let (root, repo, first, _) = fixture(format, backend);
+    let (oracle_root, oracle, _, _) = fixture(format, backend);
+    git_existing_update(root.path(), "refs/heads/main", first);
+    git_existing_update(oracle_root.path(), "refs/heads/main", first);
+    let seed = [
+        "-c",
+        "core.logAllRefUpdates=true",
+        "symbolic-ref",
+        "-m",
+        "seed",
+        "HEAD",
+        "refs/heads/main",
+    ];
+    git::git(root.path(), &seed, b"");
+    git::git(oracle_root.path(), &seed, b"");
+    let refs = repo.references().unwrap();
+    assert!(refs.has_reflog(&name("HEAD")).unwrap());
+    let result = refs
+        .transaction(&[existing_edit("HEAD", first, Expected::Exists)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", first);
+    assert_eq!(
+        result[0].logs,
+        vec![(name("HEAD"), girt::refs::LogOutcome::Appended)]
+    );
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap(),
+        oracle.references().unwrap().reflog(&name("HEAD")).unwrap()
+    );
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.last().unwrap().old, first);
+    assert_eq!(entries.last().unwrap().new, first);
+    assert!(!refs.has_reflog(&name("refs/heads/main")).unwrap());
+}
+
+#[rstest]
+fn existing_append_selects_each_log_in_resolved_head_chain(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values("files", "reftable")] backend: &str,
+) {
+    let (root, repo, first, second) = fixture(format, backend);
+    git_existing_update(root.path(), "refs/heads/main", first);
+    git::git(
+        root.path(),
+        &[
+            "-c",
+            "core.logAllRefUpdates=true",
+            "symbolic-ref",
+            "-m",
+            "seed",
+            "HEAD",
+            "refs/heads/main",
+        ],
+        b"",
+    );
+    let refs = repo.references().unwrap();
+    let before = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    let mut operation = existing_edit("HEAD", second, Expected::Exists);
+    operation.dereference = true;
+    let result = refs.transaction(&[operation]).unwrap();
+    assert_eq!(
+        result[0].logs,
+        vec![(name("HEAD"), girt::refs::LogOutcome::Appended)]
+    );
+    assert!(!refs.has_reflog(&name("refs/heads/main")).unwrap());
+    let entries = refs.reflog(&name("HEAD")).unwrap().unwrap();
+    assert_eq!(entries.len(), before.len() + 1);
+    assert_eq!(entries.last().unwrap().old, first);
+    assert_eq!(entries.last().unwrap().new, second);
+    assert_eq!(
+        refs.read(&name("HEAD")).unwrap(),
+        Some(Target::Symbolic(name("refs/heads/main")))
+    );
+    assert_eq!(
+        refs.read(&name("refs/heads/main")).unwrap(),
+        Some(Target::Direct(second))
+    );
+}
+
+#[rstest]
+fn existing_append_treats_empty_files_log_as_present_matching_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (root, repo, first, _) = fixture(format, "files");
+    let (oracle_root, oracle, _, _) = fixture(format, "files");
+    std::fs::create_dir_all(root.path().join("logs")).unwrap();
+    std::fs::write(root.path().join("logs/HEAD"), b"").unwrap();
+    std::fs::create_dir_all(oracle_root.path().join("logs")).unwrap();
+    std::fs::write(oracle_root.path().join("logs/HEAD"), b"").unwrap();
+    let refs = repo.references().unwrap();
+    let result = refs
+        .transaction(&[existing_edit("HEAD", first, Expected::Exists)])
+        .unwrap();
+    git_existing_update(oracle_root.path(), "HEAD", first);
+    assert_eq!(
+        result[0].logs,
+        vec![(name("HEAD"), girt::refs::LogOutcome::Appended)]
+    );
+    assert_eq!(
+        refs.reflog(&name("HEAD")).unwrap(),
+        oracle.references().unwrap().reflog(&name("HEAD")).unwrap()
+    );
+}

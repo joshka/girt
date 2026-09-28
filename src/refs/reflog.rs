@@ -103,14 +103,32 @@ pub enum Reflog {
         /// Exact bytes; NUL, CR and LF are rejected. No whitespace normalization is performed.
         message: Vec<u8>,
     },
+    /// Append to existing logs only when the edited destination's stored target changes.
+    ///
+    /// Uses the stored-target comparison, identity validation, terminal IDs and logging scope of
+    /// [`Self::AppendIfChanged`]. Each affected log's presence is checked under its transaction
+    /// lock: a regular files-backend log, including an empty file, counts as present; a reftable
+    /// log exists when the locked snapshot contains live records for its name. No missing log is
+    /// created, including when creating a reference for the first time.
+    ///
+    /// Unchanged targets leave existing bytes untouched without validating their tail. Changed
+    /// targets append only to present logs, with the ordinary append validation. Expectations and
+    /// reference/log locks are still enforced when skipping; skipped logs have no log outcomes.
+    /// This does not consult Git configuration or coordinate with writers that ignore these locks.
+    AppendExistingIfChanged {
+        /// Validated like commit construction, additionally requiring nonnegative seconds.
+        committer: Signature,
+        /// Exact bytes; NUL, CR and LF are rejected. No whitespace normalization is performed.
+        message: Vec<u8>,
+    },
 }
 
 impl Reflog {
     pub(super) fn append_fields(&self) -> Option<(&Signature, &[u8])> {
         match self {
-            Self::Append { committer, message } | Self::AppendIfChanged { committer, message } => {
-                Some((committer, message))
-            }
+            Self::Append { committer, message }
+            | Self::AppendIfChanged { committer, message }
+            | Self::AppendExistingIfChanged { committer, message } => Some((committer, message)),
             Self::Preserve | Self::Delete => None,
         }
     }
