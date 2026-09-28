@@ -32,6 +32,23 @@ invalid unrelated repository state, changed links and anchors, same-byte substit
 publication collisions, locks, first/second replacement failures, and literal path components.
 Legacy location and worktree-administration tests remain part of the focused gate.
 
+## Consumer Acceptance
+
+The accepted jj change `rvyouuqu` at `b580282e`, above feature-pruning change `26cd93eb`, uses the
+prepared repair after Git creates a temporary worktree. It deletes the Git repair function and its
+sole production caller. Production Git endpoints decrease from five to four and callers from six to
+five. Git worktree add remains responsible for creation and its configured side effects.
+
+The consumer passes 39 distinct tests: 19 unit, 13 CLI and seven integration cases. Strict library
+and CLI all-target Clippy with `test-fakes`, and full formatting checks pass. The canonical lock
+file remains unchanged (reported digest prefix `86bda001`). Tests cover both object formats and
+native operation settings, preserved link styles, metadata-only repair, path variants and recovery.
+The Linux-only non-UTF-8 fixture was not run on macOS; native platform qualification remains open.
+
+Producer acceptance includes 56 prepared-repair integration tests, 28 location integration tests,
+nine existing administration tests and 53 repository unit tests. The public documentation test,
+strict all-feature/all-target Clippy, core check, docs.rs, formatting and documentation checks pass.
+
 ## Related Dependency Pruning
 
 The coordinated jj change `26cd93eb` removes unused `gix` attributes and blob-diff features.
