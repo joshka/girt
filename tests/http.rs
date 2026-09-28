@@ -119,20 +119,27 @@ fn http_depth_fetch_reports_boundary(#[case] format: girt::ObjectFormat) {
     let server = Server::new(fixture.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
     let downloaded = runtime()
-        .block_on(fetch::receive_http_with_depth(
+        .block_on(fetch::receive_http_with_depth_and_progress(
             &remote,
             all,
             None,
             NonZeroU32::new(1),
             FetchLimits::default(),
             TransportControl::new(&cancel),
+            |bytes| notices.push(bytes.to_vec()),
         ))
         .unwrap();
+    let mut replay = Vec::new();
     let received = downloaded
-        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .validate(&cancel, |bytes| {
+            replay.push(bytes.to_vec());
+            ControlFlow::Continue(())
+        })
         .unwrap();
     assert!(!received.shallow_roots().is_empty());
+    assert_eq!(notices, replay);
 }
 
 #[rstest]
@@ -2397,4 +2404,192 @@ fn http_push_progress_preserves_acknowledgements_before_failure() {
     assert!(matches!(cause, PushFailure::Protocol("pkt-line header")));
     assert_eq!(report.progress, [b"first".to_vec()]);
     assert_eq!(report.refs[0].status, Some(Status::Ok));
+}
+
+fn fetch_progress_prefix() -> Vec<u8> {
+    [
+        push_response::packet(b"NAK\n"),
+        push_response::packet(b"\x02receiving\xff\r"),
+    ]
+    .concat()
+}
+
+fn progress_fetch_request(destination: Repository) -> fetch::FetchRequest {
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        ["refs/heads/*:refs/remotes/origin/*"],
+    )
+    .unwrap();
+    fetch::FetchRequest::prepare(
+        destination,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap()
+}
+
+#[test]
+fn http_fetch_progress_arrives_before_eof_and_validation_replays_notices() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let id = tip(&source.repo, "refs/heads/main");
+    let pack = git(
+        source.root.path(),
+        &["pack-objects", "--stdout", "--revs"],
+        format!("{id}\n").as_bytes(),
+    );
+    let rest = [
+        push_response::packet(&[b"\x01".as_slice(), &pack].concat()),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    let (url, acknowledge, server) =
+        push_response::serve_fetch(id, fetch_progress_prefix(), rest, true);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let (_root, destination) = destination();
+    let request = progress_fetch_request(destination);
+    let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
+    let transfer = request.receive_http_with_progress(
+        &remote,
+        None,
+        FetchLimits::default(),
+        TransportControl::new(&cancel),
+        |bytes| {
+            notices.push(bytes.to_vec());
+            let _ = acknowledge.send(());
+        },
+    );
+    fn is_send<T: Send>(_: &T) {}
+    is_send(&transfer);
+    let download = runtime().block_on(transfer).unwrap();
+    server.join().unwrap();
+    assert_eq!(notices, [b"receiving\xff\r".to_vec()]);
+    let mut replay = Vec::new();
+    let _ready = download
+        .validate(&cancel, |bytes| {
+            replay.push(bytes.to_vec());
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert_eq!(replay, notices);
+}
+
+#[rstest]
+#[case::remote(
+    b"0009\x03fail0006\x02z",
+    FetchError::Remote(b"fail".to_vec())
+)]
+#[case::truncated(b"0009\x02z", FetchError::Protocol("truncated pkt-line"))]
+fn http_fetch_progress_failure_never_publishes(#[case] rest: &[u8], #[case] expected: FetchError) {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let id = tip(&source.repo, "refs/heads/main");
+    let (url, acknowledge, server) =
+        push_response::serve_fetch(id, fetch_progress_prefix(), rest.to_vec(), true);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let (_root, destination) = destination();
+    let git_dir = destination.git_dir().to_owned();
+    let request = progress_fetch_request(destination);
+    let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
+    let download = runtime()
+        .block_on(request.receive_http_with_progress(
+            &remote,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |bytes| {
+                notices.push(bytes.to_vec());
+                let _ = acknowledge.send(());
+            },
+        ))
+        .unwrap();
+    server.join().unwrap();
+    let error = download
+        .validate(&cancel, |_| ControlFlow::Continue(()))
+        .unwrap_err();
+    assert_eq!(notices, [b"receiving\xff\r".to_vec()]);
+    let fetch::FetchWorkflowError::Transfer(cause) = error else {
+        panic!("expected transfer failure")
+    };
+    assert_eq!(cause.to_string(), expected.to_string());
+    assert!(!git_dir.join("refs/remotes/origin/main").exists());
+    assert_eq!(
+        std::fs::read_dir(git_dir.join("objects/pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn http_fetch_progress_rejects_unoffered_ack_before_notices() {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let id = tip(&source.repo, "refs/heads/main");
+    let response = [
+        push_response::packet(format!("ACK {id}\n").as_bytes()),
+        push_response::packet(b"\x02invalid"),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    let (url, _acknowledge, server) = push_response::serve_fetch(id, response, vec![], false);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let download = runtime()
+        .block_on(fetch::receive_http_with_progress(
+            &remote,
+            all,
+            None,
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| panic!("invalid negotiation must suppress notices"),
+        ))
+        .unwrap();
+    server.join().unwrap();
+    let error = download
+        .validate(&cancel, |_| {
+            panic!("invalid negotiation must suppress replay")
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        FetchError::Protocol("expected ACK of an offered have")
+    ));
+}
+
+#[rstest]
+#[case::cancelled(true, FetchError::Cancelled)]
+#[case::budget(false, FetchError::Http(HttpError::Limit("response body")))]
+fn http_fetch_progress_respects_cancellation_and_wire_budget(
+    #[case] cancel_on_notice: bool,
+    #[case] expected: FetchError,
+) {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let id = tip(&source.repo, "refs/heads/main");
+    let rest = push_response::packet(&[b"\x02".as_slice(), &[b'x'; 1024]].concat());
+    let (url, acknowledge, server) =
+        push_response::serve_fetch(id, fetch_progress_prefix(), rest, true);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
+    let error = runtime()
+        .block_on(fetch::receive_http_with_progress(
+            &remote,
+            all,
+            None,
+            FetchLimits {
+                max_wire_bytes: 200,
+                ..FetchLimits::default()
+            },
+            TransportControl::new(&cancel),
+            |bytes| {
+                notices.push(bytes.to_vec());
+                cancel.store(cancel_on_notice, Ordering::Relaxed);
+                let _ = acknowledge.send(());
+            },
+        ))
+        .unwrap_err();
+    server.join().unwrap();
+    assert_eq!(notices, [b"receiving\xff\r".to_vec()]);
+    assert_eq!(error.to_string(), expected.to_string());
 }

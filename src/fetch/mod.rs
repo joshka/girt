@@ -51,7 +51,10 @@ pub use ssh::{receive_ssh, receive_ssh_with_depth};
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
-pub use http::{receive_http, receive_http_with_depth};
+pub use http::{
+    receive_http, receive_http_with_depth, receive_http_with_depth_and_progress,
+    receive_http_with_progress,
+};
 
 #[cfg(any(
     feature = "http",

@@ -341,8 +341,7 @@ pub(super) fn response(
     cancel: &AtomicBool,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, Error> {
-    let shallow = read_shallow(wire, &negotiation, limits)?;
-    read_ack(wire, &negotiation.haves, negotiation.multi_ack)?;
+    let shallow = read_response_prefix(wire, &negotiation, limits)?;
     let mut pack = Vec::new();
     while let Some(bytes) = wire.packet()? {
         match bytes.split_first() {
@@ -371,6 +370,18 @@ pub(super) fn response(
         limits,
         cancel,
     )
+}
+
+// Live HTTP notification validates this prefix once before exposing sideband messages. Final
+// validation repeats the same checks and retains ownership of the resulting shallow boundaries.
+pub(super) fn read_response_prefix(
+    wire: &mut Wire<'_, impl Read>,
+    negotiation: &Negotiation,
+    limits: FetchLimits,
+) -> Result<Vec<ObjectId>, Error> {
+    let shallow = read_shallow(wire, negotiation, limits)?;
+    read_ack(wire, &negotiation.haves, negotiation.multi_ack)?;
+    Ok(shallow)
 }
 
 fn read_shallow(

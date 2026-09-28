@@ -46,7 +46,9 @@ impl DownloadedFetch {
     /// `max_decode_bytes`, `max_resolution_steps` and `max_connectivity_edges`; bounded input does
     /// not imply a short execution time. Cancellation is cooperative between packets/objects/graph
     /// steps, not during a single hash, inflate or parse. The network deadline has ended. Progress
-    /// callbacks run here, after network completion. Installation is a separate synchronous call.
+    /// callbacks run here, after network completion, replaying any notices already observed through
+    /// a live HTTP callback. Pass a no-op callback to avoid duplicate display. Installation is a
+    /// separate synchronous call.
     ///
     /// # Errors
     ///

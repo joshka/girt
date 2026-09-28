@@ -63,15 +63,40 @@ impl FetchRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<FetchDownload, FetchWorkflowError> {
+        self.receive_http_with_progress(remote, known, limits, control, |_| {})
+            .await
+    }
+
+    /// Downloads with live receiver notices and a discovery-derived publication plan.
+    ///
+    /// Uses [`super::receive_http_with_progress`]'s borrowed byte callback, advisory output and
+    /// validation replay contracts. Pass a no-op progress callback to [`FetchDownload::validate`]
+    /// when notices have already been displayed. Validation, installation and publication remain
+    /// explicit; this call makes no storage changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::receive_http`]'s mapping, policy and transport errors. Progress may precede
+    /// a later failure and does not establish valid objects or published references.
+    #[cfg(feature = "http")]
+    pub async fn receive_http_with_progress(
+        self,
+        remote: &crate::transport::http::HttpRemote,
+        known: Option<Arc<KnownHistory>>,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]) + Send,
+    ) -> Result<FetchDownload, FetchWorkflowError> {
         self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
-        let downloaded = super::receive_http_with_depth(
+        let downloaded = super::receive_http_with_depth_and_progress(
             remote,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
             self.depth,
             limits,
             control,
+            progress,
         )
         .await;
         let updates = selected(plan, &downloaded)?;

@@ -20,6 +20,15 @@ releases its Arc on success or failure; dropping the download releases it too. O
 retain history. Installation still rechecks local dependencies; retained history does not coordinate
 with GC.
 
+Use `fetch::receive_http_with_progress` or `FetchRequest::receive_http_with_progress` for live
+receiver notices. The `FnMut(&[u8]) + Send` callback receives complete channel-2 byte payloads after
+the shallow/ACK prefix is checked, as the bounded HTTP response arrives. Notices are advisory and
+may precede a later failure; downloading and notification make no storage changes. Final `validate`
+still checks the protocol, pack and connectivity and replays notices through its own callback. Pass
+a no-op validation callback when live notices have already been displayed. Neither callback supplies
+download byte counts or local object-resolution counts. Cancellation remains controlled by
+`TransportControl`, and callbacks should return promptly.
+
 Move the downloaded result into a caller-managed bounded blocking worker for large operations.
 Validation can outlive the initiating scope, remote, control and caller's Arc. Even a bounded 512
 MiB decode budget can take substantial time. Bound waiting downloads and aggregate retained bytes as

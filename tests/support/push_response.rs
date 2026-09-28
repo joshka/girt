@@ -17,30 +17,61 @@ pub fn serve(
     rest: Vec<u8>,
     handshake: bool,
 ) -> (String, Sender<()>, JoinHandle<()>) {
+    let caps = if sideband { " side-band-64k" } else { "" };
+    let advertisement = [
+        packet(b"# service=git-receive-pack\n"),
+        b"0000".to_vec(),
+        packet(
+            format!(
+                "{} capabilities^{{}}\0report-status{caps}\n",
+                "0".repeat(40)
+            )
+            .as_bytes(),
+        ),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    serve_response("git-receive-pack", advertisement, first, rest, handshake)
+}
+
+pub fn serve_fetch(
+    id: girt::ObjectId,
+    first: Vec<u8>,
+    rest: Vec<u8>,
+    handshake: bool,
+) -> (String, Sender<()>, JoinHandle<()>) {
+    let advertisement = [
+        packet(b"# service=git-upload-pack\n"),
+        b"0000".to_vec(),
+        packet(format!("{id} refs/heads/main\0side-band-64k shallow\n").as_bytes()),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    serve_response("git-upload-pack", advertisement, first, rest, handshake)
+}
+
+fn serve_response(
+    service: &'static str,
+    advertisement: Vec<u8>,
+    first: Vec<u8>,
+    rest: Vec<u8>,
+    handshake: bool,
+) -> (String, Sender<()>, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/repo", listener.local_addr().unwrap());
     let (acknowledge, received) = channel();
     let server = std::thread::spawn(move || {
-        let caps = if sideband { " side-band-64k" } else { "" };
-        let advertisement = [
-            packet(b"# service=git-receive-pack\n"),
-            b"0000".to_vec(),
-            packet(
-                format!(
-                    "{} capabilities^{{}}\0report-status{caps}\n",
-                    "0".repeat(40)
-                )
-                .as_bytes(),
-            ),
-            b"0000".to_vec(),
-        ]
-        .concat();
         let mut discovery = request(&listener);
-        header(&mut discovery, "advertisement", advertisement.len());
+        header(
+            &mut discovery,
+            service,
+            "advertisement",
+            advertisement.len(),
+        );
         discovery.write_all(&advertisement).unwrap();
         drop(discovery);
         let mut push = request(&listener);
-        header(&mut push, "result", first.len() + rest.len());
+        header(&mut push, service, "result", first.len() + rest.len());
         push.write_all(&first).unwrap();
         push.flush().unwrap();
         if handshake {
@@ -78,6 +109,6 @@ fn request(listener: &TcpListener) -> TcpStream {
     stream
 }
 
-fn header(stream: &mut TcpStream, kind: &str, length: usize) {
-    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/x-git-receive-pack-{kind}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n").unwrap();
+fn header(stream: &mut TcpStream, service: &str, kind: &str, length: usize) {
+    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/x-{service}-{kind}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n").unwrap();
 }
