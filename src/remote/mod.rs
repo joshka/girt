@@ -4,6 +4,8 @@
 //!
 //! - [`RemoteUrls::find`] reads URL values without parsing refspecs; [`Remote::find`] also loads
 //!   fetch and push [`Refspecs`] from an explicit configuration snapshot.
+//! - [`ConfiguredRefspec`] describes broader configured syntax, including shorthand and defaults,
+//!   without resolving or executing it. It does not change the strict [`Refspecs`] mapping subset.
 //! - [`Refspecs`] maps supplied sources to destinations without I/O or update authorization.
 //!   [`Destination`] identifies a selected local or network endpoint separately.
 //! - [`ParsedUrl`] exposes a URL's original bytes, host, and path for presentation, and expands
@@ -19,6 +21,7 @@
 //! planning. [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
 
 mod config;
+mod configured_refspec;
 mod credential;
 mod edit;
 mod endpoint;
@@ -27,6 +30,7 @@ mod refspec;
 mod url;
 
 pub use config::{Remote, RemoteError, RemoteUrls};
+pub use configured_refspec::{ConfiguredRefspec, ConfiguredRefspecError, ConfiguredRefspecKind};
 pub use credential::{
     Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,
     CredentialSession, Prompt, askpass,
