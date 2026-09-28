@@ -6,6 +6,8 @@ mod pack_git;
 mod ssh_configuration;
 #[path = "support/ssh_git.rs"]
 mod ssh_git;
+#[path = "support/ssh_openssh.rs"]
+mod ssh_openssh;
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;

@@ -11,6 +11,12 @@ supplies a default user and trusted executable and config paths. Percent encodin
 fragment fields, implicit tilde expansion and non-OpenSSH variants are refused. Local paths, file
 URLs, and helper schemes use separate transport paths; SSH has no Git-executable fallback.
 
+`SshRemote::openssh` instead keeps ordinary OpenSSH configuration policy with explicit executable
+approval and a complete caller-supplied environment. It preserves absent URL user and port values.
+The session still uses pipes and a separate process group; interactive terminal compatibility
+remains unestablished. See [ordinary OpenSSH policy](#ordinary-openssh-policy) before admitting a
+consumer configuration.
+
 ## Endpoints and Configuration
 
 Hosts accept DNS names, IPv4 and bare IPv6 addresses. Usernames accept ASCII letters, digits, dots,
@@ -23,9 +29,9 @@ limited URL and scp forms above. Other endpoint forms remain unsupported.
 
 The remote command is exactly `git-upload-pack 'quoted path'` or `git-receive-pack 'quoted path'`.
 Embedded single quotes are escaped using POSIX shell quoting. The service name is fixed; configured
-SSH arguments require application approval. Host, user and port are separate arguments, with `--`
-before the host. The remote account must provide a compatible shell and Git services. A server may
-restrict these through its own forced command.
+SSH arguments require application approval. In the restrictive constructors, host, user and port are
+separate arguments, with `--` before the host. The remote account must provide a compatible shell
+and Git services. A server may restrict these through its own forced command.
 
 The explicit `-F` file can select identity files, host aliases, known-host files and algorithm
 policy. Use `/dev/null` to select no config. An illustrative caller-owned config is:
@@ -71,6 +77,47 @@ boundary is not a configuration sandbox. OpenSSH's own parsing, algorithm negoti
 behavior remain external requirements. Unsupported OpenSSH options fail at client startup; tested
 runtime evidence uses OpenSSH 10.3. There is no keychain integration, credential helper, password
 storage, automatic authentication retry or cryptographic implementation in girt.
+
+## Ordinary OpenSSH Policy
+
+`SshRemote::openssh(config, destination, OpenSshOptions)` supports the same limited URL and scp
+syntax. `OpenSshOptions` supplies an absolute default executable, an optional exact command
+approval, and the complete child environment. Its `GIT_SSH_COMMAND`, `GIT_SSH`, and
+`GIT_SSH_VARIANT` entries participate in the same command and variant precedence described above.
+The caller asserts OpenSSH semantics for the executable; girt does not infer variants, probe
+commands, or parse shell syntax. An unapproved or mismatched selected command fails before spawning.
+Environment names and values are checked for invalid process-environment bytes; Debug and errors
+omit them.
+
+The ordinary command adds only approved literal arguments, `-p` when the URL supplies a port,
+`[user@]host`, and the quoted fixed service/path. It supplies no `-F`, default user/port, or
+restrictive `-o` flags. OpenSSH can resolve aliases, users, ports, identities, agents, proxies,
+connection sharing, authentication, host verification and host-key updates through its normal
+configuration. Applications must trust those files and any local commands they enable. Approval of
+an executable does not establish compatibility with all of its configuration.
+
+The environment is replaced by exactly the caller's map. Applications can explicitly capture
+inherited variables or construct a narrower map; girt does not discover `HOME`, `PATH`, agents,
+askpass, display settings or credentials. `GIT_PROTOCOL` must be absent or `version=0`. Girt adds no
+`SendEnv` option; caller-owned `SetEnv`/`SendEnv` or wrappers must not request another version. Only
+a protocol v0 advertisement is supported. Production girt starts the approved SSH executable, never
+a local Git executable; Git services remain on the server.
+
+This mode preserves launch choices, not full interactive Git behavior. The session owns a new
+process group, pipes protocol stdin/stdout, and drains and discards stderr. `/dev/tty` prompts can
+be unavailable to that group; askpass can operate through the supplied environment. SSH errors stay
+sanitized and bounded by the caller's deadline, so applications cannot display discarded prompts or
+infer host-key versus authentication failures. Consumer integrations must establish their prompt
+requirements before admitting a configuration. No authentication, host-key or prompting options are
+silently disabled. A launched failure is never retried automatically: trust, authentication, proxy
+and local-command effects may already have occurred. Multiplexed or daemonized processes outside the
+owned group are not cleaned up by girt.
+
+Original recording executables compare ordinary argv with the installed Git executable under
+protocol v0, including omitted and explicit user/port, scp syntax and IPv6. Disposable OpenSSH tests
+verify config-selected user, port, identity and trust, rejection of unknown/changed keys, and the
+existing cancellation/reaping boundary. These are bounded compatibility observations rather than
+proof of ordinary interactive SSH parity.
 
 ## Runtime, Bounds and Cleanup
 

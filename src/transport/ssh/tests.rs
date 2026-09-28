@@ -330,3 +330,9 @@ fn lower_priority_approval_cannot_authorize_selected_command() {
         SshError::Configuration("SSH command approval mismatch")
     ));
 }
+
+#[test]
+fn rejects_trailing_bytes_after_bracketed_host() {
+    let result = parse_endpoint(b"ssh://[::1]unexpected/repo");
+    assert!(matches!(result, Err(SshError::Configuration("SSH host"))));
+}
