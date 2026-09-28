@@ -50,6 +50,149 @@ use crate::config::{
 };
 use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 
+/// An explicitly selected Git metadata location before configuration or trust policy is applied.
+///
+/// Location resolves filesystem indirections only. It does not establish that the repository is
+/// trusted or usable, and does not freeze filesystem identity against concurrent replacement.
+/// Opening later reads current metadata at these paths, without selecting another repository.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryLocation {
+    git_dir: PathBuf,
+    common_dir: PathBuf,
+    logical_git_dir: Option<PathBuf>,
+    inferred_worktree: Option<PathBuf>,
+}
+
+impl RepositoryLocation {
+    /// Resolves exactly the supplied Git directory or `gitdir:` file.
+    ///
+    /// Never searches ancestors or descends into `.git`. Reads only filesystem structure and
+    /// gitfile/`commondir` indirections; configuration, HEAD, references, shallow roots and object
+    /// storage are not read or validated. Relative paths use the process current directory.
+    /// Canonical paths identify storage; logical aliases are retained for conditional includes.
+    /// No environment variables or trust decisions are consulted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OpenError`] for missing paths, malformed indirections, non-directory targets or
+    /// I/O failures. Reads are synchronous and metadata path files have no caller-supplied bound.
+    pub fn at_git_dir(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        Self::resolve(path.as_ref(), true)
+    }
+
+    /// Canonical private Git directory selected by this location.
+    pub fn git_dir(&self) -> &Path {
+        &self.git_dir
+    }
+
+    /// Canonical common directory selected by this location.
+    pub fn common_dir(&self) -> &Path {
+        &self.common_dir
+    }
+
+    /// Opens the selected metadata with explicit configuration inputs.
+    ///
+    /// Uses the stored directories without repeating repository selection. Linked checkout
+    /// backlinks may still be verified during opening. The
+    /// caller must apply any trust policy before this call. Configuration and repository metadata
+    /// are read now; no ambient environment is read. See [`Repository::open_with_config`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation, configuration and I/O errors of [`Repository::open_with_config`].
+    /// No files are written, and no fallback location is attempted.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use girt::RepositoryLocation;
+    /// use girt::config::ConfigInputs;
+    /// let location = RepositoryLocation::at_git_dir("project/.git")?;
+    /// let repository = location.open_with_config(&ConfigInputs::default())?;
+    /// assert_eq!(repository.git_dir(), location.git_dir());
+    /// # Ok::<(), girt::OpenError>(())
+    /// ```
+    pub fn open_with_config(&self, inputs: &ConfigInputs) -> Result<Repository, OpenError> {
+        Repository::open_location(self, inputs, crate::refs::reftable::StackLimits::default())
+    }
+
+    fn resolve(path: &Path, exact: bool) -> Result<Self, OpenError> {
+        let input = path;
+        let metadata = match fs::metadata(input) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(OpenError::NotFound(input.into()));
+            }
+            Err(source) => return Err(io_error(input, source)),
+        };
+        let logical_input = std::path::absolute(input).map_err(|error| io_error(input, error))?;
+        let logical_git_dir = if !exact && metadata.is_dir() && logical_input.join(".git").is_dir()
+        {
+            Some(logical_input.join(".git"))
+        } else if metadata.is_dir() && (exact || !logical_input.join(".git").exists()) {
+            Some(logical_input.clone())
+        } else if metadata.is_file() {
+            Some(gitfile_target(&logical_input)?)
+        } else if metadata.is_dir() && logical_input.join(".git").is_file() {
+            Some(gitfile_target(&logical_input.join(".git"))?)
+        } else {
+            None
+        };
+        let input = canonical(input)?;
+        let (git_dir, inferred_worktree) = if metadata.is_file() {
+            (
+                read_gitfile(&logical_input)?,
+                logical_input.parent().map(canonical).transpose()?,
+            )
+        } else if !exact && entry_exists(&input.join(".git"))? {
+            let dotgit = input.join(".git");
+            let git_dir = if dotgit.is_dir() {
+                canonical(&dotgit)?
+            } else {
+                read_gitfile(&dotgit)?
+            };
+            (git_dir, Some(input.clone()))
+        } else {
+            let parent = logical_input.parent();
+            let dotgit_identity = if exact {
+                (logical_input.file_name() == Some(std::ffi::OsStr::new(".git")))
+                    .then(|| input.clone())
+            } else {
+                parent.and_then(|parent| fs::canonicalize(parent.join(".git")).ok())
+            };
+            let inferred = parent
+                .filter(|_| dotgit_identity.as_deref() == Some(input.as_path()))
+                .map(canonical)
+                .transpose()?;
+            (input.clone(), inferred)
+        };
+        require_directory(&git_dir)?;
+        if !exact {
+            if !exists(&git_dir.join("HEAD"))? {
+                if inferred_worktree.is_some() || exists(&git_dir.join("objects"))? {
+                    return Err(malformed(&git_dir, "missing HEAD marker"));
+                }
+                return Err(OpenError::NotFound(input));
+            }
+            validate_head(&git_dir.join("HEAD"))?;
+        }
+        let common_file = git_dir.join("commondir");
+        let common_dir = if exists(&common_file)? {
+            let relative = metadata_path(&common_file, &read(&common_file)?)?;
+            canonical(&git_dir.join(relative))?
+        } else {
+            git_dir.clone()
+        };
+        require_directory(&common_dir)?;
+        Ok(Self {
+            git_dir,
+            common_dir,
+            logical_git_dir,
+            inferred_worktree,
+        })
+    }
+}
+
 /// An opened repository's metadata paths, checkout location and resolved snapshots.
 ///
 /// # Common entry points
@@ -241,64 +384,28 @@ impl Repository {
         inputs: &ConfigInputs,
         reference_limits: crate::refs::reftable::StackLimits,
     ) -> Result<Self, OpenError> {
-        let input = path.as_ref();
-        let metadata = match fs::metadata(input) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(OpenError::NotFound(input.into()));
-            }
-            Err(source) => return Err(io_error(input, source)),
-        };
-        let logical_input = std::path::absolute(input).map_err(|error| io_error(input, error))?;
-        let logical_git_dir = if metadata.is_dir() && logical_input.join(".git").is_dir() {
-            Some(logical_input.join(".git"))
-        } else if metadata.is_dir() && !logical_input.join(".git").exists() {
-            Some(logical_input.clone())
-        } else if metadata.is_file() {
-            Some(gitfile_target(&logical_input)?)
-        } else if metadata.is_dir() && logical_input.join(".git").is_file() {
-            Some(gitfile_target(&logical_input.join(".git"))?)
-        } else {
-            None
-        };
-        let input = canonical(input)?;
-        let (git_dir, inferred_worktree) = if metadata.is_file() {
-            (
-                read_gitfile(&logical_input)?,
-                logical_input.parent().map(canonical).transpose()?,
-            )
-        } else if entry_exists(&input.join(".git"))? {
-            let dotgit = input.join(".git");
-            let git_dir = if dotgit.is_dir() {
-                canonical(&dotgit)?
-            } else {
-                read_gitfile(&dotgit)?
-            };
-            (git_dir, Some(input.clone()))
-        } else {
-            let parent = logical_input.parent();
-            let dotgit_identity =
-                parent.and_then(|parent| fs::canonicalize(parent.join(".git")).ok());
-            let inferred = parent
-                .filter(|_| dotgit_identity.as_deref() == Some(input.as_path()))
-                .map(canonical)
-                .transpose()?;
-            (input.clone(), inferred)
-        };
+        let location = RepositoryLocation::resolve(path.as_ref(), false)?;
+        Self::open_location(&location, inputs, reference_limits)
+    }
+
+    fn open_location(
+        location: &RepositoryLocation,
+        inputs: &ConfigInputs,
+        reference_limits: crate::refs::reftable::StackLimits,
+    ) -> Result<Self, OpenError> {
+        let RepositoryLocation {
+            git_dir,
+            common_dir,
+            logical_git_dir,
+            inferred_worktree,
+        } = location.clone();
         if !exists(&git_dir.join("HEAD"))? {
             if inferred_worktree.is_some() || exists(&git_dir.join("objects"))? {
                 return Err(malformed(&git_dir, "missing HEAD marker"));
             }
-            return Err(OpenError::NotFound(input));
+            return Err(OpenError::NotFound(git_dir.clone()));
         }
         validate_head(&git_dir.join("HEAD"))?;
-        let common_file = git_dir.join("commondir");
-        let common_dir = if exists(&common_file)? {
-            let relative = metadata_path(&common_file, &read(&common_file)?)?;
-            canonical(&git_dir.join(relative))?
-        } else {
-            git_dir.clone()
-        };
         let object_dir = common_dir.join("objects");
         require_directory(&object_dir)?;
         require_directory(&common_dir.join("refs"))?;
@@ -843,6 +950,18 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    #[test]
+    fn exact_location_accepts_structure_without_repository_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let location = RepositoryLocation::at_git_dir(root.path()).unwrap();
+        assert_eq!(location.git_dir(), canonical(root.path()).unwrap());
+        assert_eq!(location.common_dir(), location.git_dir());
+        assert!(matches!(
+            location.open_with_config(&ConfigInputs::default()),
+            Err(OpenError::NotFound(_))
+        ));
+    }
+
     #[rstest]
     #[case::zero(b"0", Some(0))]
     #[case::plus(b"+1", Some(1))]

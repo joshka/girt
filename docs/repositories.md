@@ -10,6 +10,15 @@ Metadata/object operations remain available; checkout/status report an unknown w
 Opening through the checkout or gitfile supplies the relationship without guessing from the current
 directory.
 
+`RepositoryLocation::at_git_dir` resolves an already-selected Git directory or gitfile exactly,
+without descending into `.git` or searching ancestors. It reads only filesystem structure and
+`gitdir:`/`commondir` indirections. Its canonical `git_dir()` and `common_dir()` paths let callers
+apply trust policy before `location.open_with_config(&inputs)` reads configuration and repository
+metadata. Logical aliases remain available to conditional includes. Location does not validate HEAD,
+objects, references or shallow roots, establish trust, or freeze filesystem identity. Opening uses
+the stored selection; it never substitutes a nested repository. Ordinary convenience opening retains
+its checkout-root behavior.
+
 Discovery recognizes explicit `.git` entries and bare metadata with `HEAD`, `objects` and `refs`, or
 linked metadata with `HEAD` and `commondir`. A lone ordinary `HEAD` or `objects` entry and partial
 bare metadata allow ancestor search. Recognized malformed candidates still return errors.
