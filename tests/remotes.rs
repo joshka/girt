@@ -443,3 +443,35 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities() {
     );
     assert_mapping_ids(destination.path(), &mappings);
 }
+
+// Git get-url is an oracle for these shared rewrite cases. Implicit URL and malformed rewrite
+// handling is separately characterized through the consumer's public configuration API.
+#[rstest]
+#[case::ordinary(
+    b"[url \"https://host/\"]\ninsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\n"
+)]
+#[case::push_only(
+    b"[url \"ssh://host/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\n"
+)]
+#[case::explicit_push(b"[url \"ssh://unused/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\npushurl=https://host/push\n")]
+fn configured_remote_urls_match_git(#[case] body: &[u8]) {
+    let dir = init();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.path().join("config"))
+        .unwrap()
+        .write_all(body)
+        .unwrap();
+    let config = girt::Config::parse(body).unwrap();
+    let remote = girt::remote::ConfiguredRemote::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "origin"], b""),
+        [remote.fetch_url().unwrap(), b"\n"].concat()
+    );
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "--push", "origin"], b""),
+        [remote.push_url().unwrap(), b"\n"].concat()
+    );
+}

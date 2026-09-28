@@ -6,6 +6,8 @@
 //!   fetch and push [`Refspecs`] from an explicit configuration snapshot.
 //! - [`ConfiguredRefspec`] describes broader configured syntax, including shorthand and defaults,
 //!   without resolving or executing it. It does not change the strict [`Refspecs`] mapping subset.
+//! - [`ConfiguredRemote`] validates ordinary remote snapshots and configured refspecs, with an
+//!   explicit compatibility boundary for uncharacterized URL syntax.
 //! - [`Refspecs`] maps supplied sources to destinations without I/O or update authorization.
 //!   [`Destination`] identifies a selected local or network endpoint separately.
 //! - [`ParsedUrl`] exposes a URL's original bytes, host, and path for presentation, and expands
@@ -22,6 +24,8 @@
 
 mod config;
 mod configured_refspec;
+mod configured_remote;
+mod configured_url;
 mod credential;
 mod edit;
 mod endpoint;
@@ -31,6 +35,8 @@ mod url;
 
 pub use config::{Remote, RemoteError, RemoteUrls};
 pub use configured_refspec::{ConfiguredRefspec, ConfiguredRefspecError, ConfiguredRefspecKind};
+pub use configured_remote::{ConfiguredRemote, ConfiguredRemoteError};
+pub use configured_url::ConfiguredUrlError;
 pub use credential::{
     Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,
     CredentialSession, Prompt, askpass,

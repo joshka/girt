@@ -6,6 +6,32 @@ local and enabled worktree sources; `open_with_config` also accepts inherited in
 consumes the resulting order, including empty URL resets. `RemoteUrls::find` reads only URL keys
 when a caller needs display URLs without parsing refspecs. Try `cargo run --example config`.
 
+## Validating Configured Remotes
+
+`ConfiguredRemote::find` validates a named remote from an existing snapshot without opening files or
+selecting a transport. It checks the last tag option, all surviving fetch URLs, all surviving push
+URLs, fetch refspecs, push refspecs, and then URL rewrites. Only after validation does it return
+`None` for an inactive remote. Errors identify the key, original occurrence and rewrite stage
+without printing URL contents.
+
+Implicit and empty URL values reset earlier URLs. An implicit fetch refspec instead selects `HEAD`;
+refspecs retain occurrence order and duplicates. Ordinary prefix rewrites match supported serialized
+URLs, including lowercase ASCII network hosts and normalized numeric ports. An invalid supported
+push-only rewrite retains the original URL. Explicit push URLs disable push-only rewrites. The
+caller still decides which mappings to execute and which protocols to authorize.
+
+The current URL subset covers ordinary local byte paths, file URLs, scp-like SSH, SSH URLs and
+HTTP(S) URLs. It preserves file-host case and ordinary dot path segments; numeric ports retain even
+an explicit default port. Unknown protocols, helpers, IPv6, passwords, percent escapes, query or
+fragment handling, Unicode normalization, uppercase schemes and Windows drive/UNC syntax require
+`UnsupportedUrlSyntax`. Use a compatibility implementation for the whole remote on that result. Do
+not treat unsupported data as malformed or retry individual values through another parser.
+
+The separate `ParsedUrl`, `Remote` and `RemoteUrls` APIs retain their existing presentation,
+strict-mapping and explicit-value contracts. Configured validation does not widen transport
+admission. Broader URL normalization can be added after original executable fixtures establish its
+acceptance and serialization rules; supported validation errors do not need compatibility fallback.
+
 ## Inputs and Precedence
 
 Files are stably ordered by `ConfigScope`: system, global, local, worktree. Environment pairs follow
