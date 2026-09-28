@@ -69,6 +69,16 @@ including empty headers and runtime assignments, sorted and deduplicated by exac
 sections are omitted; empty subsection names are included. `Remote::names` and `RemoteUrls::names`
 keep their entries-only, first-entry ordering contract.
 
+`Config::section_occurrences` borrows the ordered section occurrences in a snapshot. Each
+`ConfigSection` exposes its ordinal, decoded name/subsection and member indices into `entries()`.
+Repeated and empty headers survive. Every include visit receives new identities, even for a cached
+file; an outer section resumes with its original identity after an include returns. Members can
+therefore be noncontiguous in the flat entry stream. Environment assignments each form a synthetic
+occurrence, while parsed command inputs retain their headers. Appending configuration rebases member
+indices and preserves empty headers. These snapshot identities do not authorize source edits; use
+`Document` for direct-file editing. Scalar and multi-value lookup retain their existing flat-entry
+semantics, and interpretation of implicit values remains the consumer's policy.
+
 ## Inputs and Precedence
 
 Files are stably ordered by `ConfigScope`: system, global, local, worktree. Environment pairs follow
@@ -130,11 +140,17 @@ observations for included/worktree format and bare settings.
 
 Resolution is synchronous and read-only. Defaults allow ten include edges, 16 MiB of loaded source
 bytes, independently 16 MiB of expanded key/value bytes per pass, 100,000 visited entries per pass,
-and one million pattern/candidate cells per match. Canonical ancestor identities detect include
-cycles; repeated non-ancestor includes are legal and count against expansion budgets. File bytes are
-cached within one call. Budgets reject excessive work with contextual errors, not partial snapshots.
-Direct bootstrap config reads also obey the byte limit. Other repository metadata retains the
-existing trusted-filesystem contract.
+and one million pattern/candidate cells per match. A third independent 16 MiB budget bounds section
+metadata in each pass: 128 logical bytes per occurrence, its section/subsection name lengths, and 8
+bytes per member. These deterministic units are not a measurement of allocator usage. Empty headers
+and repeated include visits consume this budget; variable counts retain their original meaning. All
+three byte budgets use `ResolveLimits::bytes`. Direct `Config::parse` has no resolution budget and
+allocates in proportion to its input; the source-byte budget bounds file parsing during resolution,
+independently of retained expanded metadata. Canonical ancestor identities detect include cycles;
+repeated non-ancestor includes are legal and count against expansion budgets. File bytes are cached
+within one call. Budgets reject excessive work with contextual errors, not partial snapshots. Direct
+bootstrap config reads also obey the byte limit. Other repository metadata retains the existing
+trusted-filesystem contract.
 
 Re-resolve or reopen to refresh. Old snapshots remain unchanged; no automatic watches or global
 cache exist. Concurrent external writers may produce a mixed snapshot across sources, so callers

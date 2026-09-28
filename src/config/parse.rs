@@ -24,12 +24,59 @@ use super::Origin;
 pub struct Config {
     pub(super) entries: Vec<Entry>,
     pub(super) sections: Vec<SectionName>,
+    pub(super) occurrences: Vec<SectionOccurrence>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct SectionName {
     pub section: Vec<u8>,
     pub subsection: Option<Vec<u8>>,
+}
+
+/// One section occurrence in a parsed or resolved configuration snapshot.
+///
+/// Repeated headers and repeated include visits have distinct ordinals, including empty headers.
+/// Environment assignments each form a synthetic occurrence without a physical header. Membership
+/// can be noncontiguous because an include inserts entries before the outer section resumes.
+/// These borrowed views identify snapshot membership, not writable source sections; use
+/// [`super::Document::sections`] to edit a direct file.
+#[derive(Debug, Clone, Copy)]
+pub struct ConfigSection<'a> {
+    ordinal: usize,
+    occurrence: &'a SectionOccurrence,
+}
+
+impl<'a> ConfigSection<'a> {
+    /// Zero-based occurrence position within this snapshot, not a persistent source identity.
+    pub fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    /// Original section-name bytes; matching folds ASCII case.
+    pub fn name(&self) -> &'a [u8] {
+        &self.occurrence.name.section
+    }
+
+    /// Decoded quoted subsection, or lowercase deprecated dotted subsection.
+    pub fn subsection(&self) -> Option<&'a [u8]> {
+        self.occurrence.name.subsection.as_deref()
+    }
+
+    /// Increasing member indices into [`Config::entries`], excluding included sections' entries.
+    ///
+    /// Empty headers have no members. The indices remain valid for the borrowed snapshot only.
+    pub fn entry_indices(&self) -> &'a [usize] {
+        &self.occurrence.entries
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SectionOccurrence {
+    pub name: SectionName,
+    // Header position before this entry, including empty headers at EOF. Together with member
+    // indices this preserves interleaving when a resolved snapshot is supplied as runtime input.
+    pub start: usize,
+    pub entries: Vec<usize>,
 }
 
 /// One variable occurrence, retaining spelling, bytes and source location.
@@ -93,6 +140,7 @@ impl Config {
         };
         let mut entries = Vec::new();
         let mut sections = Vec::new();
+        let mut occurrences: Vec<SectionOccurrence> = Vec::new();
         let mut layout = Layout::default();
         let mut section = Vec::new();
         let mut subsection = None;
@@ -149,9 +197,15 @@ impl Config {
                     if parser.take() != Some(b']') {
                         return Err(parser.error("expected ]"));
                     }
-                    sections.push(SectionName {
+                    let name = SectionName {
                         section: section.clone(),
                         subsection: subsection.clone(),
+                    };
+                    sections.push(name.clone());
+                    occurrences.push(SectionOccurrence {
+                        name,
+                        start: entries.len(),
+                        entries: Vec::new(),
                     });
                     if RETAIN_LAYOUT {
                         layout.sections.push(SectionSpan {
@@ -192,6 +246,11 @@ impl Config {
                             value: value_start + offset..end + offset,
                         });
                     }
+                    occurrences
+                        .last_mut()
+                        .expect("section checked above")
+                        .entries
+                        .push(entries.len());
                     entries.push(Entry {
                         line,
                         origin: None,
@@ -203,7 +262,14 @@ impl Config {
                 }
             }
         }
-        Ok((Self { entries, sections }, layout))
+        Ok((
+            Self {
+                entries,
+                sections,
+                occurrences,
+            },
+            layout,
+        ))
     }
 
     /// Whether a section exists, including an empty parsed header.
@@ -291,8 +357,51 @@ impl Config {
     }
 
     pub(crate) fn append(&mut self, other: &Self) {
+        let offset = self.entries.len();
+        self.occurrences
+            .extend(other.occurrences.iter().map(|occurrence| {
+                SectionOccurrence {
+                    name: occurrence.name.clone(),
+                    start: occurrence.start + offset,
+                    entries: occurrence
+                        .entries
+                        .iter()
+                        .map(|index| index + offset)
+                        .collect(),
+                }
+            }));
         self.entries.extend_from_slice(&other.entries);
         self.sections.extend_from_slice(&other.sections);
+    }
+
+    /// Borrows section occurrences in header encounter order, retaining empty and repeated headers.
+    ///
+    /// Include expansion assigns a fresh identity on every visit and retains outer membership when
+    /// an included file returns. This does not change flat [`Self::value`] or [`Self::values`]
+    /// semantics or apply any policy to implicit values. No I/O is performed.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nx=first\nx\n[core]\nx=last\n[empty]\n")?;
+    /// let sections: Vec<_> = config.section_occurrences().collect();
+    /// assert_eq!(sections[0].entry_indices(), &[0, 1]);
+    /// assert_eq!(sections[1].entry_indices(), &[2]);
+    /// assert!(sections[2].entry_indices().is_empty());
+    /// assert!(
+    ///     config.entries()[sections[0].entry_indices()[1]]
+    ///         .value
+    ///         .is_none()
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn section_occurrences(&self) -> impl ExactSizeIterator<Item = ConfigSection<'_>> {
+        self.occurrences
+            .iter()
+            .enumerate()
+            .map(|(ordinal, occurrence)| ConfigSection {
+                ordinal,
+                occurrence,
+            })
     }
 
     /// Returns occurrences in source or resolved precedence order.
@@ -455,6 +564,49 @@ mod tests {
         assert_eq!(
             Config::parse(bytes).unwrap().subsection_names("remote"),
             expected
+        );
+    }
+
+    #[test]
+    fn section_occurrences_preserve_headers_and_membership() {
+        let config = Config::parse(b"\xef\xbb\xbf[Core] x=one\r\nx\r\n[empty]\r\n[remote.UPPER]\r\nurl=repo\r\n[remote \"UPPER\"]\r\n[Core]\r\nx=two\r\n").unwrap();
+        let sections: Vec<_> = config.section_occurrences().collect();
+        assert_eq!(
+            sections.iter().map(|s| s.ordinal()).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            sections
+                .iter()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 1][..], &[], &[2], &[], &[3]]
+        );
+        assert_eq!(sections[0].name(), b"Core");
+        assert_eq!(sections[2].subsection(), Some(b"upper".as_slice()));
+        assert_eq!(sections[3].subsection(), Some(b"UPPER".as_slice()));
+        assert_eq!(
+            config.values("core", None, "x").collect::<Vec<_>>(),
+            [Some(b"one".as_slice()), None, Some(b"two".as_slice())]
+        );
+        assert_eq!(
+            config.value("core", None, "x"),
+            Some(Some(b"two".as_slice()))
+        );
+    }
+
+    #[test]
+    fn append_rebases_members_and_retains_empty_headers() {
+        let mut config = Config::parse(b"[core]\nx=one\n[empty]\n").unwrap();
+        config.append(&Config::parse(b"[empty]\n[core]\nx=two\n[tail]\n").unwrap());
+        let members: Vec<_> = config
+            .section_occurrences()
+            .map(|section| section.entry_indices())
+            .collect();
+        assert_eq!(members, [&[0][..], &[], &[], &[1], &[]]);
+        assert_eq!(
+            config.entries()[1].value.as_deref(),
+            Some(b"two".as_slice())
         );
     }
 

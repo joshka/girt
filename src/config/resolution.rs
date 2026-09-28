@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use super::parse::{SectionName, SectionOccurrence};
 use super::{
     Config, ConfigError, ConfigInputs, ConfigScope, Entry, Origin, SourceLocation, wildmatch,
 };
@@ -124,6 +125,7 @@ impl Config {
             });
         }
         let mut entries = Vec::new();
+        let mut occurrences = Vec::new();
         for index in 0..count {
             let line = index + 1;
             let error = |reason| ConfigError { line, reason };
@@ -149,6 +151,14 @@ impl Config {
             {
                 return Err(error("invalid environment pair"));
             }
+            occurrences.push(SectionOccurrence {
+                name: SectionName {
+                    section: section.to_vec(),
+                    subsection: (first != last).then(|| key[first + 1..last].to_vec()),
+                },
+                start: index,
+                entries: vec![index],
+            });
             entries.push(Entry {
                 section: section.to_vec(),
                 subsection: (first != last).then(|| key[first + 1..last].to_vec()),
@@ -161,6 +171,7 @@ impl Config {
         Ok(Self {
             entries,
             sections: Vec::new(),
+            occurrences,
         })
     }
 }
@@ -171,6 +182,8 @@ struct Resolver<'a> {
     bytes: usize,
     visited: usize,
     expanded_bytes: usize,
+    section_bytes: usize,
+    occurrences: Vec<SectionOccurrence>,
     stack: Vec<PathBuf>,
     ancestry: Vec<SourceLocation>,
     urls: Vec<Vec<u8>>,
@@ -187,6 +200,8 @@ impl<'a> Resolver<'a> {
             bytes: 0,
             visited: 0,
             expanded_bytes: 0,
+            section_bytes: 0,
+            occurrences: Vec::new(),
             stack: Vec::new(),
             ancestry: Vec::new(),
             urls: Vec::new(),
@@ -201,10 +216,12 @@ impl<'a> Resolver<'a> {
         self.scanning = false;
         self.visited = 0;
         self.expanded_bytes = 0;
+        self.section_bytes = 0;
         self.roots()?;
         Ok(Config {
             entries: self.output,
             sections: self.sections.into_iter().collect(),
+            occurrences: self.occurrences,
         })
     }
 
@@ -304,11 +321,46 @@ impl<'a> Resolver<'a> {
         if !self.scanning {
             self.sections.extend(config.sections.iter().cloned());
         }
-        for entry in config.entries() {
+        // Inputs may themselves be resolved: headers can begin between members of an outer
+        // occurrence. Replay header positions without regrouping the flat entry stream.
+        let mut owners = vec![0; config.entries.len()];
+        for (ordinal, occurrence) in config.occurrences.iter().enumerate() {
+            for &index in &occurrence.entries {
+                owners[index] = ordinal;
+            }
+        }
+        let mut mapped = Vec::new();
+        let mut headers = config.occurrences.iter().peekable();
+        for index in 0..=config.entries.len() {
+            while headers.peek().is_some_and(|header| header.start == index) {
+                let header = headers.next().expect("peeked header");
+                let location = SourceLocation {
+                    path: path.map(Path::to_path_buf),
+                    line: 1,
+                };
+                self.section_budget(
+                    128usize
+                        .saturating_add(header.name.section.len())
+                        .saturating_add(header.name.subsection.as_ref().map_or(0, Vec::len)),
+                    &location,
+                )?;
+                if !self.scanning {
+                    mapped.push(self.occurrences.len());
+                    self.occurrences.push(SectionOccurrence {
+                        name: header.name.clone(),
+                        start: self.output.len(),
+                        entries: Vec::new(),
+                    });
+                }
+            }
+            let Some(entry) = config.entries.get(index) else {
+                break;
+            };
             let location = SourceLocation {
                 path: path.map(Path::to_path_buf),
                 line: entry.line,
             };
+            self.section_budget(8, &location)?;
             self.visited += 1;
             self.expanded_bytes = self
                 .expanded_bytes
@@ -342,6 +394,9 @@ impl<'a> Resolver<'a> {
                     location: location.clone(),
                     included_from: self.ancestry.clone(),
                 });
+                self.occurrences[mapped[owners[index]]]
+                    .entries
+                    .push(self.output.len());
                 self.output.push(entry);
             }
             if !entry.name.eq_ignore_ascii_case(b"path") {
@@ -389,6 +444,23 @@ impl<'a> Resolver<'a> {
                 self.ancestry.pop();
                 result?;
             }
+        }
+        Ok(())
+    }
+
+    // Independent logical metadata units, not an allocator-size estimate. Keeping this budget
+    // separate preserves both the variable-count and expanded-value-byte contracts.
+    fn section_budget(
+        &mut self,
+        bytes: usize,
+        location: &SourceLocation,
+    ) -> Result<(), ResolveError> {
+        self.section_bytes = self
+            .section_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("section metadata bytes")))?;
+        if self.section_bytes > self.inputs.limits.bytes {
+            return Err(self.error(location, ResolveFailure::Limit("section metadata bytes")));
         }
         Ok(())
     }
@@ -538,6 +610,199 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn repeated_includes_resume_outer_membership_with_fresh_headers() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config");
+        std::fs::write(
+            &path,
+            b"[include]\npath=child\nmarker=outer\npath=child\n[empty]\n[core]\nx=end\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("child"), b"[core]\nx=child\n[empty]\n").unwrap();
+        let config = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path: path.clone(),
+                scope: ConfigScope::Local,
+                optional: false,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let sections: Vec<_> = config.section_occurrences().collect();
+        assert_eq!(
+            sections
+                .iter()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 2, 3][..], &[1], &[], &[4], &[], &[], &[5]]
+        );
+        assert_eq!(
+            config
+                .entries()
+                .iter()
+                .map(|entry| entry.value.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"outer".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"end".as_slice())
+            ]
+        );
+        assert_eq!(
+            config.entries()[1].origin.as_ref().unwrap().included_from[0].line,
+            2
+        );
+        assert_eq!(
+            config.entries()[4].origin.as_ref().unwrap().included_from[0].line,
+            4
+        );
+        assert_eq!(
+            config.entries()[2]
+                .origin
+                .as_ref()
+                .unwrap()
+                .location
+                .path
+                .as_ref(),
+            Some(&path)
+        );
+    }
+
+    #[test]
+    fn runtime_pairs_and_command_headers_remain_distinct() {
+        let environment = Config::from_environment(
+            |key| match key {
+                "GIT_CONFIG_COUNT" => Some(b"2".to_vec()),
+                "GIT_CONFIG_KEY_0" | "GIT_CONFIG_KEY_1" => Some(b"core.x".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(b"first".to_vec()),
+                "GIT_CONFIG_VALUE_1" => Some(Vec::new()),
+                _ => None,
+            },
+            2,
+        )
+        .unwrap();
+        let config = Config::resolve(&ConfigInputs {
+            environment: Some(environment),
+            command: Some(Config::parse(b"[core]\nx\nx=last\n[empty]\n").unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            config
+                .section_occurrences()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0][..], &[1], &[2, 3], &[]]
+        );
+        assert_eq!(config.entries()[1].value.as_deref(), Some(b"".as_slice()));
+        assert_eq!(
+            config.entries()[0].origin.as_ref().unwrap().scope,
+            ConfigScope::Environment
+        );
+        assert_eq!(
+            config.entries()[2].origin.as_ref().unwrap().scope,
+            ConfigScope::Command
+        );
+    }
+
+    #[test]
+    fn resolved_runtime_input_keeps_interleaved_entries_and_headers() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("child");
+        std::fs::write(&child, b"[core]\nx=child\n[empty]\n").unwrap();
+        let source = format!(
+            "[include]\npath={}\nmarker=outer\n[tail]\n",
+            child.display()
+        );
+        let first = Config::resolve(&ConfigInputs {
+            command: Some(Config::parse(source.as_bytes()).unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        // Missing optional include avoids a second expansion while replaying an already-resolved
+        // snapshot. Its retained child header and entries still precede the resumed outer member.
+        std::fs::remove_file(child).unwrap();
+        let second = Config::resolve(&ConfigInputs {
+            command: Some(first),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            second
+                .section_occurrences()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 2][..], &[1], &[], &[]]
+        );
+        assert_eq!(
+            second.entries()[1].value.as_deref(),
+            Some(b"child".as_slice())
+        );
+        assert_eq!(
+            second.entries()[2].value.as_deref(),
+            Some(b"outer".as_slice())
+        );
+    }
+
+    #[rstest]
+    #[case::exhausted(924, false)]
+    #[case::exact(925, true)]
+    fn repeated_empty_include_headers_consume_metadata_budget(
+        #[case] bytes: usize,
+        #[case] succeeds: bool,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config");
+        std::fs::write(&path, b"[include]\npath=child\npath=child\n").unwrap();
+        std::fs::write(root.path().join("child"), b"[x]\n[y]\n[z]\n").unwrap();
+        let result = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path,
+                scope: ConfigScope::Local,
+                optional: false,
+            }],
+            limits: super::super::ResolveLimits {
+                bytes,
+                entries: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert_eq!(result.is_ok(), succeeds);
+        assert!(result.as_ref().err().is_none_or(|error| matches!(
+            error.source,
+            ResolveFailure::Limit("section metadata bytes")
+        )));
+    }
+
+    #[test]
+    fn metadata_accounting_rejects_arithmetic_overflow() {
+        let inputs = ConfigInputs {
+            limits: super::super::ResolveLimits {
+                bytes: usize::MAX,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut resolver = Resolver::new(&inputs);
+        let location = SourceLocation {
+            path: None,
+            line: 1,
+        };
+        resolver.section_budget(1, &location).unwrap();
+        assert!(matches!(
+            resolver
+                .section_budget(usize::MAX, &location)
+                .unwrap_err()
+                .source,
+            ResolveFailure::Limit("section metadata bytes")
+        ));
+    }
 
     #[test]
     fn subsection_names_include_inherited_headers_and_runtime_assignments() {
