@@ -5,8 +5,8 @@ use std::sync::atomic::AtomicBool;
 use super::{LogRecord, LogValue, RefRecord, Snapshot, StackLimits, Table, stack};
 use crate::refs::store::{Lock, check_expected, conflicts};
 use crate::refs::{
-    Expected, LogOutcome, RefEdit, RefEditOutcome, RefName, RefOutcome, Reference, ReferenceError,
-    References, Reflog, ReflogEntry, Target, TransactionError,
+    Expected, LogOutcome, RefEdit, RefEditOutcome, RefName, RefOutcome, ReferenceError, References,
+    Reflog, ReflogEntry, Target, TransactionError,
 };
 use crate::{ObjectId, Signature};
 
@@ -89,10 +89,10 @@ pub(crate) fn read_observation(
         }))
 }
 
-pub(crate) fn list(
+pub(crate) fn list_observations(
     refs: &References<'_>,
     namespace: Option<&RefName>,
-) -> Result<Vec<Reference>, ReferenceError> {
+) -> Result<Vec<crate::refs::ReferenceObservation>, ReferenceError> {
     let mut entries = BTreeMap::new();
     for root in directories(refs) {
         for record in snapshot(refs, &root)?.table.references {
@@ -113,14 +113,18 @@ pub(crate) fn list(
                 continue;
             }
             if let Some(target) = record.target {
-                entries.insert(name, target);
+                entries.insert(
+                    name.clone(),
+                    crate::refs::ReferenceObservation {
+                        name,
+                        target,
+                        peeled_hint: record.peeled,
+                    },
+                );
             }
         }
     }
-    Ok(entries
-        .into_iter()
-        .map(|(name, target)| Reference { name, target })
-        .collect())
+    Ok(entries.into_values().collect())
 }
 
 pub(crate) fn imported_reflog(

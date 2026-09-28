@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::atomic::AtomicBool;
 
 use rstest::rstest;
 
@@ -29,6 +30,11 @@ fn packed_observation_owns_matching_hint_and_loose_shadows_it(#[case] format: Ob
     assert_eq!(observed.name, name);
     assert_eq!(observed.target, Target::Direct(target));
     assert_eq!(observed.peeled_hint, Some(peeled));
+    assert_eq!(
+        refs.list_observations_controlled(100, 100_000, &AtomicBool::new(false))
+            .unwrap(),
+        vec![observed.clone()]
+    );
     // Existing public struct literals and target-only APIs retain their shape and meaning.
     assert_eq!(refs.read(&name).unwrap(), Some(observed.target.clone()));
     assert_eq!(
@@ -46,6 +52,11 @@ fn packed_observation_owns_matching_hint_and_loose_shadows_it(#[case] format: Ob
     let loose_observation = refs.read_observation(&name).unwrap().unwrap();
     assert_eq!(loose_observation.target, observed.target);
     assert_eq!(loose_observation.peeled_hint, None);
+    assert_eq!(
+        refs.list_observations_controlled(100, 100_000, &AtomicBool::new(false))
+            .unwrap(),
+        vec![loose_observation]
+    );
     fs::write(&loose, b"ref: refs/heads/missing\n").unwrap();
     let symbolic = refs.read_observation(&name).unwrap().unwrap();
     assert_eq!(
@@ -53,6 +64,11 @@ fn packed_observation_owns_matching_hint_and_loose_shadows_it(#[case] format: Ob
         Target::Symbolic(RefName::new("refs/heads/missing").unwrap())
     );
     assert_eq!(symbolic.peeled_hint, None);
+    assert_eq!(
+        refs.list_observations_controlled(100, 100_000, &AtomicBool::new(false))
+            .unwrap(),
+        vec![symbolic]
+    );
     fs::write(&loose, b"malformed\n").unwrap();
     assert!(matches!(
         refs.read_observation(&name),
@@ -141,6 +157,11 @@ fn reftable_observation_uses_winning_record_including_tombstones(#[case] format:
             hint
         );
         assert_eq!(refs.read(&name).unwrap(), value);
+        assert_eq!(
+            refs.list_observations_controlled(100, 100_000, &AtomicBool::new(false))
+                .unwrap(),
+            observed.iter().cloned().collect::<Vec<_>>()
+        );
         if index == 0 {
             first = observed;
         }
@@ -199,4 +220,68 @@ fn git_packed_hint_survives_missing_annotation_object(#[case] format: ObjectForm
         .unwrap();
     assert_eq!(observed.target, Target::Direct(annotation.parse().unwrap()));
     assert_eq!(observed.peeled_hint, Some(commit.parse().unwrap()));
+    assert_eq!(
+        refs.list_observations_controlled(100, 100_000, &AtomicBool::new(false))
+            .unwrap(),
+        vec![observed]
+    );
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1, Backend::Files)]
+#[case(ObjectFormat::Sha256, Backend::Files)]
+#[case(ObjectFormat::Sha1, Backend::Reftable)]
+#[case(ObjectFormat::Sha256, Backend::Reftable)]
+fn observation_inventory_preserves_limits_order_and_cancellation(
+    #[case] format: ObjectFormat,
+    #[case] backend: Backend,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let repo =
+        Repository::init_with_backend(format, root.path().join("repo"), InitKind::Bare, backend)
+            .unwrap();
+    let refs = repo.references().unwrap();
+    let (target, _) = identities(format);
+    for name in ["refs/tags/z", "refs/heads/a"] {
+        refs.update_without_reflog(
+            &RefName::new(name).unwrap(),
+            Target::Direct(target),
+            super::Expected::Absent,
+        )
+        .unwrap();
+    }
+    let cancel = AtomicBool::new(false);
+    let inventory = refs
+        .list_observations_controlled(100, 100_000, &cancel)
+        .unwrap();
+    assert_eq!(
+        inventory
+            .iter()
+            .map(|entry| entry.name.as_bytes())
+            .collect::<Vec<_>>(),
+        vec![b"refs/heads/a".as_slice(), b"refs/tags/z".as_slice()]
+    );
+    assert!(inventory.iter().all(|entry| entry.peeled_hint.is_none()));
+    assert!(matches!(
+        refs.list_observations_controlled(0, 100_000, &cancel),
+        Err(ReferenceError::Limit(_))
+    ));
+    if backend == Backend::Files {
+        assert!(matches!(
+            refs.list_observations_controlled(100, 0, &cancel),
+            Err(ReferenceError::Limit(_))
+        ));
+    }
+    assert!(matches!(
+        refs.list_observations_controlled(100, 100_000, &AtomicBool::new(true)),
+        Err(ReferenceError::Cancelled)
+    ));
+    assert_eq!(
+        refs.list_namespace(&RefName::new("refs/tags").unwrap())
+            .unwrap(),
+        vec![Reference {
+            name: RefName::new("refs/tags/z").unwrap(),
+            target: Target::Direct(target)
+        }]
+    );
 }

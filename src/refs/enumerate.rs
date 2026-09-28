@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::store::{check_path, io_error, malformed, parse_loose, read_optional};
-use super::{RefName, ReferenceError, References, Target};
+use super::{RefName, ReferenceError, ReferenceObservation, References, Target};
 
 /// A full reference name and its stored target, without symbolic resolution or tag peeling.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +97,49 @@ impl References<'_> {
         self.enumerate_with_budget(None, Some(&mut budget))
     }
 
+    /// Lists stored targets with their captured peeled hints under inventory limits.
+    ///
+    /// Ordering, namespace selection, loose shadowing and live-read guarantees match
+    /// [`Self::list`]; limits and cancellation match [`Self::list_controlled`]. Each hint comes
+    /// from the same effective record as its target, without a per-name reread. A loose target
+    /// replaces the complete packed observation and clears its hint, even when IDs are equal.
+    /// Hints do not establish object existence or type; see [`ReferenceObservation`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::list_controlled`], without a partial inventory.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let refs = repo.references()?;
+    /// let observations =
+    ///     refs.list_observations_controlled(100, 1024 * 1024, &AtomicBool::new(false))?;
+    /// assert!(observations.is_empty()); // HEAD is not a refs/ inventory entry.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn list_observations_controlled(
+        &self,
+        max_entries: usize,
+        max_bytes: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<ReferenceObservation>, ReferenceError> {
+        let mut budget = ScanBudget {
+            entries: max_entries,
+            bytes: max_bytes,
+            cancel,
+        };
+        self.enumerate_observations(None, Some(&mut budget))
+    }
+
     /// Lists a full name and its descendants, using `/` as the namespace boundary.
     ///
     /// Use `refs/heads` for branches and `refs/tags` for tags. `refs/heads/topic` includes that
@@ -144,13 +187,28 @@ impl References<'_> {
     fn enumerate_with_budget(
         &self,
         namespace: Option<&RefName>,
-        mut budget: Option<&mut ScanBudget<'_>>,
+        budget: Option<&mut ScanBudget<'_>>,
     ) -> Result<Vec<Reference>, ReferenceError> {
+        Ok(self
+            .enumerate_observations(namespace, budget)?
+            .into_iter()
+            .map(|observation| Reference {
+                name: observation.name,
+                target: observation.target,
+            })
+            .collect())
+    }
+
+    fn enumerate_observations(
+        &self,
+        namespace: Option<&RefName>,
+        mut budget: Option<&mut ScanBudget<'_>>,
+    ) -> Result<Vec<ReferenceObservation>, ReferenceError> {
         if let Some(budget) = budget.as_deref_mut() {
             budget.check()?;
         }
         if self.reference_backend == super::Backend::Reftable {
-            let result = super::reftable::backend::list(self, namespace)?;
+            let result = super::reftable::backend::list_observations(self, namespace)?;
             if let Some(budget) = budget.as_deref_mut() {
                 budget.check()?;
                 if result.len() > budget.entries {
@@ -172,7 +230,16 @@ impl References<'_> {
         let mut entries: BTreeMap<_, _> = packed
             .into_iter()
             .filter(|(name, _)| selected(name.as_bytes(), namespace))
-            .map(|(name, record)| (name, Target::Direct(record.target)))
+            .map(|(name, record)| {
+                (
+                    name.clone(),
+                    ReferenceObservation {
+                        name,
+                        target: Target::Direct(record.target),
+                        peeled_hint: record.peeled_hint,
+                    },
+                )
+            })
             .collect();
         let separate = self.git_dir != self.common_dir;
         collect_loose(
@@ -208,10 +275,7 @@ impl References<'_> {
                 }
             }
         }
-        Ok(entries
-            .into_iter()
-            .map(|(name, target)| Reference { name, target })
-            .collect())
+        Ok(entries.into_values().collect())
     }
 }
 
@@ -247,7 +311,7 @@ fn collect_loose(
     root: &Path,
     namespace: Option<&RefName>,
     scope: LooseScope,
-    entries: &mut BTreeMap<RefName, Target>,
+    entries: &mut BTreeMap<RefName, ReferenceObservation>,
     mut budget: Option<&mut ScanBudget<'_>>,
 ) -> Result<(), ReferenceError> {
     let mut pending = vec![(root.join("refs"), b"refs".to_vec())];
@@ -324,7 +388,15 @@ fn collect_loose(
                 read_optional(&path)?
             };
             if let Some(bytes) = value {
-                entries.insert(name, parse_loose(format, &bytes, &path)?);
+                let target = parse_loose(format, &bytes, &path)?;
+                entries.insert(
+                    name.clone(),
+                    ReferenceObservation {
+                        name,
+                        target,
+                        peeled_hint: None,
+                    },
+                );
             }
         }
     }
