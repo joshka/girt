@@ -130,6 +130,15 @@ these choices explicit for standalone resolution, including logical and canonica
 Linked worktrees match their private Git directory, while relative includes in common config remain
 relative to that common source.
 
+`Config::resolve_with_include_placement` can select `IncludePlacement::AfterSectionReverse` for
+callers that require a different effective ordering. It emits each physical parent section in full,
+followed by its included child blocks in reverse directive order, recursively. Validation still
+visits directives forward and depth-first, so placement does not change which source error wins.
+Origins, conditional matching and resource accounting remain unchanged. Already-resolved input
+sections have their members gathered together in this mode. The default `Config::resolve` expands
+includes at their directives; repository openers retain that default. This option does not select
+sources or reproduce another opener's trust and parsing rules.
+
 ## Bootstrap, Bounds and Refresh
 
 Repository format is determined from the direct common config before effective resolution. Includes,

@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::parse::{SectionName, SectionOccurrence};
+use super::placement::{IncludePlacement, SectionPlacement};
 use super::{
     Config, ConfigError, ConfigInputs, ConfigScope, Entry, Origin, SourceLocation, wildmatch,
 };
@@ -60,6 +61,37 @@ impl Config {
     /// file origin and fail; use absolute paths. Unix paths preserve bytes; other platforms require
     /// valid UTF-8 in path values. `~user` and prefix expansion require explicit context mappings.
     pub fn resolve(inputs: &ConfigInputs) -> Result<Self, ResolveError> {
+        Self::resolve_with_include_placement(inputs, IncludePlacement::InPlace)
+    }
+
+    /// Resolves explicit sources with a selected placement of included sections.
+    ///
+    /// [`IncludePlacement::AfterSectionReverse`] changes output order after sources have been
+    /// validated in the same forward, depth-first order as [`Self::resolve`]. Includes keep their
+    /// original scope, directive ancestry and source line. Conditional matching, source caching
+    /// and all resolution budgets remain unchanged. This does not emulate another opener's
+    /// source selection, trust rules or parsing. No environment is read and no files are written.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same source, include and budget failures as [`Self::resolve`], in the same
+    /// order. Placement adds temporary entry/section slots bounded by those existing budgets.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::config::{ConfigInputs, IncludePlacement};
+    /// let inputs = ConfigInputs::default();
+    /// let config =
+    ///     Config::resolve_with_include_placement(&inputs, IncludePlacement::AfterSectionReverse)?;
+    /// assert!(config.entries().is_empty());
+    /// # Ok::<(), girt::config::ResolveError>(())
+    /// ```
+    pub fn resolve_with_include_placement(
+        inputs: &ConfigInputs,
+        placement: IncludePlacement,
+    ) -> Result<Self, ResolveError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -67,7 +99,7 @@ impl Config {
             outcome = "incomplete",
             failure_class = tracing::field::Empty
         );
-        let operation = || Resolver::new(inputs).resolve();
+        let operation = || Resolver::new(inputs, placement).resolve();
         #[cfg(feature = "tracing")]
         {
             let result = span.in_scope(operation);
@@ -178,6 +210,7 @@ impl Config {
 
 struct Resolver<'a> {
     inputs: &'a ConfigInputs,
+    placement: IncludePlacement,
     cache: HashMap<PathBuf, Config>,
     bytes: usize,
     visited: usize,
@@ -193,9 +226,10 @@ struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    fn new(inputs: &'a ConfigInputs) -> Self {
+    fn new(inputs: &'a ConfigInputs, placement: IncludePlacement) -> Self {
         Self {
             inputs,
+            placement,
             cache: HashMap::new(),
             bytes: 0,
             visited: 0,
@@ -329,6 +363,15 @@ impl<'a> Resolver<'a> {
                 owners[index] = ordinal;
             }
         }
+        let mut placement = (!self.scanning
+            && self.placement == IncludePlacement::AfterSectionReverse)
+            .then(|| {
+                SectionPlacement::new(
+                    self.output.len(),
+                    self.occurrences.len(),
+                    config.occurrences.len(),
+                )
+            });
         let mut mapped = Vec::new();
         let mut headers = config.occurrences.iter().peekable();
         for index in 0..=config.entries.len() {
@@ -439,11 +482,18 @@ impl<'a> Resolver<'a> {
                     })?;
                     parent.join(target)
                 };
+                let first_section = self.occurrences.len();
                 self.ancestry.push(location);
                 let result = self.file(&target, scope, true, prohibited || hasconfig);
                 self.ancestry.pop();
                 result?;
+                if let Some(placement) = &mut placement {
+                    placement.included(owners[index], first_section..self.occurrences.len());
+                }
             }
+        }
+        if let Some(placement) = placement {
+            placement.apply(mapped, &mut self.output, &mut self.occurrences);
         }
         Ok(())
     }
@@ -789,7 +839,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut resolver = Resolver::new(&inputs);
+        let mut resolver = Resolver::new(&inputs, IncludePlacement::InPlace);
         let location = SourceLocation {
             path: None,
             line: 1,
@@ -1058,7 +1108,7 @@ mod tests {
         let mut inputs = ConfigInputs::default();
         inputs.context.git_dirs.push(home.join("repo/.git"));
         inputs.context.home = Some(home);
-        let resolver = Resolver::new(&inputs);
+        let resolver = Resolver::new(&inputs, IncludePlacement::InPlace);
         let location = SourceLocation {
             path: None,
             line: 1,
