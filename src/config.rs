@@ -3,6 +3,7 @@
 //! # Parsing, resolving, and editing configuration
 //!
 //! - [`Config::parse`] reads one supplied byte source without I/O.
+//! - [`Config::from_decoded_sections`] preserves supplied decoded occurrences without parsing.
 //! - [`Config::resolve`] reads explicit [`ConfigInputs`], expands includes, and records [`Origin`]
 //!   for each occurrence. Re-resolve when the caller needs a fresh snapshot.
 //! - [`Document`] preserves direct-file syntax for editing; [`ConfigEdit`] holds the file lock
@@ -11,6 +12,8 @@
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
 //! separate. No operation reads or mutates process-global environment.
 mod command_environment;
+mod decoded;
+pub use decoded::{DecodedEntry, DecodedSection};
 mod document;
 mod edit;
 pub use edit::{ConfigEdit, EditError};

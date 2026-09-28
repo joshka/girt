@@ -57,7 +57,7 @@ impl<'a> ConfigSection<'a> {
         &self.occurrence.name.section
     }
 
-    /// Decoded quoted subsection, or lowercase deprecated dotted subsection.
+    /// Decoded subsection; parsing lowercases deprecated dotted subsections.
     pub fn subsection(&self) -> Option<&'a [u8]> {
         self.occurrence.name.subsection.as_deref()
     }
@@ -82,13 +82,13 @@ pub(super) struct SectionOccurrence {
 /// One variable occurrence, retaining spelling, bytes and source location.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// Physical line where this variable begins.
+    /// Physical line where this variable begins, or zero for supplied decoded entries.
     pub line: usize,
     /// Source and include ancestry, absent for a purely parsed source.
     pub origin: Option<Origin>,
     /// Original section name bytes; lookup folds ASCII case.
     pub section: Vec<u8>,
-    /// Exact quoted subsection, or lowercase deprecated dotted subsection.
+    /// Decoded subsection; parsing lowercases deprecated dotted subsections.
     pub subsection: Option<Vec<u8>>,
     /// Original variable name bytes; lookup folds ASCII case.
     pub name: Vec<u8>,
@@ -96,11 +96,11 @@ pub struct Entry {
     pub value: Option<Vec<u8>>,
 }
 
-/// Invalid or unsupported syntax in the supplied configuration bytes.
+/// Invalid syntax, decoded names, or construction limits in supplied configuration.
 #[derive(Debug, Error)]
 #[error("configuration line {line}: {reason}")]
 pub struct ConfigError {
-    /// One-based physical line where parsing detected the failure.
+    /// One-based physical line, or input section ordinal for decoded construction.
     pub line: usize,
     /// Explanation of the rejected syntax.
     pub reason: &'static str,
