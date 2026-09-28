@@ -12,6 +12,8 @@
 //!   [`Destination`] identifies a selected local or network endpoint separately.
 //! - [`ParsedUrl`] exposes a URL's original bytes, host, and path for presentation, and expands
 //!   local paths against an explicit base without accessing the filesystem.
+//! - [`canonicalize_user_url`] validates user input and expands local symlinks while permitting
+//!   nonexistent path suffixes; its result retains credentials for storage, not logging.
 //! - [`RemoteConfig`] edits named remote configuration. [`CredentialSession`] discovers credentials
 //!   only through an application-approved helper lifecycle.
 //!
@@ -33,6 +35,7 @@ pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
 mod name;
 mod refspec;
 mod url;
+mod user_url;
 
 pub use config::{Remote, RemoteError, RemoteUrls};
 pub use configured_refspec::{ConfiguredRefspec, ConfiguredRefspecError, ConfiguredRefspecKind};
@@ -50,3 +53,4 @@ pub use refspec::{
     Direction, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs, RefspecsError,
 };
 pub use url::{ParsedUrl, UrlError};
+pub use user_url::{UserUrlError, UserUrlParseError, UserUrlPathError, canonicalize_user_url};
