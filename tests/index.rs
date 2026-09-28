@@ -947,3 +947,86 @@ fn overlapping_bitmaps(format: girt::ObjectFormat, original: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(&digest);
     bytes
 }
+
+#[rstest]
+#[case::normal_v2("--no-skip-worktree", girt::index::Version::V2)]
+#[case::normal_v3("--no-skip-worktree", girt::index::Version::V3)]
+#[case::extended_v3("--skip-worktree", girt::index::Version::V3)]
+fn standalone_framing_conversion_preserves_git_tree_and_flags(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+    #[case] skip_option: &str,
+    #[case] target: girt::index::Version,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    fs::create_dir(work.join("directory")).unwrap();
+    fs::write(work.join("directory/nested"), b"nested contents").unwrap();
+    git(work, &["add", "directory/nested"]);
+    git(work, &["update-index", "--assume-unchanged", "file"]);
+    git(work, &["update-index", skip_option, "file"]);
+    git(work, &["update-index", "--index-version=4"]);
+    let tree = git(work, &["write-tree"]);
+    let listing = git(work, &["ls-files", "--stage", "--debug"]);
+    let original = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(original.version(), girt::index::Version::V4);
+    let tree_extension = original
+        .extensions()
+        .iter()
+        .find(|e| e.signature() == *b"TREE")
+        .unwrap()
+        .clone();
+    let entries = original.entries().to_vec();
+
+    // Exercise the complete forward/backward framing round trip without an entry edit.
+    for version in [target, girt::index::Version::V4] {
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        edit.set_version(version).unwrap();
+        edit.commit().unwrap();
+        let index = repo.read_index(Limits::default()).unwrap().unwrap();
+        assert_eq!(index.version(), version);
+        assert_eq!(index.entries(), entries);
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .find(|e| e.signature() == *b"TREE"),
+            Some(&tree_extension)
+        );
+        assert_eq!(git(work, &["ls-files", "--stage", "--debug"]), listing);
+        assert_eq!(git(work, &["write-tree"]), tree);
+    }
+}
+
+#[rstest]
+fn split_framing_conversion_discards_tree_but_preserves_git_entries(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = split_fixture(format);
+    let work = repo.worktree().unwrap();
+    let tree = git(work, &["write-tree"]);
+    // Git's --debug includes transient split-storage flags; -v reports assume-valid semantics.
+    let listing = git(work, &["ls-files", "--stage", "-v"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.index().shared_index_id().is_some());
+    assert!(
+        edit.index()
+            .extensions()
+            .iter()
+            .any(|e| e.signature() == *b"TREE")
+    );
+    let entries = edit.index().entries().to_vec();
+    edit.set_version(girt::index::Version::V4).unwrap();
+    assert!(
+        !edit
+            .index()
+            .extensions()
+            .iter()
+            .any(|e| matches!(&e.signature(), b"TREE" | b"link"))
+    );
+    edit.commit().unwrap();
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries(), entries);
+    assert_eq!(git(work, &["ls-files", "--stage", "-v"]), listing);
+    assert_eq!(git(work, &["write-tree"]), tree);
+}

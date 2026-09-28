@@ -200,9 +200,12 @@ impl Index {
         self.version
     }
 
-    /// Selects output framing, discarding derived caches when the version changes.
+    /// Selects output framing without changing entries or their stat/flag values.
     ///
-    /// Resolve-undo (`REUC`) is retained. Unknown optional extensions prevent conversion.
+    /// Standalone conversion retains `TREE` bytes because entry semantics are unchanged.
+    /// Split indexes become standalone and conservatively discard `TREE` along with `link`.
+    /// `REUC` is retained; `UNTR`, `FSMN`, `EOIE` and `IEOT` are discarded, and `sdir` is
+    /// regenerated from sparse entries. Unknown optional extensions prevent conversion.
     /// Unchanged versions preserve the exact original encoding.
     ///
     /// # Errors
@@ -217,14 +220,17 @@ impl Index {
             return Ok(());
         }
         let mut replacement = self.clone();
-        replacement.invalidate_extensions()?;
+        // Split resolution changes the encoded entry table; do not carry its opaque tree cache
+        // into standalone framing without validating which representation the cache describes.
+        let retain_tree = !self.extensions.iter().any(|e| e.signature == *b"link");
+        replacement.invalidate_extensions(retain_tree)?;
         replacement.version = version;
         replacement.encoded_len(limits)?;
         *self = replacement;
         Ok(())
     }
 
-    fn invalidate_extensions(&mut self) -> Result<(), Error> {
+    fn invalidate_extensions(&mut self, retain_tree: bool) -> Result<(), Error> {
         if let Some(extension) = self.extensions.iter().find(|e| {
             !matches!(
                 &e.signature,
@@ -233,7 +239,8 @@ impl Index {
         }) {
             return Err(Error::ExtensionPreventsEdit(extension.signature));
         }
-        self.extensions.retain(|e| e.signature == *b"REUC");
+        self.extensions
+            .retain(|e| e.signature == *b"REUC" || (retain_tree && e.signature == *b"TREE"));
         self.mark_sparse();
         self.original = None;
         Ok(())
@@ -295,7 +302,7 @@ impl Index {
             entries,
             extensions: self.extensions.clone(),
         };
-        replacement.invalidate_extensions()?;
+        replacement.invalidate_extensions(false)?;
         replacement.encoded_len(limits)?;
         *self = replacement;
         Ok(())
@@ -946,5 +953,171 @@ mod dual_format_tests {
             Index::parse(format, &bytes, Limits::default()),
             Err(Error::Malformed { .. })
         ));
+    }
+    fn cached_index(format: ObjectFormat, extended_flags: bool) -> Index {
+        let mut entry = Entry::new(
+            b"directory/file".to_vec(),
+            Mode::Regular,
+            ObjectId::for_blob(format, b"contents"),
+        );
+        entry.assume_valid = true;
+        entry.skip_worktree = extended_flags;
+        entry.stat.size = 42;
+        let mut index = Index::new(format, vec![entry], Limits::default()).unwrap();
+        index.version = Version::V4;
+        index.extensions = [*b"TREE", *b"EOIE", *b"REUC", *b"IEOT", *b"UNTR", *b"FSMN"]
+            .into_iter()
+            .map(|signature| Extension {
+                signature,
+                data: b"opaque\0payload\xff".to_vec(),
+            })
+            .collect();
+        let bytes = index.encode(Limits::default()).unwrap();
+        Index::parse(format, &bytes, Limits::default()).unwrap()
+    }
+
+    #[rstest]
+    #[case::normal(false, Version::V2)]
+    #[case::extended(true, Version::V3)]
+    fn framing_conversion_retains_tree_and_entry_semantics(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+        #[case] flags: bool,
+        #[case] target: Version,
+    ) {
+        let mut index = cached_index(format, flags);
+        let entries = index.entries.clone();
+        let retained = vec![index.extensions[0].clone(), index.extensions[2].clone()];
+        index.set_version(target, Limits::default()).unwrap();
+        assert_eq!(index.version(), target);
+        assert_eq!(index.entries(), entries);
+        assert_eq!(index.extensions(), retained);
+        index.set_version(Version::V4, Limits::default()).unwrap();
+        let bytes = index.encode(Limits::default()).unwrap();
+        let roundtrip = Index::parse(format, &bytes, Limits::default()).unwrap();
+        assert_eq!(roundtrip.entries(), entries);
+        assert_eq!(roundtrip.extensions(), retained);
+    }
+
+    #[rstest]
+    fn framing_conversion_of_split_discards_tree(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, false);
+        index.extensions.push(Extension {
+            signature: *b"link",
+            data: vec![0; format.digest_len()],
+        });
+        let entries = index.entries.clone();
+        index.set_version(Version::V2, Limits::default()).unwrap();
+        assert_eq!(index.entries(), entries);
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .map(Extension::signature)
+                .collect::<Vec<_>>(),
+            [*b"REUC"]
+        );
+    }
+
+    #[rstest]
+    fn framing_conversion_does_not_weaken_entry_edit_invalidation(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, false);
+        index.set_version(Version::V2, Limits::default()).unwrap();
+        let mut entries = index.entries.clone();
+        entries[0].stat.size += 1;
+        index.replace_entries(entries, Limits::default()).unwrap();
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .map(Extension::signature)
+                .collect::<Vec<_>>(),
+            [*b"REUC"]
+        );
+    }
+
+    #[rstest]
+    fn framing_conversion_unknown_extension_is_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, false);
+        index.original = None;
+        index.extensions.push(Extension {
+            signature: *b"TEST",
+            data: vec![1],
+        });
+        let before = index.encode(Limits::default()).unwrap();
+        assert_eq!(
+            index.set_version(Version::V2, Limits::default()),
+            Err(Error::ExtensionPreventsEdit(*b"TEST"))
+        );
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    fn framing_conversion_limit_failure_is_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, false);
+        let before = index.encode(Limits::default()).unwrap();
+        assert!(matches!(
+            index.set_version(
+                Version::V2,
+                Limits {
+                    max_bytes: 0,
+                    ..Default::default()
+                }
+            ),
+            Err(Error::Limit(_))
+        ));
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    fn framing_conversion_v2_flags_failure_is_atomic(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut index = cached_index(format, true);
+        let before = index.encode(Limits::default()).unwrap();
+        assert!(index.set_version(Version::V2, Limits::default()).is_err());
+        assert_eq!(index.encode(Limits::default()).unwrap(), before);
+    }
+
+    #[rstest]
+    fn framing_conversion_regenerates_one_sparse_marker(
+        #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    ) {
+        let mut directory = Entry::new(
+            b"outside/".to_vec(),
+            Mode::SparseDirectory,
+            ObjectId::null(format),
+        );
+        directory.skip_worktree = true;
+        let mut index = Index::new(format, vec![directory], Limits::default()).unwrap();
+        index.extensions.push(Extension {
+            signature: *b"TREE",
+            data: vec![1],
+        });
+        index.set_version(Version::V4, Limits::default()).unwrap();
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .map(Extension::signature)
+                .collect::<Vec<_>>(),
+            [*b"TREE", *b"sdir"]
+        );
+        index.set_version(Version::V3, Limits::default()).unwrap();
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .map(Extension::signature)
+                .collect::<Vec<_>>(),
+            [*b"TREE", *b"sdir"]
+        );
     }
 }

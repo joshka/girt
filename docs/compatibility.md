@@ -2032,11 +2032,13 @@ materializes files. These operations compose through `ColocationEdit::index_mut`
 owns staging, placeholder and materialization policy. See [R38 evidence](evidence/r38.md).
 
 Optional payloads remain opaque. Unchanged indexes round-trip exactly. Changed entries or version
-conversion discard derived `TREE`, `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. `REUC` bytes remain
-because resolve-undo describes prior conflicts independently of current entries. Unknown optional
-extensions block edits. Identical entry replacement retains every extension and original byte.
-Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split and
-sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
+conversion discard `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. Entry edits also discard `TREE`;
+standalone version conversion retains its exact payload because entry semantics are unchanged.
+Converting a split index conservatively discards `TREE` with its `link` representation. `REUC` bytes
+remain because resolve-undo describes prior conflicts independently of current entries. Unknown
+optional extensions block edits. Identical entry replacement retains every extension and original
+byte. Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split
+and sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
 
 `Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
 always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
