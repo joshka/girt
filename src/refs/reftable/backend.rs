@@ -68,17 +68,25 @@ fn snapshot(refs: &References<'_>, root: &std::path::Path) -> Result<Snapshot, R
     )
 }
 
-pub(crate) fn read(
+pub(crate) fn read_observation(
     refs: &References<'_>,
     name: &RefName,
-) -> Result<Option<Target>, ReferenceError> {
+) -> Result<Option<crate::refs::ReferenceObservation>, ReferenceError> {
     let snapshot = snapshot(refs, &directory(refs, name))?;
     Ok(snapshot
         .table
         .references
         .into_iter()
         .find(|record| record.name == *name)
-        .and_then(|record| record.target))
+        .and_then(|record| {
+            record
+                .target
+                .map(|target| crate::refs::ReferenceObservation {
+                    name: name.clone(),
+                    target,
+                    peeled_hint: record.peeled,
+                })
+        }))
 }
 
 pub(crate) fn list(

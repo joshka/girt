@@ -60,6 +60,21 @@ pub struct References<'a> {
     pub(crate) reference_backend: Backend,
 }
 
+/// A stored reference value paired with metadata captured from the same effective record.
+///
+/// A peeled hint is storage metadata, not proof of an object's existence or type. It may be used
+/// to recognize an already-known commit; otherwise callers must validate the object themselves.
+/// Symbolic and loose references have no hint. Separate observations need not share a generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceObservation {
+    /// Exact requested reference name, including supported pseudorefs such as HEAD.
+    pub name: RefName,
+    /// Effective stored value, without symbolic resolution.
+    pub target: Target,
+    /// Associated peeled identity, if the selected backend record supplies one.
+    pub peeled_hint: Option<ObjectId>,
+}
+
 /// On-disk reference storage selected by repository configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
@@ -217,17 +232,61 @@ impl<'a> References<'a> {
     /// Reports I/O, malformed loose/packed data, unsupported packed traits, and filesystem
     /// symlinks.
     pub fn read(&self, name: &RefName) -> Result<Option<Target>, ReferenceError> {
+        Ok(self
+            .read_observation(name)?
+            .map(|observation| observation.target))
+    }
+
+    /// Captures a stored target and its associated storage-provided peeled hint in one read.
+    ///
+    /// Loose values take precedence and always have no hint, even when they equal a packed
+    /// target. Packed target and hint come from the same parsed file record; reftable uses one
+    /// winning record from a merged stack snapshot. No symbolic resolution or object read occurs.
+    /// The owned result remains unchanged after publication, but is not a lock or a guarantee
+    /// about current storage. Use its target as a transaction expectation before acting on it.
+    ///
+    /// # Errors
+    ///
+    /// Reports the same errors and preserves loose-before-packed precedence as [`Self::read`].
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let refs = repo.references()?;
+    /// let observation = refs.read_observation(&RefName::new("HEAD")?)?.unwrap();
+    /// assert_eq!(observation.peeled_hint, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn read_observation(
+        &self,
+        name: &RefName,
+    ) -> Result<Option<ReferenceObservation>, ReferenceError> {
         if self.reference_backend == Backend::Reftable {
-            return super::reftable::backend::read(self, name);
+            return super::reftable::backend::read_observation(self, name);
         }
         let path = self.path(name)?;
         if let Some(bytes) = read_optional(&path)? {
-            return parse_loose(self.object_format, &bytes, &path).map(Some);
+            let target = parse_loose(self.object_format, &bytes, &path)?;
+            return Ok(Some(ReferenceObservation {
+                name: name.clone(),
+                target,
+                peeled_hint: None,
+            }));
         }
         if name.per_worktree() {
             return Ok(None);
         }
-        Ok(self.packed()?.get(name).copied().map(Target::Direct))
+        Ok(self.packed()?.get(name).map(|record| ReferenceObservation {
+            name: name.clone(),
+            target: Target::Direct(record.target),
+            peeled_hint: record.peeled_hint,
+        }))
     }
 
     /// Follows at most `max_depth` symbolic links and returns the terminal name and identity.
@@ -490,8 +549,7 @@ impl<'a> References<'a> {
         Ok(packed
             .get(name)
             .filter(|_| !name.per_worktree())
-            .copied()
-            .map(Target::Direct))
+            .map(|record| Target::Direct(record.target)))
     }
 
     pub(super) fn packed(&self) -> Result<packed::Packed, ReferenceError> {

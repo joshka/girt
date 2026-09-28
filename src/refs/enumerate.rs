@@ -172,7 +172,7 @@ impl References<'_> {
         let mut entries: BTreeMap<_, _> = packed
             .into_iter()
             .filter(|(name, _)| selected(name.as_bytes(), namespace))
-            .map(|(name, id)| (name, Target::Direct(id)))
+            .map(|(name, record)| (name, Target::Direct(record.target)))
             .collect();
         let separate = self.git_dir != self.common_dir;
         collect_loose(
