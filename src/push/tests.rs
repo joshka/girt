@@ -1171,3 +1171,241 @@ fn refuses_wrong_format_before_graph_reads(#[case] old: Option<ObjectId>, #[case
     );
     assert!(matches!(result, Err(PushFailure::ObjectFormat(_))));
 }
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn preparation_progress_observes_source_and_pack(#[case] format: crate::ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("source"), crate::InitKind::Bare).unwrap();
+    let id = repo.loose_objects().write_blob(b"source bytes").unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(id)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Reading { objects: 1 },
+            PreparationProgress::Packing { objects: (0, 1) },
+            PreparationProgress::Packing { objects: (1, 1) },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_counts_shared_objects_once_and_excludes_known_pack_entries() {
+    let f = Fixture::new();
+    let blob = f.blob();
+    let tree = f.tree(blob, EntryMode::Blob);
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(tree), command("refs/tags/also", None, tree)],
+        &[blob],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Reading { objects: 1 },
+            PreparationProgress::Reading { objects: 2 },
+            PreparationProgress::Packing { objects: (0, 1) },
+            PreparationProgress::Packing { objects: (1, 1) },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[rstest]
+#[case::reading_start(PreparationProgress::Reading { objects: 0 })]
+#[case::reading(PreparationProgress::Reading { objects: 1 })]
+#[case::packing_start(PreparationProgress::Packing { objects: (0, 1) })]
+#[case::packing(PreparationProgress::Packing { objects: (1, 1) })]
+fn preparation_progress_cancellation_has_no_prepared_result(#[case] stop: PreparationProgress) {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |event| {
+            events.push(event);
+            if event == stop {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    );
+    assert!(matches!(result, Err(PushFailure::Cancelled)));
+    assert!(!events.contains(&PreparationProgress::Complete));
+    assert_eq!(events.last(), Some(&stop));
+}
+
+#[test]
+fn preparation_progress_completion_is_not_retroactively_cancelled() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |event| {
+            if event == PreparationProgress::Complete {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert!(cancel.load(Ordering::Relaxed));
+}
+
+#[test]
+fn preparation_progress_empty_batch_has_no_pack_events() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.pack_bytes(), 0);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_deletion_only_has_no_pack_events() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let delete = command(
+        "refs/tags/test",
+        Some(f.blob()),
+        ObjectId::null(crate::ObjectFormat::Sha1),
+    );
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![delete],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.pack_bytes(), 0);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_missing_object_has_no_completion() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let missing = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"absent");
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(missing)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    );
+    assert!(matches!(result, Err(PushFailure::Missing(id)) if id == missing));
+    assert_eq!(events, [PreparationProgress::Reading { objects: 0 }]);
+}
+
+#[test]
+fn preparation_progress_index_failure_has_no_completion() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut limits = PushLimits::default();
+    limits.pack.max_index_bytes = 0;
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        limits,
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    );
+    assert!(matches!(
+        result,
+        Err(PushFailure::Pack(crate::PackWriteError::Limit(
+            "index bytes"
+        )))
+    ));
+    assert_eq!(
+        events.last(),
+        Some(&PreparationProgress::Packing { objects: (1, 1) })
+    );
+    assert!(!events.contains(&PreparationProgress::Complete));
+}
+
+#[test]
+fn preparation_progress_preserves_prepared_bytes() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let commands = vec![tag_command(f.blob())];
+    let cancel = AtomicBool::new(false);
+    let original = PreparedPush::new_local(
+        &objects,
+        commands.clone(),
+        &[],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let observed = PreparedPush::new_local_with_progress(
+        &objects,
+        commands,
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(observed.request, original.request);
+    assert_eq!(observed.pack, original.pack);
+    assert_eq!(observed.index, original.index);
+}

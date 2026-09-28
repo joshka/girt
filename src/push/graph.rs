@@ -16,6 +16,7 @@ impl Graph {
         commands: &[PushCommand],
         limits: PushLimits,
         cancel: &AtomicBool,
+        mut observe: impl FnMut(u64),
     ) -> Result<Self, Error> {
         let mut graph = Self {
             objects: HashMap::new(),
@@ -84,6 +85,8 @@ impl Graph {
                 return Err(Error::Kind(id));
             }
             graph.objects.insert(id, object);
+            observe(graph.objects.len() as u64);
+            check_cancelled(cancel)?;
         }
         let mut remaining = limits.max_ancestry_steps;
         for command in commands {

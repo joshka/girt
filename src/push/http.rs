@@ -82,7 +82,8 @@ pub async fn send_http_checked(
 /// Call [`PreparedPush::with_progress`] before sending to request sideband progress. When the
 /// receiver supports it, `progress` receives each complete channel-2 payload once, in wire order,
 /// as borrowed bytes without UTF-8 conversion. No callback occurs when sideband is not negotiated.
-/// These messages describe receiver work; local preparation and upload have no progress callback.
+/// These messages describe receiver work. [`super::PreparationProgress`] reports preparation
+/// separately; upload has no progress callback.
 ///
 /// The callback runs synchronously on the caller's async task and should return promptly. Its
 /// messages are untrusted, advisory output: they do not establish acceptance or replace inspection

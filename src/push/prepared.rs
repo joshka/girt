@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::graph::Graph;
-use super::{PushCommand, PushFailure as Error, PushLimits};
+use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects, PackObject};
 
@@ -96,7 +96,7 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
     }
 
     /// Prepares a native local push in the source format.
@@ -112,7 +112,28 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
+    }
+
+    /// Prepares a native push while observing completed source reads and pack entries.
+    ///
+    /// Uses [`Self::new_local`]'s source, force and exclusion contracts. `observe` receives
+    /// [`PreparationProgress`] synchronously and must return promptly. It cannot fail; set
+    /// `cancel` to stop at the next cooperative check. Completion means prepared buffers only,
+    /// before sending or publication. Empty and deletion-only batches have no packing events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::new`]'s preparation failures without a completion notification.
+    pub fn new_local_with_progress(
+        objects: &Objects,
+        commands: Vec<PushCommand>,
+        receiver_roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+        observe: impl FnMut(PreparationProgress),
+    ) -> Result<Self, Error> {
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, observe)
     }
 
     fn prepare(
@@ -121,6 +142,7 @@ impl PreparedPush {
         receiver_roots: &[ObjectId],
         limits: PushLimits,
         cancel: &AtomicBool,
+        mut observe: impl FnMut(PreparationProgress),
     ) -> Result<Self, Error> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -151,6 +173,8 @@ impl PreparedPush {
                 false,
                 false,
             )?;
+            observe(PreparationProgress::Reading { objects: 0 });
+            check_cancelled(cancel)?;
             if commands.iter().all(PushCommand::deletes) {
                 return Ok(Self {
                     format: objects.object_format(),
@@ -167,7 +191,9 @@ impl PreparedPush {
                     progress: false,
                 });
             }
-            let mut graph = Graph::select(objects, &commands, limits, cancel)?;
+            let mut graph = Graph::select(objects, &commands, limits, cancel, |objects| {
+                observe(PreparationProgress::Reading { objects });
+            })?;
             let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
             let inputs: Vec<_> = graph
                 .objects
@@ -183,11 +209,10 @@ impl PreparedPush {
                 cancel,
             };
             let mut index = Vec::new();
-            let result = crate::pack::write_controlled(
+            let result = crate::pack::write_controlled_observed(
                 objects.object_format(),
                 &inputs,
-                &mut pack,
-                &mut index,
+                (&mut pack, &mut index),
                 limits.pack,
                 limits.compression,
                 &mut || {
@@ -196,6 +221,11 @@ impl PreparedPush {
                     } else {
                         Ok(())
                     }
+                },
+                &mut |done, total| {
+                    observe(PreparationProgress::Packing {
+                        objects: (done, total),
+                    })
                 },
             );
             check_cancelled(cancel)?;
@@ -219,6 +249,11 @@ impl PreparedPush {
         let result = span.in_scope(operation);
         #[cfg(not(feature = "tracing"))]
         let result = { operation }();
+        let result = result.and_then(|prepared| {
+            check_cancelled(cancel)?;
+            observe(PreparationProgress::Complete);
+            Ok(prepared)
+        });
         #[cfg(feature = "tracing")]
         crate::trace::finish(&span, &result, crate::trace::push_failure);
         #[cfg(feature = "tracing")]

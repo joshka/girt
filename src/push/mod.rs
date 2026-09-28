@@ -41,6 +41,7 @@ mod graph;
 mod local;
 mod local_native;
 mod prepared;
+mod progress;
 mod protocol;
 mod types;
 
@@ -49,6 +50,7 @@ pub use local::{
     send_local_with_identity,
 };
 pub use prepared::PreparedPush;
+pub use progress::PreparationProgress;
 pub use protocol::{PushAdvertisement, send};
 pub use types::{
     ForcePolicy, PushCommand, PushError, PushFailure, PushLimits, PushReport, RefRewrite,

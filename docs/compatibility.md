@@ -1119,6 +1119,14 @@ The default writer emits ordinary zlib entries. `PushLimits::compression` can en
 internal REF_DELTA entries; both policies produce complete packs without external bases. Its
 companion index is generated into a sink, not sent or installed. Repeated and incremental pushes
 using `new` retransmit full selected histories; `new_excluding` can reduce them as described below.
+`PreparedPush::new_local_with_progress` reports unique source reads and successfully encoded pack
+entries through `PreparationProgress`. Reads include receiver history later excluded from the pack;
+packing totals describe only selected outgoing objects. Its terminal `Complete` event follows buffer
+construction and the final cancellation check. It does not report upload, server receipt, acceptance
+or publication. Observers run synchronously and must return promptly; setting the cancellation flag
+from an intermediate event stops preparation at the next cooperative check. Cancellation from the
+terminal event cannot undo completed preparation.
+
 Preparation releases selected payloads after buffering the pack; the caller can drop its object
 reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent
 edges, individual reads, pack/index output, command bytes, advertisement bytes/entries and status
