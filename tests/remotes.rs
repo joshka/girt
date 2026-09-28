@@ -454,6 +454,10 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities() {
     b"[url \"ssh://host/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\n"
 )]
 #[case::explicit_push(b"[url \"ssh://unused/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\npushurl=https://host/push\n")]
+#[case::percent_literal(b"[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_match(b"[url \"changed/\"]\ninsteadOf=https://host/a%2f\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_case_sensitive(b"[url \"changed/\"]\ninsteadOf=https://host/a%2F\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_not_decoded(b"[url \"changed/\"]\ninsteadOf=https://host/a/\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
 fn configured_remote_urls_match_git(#[case] body: &[u8]) {
     let dir = init();
     std::fs::OpenOptions::new()

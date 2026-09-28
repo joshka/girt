@@ -15,6 +15,9 @@ pub enum ConfiguredUrlError {
     /// An explicit numeric port must fit a nonzero u16.
     #[error("invalid remote URL port")]
     Port,
+    /// A network path has malformed percent escapes or decodes to invalid UTF-8.
+    #[error("invalid remote URL path escape")]
+    PathEscape,
     /// URL syntax or normalization is outside the characterized subset.
     /// [`super::ConfiguredRemote`] reports this as its distinct unsupported error variant.
     #[error("unsupported configured URL syntax")]
@@ -27,6 +30,8 @@ pub enum ConfiguredUrlError {
 /// ASCII network hosts are lowercased and numeric ports lose leading zeroes; explicit default
 /// ports and ordinary dot path segments are retained. File-host case is preserved. An HTTP(S)
 /// URL without a path gains `/`. Local paths can contain non-UTF-8 bytes and spaces.
+/// Percent spelling and case in paths are retained. HTTP(S)/SSH path escapes must be complete hex
+/// pairs whose decoded bytes form UTF-8; file/scp path percent sequences remain uninterpreted.
 ///
 /// Unlike an empty value in [`super::ConfiguredRemoteRecord`], an empty destination is an error,
 /// not a list reset. This function does not read configuration, apply fetch-to-push fallback,
@@ -36,15 +41,19 @@ pub enum ConfiguredUrlError {
 /// # Errors
 ///
 /// Returns a value-free diagnostic for malformed supported syntax. Unknown protocols, helpers,
-/// IPv6, passwords, percent escapes, query/fragment handling, Unicode normalization, uppercase
-/// schemes and Windows drive/UNC syntax return [`ConfiguredUrlError::Unsupported`]. That result
-/// requests compatibility handling; it does not establish that the destination is malformed.
+/// IPv6, passwords, authority percent escapes, query/fragment handling, Unicode normalization,
+/// uppercase schemes and Windows drive/UNC syntax return [`ConfiguredUrlError::Unsupported`]. That
+/// result requests compatibility handling; it does not establish that the destination is malformed.
 ///
 /// ```
 /// use girt::remote::{ConfiguredUrlError, normalize_configured_url};
 /// assert_eq!(
 ///     normalize_configured_url(b"https://HOST:00443/repo")?,
 ///     b"https://host:443/repo"
+/// );
+/// assert_eq!(
+///     normalize_configured_url(b"https://HOST/a%2fb")?,
+///     b"https://host/a%2fb"
 /// );
 /// assert_eq!(
 ///     normalize_configured_url(b""),
@@ -92,7 +101,7 @@ pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
     }
     std::str::from_utf8(bytes).map_err(|_| Error::Encoding)?;
     let rest = &bytes[colon + 3..];
-    if rest.iter().any(|b| matches!(b, b'?' | b'#' | b'%' | b'\\')) {
+    if rest.iter().any(|b| matches!(b, b'?' | b'#' | b'\\')) {
         return Err(Error::Unsupported);
     }
     let (authority, path) = match rest.iter().position(|b| *b == b'/') {
@@ -106,7 +115,7 @@ pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
         }
         b"/".as_slice()
     } else {
-        plain_path(path)?;
+        network_path(path)?;
         path
     };
     Ok([scheme, b"://", &authority, path].concat())
@@ -206,14 +215,44 @@ fn network_authority(bytes: &[u8], port_allowed: bool) -> Result<Vec<u8>, Config
     Ok(normalized)
 }
 
+fn network_path(mut path: &[u8]) -> Result<(), ConfiguredUrlError> {
+    plain_path(path)?;
+    if !path.contains(&b'%') {
+        return Ok(());
+    }
+    let mut decoded = Vec::with_capacity(path.len());
+    while let Some((&first, rest)) = path.split_first() {
+        if first == b'%' {
+            let pair = rest.get(..2).ok_or(ConfiguredUrlError::PathEscape)?;
+            let high = hex_digit(pair[0]).ok_or(ConfiguredUrlError::PathEscape)?;
+            let low = hex_digit(pair[1]).ok_or(ConfiguredUrlError::PathEscape)?;
+            decoded.push(high * 16 + low);
+            path = &rest[2..];
+        } else {
+            decoded.push(first);
+            path = rest;
+        }
+    }
+    std::str::from_utf8(&decoded).map_err(|_| ConfiguredUrlError::PathEscape)?;
+    Ok(())
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn plain_path(path: &[u8]) -> Result<(), ConfiguredUrlError> {
     if path.contains(&b' ') {
         return Err(ConfiguredUrlError::Unsupported);
     }
-    if !path
-        .iter()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'~' | b'+'))
-    {
+    if !path.iter().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'~' | b'+' | b'%')
+    }) {
         return Err(ConfiguredUrlError::Unsupported);
     }
     Ok(())
@@ -260,7 +299,7 @@ mod tests {
     #[case::scheme(b"foo://host/repo", ConfiguredUrlError::Unsupported)]
     #[case::ipv6(b"ssh://[::1]/repo", ConfiguredUrlError::Unsupported)]
     #[case::password(b"https://user:secret@host/repo", ConfiguredUrlError::Unsupported)]
-    #[case::escape(b"https://host/repo%20name", ConfiguredUrlError::Unsupported)]
+    #[case::authority_escape(b"https://host%20name/repo", ConfiguredUrlError::Unsupported)]
     fn failures(#[case] input: &[u8], #[case] error: ConfiguredUrlError) {
         assert_eq!(
             crate::remote::normalize_configured_url(input).unwrap_err(),
@@ -274,5 +313,70 @@ mod tests {
             normalize_configured_url(b"https://user:private-password@host/repo").unwrap_err();
         assert_eq!(error, ConfiguredUrlError::Unsupported);
         assert!(!format!("{error:?}: {error}").contains("private-password"));
+    }
+    // Original public-gix 0.87.1 percent-path fixtures; serialized bytes remain encoded.
+    #[rstest]
+    #[case::space(b"https://HOST/a%20b", b"https://host/a%20b")]
+    #[case::slash_lower(b"https://HOST/a%2fb", b"https://host/a%2fb")]
+    #[case::slash_upper(b"https://HOST/a%2Fb", b"https://host/a%2Fb")]
+    #[case::nul(b"https://HOST/a%00b", b"https://host/a%00b")]
+    #[case::dot_segments(b"https://HOST/%2e%2e/repo", b"https://host/%2e%2e/repo")]
+    #[case::question(b"https://HOST/a%3Fb", b"https://host/a%3Fb")]
+    #[case::hash(b"https://HOST/a%23b", b"https://host/a%23b")]
+    #[case::percent(b"http://HOST/%25/repo", b"http://host/%25/repo")]
+    #[case::ssh_space(b"ssh://HOST/a%20b", b"ssh://host/a%20b")]
+    #[case::ssh_slash(b"ssh://HOST/%2Frepo", b"ssh://host/%2Frepo")]
+    #[case::file_space(b"file:///tmp/a%20b", b"file:///tmp/a%20b")]
+    #[case::file_host(b"file://HOST/a%2Fb", b"file://HOST/a%2Fb")]
+    #[case::file_unfinished(b"file:///tmp/a%", b"file:///tmp/a%")]
+    #[case::scp_space(b"HOST:a%20b", b"host:a%20b")]
+    #[case::scp_user(b"user@HOST:a%2fb", b"user@host:a%2fb")]
+    #[case::scp_nonhex(b"HOST:a%GGb", b"host:a%GGb")]
+    #[case::local(b"./local%20path", b"./local%20path")]
+    #[case::local_invalid_utf8(b"/local/%FF", b"/local/%FF")]
+    #[case::unicode(b"https://HOST/%C3%A9", b"https://host/%C3%A9")]
+    #[case::newline(b"https://HOST/%0A", b"https://host/%0A")]
+    #[case::delete(b"https://HOST/%7F", b"https://host/%7F")]
+    #[case::backslash(b"https://HOST/%5C", b"https://host/%5C")]
+    #[case::double_percent(b"https://HOST/%2520", b"https://host/%2520")]
+    #[case::at(b"https://HOST/%40", b"https://host/%40")]
+    #[case::euro(b"https://HOST/%E2%82%AC", b"https://host/%E2%82%AC")]
+    fn percent_path_serialization(#[case] input: &[u8], #[case] expected: &[u8]) {
+        assert_eq!(
+            crate::remote::normalize_configured_url(input).unwrap(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::invalid_utf8(b"https://HOST/a%FFb")]
+    #[case::one_digit(b"https://HOST/a%b")]
+    #[case::missing_pair(b"https://HOST/a%")]
+    #[case::missing_digit(b"https://HOST/a%2")]
+    #[case::nonhex(b"https://HOST/a%GGb")]
+    #[case::ssh_nonhex(b"ssh://HOST/a%GGb")]
+    #[case::overlong(b"https://HOST/%C0%AF")]
+    #[case::surrogate(b"https://HOST/%ED%A0%80")]
+    #[case::truncated_utf8(b"https://HOST/%C3")]
+    fn invalid_network_path_escape_is_value_free(#[case] input: &[u8]) {
+        let error = crate::remote::normalize_configured_url(input).unwrap_err();
+        assert_eq!(error, ConfiguredUrlError::PathEscape);
+        assert_eq!(error.to_string(), "invalid remote URL path escape");
+        assert_eq!(format!("{error:?}"), "PathEscape");
+    }
+
+    #[rstest]
+    #[case::host(b"https://HOST%2Eexample/repo")]
+    #[case::user(b"https://user%20name@HOST/repo")]
+    #[case::query(b"https://HOST/a%20b?query")]
+    #[case::fragment(b"https://HOST/a%20b#fragment")]
+    #[case::credentials(b"https://user:secret@HOST/a%20b")]
+    #[case::ipv6(b"https://[::1]/a%20b")]
+    #[case::scheme(b"HTTPS://HOST/a%20b")]
+    fn percent_paths_do_not_expand_other_syntax(#[case] input: &[u8]) {
+        assert_eq!(
+            crate::remote::normalize_configured_url(input),
+            Err(ConfiguredUrlError::Unsupported)
+        );
     }
 }

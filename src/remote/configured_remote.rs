@@ -15,10 +15,10 @@ use crate::Config;
 ///
 /// URL handling covers ordinary local paths, file URLs, scp-like SSH, SSH URLs and HTTP(S) URLs.
 /// ASCII network hosts are lowercased and numeric ports are serialized without leading zeroes.
-/// Unknown protocols, IPv6, passwords, percent escapes and other uncharacterized normalization
-/// return [`ConfiguredRemoteError::UnsupportedUrlSyntax`]. A caller can then use a compatibility
-/// implementation for the **whole remote**, without treating unsupported data as invalid.
-/// This type neither authorizes a transport nor changes [`super::Remote`] or
+/// Unknown protocols, IPv6, passwords, authority percent escapes and other uncharacterized
+/// normalization return [`ConfiguredRemoteError::UnsupportedUrlSyntax`]. A caller can then use a
+/// compatibility implementation for the **whole remote**, without treating unsupported data as
+/// invalid. This type neither authorizes a transport nor changes [`super::Remote`] or
 /// [`super::RemoteUrls`]' stricter configuration policies.
 #[derive(Clone)]
 pub struct ConfiguredRemote {

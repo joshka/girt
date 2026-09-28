@@ -25,10 +25,18 @@ caller still decides which mappings to execute and which protocols to authorize.
 
 The current URL subset covers ordinary local byte paths, file URLs, scp-like SSH, SSH URLs and
 HTTP(S) URLs. It preserves file-host case and ordinary dot path segments; numeric ports retain even
-an explicit default port. Unknown protocols, helpers, IPv6, passwords, percent escapes, query or
-fragment handling, Unicode normalization, uppercase schemes and Windows drive/UNC syntax require
-`UnsupportedUrlSyntax`. Use a compatibility implementation for the whole remote on that result. Do
-not treat unsupported data as malformed or retry individual values through another parser.
+an explicit default port. Unknown protocols, helpers, IPv6, passwords, authority percent escapes,
+query or fragment handling, Unicode normalization, uppercase schemes and Windows drive/UNC syntax
+require `UnsupportedUrlSyntax`. Use a compatibility implementation for the whole remote on that
+result. Do not treat unsupported data as malformed or retry individual values through another
+parser.
+
+Percent sequences in repository paths retain their exact bytes, including hex letter case. HTTP(S)
+and SSH paths require complete hexadecimal escapes whose decoded bytes form UTF-8; malformed escapes
+return the value-free `PathEscape` error. Decoding only validates these paths: output and rewrite
+matching retain the encoded bytes. File/scp paths keep even malformed percent sequences verbatim,
+and local paths are unchanged. Authority escapes, literal query/fragment syntax and other
+unsupported URL features still require compatibility handling.
 
 The separate `ParsedUrl`, `Remote` and `RemoteUrls` APIs retain their existing presentation,
 strict-mapping and explicit-value contracts. Configured validation does not widen transport

@@ -389,3 +389,118 @@ fn ordinary_url_rewrite_errors(
     assert_eq!(error, expected);
     assert!(!format!("{error:?}: {error}").contains("secret"));
 }
+
+#[rstest]
+#[case::literal_match(b"[url \"changed/\"]\ninsteadOf=https://host/a%2f", b"changed/repo")]
+#[case::hex_case_sensitive(
+    b"[url \"changed/\"]\ninsteadOf=https://host/a%2F",
+    b"https://host/a%2frepo"
+)]
+#[case::decoded_no_match(
+    b"[url \"changed/\"]\ninsteadOf=https://host/a/",
+    b"https://host/a%2frepo"
+)]
+fn percent_rewrite_matches_serialized_bytes(#[case] body: &[u8], #[case] expected: &[u8]) {
+    let config =
+        Config::parse(&[body, b"\n[remote \"origin\"]\nurl=https://HOST/a%2frepo"].concat())
+            .unwrap();
+    assert_eq!(
+        crate::remote::rewrite_configured_url(&config, b"https://HOST/a%2frepo").unwrap(),
+        expected
+    );
+    assert_eq!(
+        ConfiguredRemote::find(&config, b"origin")
+            .unwrap()
+            .unwrap()
+            .fetch_url(),
+        Some(expected)
+    );
+    assert_eq!(
+        ConfiguredRemoteRecord::find(&config, b"origin")
+            .unwrap()
+            .unwrap()
+            .fetch_urls()
+            .next(),
+        Some(b"https://host/a%2frepo".as_slice())
+    );
+}
+
+#[rstest]
+#[case::ordinary(b"insteadOf", b"https://host/a%20b/repo", b"https://host/a%20b/repo")]
+#[case::push_only(b"pushInsteadOf", b"rawrepo", b"https://host/a%20b/repo")]
+fn percent_rewrite_replacement(#[case] key: &[u8], #[case] fetch: &[u8], #[case] push: &[u8]) {
+    let config = Config::parse(
+        &[
+            b"[url \"https://HOST/a%20b/\"]\n",
+            key,
+            b"=raw\n[remote \"origin\"]\nurl=rawrepo",
+        ]
+        .concat(),
+    )
+    .unwrap();
+    let remote = ConfiguredRemote::find(&config, b"origin").unwrap().unwrap();
+    assert_eq!(remote.fetch_url(), Some(fetch));
+    assert_eq!(remote.push_url(), Some(push));
+}
+
+#[test]
+fn percent_url_reset_and_validation_order() {
+    let config = Config::parse(b"[remote \"origin\"]\nurl=https://host/a%GG\nurl=\nurl=https://HOST/a%20b\nfetch=bad..spec").unwrap();
+    assert!(matches!(
+        ConfiguredRemote::find(&config, b"origin"),
+        Err(ConfiguredRemoteError::Refspec { key: "fetch", .. })
+    ));
+}
+
+#[test]
+fn tag_error_precedes_invalid_path_escape() {
+    let config = Config::parse(b"[remote \"origin\"]\ntagOpt=bad\nurl=https://host/a%GG").unwrap();
+    assert_eq!(
+        ConfiguredRemote::find(&config, b"origin").unwrap_err(),
+        ConfiguredRemoteError::TagOption
+    );
+}
+
+#[rstest]
+#[case::original(b"[remote \"origin\"]\nurl=\nurl=https://host/private%GG", 2, false)]
+#[case::rewritten(
+    b"[url \"https://host/private%GG\"]\ninsteadOf=raw\n[remote \"origin\"]\nurl=raw",
+    1,
+    true
+)]
+fn path_escape_error_retains_stage_without_values(
+    #[case] body: &[u8],
+    #[case] occurrence: usize,
+    #[case] rewritten: bool,
+) {
+    let error = find(body).unwrap_err();
+    assert_eq!(
+        error,
+        ConfiguredRemoteError::Url {
+            key: "url",
+            occurrence,
+            rewritten,
+            source: ConfiguredUrlError::PathEscape
+        }
+    );
+    assert!(!format!("{error:?}: {error}").contains("private"));
+}
+
+#[test]
+fn invalid_push_path_rewrite_retains_original() {
+    let config = Config::parse(
+        b"[url \"https://host/a%GG\"]\npushInsteadOf=raw\n[remote \"origin\"]\nurl=raw",
+    )
+    .unwrap();
+    let remote = ConfiguredRemote::find(&config, b"origin").unwrap().unwrap();
+    assert_eq!(remote.push_url(), Some(b"raw".as_slice()));
+}
+
+#[test]
+fn refspec_error_precedes_invalid_rewritten_path() {
+    let config = Config::parse(b"[url \"https://host/a%GG\"]\ninsteadOf=raw\n[remote \"origin\"]\nurl=raw\nfetch=bad..spec").unwrap();
+    assert!(matches!(
+        ConfiguredRemote::find(&config, b"origin"),
+        Err(ConfiguredRemoteError::Refspec { key: "fetch", .. })
+    ));
+}
