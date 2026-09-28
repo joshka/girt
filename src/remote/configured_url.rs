@@ -98,10 +98,7 @@ impl ConfiguredUrlParts {
 /// # Ok::<(), girt::remote::ConfiguredUrlError>(())
 /// ```
 pub fn parse_configured_url(bytes: &[u8]) -> Result<ConfiguredUrlParts, ConfiguredUrlError> {
-    validate_input(bytes)?;
-    super::user_url::parse(bytes)
-        .map(|url| url.parts)
-        .map_err(configured_error)
+    parse(bytes).map(|url| url.parts)
 }
 
 /// Validates and serializes one configured destination, without applying URL rewrites.
@@ -159,8 +156,12 @@ pub fn normalize_configured_url(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlEr
 }
 
 pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
+    parse(bytes).map(|url| url.bytes)
+}
+
+pub(super) fn parse(bytes: &[u8]) -> Result<super::user_url::NormalizedUrl, ConfiguredUrlError> {
     validate_input(bytes)?;
-    super::user_url::normalize(bytes).map_err(configured_error)
+    super::user_url::parse(bytes).map_err(configured_error)
 }
 
 fn validate_input(bytes: &[u8]) -> Result<(), ConfiguredUrlError> {

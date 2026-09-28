@@ -1,7 +1,10 @@
 //! Validated configured remotes, without transport selection or source discovery.
 
-use super::configured_url::normalize;
-use super::{ConfiguredRefspec, ConfiguredRefspecError, ConfiguredUrlError, Direction};
+use super::configured_url::{normalize, parse};
+use super::user_url::NormalizedUrl;
+use super::{
+    ConfiguredRefspec, ConfiguredRefspecError, ConfiguredUrlError, ConfiguredUrlParts, Direction,
+};
 use crate::Config;
 
 /// An active configured remote after validation and URL rewrites.
@@ -22,8 +25,8 @@ use crate::Config;
 /// [`super::RemoteUrls`]' stricter configuration policies.
 #[derive(Clone)]
 pub struct ConfiguredRemote {
-    fetch_url: Option<Vec<u8>>,
-    push_url: Option<Vec<u8>>,
+    fetch_url: Option<NormalizedUrl>,
+    push_url: Option<NormalizedUrl>,
     fetch_refspecs: Vec<ConfiguredRefspec>,
     push_refspecs: Vec<ConfiguredRefspec>,
 }
@@ -104,7 +107,9 @@ impl ConfiguredRemote {
     /// first equal-length match retained. Empty and implicit match values match the empty prefix.
     /// Explicit push URLs disable `pushInsteadOf`. Otherwise a malformed supported push-only
     /// rewrite retains that occurrence's original URL, even if an ordinary rewrite also matches.
-    /// Unsupported rewritten syntax always requests whole-remote compatibility handling.
+    /// Unsupported rewritten syntax always requests whole-remote compatibility handling. SSH IPv6
+    /// originals also require compatibility when a rule of the applicable rewrite kind exists:
+    /// serializers that omit their brackets can otherwise select a different destination.
     ///
     /// # Errors
     ///
@@ -152,13 +157,29 @@ impl ConfiguredRemote {
     /// First supported serialized fetch URL after resets and ordinary rewrites, if any.
     /// Bytes may contain credentials; do not log them by default.
     pub fn fetch_url(&self) -> Option<&[u8]> {
-        self.fetch_url.as_deref()
+        self.fetch_url.as_ref().map(|url| url.bytes.as_slice())
     }
 
     /// First supported serialized push URL, or the first fetch URL with push rewrite policy.
     /// Bytes may contain credentials; do not log them by default.
     pub fn push_url(&self) -> Option<&[u8]> {
-        self.push_url.as_deref()
+        self.push_url.as_ref().map(|url| url.bytes.as_slice())
+    }
+
+    /// Interpreted parts of the selected fetch URL, after resets and ordinary rewrites.
+    ///
+    /// Retains the original parsing result, including distinctions lost during serialization.
+    /// Prefer this accessor to parsing [`Self::fetch_url`] again when presenting its host or path.
+    pub fn fetch_url_parts(&self) -> Option<&ConfiguredUrlParts> {
+        self.fetch_url.as_ref().map(|url| &url.parts)
+    }
+
+    /// Interpreted parts of the selected push URL, including fetch fallback and push rewrites.
+    ///
+    /// Bytes and parts always come from the same selected parsing result. An invalid supported
+    /// push-only rewrite retains the original URL's parts as well as its bytes.
+    pub fn push_url_parts(&self) -> Option<&ConfiguredUrlParts> {
+        self.push_url.as_ref().map(|url| &url.parts)
     }
 
     /// Validated fetch descriptors in configuration order, including duplicates and defaults.
@@ -261,12 +282,12 @@ impl ConfiguredRemoteRecord {
 
     /// Every surviving supported serialized fetch URL, without rewrites. May contain secrets.
     pub fn fetch_urls(&self) -> impl ExactSizeIterator<Item = &[u8]> {
-        self.fetch.iter().map(|url| url.bytes.as_slice())
+        self.fetch.iter().map(|url| url.url.bytes.as_slice())
     }
 
     /// Every surviving explicit push URL, without rewrites or fallback. May contain secrets.
     pub fn push_urls(&self) -> impl ExactSizeIterator<Item = &[u8]> {
-        self.push.iter().map(|url| url.bytes.as_slice())
+        self.push.iter().map(|url| url.url.bytes.as_slice())
     }
 
     /// Fetch descriptors in configuration order, including duplicates and defaults.
@@ -288,7 +309,7 @@ impl ConfiguredRemoteRecord {
 #[derive(Clone)]
 struct UrlOccurrence {
     index: usize,
-    bytes: Vec<u8>,
+    url: NormalizedUrl,
 }
 
 fn configured_urls(
@@ -306,8 +327,8 @@ fn configured_urls(
     surviving
         .into_iter()
         .map(|(index, bytes)| {
-            normalize(bytes)
-                .map(|bytes| UrlOccurrence { index, bytes })
+            parse(bytes)
+                .map(|url| UrlOccurrence { index, url })
                 .map_err(|err| url_error(err, key, index, false))
         })
         .collect()
@@ -339,7 +360,9 @@ fn configured_refspecs(
 /// Normalizes the supplied URL before matching prefixes. The longest matching prefix wins;
 /// the first occurrence wins equal-length ties. An implicit or empty prefix matches every URL.
 /// The replacement is normalized and validated once, without recursively applying rewrites.
-/// `pushInsteadOf` entries are ignored: this function has no push fallback policy.
+/// `pushInsteadOf` entries are ignored: this function has no push fallback policy. SSH IPv6
+/// originals require compatibility when any ordinary rewrite rule exists, since serializers
+/// that omit their brackets can otherwise select a different destination.
 ///
 /// Reads only the supplied snapshot, without filesystem, environment or network access. It does
 /// not authorize a transport or check repository existence. Returned bytes may contain private
@@ -367,10 +390,10 @@ pub fn rewrite_configured_url(
     config: &Config,
     bytes: &[u8],
 ) -> Result<Vec<u8>, ConfiguredUrlError> {
-    let original = normalize(bytes)?;
-    match rewrite(config, &original, "insteadof") {
+    let original = parse(bytes)?;
+    match rewrite(config, &original, "insteadof")? {
         Some(rewritten) => normalize(&rewritten),
-        None => Ok(original),
+        None => Ok(original.bytes),
     }
 }
 
@@ -378,11 +401,15 @@ fn rewrite_urls(
     config: &Config,
     urls: &[UrlOccurrence],
     key: &'static str,
-) -> Result<Vec<Vec<u8>>, ConfiguredRemoteError> {
+) -> Result<Vec<NormalizedUrl>, ConfiguredRemoteError> {
     urls.iter()
-        .map(|url| match rewrite(config, &url.bytes, "insteadof") {
-            Some(bytes) => normalize(&bytes).map_err(|err| url_error(err, key, url.index, true)),
-            None => Ok(url.bytes.clone()),
+        .map(|url| {
+            let rewritten = rewrite(config, &url.url, "insteadof")
+                .map_err(|err| url_error(err, key, url.index, true))?;
+            match rewritten {
+                Some(bytes) => parse(&bytes).map_err(|err| url_error(err, key, url.index, true)),
+                None => Ok(url.url.clone()),
+            }
         })
         .collect()
 }
@@ -390,30 +417,46 @@ fn rewrite_urls(
 fn push_fallback_urls(
     config: &Config,
     originals: &[UrlOccurrence],
-    ordinary: &[Vec<u8>],
-) -> Result<Vec<Vec<u8>>, ConfiguredRemoteError> {
+    ordinary: &[NormalizedUrl],
+) -> Result<Vec<NormalizedUrl>, ConfiguredRemoteError> {
     originals
         .iter()
         .zip(ordinary)
         .map(|(url, ordinary)| {
-            let Some(bytes) = rewrite(config, &url.bytes, "pushinsteadof") else {
+            let rewritten = rewrite(config, &url.url, "pushinsteadof")
+                .map_err(|err| url_error(err, "url", url.index, true))?;
+            let Some(bytes) = rewritten else {
                 return Ok(ordinary.clone());
             };
-            match normalize(&bytes) {
-                Ok(bytes) => Ok(bytes),
+            match parse(&bytes) {
+                Ok(url) => Ok(url),
                 Err(ConfiguredUrlError::Unsupported) => Err(url_error(
                     ConfiguredUrlError::Unsupported,
                     "url",
                     url.index,
                     true,
                 )),
-                Err(_) => Ok(url.bytes.clone()),
+                Err(_) => Ok(url.url.clone()),
             }
         })
         .collect()
 }
 
-fn rewrite(config: &Config, url: &[u8], key: &str) -> Option<Vec<u8>> {
+fn rewrite(
+    config: &Config,
+    url: &NormalizedUrl,
+    key: &str,
+) -> Result<Option<Vec<u8>>, ConfiguredUrlError> {
+    // Compatibility serializers can omit SSH IPv6 brackets. Their canonical-prefix matching
+    // then selects different destinations. Decline even nonmatching rules rather than guess
+    // which serialization a caller's existing configuration expects.
+    let ssh_ipv6 = url.bytes.starts_with(b"ssh://")
+        && url.parts.host().is_some_and(|host| {
+            std::str::from_utf8(host)
+                .ok()
+                .and_then(|host| host.parse::<std::net::Ipv6Addr>().ok())
+                .is_some()
+        });
     let mut selected: Option<(&[u8], &[u8])> = None;
     for entry in config.entries() {
         if !entry.section.eq_ignore_ascii_case(b"url")
@@ -424,12 +467,16 @@ fn rewrite(config: &Config, url: &[u8], key: &str) -> Option<Vec<u8>> {
         let Some(base) = entry.subsection.as_deref() else {
             continue;
         };
+        if ssh_ipv6 {
+            return Err(ConfiguredUrlError::Unsupported);
+        }
         let prefix = entry.value.as_deref().unwrap_or_default();
-        if url.starts_with(prefix) && selected.is_none_or(|(_, old)| prefix.len() > old.len()) {
+        if url.bytes.starts_with(prefix) && selected.is_none_or(|(_, old)| prefix.len() > old.len())
+        {
             selected = Some((base, prefix));
         }
     }
-    selected.map(|(base, prefix)| [base, &url[prefix.len()..]].concat())
+    Ok(selected.map(|(base, prefix)| [base, &url.bytes[prefix.len()..]].concat()))
 }
 
 fn url_error(

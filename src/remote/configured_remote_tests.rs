@@ -732,3 +732,189 @@ fn broader_urls_preserve_occurrence_errors(
     );
     assert!(!format!("{error:?}: {error}").contains("secret"));
 }
+
+// Selected parsed components must survive serialization that loses syntax such as SSH brackets.
+#[rstest]
+#[case::ssh_bracket(
+    b"[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit",
+    b"ssh://HOST/repo%2Egit",
+    b"HOST",
+    b"/repo.git"
+)]
+#[case::scp_bracket(
+    b"[remote \"origin\"]\nurl=[HOST]:repo%2Egit",
+    b"HOST:repo%2Egit",
+    b"HOST",
+    b"repo%2Egit"
+)]
+#[case::custom_bracket(
+    b"[remote \"origin\"]\nurl=custom://[HOST]/repo%2Egit",
+    b"custom://%5BHOST%5D/repo%2Egit",
+    b"[HOST]",
+    b"/repo.git"
+)]
+#[case::custom_escape(
+    b"[remote \"origin\"]\nurl=custom://HOST%3Fx/repo%2Egit",
+    b"custom://HOST%3Fx/repo%2Egit",
+    b"HOST?x",
+    b"/repo.git"
+)]
+#[case::ordinary_rewrite(
+    b"[url \"ssh://[HOST]/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=alias:repo%2Egit",
+    b"ssh://HOST/repo%2Egit",
+    b"HOST",
+    b"/repo.git"
+)]
+#[case::reset(
+    b"[remote \"origin\"]\nurl=host:\nurl=\nurl=ssh://[HOST]/repo%2Egit",
+    b"ssh://HOST/repo%2Egit",
+    b"HOST",
+    b"/repo.git"
+)]
+#[case::first_surviving(
+    b"[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit\nurl=ssh://other/second",
+    b"ssh://HOST/repo%2Egit",
+    b"HOST",
+    b"/repo.git"
+)]
+fn selected_parts_retain_parse_provenance(
+    #[case] body: &[u8],
+    #[case] bytes: &[u8],
+    #[case] host: &[u8],
+    #[case] path: &[u8],
+) {
+    let remote = find(body).unwrap().unwrap();
+    assert_eq!(remote.fetch_url(), Some(bytes));
+    let parts = remote.fetch_url_parts().unwrap();
+    assert_eq!(parts.host(), Some(host));
+    assert_eq!(parts.path(), path);
+    assert_eq!(remote.push_url(), remote.fetch_url());
+    assert_eq!(remote.push_url_parts(), remote.fetch_url_parts());
+}
+
+#[rstest]
+#[case::push_rewrite(
+    b"[url \"ssh://[PUSH]/\"]\npushInsteadOf=ssh://HOST/\n[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit",
+    b"HOST", b"PUSH", b"ssh://PUSH/repo%2Egit"
+)]
+#[case::explicit_push(
+    b"[url \"ssh://ignored/\"]\npushInsteadOf=ssh://HOST/\n[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit\npushurl=ssh://[PUSH]/repo%2Egit",
+    b"HOST", b"PUSH", b"ssh://PUSH/repo%2Egit"
+)]
+#[case::explicit_push_rewrite(
+    b"[url \"custom://[PUSH]/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit\npushurl=alias:repo%2Egit",
+    b"HOST", b"[PUSH]", b"custom://%5BPUSH%5D/repo%2Egit"
+)]
+#[case::invalid_push_rewrite(
+    b"[url \"host:\"]\npushInsteadOf=ssh://HOST/repo%2Egit\n[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit",
+    b"HOST", b"HOST", b"ssh://HOST/repo%2Egit"
+)]
+#[case::invalid_push_rewrite_with_ordinary(
+    b"[url \"ssh://[FETCH]/\"]\ninsteadOf=ssh://HOST/\n[url \"host:\"]\npushInsteadOf=ssh://HOST/repo%2Egit\n[remote \"origin\"]\nurl=ssh://[HOST]/repo%2Egit",
+    b"FETCH", b"HOST", b"ssh://HOST/repo%2Egit"
+)]
+fn selected_push_parts_follow_the_same_rewrite_as_bytes(
+    #[case] body: &[u8],
+    #[case] fetch_host: &[u8],
+    #[case] push_host: &[u8],
+    #[case] push_bytes: &[u8],
+) {
+    let remote = find(body).unwrap().unwrap();
+    assert_eq!(remote.fetch_url_parts().unwrap().host(), Some(fetch_host));
+    assert_eq!(remote.push_url(), Some(push_bytes));
+    assert_eq!(remote.push_url_parts().unwrap().host(), Some(push_host));
+    assert_eq!(remote.push_url_parts().unwrap().path(), b"/repo.git");
+}
+
+#[test]
+fn push_only_parts_do_not_create_a_fetch_url() {
+    let remote = find(b"[remote \"origin\"]\npushurl=ssh://[PUSH]/repo%2Egit")
+        .unwrap()
+        .unwrap();
+    assert_eq!(remote.fetch_url(), None);
+    assert_eq!(remote.fetch_url_parts(), None);
+    assert_eq!(
+        remote.push_url_parts().unwrap().host(),
+        Some(b"PUSH".as_slice())
+    );
+}
+
+#[test]
+fn retaining_selected_parts_does_not_skip_later_validation() {
+    let error = find(b"[remote \"origin\"]\nurl=ssh://[HOST]/repo\nurl=https://host:bad/repo\npushurl=ssh://[PUSH]/repo").unwrap_err();
+    assert_eq!(
+        error,
+        ConfiguredRemoteError::Url {
+            key: "url",
+            occurrence: 2,
+            rewritten: false,
+            source: ConfiguredUrlError::Port,
+        }
+    );
+}
+
+// Original public remote lookup and installed Git select different destinations when SSH IPv6
+// brackets participate in canonical prefix matching. Require whole-remote compatibility here.
+#[rstest]
+#[case::witness(b"[url \"ssh://[FETCH]/repo\"]\ninsteadOf=ssh://[::1]/repo%2Egit\n[url \"host:\"]\npushInsteadOf=ssh://[::1]/repo%2Egit\n")]
+#[case::ordinary_nonmatching(b"[url \"ssh://other/\"]\ninsteadOf=unrelated:\n")]
+#[case::push_nonmatching(b"[url \"ssh://other/\"]\npushInsteadOf=unrelated:\n")]
+fn ssh_ipv6_original_with_rewrite_requires_compatibility(#[case] rules: &[u8]) {
+    let body = [rules, b"[remote \"origin\"]\nurl=ssh://[::1]/repo%2Egit\n"].concat();
+    assert_eq!(
+        find(&body).unwrap_err(),
+        ConfiguredRemoteError::UnsupportedUrlSyntax {
+            key: "url",
+            occurrence: 1,
+            rewritten: true,
+        }
+    );
+}
+
+#[rstest]
+#[case::no_rewrite(b"[remote \"origin\"]\nurl=ssh://[::1]/repo%2Egit\n")]
+#[case::replacement(
+    b"[url \"ssh://[::1]/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=alias:repo%2Egit\n"
+)]
+#[case::explicit_push_ignores_push_rules(b"[url \"ssh://other/\"]\npushInsteadOf=ssh://\n[remote \"origin\"]\nurl=ssh://[::1]/repo%2Egit\npushurl=ssh://[::1]/repo%2Egit\n")]
+fn ssh_ipv6_without_ambiguous_prefix_matching_retains_native_parts(#[case] body: &[u8]) {
+    let remote = find(body).unwrap().unwrap();
+    assert_eq!(
+        remote.fetch_url(),
+        Some(b"ssh://[::1]/repo%2Egit".as_slice())
+    );
+    assert_eq!(
+        remote.fetch_url_parts().unwrap().host(),
+        Some(b"::1".as_slice())
+    );
+    assert_eq!(remote.fetch_url_parts().unwrap().path(), b"/repo.git");
+    assert_eq!(remote.push_url_parts(), remote.fetch_url_parts());
+}
+
+#[test]
+fn ssh_ipv6_guard_preserves_earlier_rewrite_failure() {
+    let error = find(b"[url \"https://host:bad/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=alias:repo\nurl=ssh://[::1]/repo\n").unwrap_err();
+    assert_eq!(
+        error,
+        ConfiguredRemoteError::Url {
+            key: "url",
+            occurrence: 1,
+            rewritten: true,
+            source: ConfiguredUrlError::Port,
+        }
+    );
+}
+
+#[test]
+fn standalone_ipv6_rewrite_guard_uses_only_ordinary_rules() {
+    let ordinary = Config::parse(b"[url \"ssh://other/\"]\ninsteadOf=unrelated:\n").unwrap();
+    assert_eq!(
+        super::rewrite_configured_url(&ordinary, b"ssh://[::1]/repo"),
+        Err(ConfiguredUrlError::Unsupported)
+    );
+    let push = Config::parse(b"[url \"ssh://other/\"]\npushInsteadOf=ssh://\n").unwrap();
+    assert_eq!(
+        super::rewrite_configured_url(&push, b"ssh://[::1]/repo").unwrap(),
+        b"ssh://[::1]/repo"
+    );
+}

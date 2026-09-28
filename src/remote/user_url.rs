@@ -123,11 +123,7 @@ pub fn canonicalize_user_url(source: &[u8], base: &Path) -> Result<Vec<u8>, User
     }
 }
 
-/// Normalizes presentation without accessing the filesystem or expanding relative paths.
-pub(super) fn normalize(source: &[u8]) -> Result<Vec<u8>, UserUrlParseError> {
-    parse(source).map(|url| url.bytes)
-}
-
+#[derive(Clone)]
 pub(super) struct NormalizedUrl {
     pub bytes: Vec<u8>,
     pub parts: ConfiguredUrlParts,
