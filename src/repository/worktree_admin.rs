@@ -50,14 +50,14 @@ pub enum WorktreeRetirement {
     Confirmed,
 }
 
-struct AdminLock(PathBuf);
+pub(super) struct AdminLock(PathBuf);
 impl Drop for AdminLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
 }
 
-fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError> {
+pub(super) fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError> {
     let path = registration.join("girt-admin.lock");
     match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(_) => Ok(AdminLock(path)),
@@ -72,8 +72,11 @@ fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError> {
     }
 }
 
-fn checked_registration(repo: &Repository, path: &Path) -> Result<PathBuf, WorktreeAdminError> {
-    let root = repo.common_dir.join("worktrees");
+pub(super) fn checked_registration(
+    common_dir: &Path,
+    path: &Path,
+) -> Result<PathBuf, WorktreeAdminError> {
+    let root = common_dir.join("worktrees");
     if path.parent() != Some(root.as_path()) {
         return Err(WorktreeAdminError::Uncertain(path.into()));
     }
@@ -99,7 +102,7 @@ fn resolved(source: &Path, target: &Path) -> PathBuf {
     source.parent().unwrap_or(Path::new(".")).join(target)
 }
 
-fn replace(
+pub(super) fn replace(
     path: &Path,
     bytes: &[u8],
     written: &mut Vec<PathBuf>,
@@ -164,7 +167,7 @@ impl Repository {
         checkout: impl AsRef<Path>,
         link_style: WorktreeLinkStyle,
     ) -> Result<(), WorktreeAdminError> {
-        let registration = checked_registration(self, registration.as_ref())?;
+        let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let checkout = fs::canonicalize(checkout.as_ref())
             .map_err(|_| WorktreeAdminError::Uncertain(checkout.as_ref().into()))?;
         if !checkout.is_dir() {
@@ -232,7 +235,7 @@ impl Repository {
         registration: impl AsRef<Path>,
         reason: &str,
     ) -> Result<(), WorktreeAdminError> {
-        let registration = checked_registration(self, registration.as_ref())?;
+        let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         if reason.contains(['\n', '\r']) {
             return Err(WorktreeAdminError::Uncertain(registration));
         }
@@ -265,7 +268,7 @@ impl Repository {
         registration: impl AsRef<Path>,
         reason: &str,
     ) -> Result<(), WorktreeAdminError> {
-        let registration = checked_registration(self, registration.as_ref())?;
+        let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let _guard = lock(&registration)?;
         let path = registration.join("locked");
         if fs::read(&path).map_err(|_| WorktreeAdminError::Uncertain(path.clone()))?
@@ -297,7 +300,7 @@ impl Repository {
         expire_before: SystemTime,
         _retirement: WorktreeRetirement,
     ) -> Result<(), WorktreeAdminError> {
-        let registration = checked_registration(self, registration.as_ref())?;
+        let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let _guard = lock(&registration)?;
         let locked = registration.join("locked");
         match fs::symlink_metadata(&locked) {

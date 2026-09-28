@@ -45,6 +45,20 @@ empty linked checkout; `repair_worktree` repairs links to an identified checkout
 `prune_worktree` removes a retired registration only after explicit retirement confirmation. These
 operations require caller coordination and can retain partial state after failure.
 
+For a newly published gitfile, `RepositoryLocation::prepare_worktree_repair` captures the exact
+registration without opening repository storage or configuration. Keep the source gitfile, publish
+it with a no-clobber hard link, then call `WorktreeRepair::repair(destination)`. Repair preserves
+the captured forward and back links' absolute or relative forms independently; it does not enable
+repository extensions. Captured links and canonical anchors are rechecked under the administration
+lock. Unix additionally checks device/inode identity; other platforms check file kind, paths and
+bytes. Caller exclusion of noncooperating administrators remains required. Failures retain recovery
+metadata and report completed link replacements.
+
+Gitfile, backlink and `commondir` path readers remove a terminal run of CR/LF bytes and preserve
+interior CR/LF and literal spaces. Empty paths and NUL bytes are rejected. A path component ending
+in CR/LF must have a following separator to distinguish it from the metadata terminator. Prepared
+repair supports these existing paths; creation retains its separate path restrictions.
+
 Without `extensions.worktreeConfig`, linked layouts ignore shared `core.bare` and `core.worktree`.
 With it, direct common settings followed by direct private settings determine the checkout.
 Includes, inherited sources and runtime config overrides affect the resolved configuration, not this

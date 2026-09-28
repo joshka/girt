@@ -282,7 +282,8 @@ pub use repository::{
     ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, OpenError,
     OperationCleanupError, OperationError, OperationLimits, OperationState, Repository,
     RepositoryLocation, RepositoryMetadata, ShallowError, ShallowRoots, Worktree,
-    WorktreeAdminError, WorktreeError, WorktreeLinkStyle, WorktreeRetirement, WorktreeState,
+    WorktreeAdminError, WorktreeError, WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement,
+    WorktreeState,
 };
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

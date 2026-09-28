@@ -6,6 +6,7 @@ mod operation;
 mod shallow;
 mod worktree_admin;
 mod worktree_create;
+mod worktree_repair;
 mod worktrees;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -18,6 +19,7 @@ pub use shallow::{ShallowError, ShallowRoots};
 use thiserror::Error;
 pub use worktree_admin::{WorktreeAdminError, WorktreeRetirement};
 pub use worktree_create::CreateWorktreeError;
+pub use worktree_repair::WorktreeRepair;
 pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 
 /// Link spelling for one worktree creation or repair operation.
@@ -970,10 +972,12 @@ fn gitfile_target(path: &Path) -> Result<PathBuf, OpenError> {
     Ok(path.parent().unwrap_or(Path::new(".")).join(target))
 }
 fn metadata_path(source: &Path, bytes: &[u8]) -> Result<PathBuf, OpenError> {
-    let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
-    let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
-    if bytes.is_empty() || bytes.contains(&b'\n') || bytes.contains(&0) {
-        return Err(malformed(source, "empty or multiline path"));
+    let end = bytes
+        .iter()
+        .rposition(|byte| !matches!(byte, b'\r' | b'\n'));
+    let bytes = &bytes[..end.map_or(0, |index| index + 1)];
+    if bytes.is_empty() || bytes.contains(&0) {
+        return Err(malformed(source, "empty path or NUL in path"));
     }
     path_bytes(source, bytes)
 }
