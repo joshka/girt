@@ -30,6 +30,7 @@ mod credential;
 mod edit;
 mod endpoint;
 pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
+mod name;
 mod refspec;
 mod url;
 
@@ -42,6 +43,7 @@ pub use credential::{
     CredentialSession, Prompt, askpass,
 };
 pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment};
+pub use name::{InvalidRemoteName, RemoteNameError, validate_name};
 pub use refspec::{
     Direction, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs, RefspecsError,
 };

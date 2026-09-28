@@ -475,3 +475,34 @@ fn configured_remote_urls_match_git(#[case] body: &[u8]) {
         [remote.push_url().unwrap(), b"\n"].concat()
     );
 }
+
+// Remote-add validates tracking-reference names more strictly than raw config subsections.
+#[rstest]
+#[case::ordinary("origin", true)]
+#[case::reserved_by_consumer("git", true)]
+#[case::slash("team/fork", true)]
+#[case::trailing_dot("fork.", true)]
+#[case::dot_before_slash("a./b", true)]
+#[case::at("@", true)]
+#[case::leading_dash("-fork", true)]
+#[case::empty("", false)]
+#[case::space("a b", false)]
+#[case::wildcard("a*b", false)]
+#[case::multiple_wildcards("a**b", false)]
+#[case::lock_suffix("a.lock", false)]
+#[case::leading_dot(".a", false)]
+#[case::trailing_slash("a/", false)]
+#[case::colon(":", false)]
+fn remote_name_validation_agrees_with_git(#[case] name: &str, #[case] accepted: bool) {
+    let directory = init();
+    let output = attempt(
+        directory.path(),
+        &["remote", "add", "--", name, "/unused"],
+        b"",
+    );
+    assert_eq!(output.status.success(), accepted, "{output:?}");
+    assert_eq!(
+        girt::remote::validate_name(name.as_bytes()).is_ok(),
+        accepted
+    );
+}
