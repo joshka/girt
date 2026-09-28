@@ -445,3 +445,40 @@ fn grouped_append_matches_git_and_preserves_original_bytes() {
         Some(None)
     );
 }
+
+#[test]
+fn physical_section_removal_publishes_only_the_selected_occurrence() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("config");
+    let original = b"# keep\r\n[remote.origin]\r\nurl=first\r\n[remote \"origin\"]\r\nurl=second\r\n[remote]\r\nkey=kept\r\n";
+    std::fs::write(&path, original).unwrap();
+    let mut edit = ConfigEdit::open(&path, 4096).unwrap();
+    let first = edit.document().sections().next().unwrap().ordinal();
+    edit.document_mut().remove_sections(&[first]).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    edit.commit().unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"# keep\r\n\r\n\r\n[remote \"origin\"]\r\nurl=second\r\n[remote]\r\nkey=kept\r\n"
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &[
+                "config",
+                "--file",
+                "config",
+                "--get-all",
+                "remote.origin.url"
+            ]
+        ),
+        b"second\n"
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &["config", "--file", "config", "--get", "remote.key"]
+        ),
+        b"kept\n"
+    );
+}

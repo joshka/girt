@@ -14,7 +14,7 @@ mod document;
 mod edit;
 pub use edit::{ConfigEdit, EditError};
 mod parse;
-pub use document::Document;
+pub use document::{Document, DocumentSection};
 mod resolution;
 mod sources;
 mod values;

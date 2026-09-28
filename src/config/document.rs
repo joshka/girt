@@ -16,6 +16,43 @@ pub struct Document {
     layout: Layout,
 }
 
+/// One physical section header and its direct-file assignment occurrences.
+///
+/// Repeated headers are distinct even when their decoded names match. This view borrows its
+/// [`Document`]; ordinal and entry indices describe that document's current state and become stale
+/// after any edit. Comments and empty sections do not contribute entry occurrences.
+#[derive(Debug, Clone)]
+pub struct DocumentSection<'a> {
+    ordinal: usize,
+    name: &'a [u8],
+    subsection: Option<&'a [u8]>,
+    entries: Range<usize>,
+}
+
+impl<'a> DocumentSection<'a> {
+    /// Zero-based physical header position, suitable for [`Document::remove_sections`].
+    pub fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    /// Original section-name bytes; name matching usually folds ASCII case.
+    pub fn name(&self) -> &'a [u8] {
+        self.name
+    }
+
+    /// Exact quoted subsection bytes, or lowercase deprecated dotted subsection bytes.
+    pub fn subsection(&self) -> Option<&'a [u8]> {
+        self.subsection
+    }
+
+    /// Assignment occurrence range in [`Document::config`]'s [`Config::entries`].
+    ///
+    /// Empty sections have an empty range at the next assignment's position, or at the end.
+    pub fn entry_range(&self) -> Range<usize> {
+        self.entries.clone()
+    }
+}
+
 impl Document {
     /// Parses one file, retaining its exact bytes (including a leading BOM).
     ///
@@ -39,6 +76,86 @@ impl Document {
     /// Current direct-file entries; includes remain unexpanded directives.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Iterates physical section headers in file order, including empty and repeated sections.
+    ///
+    /// Views borrow this document. Their ordinals and entry occurrence ranges become stale after
+    /// edits. Includes remain ordinary direct-file entries; no included files are read.
+    pub fn sections(&self) -> impl ExactSizeIterator<Item = DocumentSection<'_>> {
+        (0..self.layout.sections.len()).map(|ordinal| self.section_at(ordinal))
+    }
+
+    fn section_at(&self, ordinal: usize) -> DocumentSection<'_> {
+        let section = &self.layout.sections[ordinal];
+        let next_header = self
+            .layout
+            .sections
+            .get(ordinal + 1)
+            .map_or(self.bytes.len(), |next| next.range.start);
+        let start = self
+            .layout
+            .entries
+            .partition_point(|entry| entry.range.start < section.range.end);
+        let end = self
+            .layout
+            .entries
+            .partition_point(|entry| entry.range.start < next_header);
+        DocumentSection {
+            ordinal,
+            name: &section.section,
+            subsection: section.subsection.as_deref(),
+            entries: start..end,
+        }
+    }
+
+    /// Removes selected physical headers and their assignments in one atomic edit.
+    ///
+    /// Preserves comments, whitespace and all unrelated bytes just like [`Self::remove_section`].
+    /// Ordinals come from [`Self::sections`] in the current document; edits make previous ordinals
+    /// stale. Duplicates are accepted and removed once. An empty selection is an exact no-op.
+    ///
+    /// # Errors
+    ///
+    /// Validates every ordinal before editing. An invalid ordinal or resulting syntax error leaves
+    /// the entire document unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let mut document =
+    ///     Document::parse(b"[remote \"origin\"]\nurl=first\n[remote \"origin\"]\nurl=second\n")?;
+    /// let second = document.sections().nth(1).unwrap();
+    /// assert_eq!(second.entry_range(), 1..2);
+    /// document.remove_sections(&[second.ordinal()])?;
+    /// assert_eq!(document.config().entries().len(), 1);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn remove_sections(&mut self, ordinals: &[usize]) -> Result<(), ConfigError> {
+        if ordinals
+            .iter()
+            .any(|&ordinal| ordinal >= self.layout.sections.len())
+        {
+            return Err(invalid("invalid section ordinal"));
+        }
+        if ordinals.is_empty() {
+            return Ok(());
+        }
+        let mut selected = ordinals.to_vec();
+        selected.sort_unstable();
+        selected.dedup();
+        let mut edits = Vec::new();
+        for ordinal in selected {
+            edits.push((self.layout.sections[ordinal].range.clone(), Vec::new()));
+            let entries = self.section_at(ordinal).entry_range();
+            edits.extend(
+                self.layout.entries[entries]
+                    .iter()
+                    .map(|entry| (entry.range.clone(), Vec::new())),
+            );
+        }
+        self.apply(edits)
     }
 
     /// Replaces one decoded occurrence value, preserving its key spelling and trailing comment.
@@ -184,28 +301,15 @@ impl Document {
         section: &str,
         subsection: Option<&[u8]>,
     ) -> Result<(), ConfigError> {
-        let mut edits: Vec<_> = self
-            .layout
-            .sections
-            .iter()
-            .filter(|s| {
-                s.section.eq_ignore_ascii_case(section.as_bytes())
-                    && s.subsection.as_deref() == subsection
+        let ordinals: Vec<_> = self
+            .sections()
+            .filter(|physical| {
+                physical.name().eq_ignore_ascii_case(section.as_bytes())
+                    && physical.subsection() == subsection
             })
-            .map(|s| (s.range.clone(), Vec::new()))
+            .map(|physical| physical.ordinal())
             .collect();
-        edits.extend(
-            self.config
-                .entries()
-                .iter()
-                .zip(&self.layout.entries)
-                .filter(|(e, _)| {
-                    e.section.eq_ignore_ascii_case(section.as_bytes())
-                        && e.subsection.as_deref() == subsection
-                })
-                .map(|(_, s)| (s.range.clone(), Vec::new())),
-        );
-        self.apply(edits)
+        self.remove_sections(&ordinals)
     }
 
     fn apply(&mut self, mut edits: Vec<(Range<usize>, Vec<u8>)>) -> Result<(), ConfigError> {
@@ -267,6 +371,79 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn physical_sections_include_empty_repeated_and_deprecated_headers() {
+        let document = Document::parse(b"[Remote \"x\"]\na=one\nb\n[remote]\n[remote.X]\nc=three\n[remote \"X\"]\n[remote \"x\"]\nd=four\n[last]").unwrap();
+        let sections: Vec<_> = document.sections().collect();
+        assert_eq!(document.sections().len(), 6);
+        assert_eq!(
+            sections
+                .iter()
+                .map(DocumentSection::ordinal)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4, 5]
+        );
+        assert_eq!(sections[0].name(), b"Remote");
+        assert_eq!(sections[1].subsection(), None);
+        assert_eq!(sections[2].subsection(), Some(b"x".as_slice()));
+        assert_eq!(sections[3].subsection(), Some(b"X".as_slice()));
+        assert_eq!(
+            sections
+                .iter()
+                .map(DocumentSection::entry_range)
+                .collect::<Vec<_>>(),
+            [0..2, 2..2, 2..3, 3..3, 3..4, 4..4]
+        );
+        let entries = &document.config().entries()[sections[0].entry_range()];
+        assert_eq!(entries[0].value.as_deref(), Some(b"one".as_slice()));
+        assert_eq!(entries[1].value, None);
+    }
+
+    #[test]
+    fn selective_removal_preserves_same_named_neighbor_and_all_comments() {
+        let original = b"\xef\xbb\xbf[remote \"x\"] #header\r\nurl=\"a#b\" #url\r\nimplicit ;bool\r\nmulti=one\\\r\n two #tail\r\n[other]\r\nx=yes\r\n[remote \"x\"]\r\nurl=second\r\n";
+        let mut document = Document::parse(original).unwrap();
+        assert_eq!(document.sections().next().unwrap().entry_range(), 0..3);
+        document.remove_sections(&[0, 0]).unwrap();
+        assert_eq!(document.as_bytes(), b"\xef\xbb\xbf #header\r\n #url\r\n ;bool\r\n #tail\r\n[other]\r\nx=yes\r\n[remote \"x\"]\r\nurl=second\r\n");
+        assert_eq!(
+            document.config().value("remote", Some(b"x"), "url"),
+            Some(Some(b"second".as_slice()))
+        );
+        assert_eq!(document.sections().nth(1).unwrap().entry_range(), 1..2);
+    }
+
+    #[test]
+    fn removal_deduplicates_unsorted_ordinals_and_removes_empty_headers() {
+        let mut document =
+            Document::parse(b"[same]a=one\n[same]#empty\n[keep]x=yes\n[same]a=last").unwrap();
+        document.remove_sections(&[3, 0, 1, 3]).unwrap();
+        assert_eq!(document.as_bytes(), b"\n#empty\n[keep]x=yes\n");
+        assert_eq!(document.sections().len(), 1);
+    }
+
+    #[rstest]
+    #[case::empty(b"")]
+    #[case::comments(b"\xef\xbb\xbf # only\r\n")]
+    #[case::sections(b"[x]\r\na=\"two\\nlines\" ;comment\r\n[x]\r\n")]
+    fn empty_section_selection_is_exact_noop(#[case] bytes: &[u8]) {
+        let mut document = Document::parse(bytes).unwrap();
+        document.remove_sections(&[]).unwrap();
+        assert_eq!(document.as_bytes(), bytes);
+    }
+
+    #[rstest]
+    #[case(&[0, 2][..])]
+    #[case(&[usize::MAX, 0][..])]
+    fn invalid_section_ordinal_is_atomic(#[case] ordinals: &[usize]) {
+        let bytes = b"[x]a=one\n[x]a=two\n";
+        let mut document = Document::parse(bytes).unwrap();
+        assert!(document.remove_sections(ordinals).is_err());
+        assert_eq!(document.as_bytes(), bytes);
+        assert_eq!(document.sections().len(), 2);
+        assert_eq!(document.config().entries().len(), 2);
+    }
 
     #[rstest]
     #[case::comments(

@@ -159,6 +159,14 @@ whitespace and comments; an edited header or value uses canonical quoting. Inert
 bytes. NUL in names, subsections and values, and subsection newlines, are rejected. No include
 expansion or typed URL interpretation happens in this layer.
 
+`Document::sections` exposes borrowed physical header views, including repeated and empty headers.
+Each `DocumentSection` provides `ordinal`, decoded `name`/`subsection`, and an `entry_range` into
+`document.config().entries()`. `remove_sections` removes selected headers and their assignments in
+one atomic batch while preserving surrounding comments and whitespace. Duplicate ordinals are
+accepted, an empty selection preserves exact bytes, and every ordinal is validated before any
+change. Views borrow the document; obtain new ordinals and occurrence ranges after edits. These are
+direct-file positions, not resolved include provenance.
+
 `Repository::edit_config(max_bytes)` locks the common local file independently of the repository's
 cached effective snapshot. `ConfigEdit::open(path, max_bytes)` explicitly selects another OS-native
 path, including a worktree file. Neither follows destination symlinks. Acquire the guard before
