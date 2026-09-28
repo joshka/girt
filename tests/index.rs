@@ -1112,3 +1112,107 @@ fn discard_entry_offsets_git_oracle(
     assert_eq!(git(work, &["ls-files", "--stage", "--debug"]), listing);
     assert_eq!(git(work, &["write-tree"]), tree);
 }
+
+#[rstest]
+fn alternate_index_interoperates_with_git_relative_override(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    let default = fs::read(repo.git_dir().join("index")).unwrap();
+    success(
+        command(work, &["add", "file"])
+            .env("GIT_INDEX_FILE", "alternate.index")
+            .output()
+            .unwrap(),
+    );
+    let alternate = work.join("alternate.index");
+    assert!(!repo.git_dir().join("alternate.index").exists());
+    let loaded = repo
+        .read_index_at(&alternate, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.entries()[0].path, b"file");
+    let edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    let attempted = command(work, &["read-tree", "--empty"])
+        .env("GIT_INDEX_FILE", "alternate.index")
+        .output()
+        .unwrap();
+    assert!(!attempted.status.success());
+    edit.abort().unwrap();
+    let mut edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    edit.replace_entries(Vec::new()).unwrap();
+    edit.commit().unwrap();
+    let files = success(
+        command(work, &["ls-files"])
+            .env("GIT_INDEX_FILE", "alternate.index")
+            .output()
+            .unwrap(),
+    );
+    assert!(files.is_empty());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), default);
+}
+
+#[rstest]
+fn alternate_split_index_is_declined_before_missing_dependency_lookup(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    seed(&repo);
+    git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
+    let split = fs::read(repo.git_dir().join("index")).unwrap();
+    let alternate = root.path().join("alternate");
+    fs::write(&alternate, &split).unwrap();
+    assert!(repo.read_index(Limits::default()).is_ok());
+    assert!(
+        matches!(repo.read_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: girt::index::Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert!(
+        matches!(repo.edit_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: girt::index::Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert_eq!(fs::read(&alternate).unwrap(), split);
+    assert!(!root.path().join("alternate.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn git_alternate_leaf_symlink_behavior_is_outside_native_admission(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    let default = fs::read(repo.git_dir().join("index")).unwrap();
+    let target = work.join("target.index");
+    fs::write(&target, &default).unwrap();
+    let alias = work.join("alias.index");
+    std::os::unix::fs::symlink("target.index", &alias).unwrap();
+    let files = success(
+        command(work, &["ls-files"])
+            .env("GIT_INDEX_FILE", "alias.index")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(files, b"file\n");
+    assert!(matches!(
+        repo.edit_index_at(&alias, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    success(
+        command(work, &["read-tree", "--empty"])
+            .env("GIT_INDEX_FILE", "alias.index")
+            .output()
+            .unwrap(),
+    );
+    assert!(fs::symlink_metadata(&alias).unwrap().is_symlink());
+    assert_ne!(fs::read(&target).unwrap(), default);
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), default);
+    assert!(
+        repo.read_index_at(&target, Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+}

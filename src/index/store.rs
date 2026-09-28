@@ -9,14 +9,15 @@ use crate::Repository;
 
 /// An exclusive `index.lock` held from snapshot read through publication or drop.
 ///
-/// Obtain with [`Repository::edit_index`], derive edits from [`Self::index`], and call
-/// [`Self::replace_entries`] then [`Self::commit`]. Missing storage starts as an empty index.
-/// Dropping without committing abandons the edit and removes only the acquired lock. Existing
-/// locks are never stolen. Cleanup is best effort; a filesystem cleanup failure can leave the
-/// owned lock for manual removal. [`Self::abort`] explicitly reports cleanup errors; failed reads
-/// and commits retain both operation and cleanup causes. Unix cleanup/publication rechecks the
-/// acquired lock inode, refusing an observed replacement. Processes must honor Git's lock protocol;
-/// arbitrary directory, symlink or lock replacement is outside this contract.
+/// Obtain with [`Repository::edit_index`] or [`Repository::edit_index_at`], derive edits from
+/// [`Self::index`], and call [`Self::replace_entries`] then [`Self::commit`]. Missing storage
+/// starts as an empty index. Dropping without committing abandons the edit and removes only the
+/// acquired lock. Existing locks are never stolen. Cleanup is best effort; a filesystem cleanup
+/// failure can leave the owned lock for manual removal. [`Self::abort`] explicitly reports cleanup
+/// errors; failed reads and commits retain both operation and cleanup causes. Unix
+/// cleanup/publication rechecks the acquired lock inode, refusing an observed replacement.
+/// Processes must honor Git's lock protocol; arbitrary directory, symlink or lock replacement is
+/// outside this contract.
 ///
 /// Publication uses a same-directory rename, with atomic replacement where the host filesystem
 /// supports it. No fsync or crash durability is promised. No shared-repository permission policy
@@ -100,6 +101,36 @@ impl Repository {
     /// Concurrent cooperating writers publish whole files by rename. In-place writes by
     /// noncooperating processes may instead produce a parse error.
     pub fn read_index(&self, limits: Limits) -> Result<Option<Index>, StorageError> {
+        self.read_index_path(self.git_dir().join("index"), limits, true)
+    }
+
+    /// Reads a caller-selected standalone index, returning `None` when absent.
+    ///
+    /// Relative paths resolve once against the process current directory, not the Git directory.
+    /// No environment or configuration override is read. Symlink ancestors retain their spelling;
+    /// the final component must be a regular file. Unlike Git, this API rejects leaf symlinks.
+    /// The repository selects the object format. No other index path is read or changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::read_index`]'s bounded I/O, format and non-regular-file errors. Split `link`
+    /// extensions are rejected as [`Error::MandatoryExtension`] without reading a shared file,
+    /// even when `path` names the default index. Nothing is written.
+    pub fn read_index_at(
+        &self,
+        path: impl AsRef<Path>,
+        limits: Limits,
+    ) -> Result<Option<Index>, StorageError> {
+        let path = absolute_index_path(path.as_ref())?;
+        self.read_index_path(path, limits, false)
+    }
+
+    fn read_index_path(
+        &self,
+        path: PathBuf,
+        limits: Limits,
+        resolve_split: bool,
+    ) -> Result<Option<Index>, StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -110,10 +141,9 @@ impl Repository {
         );
 
         let operation = || {
-            let path = self.git_dir().join("index");
             read_bytes(&path, limits)?
                 .map(|bytes| {
-                    parse_storage(self.object_format(), &path, &bytes, limits)
+                    parse_storage(self.object_format(), &path, &bytes, limits, resolve_split)
                         .map(|(index, _)| index)
                 })
                 .transpose()
@@ -140,6 +170,49 @@ impl Repository {
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
+        self.edit_index_path(self.git_dir().join("index"), limits, true)
+    }
+
+    /// Locks and edits a caller-selected standalone index.
+    ///
+    /// Uses [`Self::read_index_at`]'s path, format and symlink policy. Relative paths are made
+    /// absolute before acquiring the lock and remain fixed throughout the edit. The adjacent lock
+    /// name appends `.lock` to the complete filename, including any extension. Parent directories
+    /// must already exist. Missing storage starts empty and is created only by explicit commit.
+    /// Existing locks are never stolen. Publication uses [`IndexEdit`]'s unchanged snapshot and
+    /// lock-identity checks; it never retries through another index path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::edit_index`]'s lock, I/O, format and resource failures. Split `link`
+    /// extensions are rejected without reading shared dependencies. Failure releases only the
+    /// acquired lock; cleanup failures are retained. No other index path is read or changed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use girt::{Repository, index::Limits};
+    /// # let repository = Repository::open("project")?;
+    /// let mut edit = repository.edit_index_at("temporary.index", Limits::default())?;
+    /// edit.replace_entries(Vec::new())?;
+    /// edit.commit()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn edit_index_at(
+        &self,
+        path: impl AsRef<Path>,
+        limits: Limits,
+    ) -> Result<IndexEdit, StorageError> {
+        let path = absolute_index_path(path.as_ref())?;
+        self.edit_index_path(path, limits, false)
+    }
+
+    fn edit_index_path(
+        &self,
+        destination: PathBuf,
+        limits: Limits,
+        resolve_split: bool,
+    ) -> Result<IndexEdit, StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -150,8 +223,9 @@ impl Repository {
         );
 
         let operation = || {
-            let destination = self.git_dir().join("index");
-            let lock_path = self.git_dir().join("index.lock");
+            let mut lock_name = destination.as_os_str().to_os_string();
+            lock_name.push(".lock");
+            let lock_path = PathBuf::from(lock_name);
             let file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -185,8 +259,13 @@ impl Repository {
             let result = (|| {
                 edit.original = read_bytes(&edit.destination, limits)?;
                 if let Some(bytes) = &edit.original {
-                    (edit.index, edit.shared) =
-                        parse_storage(self.object_format(), &edit.destination, bytes, limits)?;
+                    (edit.index, edit.shared) = parse_storage(
+                        self.object_format(),
+                        &edit.destination,
+                        bytes,
+                        limits,
+                        resolve_split,
+                    )?;
                 }
                 Ok(())
             })();
@@ -469,6 +548,10 @@ impl Drop for IndexEdit {
         }
     }
 }
+fn absolute_index_path(path: &Path) -> Result<PathBuf, StorageError> {
+    std::path::absolute(path).map_err(|source| io_error("resolve index path", path, source))
+}
+
 fn read_bytes(path: &Path, limits: Limits) -> Result<Option<Vec<u8>>, StorageError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -498,12 +581,21 @@ fn parse_storage(
     path: &Path,
     bytes: &[u8],
     limits: Limits,
+    resolve_split: bool,
 ) -> Result<(Index, SharedFile), StorageError> {
     let contextual = |source| StorageError::Format {
         path: path.into(),
         source,
     };
     let index = Index::parse_file(format, bytes, limits).map_err(contextual)?;
+    if !resolve_split
+        && index
+            .extensions()
+            .iter()
+            .any(|extension| extension.signature() == *b"link")
+    {
+        return Err(contextual(Error::MandatoryExtension(*b"link")));
+    }
     let shared = if let Some(id) = index.shared_index_id() {
         let shared_path = path.with_file_name(format!("sharedindex.{id}"));
         let remaining = Limits {

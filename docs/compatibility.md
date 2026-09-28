@@ -2048,6 +2048,20 @@ encoding; failures preserve the draft. Optional cache payloads may be malformed 
 interpreted, but normal outer framing, entry and checksum validation still precedes editing.
 Publication remains explicit through `commit`.
 
+`Repository::read_index_at` and `edit_index_at` accept an explicit standalone index path without
+consulting `GIT_INDEX_FILE`. Relative paths resolve once against the process current directory;
+publication appends `.lock` to the complete filename beside the selected index. No other index path
+is touched. The same lock ownership, byte snapshot checks and explicit commit lifecycle apply. Both
+explicit-path APIs reject every split `link` extension before reading dependencies, including a null
+shared identity. Default index operations retain their existing split support.
+
+Leaf symlinks and non-regular destinations are rejected; symlink ancestors are retained. This is a
+conservative admission policy, not Git's override behavior. Independent disposable Git observations
+show relative overrides based on the working directory and leaf symlinks followed for reads and
+writes, with the target updated and the link retained. Public gix 0.87 observations instead replace
+the leaf link when writing. Callers requiring either leaf-symlink behavior must select another path
+or use their compatibility implementation before beginning a native edit.
+
 `Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
 always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
 `GIT_INDEX_FILE` and configuration overrides are ignored. `edit_index` creates `index.lock`
