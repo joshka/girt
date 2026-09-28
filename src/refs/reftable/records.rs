@@ -27,7 +27,9 @@ pub struct LogValue {
     pub email: Vec<u8>,
     /// Unsigned seconds since the Unix epoch.
     pub seconds: u64,
-    /// Signed timezone offset in minutes.
+    /// Signed timezone offset in semantic minutes, converted from Git's stored decimal `HHMM`.
+    /// Noncanonical minute digits are arithmetic; encoding normalizes them and requires a value
+    /// in `-19679..=19679` so the canonical representation fits the signed two-byte field.
     pub offset_minutes: i16,
     /// Exact message bytes.
     pub message: Vec<u8>,

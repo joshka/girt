@@ -120,16 +120,22 @@ is required before a publication that would exceed its resulting-stack budget.
 
 ### Reflog Timezone Interoperability
 
-Girt encodes reftable timezone fields as signed minutes, as required by the
-[published format](https://git-scm.com/docs/reftable#_log_record). Git 2.55.0 instead writes and
-interprets these fields as signed decimal `HHMM` values. For example, Git writes `-700` for `-0700`,
-which girt exposes as `offset_minutes = -700`; Git displays a girt-written `-420` (seven hours west
-of UTC) as `-0420`. This affects interpreted reflog timezone offsets in both SHA-1 and SHA-256
-repositories. Stored timestamps, reference targets and raw field preservation are unaffected.
+Girt encodes reftable timezone fields as signed decimal `HHMM`, matching independently observed Git
+behavior. Public `Signature::offset_minutes` and `reftable::LogValue::offset_minutes` remain
+semantic minutes: `-420` encodes as `-700`, and a stored `530` decodes to `330` minutes. Negative
+values use the same signed arithmetic. Noncanonical minute digits are interpreted arithmetically;
+re-encoding normalizes them. Encoding rejects minute offsets outside `-19679..=19679`, whose
+canonical `HHMM` values would exceed the signed two-byte field. Consequently, some noncanonical
+fields near the signed limits decode successfully but cannot be re-encoded.
 
-The file has no discriminator for these interpretations, and valid values overlap. Girt preserves
-the specified minute encoding without guessing from the value. UTC is interoperable; callers that
-require accurate non-UTC offsets across Git 2.55.0 and girt must treat this boundary as unsupported.
-The [timezone observations](evidence/r37.md#git-2550-timezone-discrepancy) record both directions
-and fixture provenance. Reassess this limitation when the specification or Git's behavior is
-clarified.
+This is an interim compatibility decision: the
+[published format](https://git-scm.com/docs/reftable#_log_record) describes signed minutes, but the
+observed Git encoding is treated as authoritative pending clarification in the
+[mailing-list follow-up](https://lore.kernel.org/git/85f7daa8-d60b-4348-ac2f-b1a68628af7b@app.fastmail.com/T/#u).
+The [timezone observations](evidence/r37.md#git-2550-timezone-discrepancy) record the discrepancy
+and bidirectional interoperability checks for both object formats.
+
+Earlier girt versions wrote the specified minute encoding. The file has no discriminator and the
+valid numeric ranges overlap, so those tables cannot be automatically distinguished from Git-written
+tables. They now receive the Git interpretation; no migration heuristic is applied. Reassess this
+decision if the format specification or Git behavior changes.

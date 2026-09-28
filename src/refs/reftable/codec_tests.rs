@@ -40,7 +40,7 @@ fn table(format: ObjectFormat) -> Table {
                     name: b"\xff name ".to_vec(),
                     email: b"a@b".to_vec(),
                     seconds: u64::MAX,
-                    offset_minutes: i16::MIN,
+                    offset_minutes: -1439,
                     message: b"raw\0\r\n bytes".to_vec(),
                 }),
             },

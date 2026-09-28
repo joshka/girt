@@ -13,8 +13,9 @@ impl Table {
     ///
     /// # Errors
     ///
-    /// Reports invalid ordering, update ranges, mixed identities, invalid peeled values, and
-    /// exhausted limits. No filesystem mutation is performed.
+    /// Reports invalid ordering, update ranges, mixed identities, invalid peeled values,
+    /// timezone offsets outside the signed `HHMM` representation, and exhausted limits. No
+    /// filesystem mutation is performed.
     pub fn encode(&self, limits: Limits) -> Result<Vec<u8>, Error> {
         self.check_limits(limits)?;
         let header = self.header();
@@ -73,7 +74,7 @@ impl Table {
                 string(&mut bytes, &value.name);
                 string(&mut bytes, &value.email);
                 varint(&mut bytes, value.seconds);
-                bytes.extend_from_slice(&value.offset_minutes.to_be_bytes());
+                bytes.extend_from_slice(&super::timezone::encode(value.offset_minutes)?);
                 string(&mut bytes, &value.message);
             }
             records.push((name, bytes));

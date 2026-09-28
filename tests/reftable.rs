@@ -7,6 +7,9 @@ use girt::{ObjectFormat, ObjectId, Repository, Signature};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+    git_with_date(root, args, None)
+}
+fn git_with_date(root: &Path, args: &[&str], date: Option<&str>) -> Vec<u8> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -20,6 +23,7 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
         .env("GIT_AUTHOR_EMAIL", "a@b")
         .env("GIT_COMMITTER_NAME", "Fixture")
         .env("GIT_COMMITTER_EMAIL", "a@b")
+        .envs(date.map(|value| ("GIT_COMMITTER_DATE", value)))
         .output()
         .unwrap();
     assert!(
@@ -424,5 +428,72 @@ fn rejected_result_budget_leaves_the_stack_unchanged() {
     assert_eq!(
         std::fs::read(repo.git_dir().join("reftable/tables.list")).unwrap(),
         before
+    );
+}
+
+#[rstest]
+#[case::utc("+0000", "+0000", 0)]
+#[case::west("-0700", "-0700", -420)]
+#[case::east_half_hour("+0530", "+0530", 330)]
+#[case::west_half_hour("-0330", "-0330", -210)]
+#[case::east_quarter_hour("+0015", "+0015", 15)]
+#[case::west_quarter_hour("-0015", "-0015", -15)]
+#[case::positive_boundary("+2359", "+2359", 1439)]
+#[case::negative_boundary("-2359", "-2359", -1439)]
+#[case::positive_noncanonical_input("+0060", "+0100", 60)]
+#[case::negative_noncanonical_input("-0060", "-0100", -60)]
+fn reflog_timezones_interoperate_in_both_directions(
+    #[values("sha1", "sha256")] spelling: &str,
+    #[case] input_offset: &str,
+    #[case] offset: &str,
+    #[case] minutes: i16,
+) {
+    let root = fixture(spelling);
+    let repo = Repository::open(root.path()).unwrap();
+    let id = tip(root.path(), repo.object_format());
+    git_with_date(
+        root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            "timezone-oracle",
+            "refs/heads/from-git",
+            &id.to_string(),
+        ],
+        Some(&format!("@1700000123 {input_offset}")),
+    );
+    let refs = repo.references().unwrap();
+    let observed = refs.reflog(&name(b"refs/heads/from-git")).unwrap().unwrap();
+    assert_eq!(observed[0].committer.offset_minutes, minutes);
+    assert_eq!(observed[0].committer.seconds, 1700000123);
+    refs.transaction(&[RefEdit {
+        name: name(b"refs/heads/from-girt"),
+        target: Some(Target::Direct(id)),
+        expected: Expected::Absent,
+        dereference: false,
+        reflog: Reflog::Append {
+            committer: Signature {
+                name: b"Girt".to_vec(),
+                email: b"girt@example.invalid".to_vec(),
+                seconds: 1700000123,
+                offset_minutes: minutes,
+            },
+            message: b"timezone-oracle".to_vec(),
+        },
+    }])
+    .unwrap();
+    assert_eq!(
+        git(
+            root.path(),
+            &[
+                "reflog",
+                "show",
+                "--format=%gD",
+                "--date=raw",
+                "refs/heads/from-girt"
+            ]
+        ),
+        format!("refs/heads/from-girt@{{1700000123 {offset}}}\n").as_bytes(),
     );
 }

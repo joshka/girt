@@ -4,7 +4,7 @@ mod git {
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    // UTC isolates publication policy from the independently tracked reftable timezone codec.
+    // UTC keeps this fixture focused on publication policy.
     pub fn git(root: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         let mut command = Command::new("git");
         for (key, _) in std::env::vars_os() {
