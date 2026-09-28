@@ -17,7 +17,11 @@
 //! directories retain tree identities; explicit expansion reads their trees without materializing
 //! files. Unknown mandatory extensions are refused. Optional extensions are opaque and round-trip
 //! unchanged. Editing discards derived caches, retains resolve-undo records and refuses unknown
-//! optional extensions. See [`Index::replace_entries`].
+//! optional extensions. See [`Index::replace_entries`]. Explicit
+//! [`IndexEdit::discard_optional_extensions`] permits caller-selected optional data loss, and
+//! [`IndexEdit::replace_index`] installs a complete standalone draft without releasing its guards.
+//! [`crate::Repository::edit_index_at_with_options`] separately opts into alternate split storage
+//! or replacing a symlink leaf after reading through it; default admission stays unchanged.
 //!
 //! [`crate::Repository::read_index`] distinguishes absence from an empty index.
 //! [`crate::Repository::edit_index`] locks before reading; [`IndexEdit::commit`] publishes the
@@ -49,4 +53,4 @@ mod store;
 pub use codec::{Error, Extension, Index, Limits, Version};
 pub use entries::{Entry, Mode, Stage, Stat, Timestamp};
 pub use sparse::{SparseError, SparseLimits};
-pub use store::{IndexEdit, StorageError};
+pub use store::{EditOptions, IndexEdit, StorageError};

@@ -308,6 +308,43 @@ impl Index {
         Ok(())
     }
 
+    pub(super) fn discard_optional_extensions(
+        &mut self,
+        signatures: &[[u8; 4]],
+        limits: Limits,
+    ) -> Result<(), Error> {
+        if let Some(signature) = signatures
+            .iter()
+            .find(|signature| !signature[0].is_ascii_uppercase())
+        {
+            return Err(Error::MandatoryExtension(*signature));
+        }
+        if !self
+            .extensions
+            .iter()
+            .any(|extension| signatures.contains(&extension.signature))
+        {
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement.extensions.retain(|extension| {
+            !signatures.contains(&extension.signature)
+                && !matches!(&extension.signature, b"EOIE" | b"IEOT")
+        });
+        if replacement
+            .extensions
+            .iter()
+            .any(|extension| extension.signature == *b"link")
+        {
+            replacement.make_standalone(limits)?;
+        } else {
+            replacement.original = None;
+            replacement.encoded_len(limits)?;
+        }
+        *self = replacement;
+        Ok(())
+    }
+
     pub(super) fn make_standalone(&mut self, limits: Limits) -> Result<(), Error> {
         if let Some(extension) = self.extensions.iter().find(|extension| {
             !matches!(

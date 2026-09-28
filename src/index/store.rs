@@ -7,9 +7,71 @@ use thiserror::Error;
 use super::{Entry, Error, Index, Limits};
 use crate::Repository;
 
+/// Explicit storage admission for a caller-selected index edit.
+///
+/// Defaults retain standalone, regular-file-only admission. These options do not select an index
+/// from environment or configuration, authorize directory replacement, or bypass snapshot checks.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EditOptions {
+    /// Resolve immutable split dependencies beside the selected lexical index path.
+    pub resolve_split: bool,
+    /// Read through a final symlink, then replace that selected leaf on publication.
+    ///
+    /// The referent is never written. The original leaf kind, symlink spelling, followed bytes
+    /// and presence remain publication preconditions; Unix also checks the captured leaf inode.
+    pub follow_symlink: bool,
+}
+
+#[derive(Debug)]
+struct LeafSnapshot {
+    metadata: Option<fs::Metadata>,
+    target: Option<PathBuf>,
+}
+
+impl LeafSnapshot {
+    fn read(path: &Path) -> Result<Self, StorageError> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error("inspect index leaf", path, error)),
+        };
+        let target = if metadata.as_ref().is_some_and(|value| value.is_symlink()) {
+            Some(fs::read_link(path).map_err(|error| io_error("read index symlink", path, error))?)
+        } else {
+            None
+        };
+        Ok(Self { metadata, target })
+    }
+
+    fn check(&self, path: &Path) -> Result<(), StorageError> {
+        let current = Self::read(path)?;
+        let unchanged = match (&self.metadata, &current.metadata) {
+            (None, None) => true,
+            (Some(before), Some(after)) => {
+                let same_kind = before.file_type() == after.file_type();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    same_kind && before.dev() == after.dev() && before.ino() == after.ino()
+                }
+                #[cfg(not(unix))]
+                {
+                    same_kind
+                }
+            }
+            _ => false,
+        };
+        if !unchanged || self.target != current.target {
+            return Err(StorageError::Changed(path.into()));
+        }
+        Ok(())
+    }
+}
+
 /// An exclusive `index.lock` held from snapshot read through publication or drop.
 ///
-/// Obtain with [`Repository::edit_index`] or [`Repository::edit_index_at`], derive edits from
+/// Obtain with [`Repository::edit_index`], [`Repository::edit_index_at`] or
+/// [`Repository::edit_index_at_with_options`], derive edits from
 /// [`Self::index`], and call [`Self::replace_entries`] then [`Self::commit`]. Missing storage
 /// starts as an empty index. Dropping without committing abandons the edit and removes only the
 /// acquired lock. Existing locks are never stolen. Cleanup is best effort; a filesystem cleanup
@@ -29,6 +91,7 @@ pub struct IndexEdit {
     lock_path: PathBuf,
     file: Option<File>,
     original: Option<Vec<u8>>,
+    leaf: Option<LeafSnapshot>,
     shared: Option<(PathBuf, Vec<u8>)>,
     lock_identity: fs::Metadata,
     index: Index,
@@ -170,7 +233,14 @@ impl Repository {
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
-        self.edit_index_path(self.git_dir().join("index"), limits, true)
+        self.edit_index_path(
+            self.git_dir().join("index"),
+            limits,
+            EditOptions {
+                resolve_split: true,
+                ..EditOptions::default()
+            },
+        )
     }
 
     /// Locks and edits a caller-selected standalone index.
@@ -203,15 +273,49 @@ impl Repository {
         path: impl AsRef<Path>,
         limits: Limits,
     ) -> Result<IndexEdit, StorageError> {
-        let path = absolute_index_path(path.as_ref())?;
-        self.edit_index_path(path, limits, false)
+        self.edit_index_at_with_options(path, limits, EditOptions::default())
+    }
+
+    /// Locks a selected index with explicit split and symlink admission.
+    ///
+    /// Paths are fixed lexically before locking. Split dependencies are read beside that path,
+    /// including when its final leaf is a symlink; the referent's parent is never used for lookup.
+    /// A followed missing target starts an empty draft. Publication replaces the selected symlink,
+    /// never its referent. Leaf identity/spelling and followed bytes are rechecked before rename.
+    /// See [`IndexEdit`] for cooperating-writer, cleanup and durability requirements.
+    ///
+    /// # Errors
+    ///
+    /// Returns the lock, bounded-read, format and cleanup errors of [`Self::edit_index_at`]. A
+    /// required absent shared file is [`StorageError::MissingShared`], never an empty replacement.
+    ///
+    /// ```no_run
+    /// # use girt::{Repository, index::{EditOptions, Limits}};
+    /// # let repository = Repository::open("project")?;
+    /// let options = EditOptions {
+    ///     resolve_split: true,
+    ///     follow_symlink: true,
+    /// };
+    /// let mut edit =
+    ///     repository.edit_index_at_with_options("alternate.index", Limits::default(), options)?;
+    /// edit.discard_optional_extensions(&[*b"REUC"])?;
+    /// edit.commit()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn edit_index_at_with_options(
+        &self,
+        path: impl AsRef<Path>,
+        limits: Limits,
+        options: EditOptions,
+    ) -> Result<IndexEdit, StorageError> {
+        self.edit_index_path(absolute_index_path(path.as_ref())?, limits, options)
     }
 
     fn edit_index_path(
         &self,
         destination: PathBuf,
         limits: Limits,
-        resolve_split: bool,
+        options: EditOptions,
     ) -> Result<IndexEdit, StorageError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -251,21 +355,29 @@ impl Repository {
                 lock_identity,
                 file: Some(file),
                 original: None,
+                leaf: None,
                 shared: None,
                 index: Index::empty(self.object_format()),
                 limits,
                 published: false,
             };
             let result = (|| {
-                edit.original = read_bytes(&edit.destination, limits)?;
+                if options.follow_symlink {
+                    edit.leaf = Some(LeafSnapshot::read(&edit.destination)?);
+                }
+                edit.original =
+                    read_selected_bytes(&edit.destination, limits, options.follow_symlink)?;
                 if let Some(bytes) = &edit.original {
                     (edit.index, edit.shared) = parse_storage(
                         self.object_format(),
                         &edit.destination,
                         bytes,
                         limits,
-                        resolve_split,
+                        options.resolve_split,
                     )?;
+                }
+                if let Some(leaf) = &edit.leaf {
+                    leaf.check(&edit.destination)?;
                 }
                 Ok(())
             })();
@@ -299,6 +411,45 @@ impl IndexEdit {
     /// No bytes are written; the guard continues to own the lock after failure.
     pub fn replace_entries(&mut self, entries: Vec<Entry>) -> Result<(), Error> {
         self.index.replace_entries(entries, self.limits)
+    }
+
+    /// Replaces the complete draft with a caller-supplied standalone index.
+    ///
+    /// The held object format and limits are validated before mutation. Original primary/shared
+    /// snapshots and lock ownership remain unchanged; only explicit commit publishes the draft.
+    ///
+    /// # Errors
+    ///
+    /// Foreign formats, limit failures and any `link` extension leave the previous draft intact.
+    /// A replacement cannot introduce a shared dependency that this guard has not captured.
+    pub fn replace_index(&mut self, index: Index) -> Result<(), Error> {
+        crate::ObjectId::null(index.object_format()).require_format(self.index.object_format())?;
+        if index
+            .extensions()
+            .iter()
+            .any(|extension| extension.signature() == *b"link")
+        {
+            return Err(Error::ExtensionPreventsEdit(*b"link"));
+        }
+        index.encoded_len(self.limits)?;
+        self.index = index;
+        Ok(())
+    }
+
+    /// Explicitly discards selected optional extensions from the held draft.
+    ///
+    /// Only uppercase-leading signatures are accepted. An actual removal also drops `EOIE` and
+    /// `IEOT`, whose offsets can change during encoding. Split drafts become standalone at the
+    /// same version, dropping `link` and derived caches while retaining unselected `REUC` and
+    /// the original shared-file publication check. Standalone sparse markers are retained.
+    ///
+    /// # Errors
+    ///
+    /// Mandatory signatures, retained unknown extensions during split conversion and resource
+    /// failures leave the entire draft unchanged. No matching extension is a byte-preserving no-op.
+    pub fn discard_optional_extensions(&mut self, signatures: &[[u8; 4]]) -> Result<(), Error> {
+        self.index
+            .discard_optional_extensions(signatures, self.limits)
     }
 
     /// Expands sparse directories in the held draft, leaving publication to `commit`.
@@ -581,7 +732,12 @@ impl IndexEdit {
     }
 
     fn check_original(&self) -> Result<(), StorageError> {
-        if read_bytes(&self.destination, self.limits)? != self.original {
+        if let Some(leaf) = &self.leaf {
+            leaf.check(&self.destination)?;
+        }
+        if read_selected_bytes(&self.destination, self.limits, self.leaf.is_some())?
+            != self.original
+        {
             return Err(StorageError::Changed(self.destination.clone()));
         }
         if let Some((path, bytes)) = &self.shared
@@ -616,7 +772,19 @@ fn absolute_index_path(path: &Path) -> Result<PathBuf, StorageError> {
 }
 
 fn read_bytes(path: &Path, limits: Limits) -> Result<Option<Vec<u8>>, StorageError> {
-    let metadata = match fs::symlink_metadata(path) {
+    read_selected_bytes(path, limits, false)
+}
+
+fn read_selected_bytes(
+    path: &Path,
+    limits: Limits,
+    follow_symlink: bool,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    let metadata = match if follow_symlink {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    } {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(io_error("inspect index", path, source)),
@@ -696,3 +864,6 @@ fn with_cleanup(operation: StorageError, cleanup: Result<(), StorageError>) -> S
         },
     }
 }
+
+#[cfg(test)]
+mod options_tests;
