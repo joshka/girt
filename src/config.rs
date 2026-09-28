@@ -10,6 +10,7 @@
 //!
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
 //! separate. No operation reads or mutates process-global environment.
+mod command_environment;
 mod document;
 mod edit;
 pub use edit::{ConfigEdit, EditError};
