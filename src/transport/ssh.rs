@@ -112,7 +112,9 @@ impl std::fmt::Debug for SshEnvironment {
 /// guaranteed stopped. Prefer cancellation followed by awaiting a push's classified outcome.
 /// Callers must not globally reap these children. Descendants escaping the group are excluded.
 ///
-/// Stderr is drained and discarded to prevent blockage and credential/path leakage. Errors expose
+/// Stderr is drained and discarded by default to prevent blockage and credential/path leakage.
+/// [`crate::fetch::discover_ssh_with_diagnostics`] explicitly opts into raw local stderr delivery.
+/// Errors expose
 /// only static categories, I/O kinds and exit codes; Git progress/status bytes remain untrusted.
 /// An exit code of 255 indicates an SSH/service failure, not a Git ref rejection. OpenSSH cannot
 /// reliably distinguish authentication, host trust and network failures without parsing stderr.

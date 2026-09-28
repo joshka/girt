@@ -504,18 +504,52 @@ pub async fn discover_ssh(
     limits: FetchLimits,
     control: TransportControl<'_>,
 ) -> Result<RemoteDiscovery, FetchError> {
+    discover_ssh_with_diagnostics(remote, limits, control, |_| {}).await
+}
+
+/// Discovers an SSH endpoint while delivering raw local process diagnostics.
+///
+/// The callback receives stderr bytes while service I/O runs, including unterminated messages.
+/// Chunks are at most 8192 bytes; chunk boundaries have no line or encoding meaning. No transcript
+/// is retained by girt. Diagnostic bytes may contain credentials, paths and untrusted terminal
+/// escapes: the caller owns display, redaction and any retained-buffer limits. Errors, Debug and
+/// tracing remain redacted. The default [`discover_ssh`] discards these diagnostics.
+///
+/// The callback runs synchronously and must return promptly to preserve cancellation and deadline
+/// responsiveness. It has no return value and does not select retry or transport outcomes. A
+/// callback panic unwinds normally and drops the owned session. Successful completion drains final
+/// diagnostics before returning; cancellation and transport failure may leave unread diagnostics.
+/// No authentication or terminal policy is changed, and a launched failure is never retried.
+///
+/// # Errors
+///
+/// Returns the same transport, protocol, limit and interruption errors as [`discover_ssh`].
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub async fn discover_ssh_with_diagnostics(
+    remote: &crate::transport::ssh::SshRemote,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    mut diagnostics: impl FnMut(&[u8]),
+) -> Result<RemoteDiscovery, FetchError> {
     traced_async("ssh", async {
         control.check()?;
         let mut session = remote.connect("git-upload-pack", control)?;
         let bytes = session
-            .advertise(
+            .advertise_with_diagnostics(
                 limits.max_advertisement_bytes.min(limits.max_wire_bytes),
                 control,
+                &mut diagnostics,
             )
             .await?;
         let discovered = discover(&mut bytes.as_slice(), limits, control.cancel)?;
         let (body, result, _) = session
-            .exchange(b"0000", &[], limits.max_wire_bytes - bytes.len(), control)
+            .exchange_with_diagnostics(
+                b"0000",
+                &[],
+                limits.max_wire_bytes - bytes.len(),
+                control,
+                &mut diagnostics,
+            )
             .await;
         result?;
         if !body.is_empty() {

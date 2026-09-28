@@ -93,12 +93,12 @@ mod connectivity;
 mod discovery;
 #[cfg(feature = "http")]
 pub use discovery::discover_http;
-#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use discovery::discover_ssh;
 pub(crate) use discovery::interpret_head;
 pub use discovery::{
     ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
 };
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub use discovery::{discover_ssh, discover_ssh_with_diagnostics};
 mod progress;
 pub use progress::{LocalFetchProgress, ValidationProgress};
 

@@ -4,6 +4,8 @@
 mod pack_git;
 #[path = "support/ssh_configuration.rs"]
 mod ssh_configuration;
+#[path = "support/ssh_diagnostics.rs"]
+mod ssh_diagnostics;
 #[path = "support/ssh_git.rs"]
 mod ssh_git;
 #[path = "support/ssh_openssh.rs"]

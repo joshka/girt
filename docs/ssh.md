@@ -127,6 +127,20 @@ observes process exit. Full pipes in either direction do not require a blocking 
 yield so cancellation and other runtime work can progress. No runtime or detached task is created.
 The `ssh` feature does not enable HTTP/TLS dependencies or async filesystem operations.
 
+`fetch::discover_ssh_with_diagnostics` optionally delivers raw local stderr while discovery runs.
+Its synchronous callback receives chunks of at most 8192 bytes, including incomplete lines and
+non-UTF-8 bytes. Successful completion drains final diagnostics before returning. Cancellation or
+transport failure may leave unread bytes. Girt keeps no diagnostic transcript; callers own display,
+redaction and retention bounds. These bytes can contain secrets and untrusted terminal escapes and
+are separate from remote Git sideband messages. The ordinary `discover_ssh` API discards them, and
+errors, Debug and tracing remain redacted.
+
+Diagnostic callbacks must return promptly. They have no result that can request retry or change a
+transport outcome; a display failure should be handled by the caller. A callback panic unwinds and
+drops the session, preserving process cleanup. Delivery does not change terminal foreground
+ownership, authentication, command/environment selection or the no-retry policy. In particular,
+streaming stderr does not make a background process group able to read `/dev/tty`.
+
 `receive_ssh` takes `Option<Arc<KnownHistory>>` and returns an owned `DownloadedFetch`. Pass `None`
 for a full transfer without preparing or allocating history. With `Some`, the result privately
 retains the exact negotiation history without copying objects. It is `Send + Sync + 'static`: move

@@ -91,18 +91,29 @@ impl Session {
         limit: usize,
         control: TransportControl<'_>,
     ) -> Result<Vec<u8>, SshError> {
+        self.advertise_with_diagnostics(limit, control, &mut |_| {})
+            .await
+    }
+
+    pub(crate) async fn advertise_with_diagnostics(
+        &mut self,
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> Result<Vec<u8>, SshError> {
         let result = controlled(
             advertisement(&mut self.output, limit),
             &mut self.diagnostics,
             &mut self.diagnostics_open,
             control,
+            diagnostics,
         )
         .await;
         // EOF before an advertisement often means host-key/authentication failure. Observe the
         // process under the same deadline so it is reported as transport failure, not Git refusal.
         if matches!(result, Err(SshError::Protocol("truncated advertisement"))) {
             self.input.take();
-            self.finish(control).await?;
+            self.finish(control, diagnostics).await?;
         }
         result
     }
@@ -113,6 +124,18 @@ impl Session {
         pack: &[u8],
         limit: usize,
         control: TransportControl<'_>,
+    ) -> (Vec<u8>, Result<(), SshError>, usize) {
+        self.exchange_with_diagnostics(request, pack, limit, control, &mut |_| {})
+            .await
+    }
+
+    pub(crate) async fn exchange_with_diagnostics(
+        &mut self,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
         let mut written = 0;
@@ -131,22 +154,41 @@ impl Session {
             &mut self.diagnostics,
             &mut self.diagnostics_open,
             control,
+            diagnostics,
         )
         .await;
         if result.is_ok() {
-            result = self.finish(control).await;
+            result = self.finish(control, diagnostics).await;
         }
         (body, result, written)
     }
 
-    async fn finish(&mut self, control: TransportControl<'_>) -> Result<(), SshError> {
-        controlled(
+    async fn finish(
+        &mut self,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> Result<(), SshError> {
+        let result = controlled(
             self.process.wait(),
             &mut self.diagnostics,
             &mut self.diagnostics_open,
             control,
+            diagnostics,
         )
-        .await
+        .await;
+        // The process can exit while its last diagnostic bytes are still in the pipe. Reaping
+        // kills owned descendants first, so their pipe handles cannot keep this drain alive.
+        if self.process.reaped {
+            let drained = drain_diagnostics(
+                &mut self.diagnostics,
+                &mut self.diagnostics_open,
+                control,
+                diagnostics,
+            )
+            .await;
+            return result.and(drained);
+        }
+        result
     }
 }
 
@@ -261,9 +303,10 @@ async fn controlled<T>(
     diagnostics: &mut AsyncFd<ChildStderr>,
     diagnostics_open: &mut bool,
     control: TransportControl<'_>,
+    diagnostic_callback: &mut impl FnMut(&[u8]),
 ) -> Result<T, SshError> {
     tokio::pin!(future);
-    let mut discard = [0; 8192];
+    let mut bytes = [0; 8192];
     loop {
         control.check()?;
         let interval = control.deadline.map_or(Duration::from_millis(20), |end| {
@@ -274,12 +317,37 @@ async fn controlled<T>(
             biased;
             _ = tokio::time::sleep(interval) => {},
             result = &mut future => return result,
-            result = read(diagnostics, &mut discard), if *diagnostics_open => {
-                if result? == 0 { *diagnostics_open = false; }
+            result = read(diagnostics, &mut bytes), if *diagnostics_open => {
+                let count = result?;
+                if count == 0 { *diagnostics_open = false; }
+                else { diagnostic_callback(&bytes[..count]); }
                 tokio::task::yield_now().await;
             },
         }
     }
+}
+
+async fn drain_diagnostics(
+    diagnostics: &mut AsyncFd<ChildStderr>,
+    open: &mut bool,
+    control: TransportControl<'_>,
+    callback: &mut impl FnMut(&[u8]),
+) -> Result<(), SshError> {
+    let mut bytes = [0; 8192];
+    while *open {
+        control.check()?;
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+            result = read(diagnostics, &mut bytes) => {
+                let count = result?;
+                if count == 0 { *open = false; }
+                else { callback(&bytes[..count]); }
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -354,7 +422,7 @@ mod tests {
                 deadline: Some(Instant::now() + Duration::from_secs(2)),
             };
             session.advertise(4, control).await.unwrap();
-            session.finish(control).await.unwrap();
+            session.finish(control, &mut |_| {}).await.unwrap();
             let count =
                 tokio::time::timeout(Duration::from_secs(2), read(&mut session.output, &mut [0]))
                     .await
