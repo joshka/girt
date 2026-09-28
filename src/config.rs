@@ -38,3 +38,6 @@ pub(crate) use values::{boolean, integer};
 
 #[cfg(test)]
 mod options_tests;
+
+#[cfg(test)]
+mod user_home_tests;

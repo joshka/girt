@@ -129,6 +129,52 @@ impl Config {
         inputs: &ConfigInputs,
         options: ResolveOptions,
     ) -> Result<Self, ResolveError> {
+        Self::resolve_with_lookup(inputs, options, None)
+    }
+
+    /// Resolves includes with an explicit fallback lookup for `~username/` paths.
+    ///
+    /// Caller-supplied `user_homes` take precedence. The callback receives exact username bytes
+    /// only when expansion reaches an unmapped named home. Positive and negative results are
+    /// cached for this resolution across roots and passes; a later call starts a fresh cache.
+    /// The default condition policy may reach includes during its preliminary validation pass,
+    /// including unmatched hasconfig descendants. Root-snapshot policy visits only selected
+    /// descendants. Callback order follows traversal, independently of output placement.
+    ///
+    /// Cache entries and retained username/path bytes are independently bounded by the input
+    /// entry and byte limits. The caller bounds its own callback work and temporary allocations.
+    /// No ambient home lookup or user enumeration occurs. `~/` and prefix expansion use only
+    /// explicit context. Returning `None` follows the selected unresolved-path policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::resolve_with_options`]'s errors and cache resource-limit failures. An
+    /// oversized callback result is rejected before retention. Earlier callback effects are not
+    /// rolled back on failure; callbacks should perform read-only lookup.
+    ///
+    /// ```
+    /// use girt::config::{Config, ConfigInputs, ResolveOptions};
+    /// let config = Config::resolve_with_user_home_lookup(
+    ///     &ConfigInputs::default(),
+    ///     ResolveOptions::default(),
+    ///     |_name| None,
+    /// )?;
+    /// assert!(config.entries().is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn resolve_with_user_home_lookup(
+        inputs: &ConfigInputs,
+        options: ResolveOptions,
+        mut lookup: impl FnMut(&[u8]) -> Option<PathBuf>,
+    ) -> Result<Self, ResolveError> {
+        Self::resolve_with_lookup(inputs, options, Some(&mut lookup))
+    }
+
+    fn resolve_with_lookup<'a>(
+        inputs: &'a ConfigInputs,
+        options: ResolveOptions,
+        lookup: Option<&'a mut UserHomeLookup<'a>>,
+    ) -> Result<Self, ResolveError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -136,7 +182,11 @@ impl Config {
             outcome = "incomplete",
             failure_class = tracing::field::Empty
         );
-        let operation = || Resolver::new(inputs, options).resolve();
+        let operation = || {
+            let mut resolver = Resolver::new(inputs, options);
+            resolver.user_home_lookup = lookup;
+            resolver.resolve()
+        };
         #[cfg(feature = "tracing")]
         {
             let result = span.in_scope(operation);
@@ -245,10 +295,15 @@ impl Config {
     }
 }
 
+type UserHomeLookup<'a> = dyn FnMut(&[u8]) -> Option<PathBuf> + 'a;
+
 struct Resolver<'a> {
     inputs: &'a ConfigInputs,
     options: ResolveOptions,
     cache: HashMap<PathBuf, Config>,
+    user_home_lookup: Option<&'a mut UserHomeLookup<'a>>,
+    user_homes: HashMap<Vec<u8>, Option<PathBuf>>,
+    user_home_bytes: usize,
     bytes: usize,
     visited: usize,
     expanded_bytes: usize,
@@ -269,6 +324,9 @@ impl<'a> Resolver<'a> {
             inputs,
             options,
             cache: HashMap::new(),
+            user_home_lookup: None,
+            user_homes: HashMap::new(),
+            user_home_bytes: 0,
             bytes: 0,
             visited: 0,
             expanded_bytes: 0,
@@ -610,23 +668,30 @@ impl<'a> Resolver<'a> {
     }
 
     fn expand(
-        &self,
+        &mut self,
         bytes: &[u8],
         location: &SourceLocation,
     ) -> Result<Option<PathBuf>, ResolveError> {
+        if self.user_home_lookup.is_some() {
+            if bytes.contains(&0) {
+                return Err(
+                    self.error(location, ResolveFailure::Input("include path contains NUL"))
+                );
+            }
+            path_bytes(bytes).map_err(|source| self.error(location, source))?;
+        }
         let context = &self.inputs.context;
         let expanded = if let Some(rest) = bytes.strip_prefix(b"~/") {
-            context.home.as_ref().map(|home| (home, rest))
+            context.home.clone().map(|home| (home, rest))
         } else if let Some(rest) = bytes.strip_prefix(b"%(prefix)/") {
-            context.prefix.as_ref().map(|prefix| (prefix, rest))
+            context.prefix.clone().map(|prefix| (prefix, rest))
         } else if bytes.starts_with(b"~") {
-            bytes.iter().position(|b| *b == b'/').and_then(|slash| {
-                context
-                    .user_homes
-                    .iter()
-                    .find(|(name, _)| name == &bytes[1..slash])
-                    .map(|(_, home)| (home, &bytes[slash + 1..]))
-            })
+            match bytes.iter().position(|b| *b == b'/') {
+                Some(slash) => self
+                    .named_home(&bytes[1..slash], location)?
+                    .map(|home| (home, &bytes[slash + 1..])),
+                None => None,
+            }
         } else {
             return path_bytes(bytes)
                 .map(Some)
@@ -652,6 +717,53 @@ impl<'a> Resolver<'a> {
         )))
     }
 
+    fn named_home(
+        &mut self,
+        name: &[u8],
+        location: &SourceLocation,
+    ) -> Result<Option<PathBuf>, ResolveError> {
+        if let Some((_, home)) = self
+            .inputs
+            .context
+            .user_homes
+            .iter()
+            .find(|(user, _)| user == name)
+        {
+            return Ok(Some(home.clone()));
+        }
+        if let Some(home) = self.user_homes.get(name) {
+            return Ok(home.clone());
+        }
+        if self.user_home_lookup.is_none() {
+            return Ok(None);
+        }
+        if name.contains(&0) {
+            return Err(self.error(
+                location,
+                ResolveFailure::Input("include username contains NUL"),
+            ));
+        }
+        if self.user_homes.len() >= self.inputs.limits.entries {
+            return Err(self.error(location, ResolveFailure::Limit("user home cache entries")));
+        }
+        let names_bytes = self
+            .user_home_bytes
+            .checked_add(name.len())
+            .filter(|total| *total <= self.inputs.limits.bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("user home cache bytes")))?;
+        let home = self.user_home_lookup.as_mut().expect("lookup present")(name);
+        let retained_bytes = names_bytes
+            .checked_add(
+                home.as_ref()
+                    .map_or(0, |path| path.as_os_str().as_encoded_bytes().len()),
+            )
+            .filter(|total| *total <= self.inputs.limits.bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("user home cache bytes")))?;
+        self.user_home_bytes = retained_bytes;
+        self.user_homes.insert(name.to_vec(), home.clone());
+        Ok(home)
+    }
+
     fn glob(
         &self,
         pattern: &[u8],
@@ -663,7 +775,11 @@ impl<'a> Resolver<'a> {
             .ok_or_else(|| self.error(location, ResolveFailure::Limit("wildcard work")))
     }
 
-    fn condition(&self, condition: &[u8], location: &SourceLocation) -> Result<bool, ResolveError> {
+    fn condition(
+        &mut self,
+        condition: &[u8],
+        location: &SourceLocation,
+    ) -> Result<bool, ResolveError> {
         if let Some(pattern) = condition.strip_prefix(b"hasconfig:remote.*.url:") {
             for url in &self.urls {
                 if self.glob(pattern, url, false, location)? {
@@ -1254,7 +1370,7 @@ mod tests {
         let mut inputs = ConfigInputs::default();
         inputs.context.git_dirs.push(home.join("repo/.git"));
         inputs.context.home = Some(home);
-        let resolver = Resolver::new(&inputs, ResolveOptions::default());
+        let mut resolver = Resolver::new(&inputs, ResolveOptions::default());
         let location = SourceLocation {
             path: None,
             line: 1,
