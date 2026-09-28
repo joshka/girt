@@ -308,6 +308,30 @@ impl Index {
         Ok(())
     }
 
+    pub(super) fn make_standalone(&mut self, limits: Limits) -> Result<(), Error> {
+        if let Some(extension) = self.extensions.iter().find(|extension| {
+            !matches!(
+                &extension.signature,
+                b"link" | b"TREE" | b"UNTR" | b"FSMN" | b"EOIE" | b"IEOT" | b"REUC"
+            )
+        }) {
+            return Err(Error::ExtensionPreventsEdit(extension.signature));
+        }
+        if !self
+            .extensions
+            .iter()
+            .any(|extension| extension.signature == *b"link")
+        {
+            self.encoded_len(limits)?;
+            return Ok(());
+        }
+        let mut replacement = self.clone();
+        replacement.invalidate_extensions(false)?;
+        replacement.encoded_len(limits)?;
+        *self = replacement;
+        Ok(())
+    }
+
     pub(super) fn invalidate_entry_offsets(&mut self, limits: Limits) -> Result<(), Error> {
         if let Some(extension) = self.extensions.iter().find(|extension| {
             !matches!(

@@ -359,6 +359,40 @@ impl IndexEdit {
         self.index.set_version(version, self.limits)
     }
 
+    /// Converts a resolved split index to standalone storage without changing its entries or
+    /// version.
+    ///
+    /// Preserves paths, IDs, stages, flags and stat words, even when the logical entries and
+    /// framing version are unchanged. Removes `link` and the derived `TREE`, `UNTR`, `FSMN`,
+    /// `EOIE` and `IEOT` caches. Resolve-undo (`REUC`) bytes are retained. An already
+    /// standalone supported index retains its exact encoding, including caches.
+    ///
+    /// This only changes the held draft. The shared file is never written or removed; its original
+    /// bytes remain a publication precondition alongside the primary index. Call [`Self::commit`]
+    /// to publish, or drop the guard to discard the draft. The existing lock stays held throughout.
+    ///
+    /// # Errors
+    ///
+    /// Sparse (`sdir`) and unknown extensions are rejected, including on standalone input. Resource
+    /// or extension errors preserve the draft and storage. Shared-file resolution errors are
+    /// reported earlier by [`Repository::edit_index`]. Explicit alternate indexes with split
+    /// dependencies remain unsupported by [`Repository::edit_index_at`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let repository = girt::Repository::open("project")?;
+    /// let mut edit = repository.edit_index(girt::index::Limits::default())?;
+    /// edit.make_standalone()?;
+    /// edit.commit()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn make_standalone(&mut self) -> Result<(), Error> {
+        self.index.make_standalone(self.limits)
+    }
+
     /// Discards standalone entry-offset accelerators (`EOIE` and `IEOT`) under the held lock.
     ///
     /// Preserves entries, stat words, flags, framing version and opaque `TREE`/`REUC`/`sdir`

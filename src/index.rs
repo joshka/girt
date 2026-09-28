@@ -12,11 +12,12 @@
 //! Intent-to-add, skip-worktree and assume-valid are retained as data; no staging, sparse-checkout
 //! or stat-skipping policy is implemented. Split indexes resolve their immutable shared file on
 //! repository reads; unchanged publication preserves that dependency and edits publish a full
-//! index. Sparse directories retain tree identities; explicit expansion reads their trees without
-//! materializing files. Unknown mandatory extensions are refused.
-//! Optional extensions are opaque and round-trip unchanged. Editing discards derived caches,
-//! retains resolve-undo records and refuses unknown optional extensions. See
-//! [`Index::replace_entries`].
+//! index. [`IndexEdit::make_standalone`] explicitly removes that dependency without changing
+//! entries or version, while retaining both storage snapshots for publication checks. Sparse
+//! directories retain tree identities; explicit expansion reads their trees without materializing
+//! files. Unknown mandatory extensions are refused. Optional extensions are opaque and round-trip
+//! unchanged. Editing discards derived caches, retains resolve-undo records and refuses unknown
+//! optional extensions. See [`Index::replace_entries`].
 //!
 //! [`crate::Repository::read_index`] distinguishes absence from an empty index.
 //! [`crate::Repository::edit_index`] locks before reading; [`IndexEdit::commit`] publishes the

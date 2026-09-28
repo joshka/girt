@@ -1244,3 +1244,115 @@ fn discard_resolve_undo_matches_git_without_changing_entries_or_tree(
     assert_eq!(git(root, &["ls-files", "--stage", "--debug"]), entries);
     assert_eq!(git(root, &["write-tree"]), tree);
 }
+
+#[rstest]
+#[case::v2_sha1(girt::ObjectFormat::Sha1, "2", "--no-skip-worktree")]
+#[case::v2_sha256(girt::ObjectFormat::Sha256, "2", "--no-skip-worktree")]
+#[case::v3_sha1(girt::ObjectFormat::Sha1, "3", "--skip-worktree")]
+#[case::v3_sha256(girt::ObjectFormat::Sha256, "3", "--skip-worktree")]
+#[case::v4_sha1(girt::ObjectFormat::Sha1, "4", "--skip-worktree")]
+#[case::v4_sha256(girt::ObjectFormat::Sha256, "4", "--skip-worktree")]
+fn make_standalone_preserves_resolved_split_entries_and_shared_storage(
+    #[case] format: girt::ObjectFormat,
+    #[case] source_version: &str,
+    #[case] flag: &str,
+) {
+    let (_root, repo) = split_fixture(format);
+    let work = repo.worktree().unwrap();
+    git(
+        work,
+        &["update-index", &format!("--index-version={source_version}")],
+    );
+    git(work, &["update-index", "--split-index"]);
+    git(work, &["update-index", flag, "c"]);
+    let expected = git(work, &["ls-files", "--stage"]);
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let entries = edit.index().entries().to_vec();
+    let version = edit.index().version();
+    assert_eq!(version as u32, source_version.parse::<u32>().unwrap());
+    let shared = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    let shared_before = fs::read(&shared).unwrap();
+    #[cfg(unix)]
+    let shared_inode = {
+        use std::os::unix::fs::MetadataExt as _;
+        fs::metadata(&shared).unwrap().ino()
+    };
+    assert!(matches!(
+        repo.edit_index(Limits::default()),
+        Err(StorageError::Locked(_))
+    ));
+    edit.make_standalone().unwrap();
+    assert_eq!(edit.index().entries(), entries);
+    assert_eq!(edit.index().version(), version);
+    assert!(edit.index().shared_index_id().is_none());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    edit.commit().unwrap();
+    let published = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(published.entries(), entries);
+    assert_eq!(published.version(), version);
+    assert_eq!(git(work, &["ls-files", "--stage"]), expected);
+    assert_eq!(fs::read(&shared).unwrap(), shared_before);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        assert_eq!(fs::metadata(&shared).unwrap().ino(), shared_inode);
+    }
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_retains_primary_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.make_standalone().unwrap();
+    fs::write(&primary, b"independent writer").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == primary));
+    assert_eq!(fs::read(primary).unwrap(), b"independent writer");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_retains_shared_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let before = fs::read(&primary).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let shared_path = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    edit.make_standalone().unwrap();
+    fs::write(&shared_path, b"independent writer").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared_path));
+    assert_eq!(fs::read(shared_path).unwrap(), b"independent writer");
+    assert_eq!(fs::read(primary).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_rejects_deleted_shared_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let before = fs::read(&primary).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let shared_path = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    edit.make_standalone().unwrap();
+    fs::remove_file(&shared_path).unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared_path));
+    assert!(!shared_path.exists());
+    assert_eq!(fs::read(primary).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
