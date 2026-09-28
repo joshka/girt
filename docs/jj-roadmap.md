@@ -17,8 +17,9 @@ demonstrated capability. The first usable 0.1 crate is published before this ful
 complete, with the supported jj slice verified through the registry. Independent Git test oracles
 and remote servers remain permitted; explicit user extension programs must be inventoried. Deferred
 platform support must stay visible. A successful local path dependency does not complete registry
-delivery. Native worktree pruning is part of this target. Its current Git fallback and earlier prune
-deferral are temporary implementation boundaries, not final-completion exceptions.
+delivery. Native worktree cleanup is part of this target. The local jj integration now detaches
+workspaces natively while retaining uncertain registrations; explicit physical cleanup requires a
+separate lifetime and administration contract.
 
 Follow the [publication plan](publication-plan.md): documentation quality for the stable 0.1 API,
 release qualification and CI hardening, initial crates.io publication with verified docs.rs builds,
@@ -833,8 +834,9 @@ private roots, uses fresh registration identities for replacements, and reports 
 [R35-W1](evidence/r35.md#r35-w1--worktree-retirement-proof) owns identity-qualified native
 detachment and its move/reuse cases. Explicit physical cleanup remains a backlog item requiring a
 demonstrated exclusive-administration/lifetime contract; missing paths and stale backlinks are not
-proof. Final A19 completion requires replacing the Git prune subprocess with this conservative
-native behavior and removing every other production Git, gix and libgit2 dependency.
+proof. The local jj integration has replaced the Git prune subprocess with this conservative native
+behavior. Final A19 completion still requires removing every other production Git, gix and libgit2
+dependency and passing the consumer acceptance gates.
 
 The accumulated R11–R20 and R36–R40 storage APIs keep coherent owners: references and reflogs,
 index/colocation, object topology and snapshots, and worktree metadata. R37/R38/R40 propagate
