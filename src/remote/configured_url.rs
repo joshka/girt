@@ -24,12 +24,93 @@ pub enum ConfiguredUrlError {
     Unsupported,
 }
 
+/// Interpreted presentation components of a configured Git location.
+///
+/// Construct with [`parse_configured_url`]. Components describe URL syntax and do not authorize a
+/// transport. Host and path bytes can contain private data; Debug omits them. No credentials or
+/// port are included in the host. This type owns its components independently of the source
+/// configuration.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ConfiguredUrlParts {
+    pub(super) protocol: super::Protocol,
+    pub(super) host: Option<Vec<u8>>,
+    pub(super) path: Vec<u8>,
+}
+
+impl std::fmt::Debug for ConfiguredUrlParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfiguredUrlParts")
+            .field("protocol", &self.protocol)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConfiguredUrlParts {
+    /// Returns the recognized protocol family without granting transport permission.
+    ///
+    /// Lowercase `file` URLs are [`super::Protocol::File`]; local paths are
+    /// [`super::Protocol::Local`]. Custom and mixed-case schemes are [`super::Protocol::Helper`].
+    pub fn protocol(&self) -> super::Protocol {
+        self.protocol
+    }
+
+    /// Returns the host without credentials or a port, or None for a hostless location.
+    ///
+    /// HTTP(S) retains encoded host spelling and IPv6 brackets. Other scheme hosts decode percent
+    /// escapes; SSH and scp hosts omit enclosing brackets. File and scp hosts retain literal
+    /// percent sequences. Ordinary ASCII names are lowercased; opaque host spelling is
+    /// retained.
+    pub fn host(&self) -> Option<&[u8]> {
+        self.host.as_deref()
+    }
+
+    /// Returns the interpreted repository path, including any query or fragment suffix.
+    ///
+    /// Scheme URL paths decode percent escapes once, except lowercase file URLs. Local, file and
+    /// scp-like paths are literal. No slash trimming, suffix removal, filesystem expansion or
+    /// canonicalization occurs. Decoded control bytes may be present: this is not a filesystem or
+    /// transport-ready path.
+    pub fn path(&self) -> &[u8] {
+        &self.path
+    }
+}
+
+/// Parses configured URL presentation components without filesystem or network access.
+///
+/// Applies the same syntax boundary as [`normalize_configured_url`], retaining the shared parser's
+/// interpreted host and path rather than parsing the serialized URL again. For lossless syntactic
+/// components use [`super::ParsedUrl`] instead. This operation does not load remote configuration,
+/// apply rewrites or decide how to construct a web link.
+///
+/// # Errors
+///
+/// Returns the same value-free validation and unsupported-syntax errors as
+/// [`normalize_configured_url`].
+///
+/// ```
+/// use girt::remote::{Protocol, parse_configured_url};
+/// let url = parse_configured_url(b"ssh://user@HOST/team/repo%2Egit")?;
+/// assert_eq!(url.protocol(), Protocol::Ssh);
+/// assert_eq!(url.host(), Some(b"host".as_slice()));
+/// assert_eq!(url.path(), b"/team/repo.git");
+/// let literal = parse_configured_url(b"user@HOST:team/repo%2Egit")?;
+/// assert_eq!(literal.path(), b"team/repo%2Egit");
+/// # Ok::<(), girt::remote::ConfiguredUrlError>(())
+/// ```
+pub fn parse_configured_url(bytes: &[u8]) -> Result<ConfiguredUrlParts, ConfiguredUrlError> {
+    validate_input(bytes)?;
+    super::user_url::parse(bytes)
+        .map(|url| url.parts)
+        .map_err(configured_error)
+}
+
 /// Validates and serializes one configured destination, without applying URL rewrites.
 ///
 /// Supports ordinary local byte paths, file URLs, scp-like SSH, and scheme-based network URLs.
-/// Ordinary ASCII hosts are lowercased; percent-encoded host spelling is preserved. Numeric ports
-/// lose leading zeroes; explicit default
-/// ports and ordinary dot path segments are retained. File-host case is preserved. An HTTP(S)
+/// Ordinary ASCII hosts are lowercased. HTTP(S) retains percent-encoded host spelling; SSH and
+/// custom schemes interpret host escapes before serialization. Numeric ports lose leading zeroes;
+/// explicit default ports and ordinary dot path segments are retained. File-host case is preserved.
+/// An HTTP(S)
 /// URL without a path gains `/`. Local paths can contain non-UTF-8 bytes and spaces.
 /// File URL paths also retain literal spaces, without encoding or trimming them.
 /// Percent spelling and case in paths are retained. HTTP(S)/SSH path escapes must be complete hex
@@ -78,6 +159,11 @@ pub fn normalize_configured_url(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlEr
 }
 
 pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
+    validate_input(bytes)?;
+    super::user_url::normalize(bytes).map_err(configured_error)
+}
+
+fn validate_input(bytes: &[u8]) -> Result<(), ConfiguredUrlError> {
     use ConfiguredUrlError as Error;
     if bytes.is_empty() {
         return Err(Error::MissingPath);
@@ -117,19 +203,23 @@ pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
             std::str::from_utf8(bytes).map_err(|_| Error::Encoding)?;
         }
     }
-    super::user_url::normalize(bytes).map_err(|error| {
-        use super::UserUrlParseError as Parse;
-        match error {
-            Parse::EmptyPath | Parse::MissingUrlPath | Parse::MissingScpPath => Error::MissingPath,
-            Parse::MissingHost | Parse::InvalidAuthority | Parse::InvalidScp => Error::Authority,
-            Parse::InvalidPort => Error::Port,
-            Parse::InvalidEscape | Parse::InvalidEncoding => Error::PathEscape,
-            Parse::InvalidUrl => Error::Unsupported,
-        }
-    })
+    Ok(())
 }
 
-fn file_url(bytes: &[u8], start: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
+fn configured_error(error: super::UserUrlParseError) -> ConfiguredUrlError {
+    use ConfiguredUrlError as Error;
+
+    use super::UserUrlParseError as Parse;
+    match error {
+        Parse::EmptyPath | Parse::MissingUrlPath | Parse::MissingScpPath => Error::MissingPath,
+        Parse::MissingHost | Parse::InvalidAuthority | Parse::InvalidScp => Error::Authority,
+        Parse::InvalidPort => Error::Port,
+        Parse::InvalidEscape | Parse::InvalidEncoding => Error::PathEscape,
+        Parse::InvalidUrl => Error::Unsupported,
+    }
+}
+
+fn file_url(bytes: &[u8], start: usize) -> Result<(), ConfiguredUrlError> {
     let rest = &bytes[start..];
     if rest.is_empty() {
         return Err(ConfiguredUrlError::MissingPath);
@@ -148,8 +238,7 @@ fn file_url(bytes: &[u8], start: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
     for part in rest[slash..].split(|byte| *byte == b' ') {
         plain_path(part)?;
     }
-    // File authorities are preserved, unlike the network host case normalization.
-    Ok(bytes.to_vec())
+    Ok(())
 }
 
 fn plain_path(path: &[u8]) -> Result<(), ConfiguredUrlError> {
@@ -404,3 +493,7 @@ mod tests {
         assert!(!format!("{error:?}: {error}").contains("secret"));
     }
 }
+
+#[cfg(test)]
+#[path = "configured_url_parts_tests.rs"]
+mod parts_tests;

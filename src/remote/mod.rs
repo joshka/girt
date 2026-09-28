@@ -14,6 +14,8 @@
 //!   local paths against an explicit base without accessing the filesystem.
 //! - [`canonicalize_user_url`] validates user input and expands local symlinks while permitting
 //!   nonexistent path suffixes; its result retains credentials for storage, not logging.
+//! - [`parse_configured_url`] returns interpreted host/path components without filesystem access;
+//!   scheme paths are decoded while local, file and scp paths remain literal.
 //! - [`RemoteConfig`] edits named remote configuration. [`CredentialSession`] discovers credentials
 //!   only through an application-approved helper lifecycle.
 //!
@@ -42,7 +44,9 @@ pub use configured_refspec::{ConfiguredRefspec, ConfiguredRefspecError, Configur
 pub use configured_remote::{
     ConfiguredRemote, ConfiguredRemoteError, ConfiguredRemoteRecord, rewrite_configured_url,
 };
-pub use configured_url::{ConfiguredUrlError, normalize_configured_url};
+pub use configured_url::{
+    ConfiguredUrlError, ConfiguredUrlParts, normalize_configured_url, parse_configured_url,
+};
 pub use credential::{
     Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,
     CredentialSession, Prompt, askpass,

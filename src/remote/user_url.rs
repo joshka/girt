@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
+use super::{ConfiguredUrlParts, Protocol};
+
 /// Failure while preparing a user-supplied repository location.
 ///
 /// Diagnostics never include the supplied URL, which may contain credentials. Parsing is completed
@@ -79,8 +81,10 @@ pub enum UserUrlPathError {
 /// most 32 symbolic links are followed. Resolution is observational, not a filesystem safety check:
 /// another process can change the path after this call.
 ///
-/// Ordinary ASCII network hosts become lowercase and ports become decimal. Explicit default ports
-/// remain present. Opaque custom authorities are escaped without folding their case. Scheme-URL
+/// Ordinary ASCII network hosts and IPv6 addresses become lowercase; ports become decimal.
+/// Explicit default ports remain present. HTTP(S) host escapes retain their spelling; SSH and
+/// custom hosts interpret escapes before serialization. Bracketed non-IP SSH/scp names and opaque
+/// custom authorities retain their case. Scheme-URL
 /// user information is decoded and escaped for serialization; scp user information and path percent
 /// escapes retain their spelling. Lowercase HTTP(S) URLs without a path gain `/`. Other scheme
 /// spelling is retained, and custom schemes are accepted without authorizing any transport. File
@@ -115,12 +119,21 @@ pub fn canonicalize_user_url(source: &[u8], base: &Path) -> Result<Vec<u8>, User
             let path = resolve_path(&source[path_start..], base)?;
             Ok([&source[..path_start], path.as_slice()].concat())
         }
-        _ => form.render(source).map_err(Into::into),
+        _ => form.render(source).map(|url| url.bytes).map_err(Into::into),
     }
 }
 
 /// Normalizes presentation without accessing the filesystem or expanding relative paths.
 pub(super) fn normalize(source: &[u8]) -> Result<Vec<u8>, UserUrlParseError> {
+    parse(source).map(|url| url.bytes)
+}
+
+pub(super) struct NormalizedUrl {
+    pub bytes: Vec<u8>,
+    pub parts: ConfiguredUrlParts,
+}
+
+pub(super) fn parse(source: &[u8]) -> Result<NormalizedUrl, UserUrlParseError> {
     UrlForm::parse(source)?.render(source)
 }
 
@@ -171,25 +184,47 @@ impl UrlForm {
         Ok(Self::Network { colon })
     }
 
-    fn render(self, source: &[u8]) -> Result<Vec<u8>, UserUrlParseError> {
+    fn render(self, source: &[u8]) -> Result<NormalizedUrl, UserUrlParseError> {
         use UserUrlParseError as Parse;
         match self {
-            Self::Local | Self::File { .. } => Ok(source.to_vec()),
+            Self::Local => Ok(NormalizedUrl {
+                bytes: source.to_vec(),
+                parts: ConfiguredUrlParts {
+                    protocol: Protocol::Local,
+                    host: None,
+                    path: source.to_vec(),
+                },
+            }),
+            Self::File { path_start } => Ok(NormalizedUrl {
+                bytes: source.to_vec(),
+                parts: ConfiguredUrlParts {
+                    protocol: Protocol::File,
+                    host: (path_start > 7).then(|| source[7..path_start].to_vec()),
+                    path: source[path_start..].to_vec(),
+                },
+            }),
             Self::Network { colon } => normalize_network(source, colon),
             Self::Scp { colon } => {
                 let path = &source[colon + 1..];
                 if path.is_empty() {
                     return Err(Parse::MissingScpPath);
                 }
-                let authority = normalize_authority(&source[..colon], AuthorityKind::Scp)
+                let (authority, host) = normalize_authority(&source[..colon], AuthorityKind::Scp)
                     .map_err(|_| Parse::InvalidScp)?;
-                Ok([authority.as_slice(), b":", path].concat())
+                Ok(NormalizedUrl {
+                    bytes: [authority.as_slice(), b":", path].concat(),
+                    parts: ConfiguredUrlParts {
+                        protocol: Protocol::Ssh,
+                        host,
+                        path: path.to_vec(),
+                    },
+                })
             }
         }
     }
 }
 
-fn normalize_network(source: &[u8], colon: usize) -> Result<Vec<u8>, UserUrlParseError> {
+fn normalize_network(source: &[u8], colon: usize) -> Result<NormalizedUrl, UserUrlParseError> {
     use UserUrlParseError as Error;
     let scheme = &source[..colon];
     let rest = &source[colon + 3..];
@@ -202,7 +237,7 @@ fn normalize_network(source: &[u8], colon: usize) -> Result<Vec<u8>, UserUrlPars
         .iter()
         .position(|b| *b == b'/' || (kind != AuthorityKind::Other && b"?#".contains(b)))
         .unwrap_or(rest.len());
-    let authority = normalize_authority(&rest[..end], kind)?;
+    let (authority, host) = normalize_authority(&rest[..end], kind)?;
     let path = &rest[end..];
     if end == 0 && matches!(scheme, b"http" | b"https" | b"ssh" | b"git") {
         return Err(Error::MissingHost);
@@ -214,7 +249,22 @@ fn normalize_network(source: &[u8], colon: usize) -> Result<Vec<u8>, UserUrlPars
     if path.is_empty() && matches!(scheme, b"http" | b"https") {
         path.push(b'/');
     }
-    Ok([&source[..colon + 3], &authority, &path].concat())
+    let decoded_path = decode_escapes(&path)?;
+    let protocol = match scheme {
+        b"http" => Protocol::Http,
+        b"https" => Protocol::Https,
+        b"ssh" => Protocol::Ssh,
+        b"git" => Protocol::Git,
+        _ => Protocol::Helper,
+    };
+    Ok(NormalizedUrl {
+        bytes: [&source[..colon + 3], &authority, &path].concat(),
+        parts: ConfiguredUrlParts {
+            protocol,
+            host,
+            path: decoded_path,
+        },
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -225,7 +275,10 @@ enum AuthorityKind {
     Other,
 }
 
-fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, UserUrlParseError> {
+fn normalize_authority(
+    bytes: &[u8],
+    kind: AuthorityKind,
+) -> Result<(Vec<u8>, Option<Vec<u8>>), UserUrlParseError> {
     use UserUrlParseError::InvalidAuthority as Error;
     let port_allowed = kind != AuthorityKind::Scp;
     let (userinfo, host_port) = match bytes.iter().rposition(|b| *b == b'@') {
@@ -244,14 +297,7 @@ fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, Use
         if !tail.is_empty() && (!port_allowed || !tail.starts_with(b":")) {
             return Err(Error);
         }
-        let host = if matches!(kind, AuthorityKind::Ssh | AuthorityKind::Scp)
-            && !host_port[1..close].contains(&b':')
-        {
-            &host_port[1..close]
-        } else {
-            &host_port[..close + 1]
-        };
-        (host, tail.strip_prefix(b":"))
+        (&host_port[..close + 1], tail.strip_prefix(b":"))
     } else {
         let colon = host_port.iter().position(|b| *b == b':');
         match colon {
@@ -296,21 +342,29 @@ fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, Use
             out.push(b'@');
         }
     }
-    let escape_host = |byte: u8| {
-        (kind != AuthorityKind::Scp && !byte.is_ascii())
-            || (kind == AuthorityKind::Other && b"[]:?#".contains(&byte))
-    };
-    if host.contains(&b'%') || host.iter().copied().any(escape_host) {
-        for &byte in host {
-            if escape_host(byte) {
-                push_escape(&mut out, byte);
+    let component = host_component(host, kind)?;
+    let rendered_host = if matches!(kind, AuthorityKind::Web | AuthorityKind::Scp) {
+        // HTTP hosts are retained in their encoded form. Scp hosts have no escape syntax.
+        if kind == AuthorityKind::Scp && host.starts_with(b"[") && component.contains(&b':') {
+            [b"[", component.as_slice(), b"]"].concat()
+        } else {
+            component.clone()
+        }
+    } else if kind == AuthorityKind::Ssh && host.starts_with(b"[") && component.contains(&b':') {
+        // Keep valid brackets when serializing IPv6, including fully expanded addresses.
+        [b"[", component.as_slice(), b"]"].concat()
+    } else {
+        let mut encoded = Vec::new();
+        for &byte in &component {
+            if byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=".contains(&byte) {
+                encoded.push(byte);
             } else {
-                out.push(byte);
+                push_escape(&mut encoded, byte);
             }
         }
-    } else {
-        out.extend(host.iter().map(u8::to_ascii_lowercase));
-    }
+        encoded
+    };
+    out.extend_from_slice(&rendered_host);
     if let Some(port) = port {
         out.push(b':');
         if !port.is_empty() {
@@ -327,7 +381,42 @@ fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, Use
             out.extend_from_slice(port.to_string().as_bytes());
         }
     }
-    Ok(out)
+    let present = !host.is_empty() || bytes.starts_with(b"[");
+    Ok((out, present.then_some(component)))
+}
+
+fn host_component(host: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, UserUrlParseError> {
+    let bracketed = host.starts_with(b"[");
+    let host = if matches!(kind, AuthorityKind::Ssh | AuthorityKind::Scp) {
+        host.strip_prefix(b"[")
+            .and_then(|host| host.strip_suffix(b"]"))
+            .unwrap_or(host)
+    } else {
+        host
+    };
+    let mut component = if matches!(kind, AuthorityKind::Ssh | AuthorityKind::Other) {
+        decode_escapes(host)?
+    } else {
+        host.to_vec()
+    };
+    let ordinary_host = component
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(b));
+    let ip_host = component
+        .strip_prefix(b"[")
+        .and_then(|host| host.strip_suffix(b"]"))
+        .unwrap_or(&component);
+    let ipv6 = std::str::from_utf8(ip_host)
+        .ok()
+        .and_then(|host| host.parse::<std::net::Ipv6Addr>().ok())
+        .is_some();
+    if (ordinary_host && !bracketed)
+        || ipv6
+        || (kind == AuthorityKind::Web && !component.contains(&b'%'))
+    {
+        component.make_ascii_lowercase();
+    }
+    Ok(component)
 }
 
 fn encode_userinfo(out: &mut Vec<u8>, bytes: &[u8], password: bool) {
