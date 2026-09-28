@@ -23,6 +23,7 @@
 
 mod enumerate;
 mod imported;
+mod leaf_symlink;
 mod lock_wait;
 mod name;
 mod packed;
