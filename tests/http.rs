@@ -503,11 +503,21 @@ fn real_git_delta_push_incremental_and_empty_commands() {
     )
     .with_progress();
     let rt = runtime();
-    assert!(
-        rt.block_on(push::send_http(&remote, initial, control))
-            .unwrap()
-            .all_succeeded()
-    );
+    let mut progress = Vec::new();
+    let outcome = rt
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            initial,
+            control,
+            |_| true,
+            |message| progress.push(message.to_vec()),
+        ))
+        .unwrap();
+    let HttpPushOutcome::Sent(report) = outcome else {
+        panic!("push declined")
+    };
+    assert!(report.all_succeeded());
+    assert_eq!(report.progress, progress);
     assert_eq!(tip(&dest, "refs/heads/main"), old);
     assert_eq!(tip(&dest, "refs/tags/packed"), tag);
     verify(&f, &dest);
@@ -763,11 +773,21 @@ fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectF
     )
     .unwrap();
     let rt = runtime();
-    assert!(
-        rt.block_on(push::send_http(&remote, initial, control))
-            .unwrap()
-            .all_succeeded()
-    );
+    let mut progress = Vec::new();
+    let outcome = rt
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            initial,
+            control,
+            |_| true,
+            |message| progress.push(message.to_vec()),
+        ))
+        .unwrap();
+    let HttpPushOutcome::Sent(report) = outcome else {
+        panic!("push declined")
+    };
+    assert!(report.all_succeeded());
+    assert_eq!(report.progress, progress);
     assert_eq!(tip(&dest, "refs/for/main"), id);
 
     let commands = vec![
@@ -872,11 +892,21 @@ fn stale_wire_lease_preserves_independent_success(#[case] format: girt::ObjectFo
     )
     .unwrap();
     let rt = runtime();
-    assert!(
-        rt.block_on(push::send_http(&remote, initial, control))
-            .unwrap()
-            .all_succeeded()
-    );
+    let mut progress = Vec::new();
+    let outcome = rt
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            initial,
+            control,
+            |_| true,
+            |message| progress.push(message.to_vec()),
+        ))
+        .unwrap();
+    let HttpPushOutcome::Sent(report) = outcome else {
+        panic!("push declined")
+    };
+    assert!(report.all_succeeded());
+    assert_eq!(report.progress, progress);
     let mixed = PreparedPush::new(
         &objects,
         vec![
@@ -2147,4 +2177,224 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
             .contains(&expected.to_string())
     );
     assert_eq!(proxy.requests(), ["CONNECT", "CONNECT"]);
+}
+
+#[path = "support/push_response.rs"]
+mod push_response;
+
+fn progress_prepared(limits: PushLimits) -> PreparedPush {
+    plain_prepared(limits).with_progress()
+}
+
+fn plain_prepared(limits: PushLimits) -> PreparedPush {
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    PreparedPush::new(
+        &source.repo.objects(PackLimits::default()).unwrap(),
+        vec![command(
+            "refs/heads/main",
+            None,
+            tip(&source.repo, "refs/heads/main"),
+        )],
+        limits,
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+}
+
+fn success_status() -> Vec<u8> {
+    [
+        push_response::packet(b"unpack ok\n"),
+        push_response::packet(b"ok refs/heads/main\n"),
+        b"0000".to_vec(),
+    ]
+    .concat()
+}
+
+#[test]
+fn http_push_progress_arrives_before_response_completion() {
+    let first = push_response::packet(b"\x02receiving\xff\r");
+    let status = [b"\x01".as_slice(), &success_status()].concat();
+    let rest = [
+        push_response::packet(b"\x02done\n"),
+        push_response::packet(&status),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    let (url, acknowledge, server) = push_response::serve(true, first, rest, true);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut messages = Vec::new();
+    let outcome = runtime()
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            progress_prepared(PushLimits::default()),
+            TransportControl::new(&cancel),
+            |_| true,
+            |message| {
+                messages.push(message.to_vec());
+                let _ = acknowledge.send(());
+            },
+        ))
+        .unwrap();
+    server.join().unwrap();
+    let HttpPushOutcome::Sent(report) = outcome else {
+        panic!("push declined")
+    };
+    assert!(report.all_succeeded());
+    assert_eq!(messages, [b"receiving\xff\r".to_vec(), b"done\n".to_vec()]);
+    assert_eq!(report.progress, messages);
+}
+
+#[rstest]
+#[case::not_supported(false, progress_prepared)]
+#[case::not_requested(true, plain_prepared)]
+fn http_push_progress_requires_sideband_negotiation(
+    #[case] supported: bool,
+    #[case] prepare: fn(PushLimits) -> PreparedPush,
+) {
+    let (url, _acknowledge, server) =
+        push_response::serve(supported, success_status(), vec![], false);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let prepared = prepare(PushLimits::default());
+    let cancel = AtomicBool::new(false);
+    let outcome = runtime()
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            prepared,
+            TransportControl::new(&cancel),
+            |_| true,
+            |_| panic!("unnegotiated progress"),
+        ))
+        .unwrap();
+    server.join().unwrap();
+    assert!(
+        matches!(outcome, HttpPushOutcome::Sent(report) if report.all_succeeded() && report.progress.is_empty())
+    );
+}
+
+#[rstest]
+#[case::remote_error(b"0009\x03fail0006\x02z", PushFailure::Remote(b"fail".to_vec()))]
+#[case::invalid_header(b"zzzz0006\x02z", PushFailure::Protocol("pkt-line header"))]
+#[case::truncated(b"0009\x02z", PushFailure::Protocol("truncated pkt-line"))]
+fn http_push_progress_retains_uncertain_prefix(#[case] rest: &[u8], #[case] expected: PushFailure) {
+    let (url, acknowledge, server) = push_response::serve(
+        true,
+        push_response::packet(b"\x02first"),
+        rest.to_vec(),
+        true,
+    );
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut messages = Vec::new();
+    let error = runtime()
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            progress_prepared(PushLimits::default()),
+            TransportControl::new(&cancel),
+            |_| true,
+            |message| {
+                messages.push(message.to_vec());
+                let _ = acknowledge.send(());
+            },
+        ))
+        .unwrap_err();
+    server.join().unwrap();
+    let PushError::Uncertain { cause, report } = error else {
+        panic!("expected uncertainty")
+    };
+    assert_eq!(cause.to_string(), expected.to_string());
+    assert_eq!(messages, [b"first".to_vec()]);
+    assert_eq!(report.progress, messages);
+    assert!(report.refs[0].attempted);
+    assert!(report.refs[0].status.is_none());
+}
+
+#[test]
+fn http_push_progress_callback_can_request_cancellation() {
+    let (url, acknowledge, server) = push_response::serve(
+        true,
+        push_response::packet(b"\x02first"),
+        b"0000".to_vec(),
+        true,
+    );
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let error = runtime()
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            progress_prepared(PushLimits::default()),
+            TransportControl::new(&cancel),
+            |_| true,
+            |_| {
+                cancel.store(true, Ordering::Relaxed);
+                let _ = acknowledge.send(());
+            },
+        ))
+        .unwrap_err();
+    server.join().unwrap();
+    assert!(
+        matches!(error, PushError::Uncertain { cause: PushFailure::Cancelled, report } if report.progress == [b"first".to_vec()])
+    );
+}
+
+#[test]
+fn http_push_progress_excludes_bytes_beyond_status_budget() {
+    let response = [
+        push_response::packet(b"\x02first"),
+        push_response::packet(b"\x02outside"),
+        b"0000".to_vec(),
+    ]
+    .concat();
+    let (url, _acknowledge, server) = push_response::serve(true, response, vec![], false);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let limits = PushLimits {
+        max_status_bytes: 15,
+        ..PushLimits::default()
+    };
+    let mut messages = Vec::new();
+    let error = runtime()
+        .block_on(push::send_http_checked_with_progress(
+            &remote,
+            progress_prepared(limits),
+            TransportControl::new(&cancel),
+            |_| true,
+            |message| messages.push(message.to_vec()),
+        ))
+        .unwrap_err();
+    server.join().unwrap();
+    assert_eq!(messages, [b"first".to_vec()]);
+    assert!(
+        matches!(error, PushError::Uncertain { cause: PushFailure::Http(HttpError::Limit("response body")), report } if report.progress == messages)
+    );
+}
+
+#[test]
+fn http_push_progress_preserves_acknowledgements_before_failure() {
+    let status = [b"\x01".as_slice(), &success_status()].concat();
+    let rest = [push_response::packet(&status), b"zzzz".to_vec()].concat();
+    let (url, acknowledge, server) =
+        push_response::serve(true, push_response::packet(b"\x02first"), rest, true);
+    let remote = HttpRemote::new(&url, &[], &[]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = progress_prepared(PushLimits::default());
+    let transfer = push::send_http_checked_with_progress(
+        &remote,
+        prepared,
+        TransportControl::new(&cancel),
+        |_| true,
+        |_| {
+            let _ = acknowledge.send(());
+        },
+    );
+    fn is_send<T: Send>(_: &T) {}
+    is_send(&transfer);
+    let error = runtime().block_on(transfer).unwrap_err();
+    server.join().unwrap();
+    let PushError::Uncertain { cause, report } = error else {
+        panic!("expected uncertainty")
+    };
+    assert!(matches!(cause, PushFailure::Protocol("pkt-line header")));
+    assert_eq!(report.progress, [b"first".to_vec()]);
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
 }

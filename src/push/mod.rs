@@ -35,7 +35,7 @@ pub use ssh::send_ssh;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
-pub use http::{HttpPushOutcome, send_http, send_http_checked};
+pub use http::{HttpPushOutcome, send_http, send_http_checked, send_http_checked_with_progress};
 
 mod graph;
 mod local;

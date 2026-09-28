@@ -32,15 +32,9 @@ impl<R: Read> Wire<'_, R> {
         self.charge(4)?;
         let mut header = [0; 4];
         self.exact(&mut header)?;
-        if !header.iter().all(u8::is_ascii_hexdigit) {
-            return Err(Error::Protocol("pkt-line header"));
-        }
-        let length = usize::from_str_radix(std::str::from_utf8(&header).unwrap(), 16).unwrap();
+        let length = packet_length(&header)?;
         if length == 0 {
             return Ok(None);
-        }
-        if !(4..=65520).contains(&length) {
-            return Err(Error::Protocol("pkt-line length"));
         }
         self.charge(length - 4)?;
         let mut bytes = vec![0; length - 4];
@@ -75,6 +69,18 @@ impl<R: Read> Wire<'_, R> {
         }
         Ok(())
     }
+}
+
+/// Decodes a complete header, including flush, using the shared pkt-line length bounds.
+pub(crate) fn packet_length(header: &[u8; 4]) -> Result<usize, Error> {
+    if !header.iter().all(u8::is_ascii_hexdigit) {
+        return Err(Error::Protocol("pkt-line header"));
+    }
+    let length = usize::from_str_radix(std::str::from_utf8(header).unwrap(), 16).unwrap();
+    if length != 0 && !(4..=65520).contains(&length) {
+        return Err(Error::Protocol("pkt-line length"));
+    }
+    Ok(length)
 }
 
 pub(crate) fn packet(

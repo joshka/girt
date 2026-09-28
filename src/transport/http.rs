@@ -360,13 +360,33 @@ impl HttpRemote {
         limit: usize,
         control: TransportControl<'_>,
     ) -> HttpResponse {
+        self.exchange_observed(service, body, limit, control, |_| {})
+            .await
+    }
+
+    // Observers see only the retained, bounded prefix, including on a body-limit failure.
+    pub(crate) async fn exchange_observed(
+        &self,
+        service: &str,
+        body: Option<RequestBody>,
+        limit: usize,
+        control: TransportControl<'_>,
+        mut observe: impl FnMut(&[u8]) + Send,
+    ) -> HttpResponse {
         let mut output = HttpResponse {
             body: Vec::new(),
             result: Ok(()),
         };
-        output.result = self
-            .transfer(service, body, limit, control, &mut output.body)
-            .await;
+        let receive = |chunk: &[u8]| {
+            let accepted = chunk.len().min(limit.saturating_sub(output.body.len()));
+            output.body.extend_from_slice(&chunk[..accepted]);
+            observe(&output.body);
+            if accepted < chunk.len() {
+                return Err(HttpError::Limit("response body"));
+            }
+            Ok(())
+        };
+        output.result = self.transfer(service, body, control, receive).await;
         output
     }
 
@@ -374,9 +394,8 @@ impl HttpRemote {
         &self,
         service: &str,
         body: Option<RequestBody>,
-        limit: usize,
         control: TransportControl<'_>,
-        output: &mut Vec<u8>,
+        mut receive: impl FnMut(&[u8]) -> Result<(), HttpError> + Send,
     ) -> Result<(), HttpError> {
         check(control)?;
         let rpc = body.is_some();
@@ -520,11 +539,7 @@ impl HttpRemote {
             .await?
             .map_err(|_| HttpError::Network)?
         {
-            if chunk.len() > limit.saturating_sub(output.len()) {
-                output.extend_from_slice(&chunk[..limit.saturating_sub(output.len())]);
-                return Err(HttpError::Limit("response body"));
-            }
-            output.extend_from_slice(&chunk);
+            receive(&chunk)?;
         }
         Ok(())
     }

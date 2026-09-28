@@ -42,6 +42,17 @@ per-reference report. Advertised absence can also mean a hidden ref, and tips ma
 callback. The receiver still checks every command's expected old value. A failed POST remains
 uncertain and must not trigger automatic fallback.
 
+Use `push::send_http_checked_with_progress` with `PreparedPush::with_progress()` to receive live
+receiver messages when sideband is negotiated. Its `FnMut(&[u8]) + Send` callback receives complete
+channel-2 payloads in wire order as the HTTP body arrives, before response completion. Payloads
+remain untrusted bytes and may contain invalid UTF-8 or terminal control characters. The callback
+runs on the async task and should return promptly; cancellation still uses `TransportControl`.
+Messages describe receiver work, with no local preparation or upload counters. They remain in the
+final `PushReport::progress`, including uncertain reports; receipt of progress does not prove a ref
+update succeeded. Malformed framing, channel 3 and the terminating flush stop live notification. The
+final status parser still determines acknowledgement and uncertainty, and bytes beyond the status
+budget are never delivered.
+
 Advertisement parsing, knowledge-budget checks, request selection/encoding and bounded push status
 parsing remain synchronous preflight/completion work. Their costs scale with configured ref, known
 object, want and status limits; there is no executor latency guarantee for arbitrarily large limits
