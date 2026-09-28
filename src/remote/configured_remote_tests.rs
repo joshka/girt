@@ -165,3 +165,93 @@ fn debug_and_errors_do_not_disclose_urls() {
     let error = find(b"[remote \"origin\"]\nurl=ssh://secret@host:\n").unwrap_err();
     assert!(!format!("{error:?} {error}").contains("secret"));
 }
+
+#[rstest]
+#[case::absent(b"", false)]
+#[case::other(b"[remote \"other\"]", false)]
+#[case::empty(b"[remote \"origin\"]", true)]
+#[case::unknown_field(b"[remote \"origin\"]\ncustom=value", true)]
+#[case::reset(b"[remote \"origin\"]\nurl=bad:\nurl", true)]
+#[case::spec_only(b"[remote \"origin\"]\nfetch", true)]
+fn configured_record_retains_inactive_existence(#[case] body: &[u8], #[case] exists: bool) {
+    let config = Config::parse(body).unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin").unwrap();
+    assert_eq!(record.is_some(), exists);
+    assert!(
+        ConfiguredRemote::find(&config, b"origin")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[rstest]
+#[case::absent(b"", None)]
+#[case::tags(b"tagOpt=--tags", Some(b"--tags".as_slice()))]
+#[case::last(b"tagOpt=--tags\ntagOpt=--no-tags", Some(b"--no-tags".as_slice()))]
+#[case::cleared(b"tagOpt=bad\ntagOpt", None)]
+fn configured_record_tag_option(#[case] body: &[u8], #[case] expected: Option<&[u8]>) {
+    let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.tag_option(), expected);
+}
+
+#[test]
+fn configured_record_retains_order_duplicates_and_canonical_raw_urls() {
+    let config = Config::parse(b"[remote \"origin\"]\nurl=host:\nurl=\nurl=https://HOST:00443/a\nurl=second\nurl=second\npushurl=bad:\npushurl\npushurl=user@HOST:repo\nfetch\nfetch\npush=:refs/heads/old\ntagOpt=--tags\n[url \"host:\"]\ninsteadOf=https://host:443/\npushInsteadOf=second\n").unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record.fetch_urls().collect::<Vec<_>>(),
+        [b"https://host:443/a".as_slice(), b"second", b"second"]
+    );
+    assert_eq!(
+        record.push_urls().collect::<Vec<_>>(),
+        [b"user@host:repo".as_slice()]
+    );
+    assert_eq!(record.fetch_refspecs().len(), 2);
+    assert_eq!(record.fetch_refspecs()[0], record.fetch_refspecs()[1]);
+    assert_eq!(record.push_refspecs()[0].to_bytes(), b":refs/heads/old");
+    assert_eq!(record.tag_option(), Some(b"--tags".as_slice()));
+    assert!(ConfiguredRemote::find(&config, b"origin").is_ok());
+}
+
+#[test]
+fn configured_record_does_not_validate_rewrites_or_apply_push_fallback() {
+    let config = Config::parse(b"[remote \"origin\"]\nurl=secret-local-path\n[url \"host:\"]\ninsteadOf=secret-local-path\n").unwrap();
+    let record = ConfiguredRemoteRecord::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record.fetch_urls().collect::<Vec<_>>(),
+        [b"secret-local-path".as_slice()]
+    );
+    assert_eq!(record.push_urls().len(), 0);
+    assert!(!format!("{record:?}").contains("secret-local-path"));
+    assert!(matches!(
+        ConfiguredRemote::find(&config, b"origin"),
+        Err(ConfiguredRemoteError::Url {
+            rewritten: true,
+            ..
+        })
+    ));
+}
+
+#[rstest]
+#[case::tag(b"tagOpt=bad\nurl=host:", "tag")]
+#[case::fetch_url(b"url=host:\npushurl=host:\nfetch=bad?", "url")]
+#[case::push_url(b"pushurl=host:\nfetch=bad?", "pushurl")]
+#[case::fetch_spec(b"fetch=bad?\npush=bad?", "fetch")]
+#[case::push_spec(b"push=bad?", "push")]
+fn configured_record_preserves_error_order(#[case] body: &[u8], #[case] key: &str) {
+    let config = Config::parse(&[b"[remote \"origin\"]\n", body].concat()).unwrap();
+    let error = ConfiguredRemoteRecord::find(&config, b"origin").unwrap_err();
+    let actual = match error {
+        ConfiguredRemoteError::TagOption => "tag",
+        ConfiguredRemoteError::Url { key, .. } | ConfiguredRemoteError::Refspec { key, .. } => key,
+        error => panic!("unexpected error: {error}"),
+    };
+    assert_eq!(actual, key);
+}

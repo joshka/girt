@@ -115,14 +115,16 @@ impl ConfiguredRemote {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn find(config: &Config, name: &[u8]) -> Result<Option<Self>, ConfiguredRemoteError> {
-        match config.value("remote", Some(name), "tagopt") {
-            None | Some(None | Some(b"--tags" | b"--no-tags")) => {}
-            _ => return Err(ConfiguredRemoteError::TagOption),
-        }
-        let fetch = configured_urls(config, name, "url")?;
-        let push = configured_urls(config, name, "pushurl")?;
-        let fetch_refspecs = configured_refspecs(config, name, "fetch", Direction::Fetch)?;
-        let push_refspecs = configured_refspecs(config, name, "push", Direction::Push)?;
+        let Some(record) = ConfiguredRemoteRecord::find(config, name)? else {
+            return Ok(None);
+        };
+        let ConfiguredRemoteRecord {
+            fetch,
+            push,
+            fetch_refspecs,
+            push_refspecs,
+            ..
+        } = record;
         let rewritten_fetch = rewrite_urls(config, &fetch, "url")?;
         let rewritten_push = if push.is_empty() {
             push_fallback_urls(config, &fetch, &rewritten_fetch)?
@@ -163,6 +165,104 @@ impl ConfiguredRemote {
     }
 }
 
+/// A validated remote before URL rewrites, including URL-free configured sections.
+///
+/// All surviving URL occurrences are retained in configuration order, after implicit and empty
+/// resets and supported URL serialization. This is a read-only record, not an edit transaction:
+/// callers remain responsible for fresh source loading, locks and publication. Unknown fields
+/// remain in the original [`Config`], not in this record. Debug output omits value bytes.
+#[derive(Clone)]
+pub struct ConfiguredRemoteRecord {
+    fetch: Vec<UrlOccurrence>,
+    push: Vec<UrlOccurrence>,
+    fetch_refspecs: Vec<ConfiguredRefspec>,
+    push_refspecs: Vec<ConfiguredRefspec>,
+    tag_option: Option<&'static [u8]>,
+}
+
+impl std::fmt::Debug for ConfiguredRemoteRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfiguredRemoteRecord")
+            .field("fetch_url_count", &self.fetch.len())
+            .field("push_url_count", &self.push.len())
+            .field("fetch_refspec_count", &self.fetch_refspecs.len())
+            .field("push_refspec_count", &self.push_refspecs.len())
+            .field("tag_option", &self.tag_option)
+            .finish()
+    }
+}
+
+impl ConfiguredRemoteRecord {
+    /// Finds a configured section without applying `insteadOf` or `pushInsteadOf`.
+    ///
+    /// Returns `None` only when the section is absent. An empty or URL-free section returns a
+    /// record after validation. No fetch-to-push URL fallback is applied. Names are exact
+    /// subsection bytes, without reference-name validation.
+    ///
+    /// # Errors
+    ///
+    /// Validates the last tag option, surviving fetch URLs, surviving push URLs, all fetch
+    /// refspecs, then all push refspecs. Uses the supported syntax and whole-record compatibility
+    /// boundary of [`ConfiguredRemote`]. Rewrites are neither read nor validated.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::ConfiguredRemoteRecord;
+    /// let config = Config::parse(b"[remote \"origin\"]\n")?;
+    /// let record = ConfiguredRemoteRecord::find(&config, b"origin")?.unwrap();
+    /// assert_eq!(record.fetch_urls().len(), 0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn find(config: &Config, name: &[u8]) -> Result<Option<Self>, ConfiguredRemoteError> {
+        if !config.contains_section("remote", Some(name)) {
+            return Ok(None);
+        }
+        let tag_option = match config.value("remote", Some(name), "tagopt") {
+            None | Some(None) => None,
+            Some(Some(b"--tags")) => Some(b"--tags".as_slice()),
+            Some(Some(b"--no-tags")) => Some(b"--no-tags".as_slice()),
+            _ => return Err(ConfiguredRemoteError::TagOption),
+        };
+        let fetch = configured_urls(config, name, "url")?;
+        let push = configured_urls(config, name, "pushurl")?;
+        let fetch_refspecs = configured_refspecs(config, name, "fetch", Direction::Fetch)?;
+        let push_refspecs = configured_refspecs(config, name, "push", Direction::Push)?;
+        Ok(Some(Self {
+            fetch,
+            push,
+            fetch_refspecs,
+            push_refspecs,
+            tag_option,
+        }))
+    }
+
+    /// Every surviving supported serialized fetch URL, without rewrites. May contain secrets.
+    pub fn fetch_urls(&self) -> impl ExactSizeIterator<Item = &[u8]> {
+        self.fetch.iter().map(|url| url.bytes.as_slice())
+    }
+
+    /// Every surviving explicit push URL, without rewrites or fallback. May contain secrets.
+    pub fn push_urls(&self) -> impl ExactSizeIterator<Item = &[u8]> {
+        self.push.iter().map(|url| url.bytes.as_slice())
+    }
+
+    /// Fetch descriptors in configuration order, including duplicates and defaults.
+    pub fn fetch_refspecs(&self) -> &[ConfiguredRefspec] {
+        &self.fetch_refspecs
+    }
+
+    /// Push descriptors in configuration order, including duplicates.
+    pub fn push_refspecs(&self) -> &[ConfiguredRefspec] {
+        &self.push_refspecs
+    }
+
+    /// Last validated `--tags` or `--no-tags`; absent or implicit last values return `None`.
+    pub fn tag_option(&self) -> Option<&[u8]> {
+        self.tag_option
+    }
+}
+
+#[derive(Clone)]
 struct UrlOccurrence {
     index: usize,
     bytes: Vec<u8>,

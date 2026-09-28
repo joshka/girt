@@ -23,6 +23,13 @@ use super::Origin;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(super) entries: Vec<Entry>,
+    pub(super) sections: Vec<SectionName>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct SectionName {
+    pub section: Vec<u8>,
+    pub subsection: Option<Vec<u8>>,
 }
 
 /// One variable occurrence, retaining spelling, bytes and source location.
@@ -85,6 +92,7 @@ impl Config {
             value_end: 0,
         };
         let mut entries = Vec::new();
+        let mut sections = Vec::new();
         let mut layout = Layout::default();
         let mut section = Vec::new();
         let mut subsection = None;
@@ -141,6 +149,10 @@ impl Config {
                     if parser.take() != Some(b']') {
                         return Err(parser.error("expected ]"));
                     }
+                    sections.push(SectionName {
+                        section: section.clone(),
+                        subsection: subsection.clone(),
+                    });
                     if RETAIN_LAYOUT {
                         layout.sections.push(SectionSpan {
                             range: start + offset..parser.pos + offset,
@@ -191,7 +203,22 @@ impl Config {
                 }
             }
         }
-        Ok((Self { entries }, layout))
+        Ok((Self { entries, sections }, layout))
+    }
+
+    /// Whether a section exists, including an empty parsed header.
+    ///
+    /// Section names use ASCII case folding; subsection bytes are exact. Resolved includes retain
+    /// their empty headers. Environment assignments imply their section even though they have no
+    /// physical header. This query does not identify a writable source or physical section.
+    pub fn contains_section(&self, section: &str, subsection: Option<&[u8]>) -> bool {
+        self.sections.iter().any(|header| {
+            header.section.eq_ignore_ascii_case(section.as_bytes())
+                && header.subsection.as_deref() == subsection
+        }) || self.entries.iter().any(|entry| {
+            entry.section.eq_ignore_ascii_case(section.as_bytes())
+                && entry.subsection.as_deref() == subsection
+        })
     }
 
     /// Returns all occurrences, preserving order and distinguishing implicit from empty values.

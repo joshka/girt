@@ -32,6 +32,23 @@ strict-mapping and explicit-value contracts. Configured validation does not wide
 admission. Broader URL normalization can be added after original executable fixtures establish its
 acceptance and serialization rules; supported validation errors do not need compatibility fallback.
 
+`ConfiguredRemoteRecord::find` provides the validated record before rewrites. It retains every
+surviving supported serialized URL, ordered refspecs and the last tag option. An empty or URL-free
+remote returns a record; only a missing section returns `None`. Push URLs contain only explicit
+values, with no fetch-URL fallback. Use this record when preparing an edit that must preserve
+configured destinations rather than transport rewrites. It does not load fresh sources, acquire
+locks, select a writable file or publish changes.
+
+`normalize_configured_url` validates and serializes one destination using the same bounded URL
+contract, without rewrites or source access. An empty destination is an error here; list resets
+belong to configuration interpretation. The returned bytes may contain private information, while
+errors omit input values.
+
+`Config::contains_section` retains empty headers through parsing and include resolution. Runtime
+assignments also imply section existence. Section names ignore ASCII case; quoted subsection bytes
+remain exact. This query does not expose physical section identity or source ownership, and entry
+ordering and provenance are unchanged.
+
 ## Inputs and Precedence
 
 Files are stably ordered by `ConfigScope`: system, global, local, worktree. Environment pairs follow

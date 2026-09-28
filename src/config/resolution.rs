@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -158,7 +158,10 @@ impl Config {
                 origin: None,
             });
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            sections: Vec::new(),
+        })
     }
 }
 
@@ -172,6 +175,7 @@ struct Resolver<'a> {
     ancestry: Vec<SourceLocation>,
     urls: Vec<Vec<u8>>,
     output: Vec<Entry>,
+    sections: BTreeSet<super::parse::SectionName>,
     scanning: bool,
 }
 
@@ -187,6 +191,7 @@ impl<'a> Resolver<'a> {
             ancestry: Vec::new(),
             urls: Vec::new(),
             output: Vec::new(),
+            sections: BTreeSet::new(),
             scanning: true,
         }
     }
@@ -199,6 +204,7 @@ impl<'a> Resolver<'a> {
         self.roots()?;
         Ok(Config {
             entries: self.output,
+            sections: self.sections.into_iter().collect(),
         })
     }
 
@@ -295,6 +301,9 @@ impl<'a> Resolver<'a> {
         scope: ConfigScope,
         prohibited: bool,
     ) -> Result<(), ResolveError> {
+        if !self.scanning {
+            self.sections.extend(config.sections.iter().cloned());
+        }
         for entry in config.entries() {
             let location = SourceLocation {
                 path: path.map(Path::to_path_buf),
@@ -529,6 +538,105 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::empty(b"", false)]
+    #[case::header(b"[ReMoTe \"Name\"]", true)]
+    #[case::nonempty(b"[remote \"Name\"]\nurl=value", true)]
+    #[case::different_case(b"[remote \"name\"]", false)]
+    #[case::missing_subsection(b"[remote]", false)]
+    fn section_existence_survives_resolution(#[case] bytes: &[u8], #[case] exists: bool) {
+        let parsed = Config::parse(bytes).unwrap();
+        assert_eq!(parsed.contains_section("remote", Some(b"Name")), exists);
+        let resolved = Config::resolve(&ConfigInputs {
+            command: Some(parsed),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(resolved.contains_section("REMOTE", Some(b"Name")), exists);
+    }
+
+    #[test]
+    fn included_empty_headers_survive_without_entry_or_provenance_changes() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("child"),
+            b"[remote \"empty\"]\n[remote \"\xff\"]\n[a]\nb=child\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("parent"),
+            b"[a]\nb=before\n[include]\npath=child\npath=child\n[a]\nb=after\n",
+        )
+        .unwrap();
+        let resolved = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path: root.path().join("parent"),
+                scope: ConfigScope::Global,
+                optional: false,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(resolved.contains_section("remote", Some(b"empty")));
+        // Repeated includes retain existence once, without multiplying header storage.
+        assert_eq!(resolved.sections.len(), 4);
+        assert!(resolved.contains_section("remote", Some(b"\xff")));
+        assert_eq!(
+            resolved.values("a", None, "b").collect::<Vec<_>>(),
+            [
+                Some(b"before".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"after".as_slice())
+            ]
+        );
+        let child = resolved
+            .entries()
+            .iter()
+            .find(|entry| entry.name == b"b" && entry.value.as_deref() == Some(b"child"))
+            .unwrap();
+        let origin = child.origin.as_ref().unwrap();
+        assert_eq!(origin.scope, ConfigScope::Global);
+        assert_eq!(origin.location.path, Some(root.path().join("child")));
+        assert_eq!(origin.included_from.len(), 1);
+        assert!(
+            crate::remote::ConfiguredRemoteRecord::find(&resolved, b"empty")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn runtime_assignment_implies_section_existence() {
+        let environment = Config::from_environment(
+            |name| match name {
+                "GIT_CONFIG_COUNT" => Some(b"1".to_vec()),
+                "GIT_CONFIG_KEY_0" => Some(b"remote.origin.url".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(Vec::new()),
+                _ => None,
+            },
+            10,
+        )
+        .unwrap();
+        assert!(environment.contains_section("remote", Some(b"origin")));
+        let resolved = Config::resolve(&ConfigInputs {
+            environment: Some(environment),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(resolved.contains_section("remote", Some(b"origin")));
+        assert!(
+            crate::remote::ConfiguredRemoteRecord::find(&resolved, b"origin")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            !Config::resolve(&ConfigInputs::default())
+                .unwrap()
+                .contains_section("remote", Some(b"origin"))
+        );
+    }
 
     #[rstest]
     #[case::missing_key(Some(b"1".as_slice()), None, Some(b"v".as_slice()))]

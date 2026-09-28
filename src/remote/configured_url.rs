@@ -21,6 +21,41 @@ pub enum ConfiguredUrlError {
     Unsupported,
 }
 
+/// Validates and serializes one configured destination, without applying URL rewrites.
+///
+/// Supports ordinary local byte paths, file URLs, scp-like SSH, SSH URLs and HTTP(S) URLs.
+/// ASCII network hosts are lowercased and numeric ports lose leading zeroes; explicit default
+/// ports and ordinary dot path segments are retained. File-host case is preserved. An HTTP(S)
+/// URL without a path gains `/`. Local paths can contain non-UTF-8 bytes and spaces.
+///
+/// Unlike an empty value in [`super::ConfiguredRemoteRecord`], an empty destination is an error,
+/// not a list reset. This function does not read configuration, apply fetch-to-push fallback,
+/// authorize a transport, access the network or check whether a repository exists.
+/// Returned bytes may contain private paths or credentials; do not log them by default.
+///
+/// # Errors
+///
+/// Returns a value-free diagnostic for malformed supported syntax. Unknown protocols, helpers,
+/// IPv6, passwords, percent escapes, query/fragment handling, Unicode normalization, uppercase
+/// schemes and Windows drive/UNC syntax return [`ConfiguredUrlError::Unsupported`]. That result
+/// requests compatibility handling; it does not establish that the destination is malformed.
+///
+/// ```
+/// use girt::remote::{ConfiguredUrlError, normalize_configured_url};
+/// assert_eq!(
+///     normalize_configured_url(b"https://HOST:00443/repo")?,
+///     b"https://host:443/repo"
+/// );
+/// assert_eq!(
+///     normalize_configured_url(b""),
+///     Err(ConfiguredUrlError::MissingPath)
+/// );
+/// # Ok::<(), ConfiguredUrlError>(())
+/// ```
+pub fn normalize_configured_url(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
+    normalize(bytes)
+}
+
 pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
     use ConfiguredUrlError as Error;
     if bytes.is_empty() {
@@ -205,10 +240,14 @@ mod tests {
     #[case::dot_segments(b"https://host/a/../repo", b"https://host/a/../repo")]
     #[case::empty_port(b"https://host:/repo", b"https://host:/repo")]
     fn canonical_values(#[case] input: &[u8], #[case] expected: &[u8]) {
-        assert_eq!(normalize(input).unwrap(), expected);
+        assert_eq!(
+            crate::remote::normalize_configured_url(input).unwrap(),
+            expected
+        );
     }
 
     #[rstest]
+    #[case::empty(b"", ConfiguredUrlError::MissingPath)]
     #[case::scp_empty(b"host:", ConfiguredUrlError::MissingPath)]
     #[case::file_empty(b"file://", ConfiguredUrlError::MissingPath)]
     #[case::ssh_empty(b"ssh://host", ConfiguredUrlError::MissingPath)]
@@ -223,6 +262,17 @@ mod tests {
     #[case::password(b"https://user:secret@host/repo", ConfiguredUrlError::Unsupported)]
     #[case::escape(b"https://host/repo%20name", ConfiguredUrlError::Unsupported)]
     fn failures(#[case] input: &[u8], #[case] error: ConfiguredUrlError) {
-        assert_eq!(normalize(input).unwrap_err(), error);
+        assert_eq!(
+            crate::remote::normalize_configured_url(input).unwrap_err(),
+            error
+        );
+    }
+
+    #[test]
+    fn single_url_error_does_not_disclose_input() {
+        let error =
+            normalize_configured_url(b"https://user:private-password@host/repo").unwrap_err();
+        assert_eq!(error, ConfiguredUrlError::Unsupported);
+        assert!(!format!("{error:?}: {error}").contains("private-password"));
     }
 }
