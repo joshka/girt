@@ -103,6 +103,16 @@ fn urls_and_activity(
     b"good",
     b"other"
 )]
+#[case::invalid_authority_push_retains_original(
+    b"[url \"http://bad host/\"]\npushInsteadOf=good\n[remote \"origin\"]\nurl=good",
+    b"good",
+    b"good"
+)]
+#[case::missing_host_push_retains_original(
+    b"[url \"http://user@/\"]\npushInsteadOf=good\n[remote \"origin\"]\nurl=good",
+    b"good",
+    b"good"
+)]
 fn rewrites(#[case] body: &[u8], #[case] fetch: &[u8], #[case] push: &[u8]) {
     let remote = find(body).unwrap().unwrap();
     assert_eq!(remote.fetch_url(), Some(fetch));
@@ -486,9 +496,9 @@ fn ordinary_url_rewrite(#[case] body: &[u8], #[case] input: &[u8], #[case] expec
     ConfiguredUrlError::Unsupported
 )]
 #[case::private_replacement(
-    b"[url \"https://user:secret@host/repo\"]\ninsteadOf=raw",
+    b"[url \"https://user:secret@host:bad/repo\"]\ninsteadOf=raw",
     b"raw",
-    ConfiguredUrlError::Unsupported
+    ConfiguredUrlError::Port
 )]
 fn ordinary_url_rewrite_errors(
     #[case] body: &[u8],
@@ -635,4 +645,90 @@ fn configured_file_spaces_preserve_storage_and_rewrite_matching() {
         crate::remote::rewrite_configured_url(&config, b"file:///repo  name ").unwrap(),
         b"file:///new place/name "
     );
+}
+
+#[rstest]
+#[case::credentials(
+    b"[remote \"origin\"]\nurl=https://user:secret@HOST/repo\n",
+    b"https://user:secret@host/repo",
+    b"https://user:secret@host/repo"
+)]
+#[case::ipv6_push(
+    b"[remote \"origin\"]\nurl=relative/../repo\npushurl=ssh://[::1]/repo\n",
+    b"relative/../repo",
+    b"ssh://[::1]/repo"
+)]
+#[case::reset_invalid_credentials(
+    b"[remote \"origin\"]\nurl=https://user:secret@host:bad/repo\nurl=\nurl=HTTPS://HOST/repo\n",
+    b"HTTPS://host/repo",
+    b"HTTPS://host/repo"
+)]
+#[case::ordinary_rewrite_credentials(
+    b"[url \"https://user:secret@HOST/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=alias:repo\n",
+    b"https://user:secret@host/repo",
+    b"https://user:secret@host/repo"
+)]
+#[case::push_rewrite_custom(
+    b"[url \"custom://HOST/\"]\npushInsteadOf=local/\n[remote \"origin\"]\nurl=local/repo\n",
+    b"local/repo",
+    b"custom://host/repo"
+)]
+#[case::query_and_fragment(
+    b"[remote \"origin\"]\nurl=\"https://HOST/repo?query#fragment\"\n",
+    b"https://host/repo?query#fragment",
+    b"https://host/repo?query#fragment"
+)]
+#[case::repeated_sections(
+    b"[remote \"origin\"]\nurl=HTTPS://HOST/first\n[remote \"origin\"]\nurl=ssh://[::1]/second\n",
+    b"HTTPS://host/first",
+    b"HTTPS://host/first"
+)]
+fn broader_urls_preserve_remote_resolution(
+    #[case] body: &[u8],
+    #[case] fetch: &[u8],
+    #[case] push: &[u8],
+) {
+    let remote = find(body).unwrap().unwrap();
+    assert_eq!(remote.fetch_url(), Some(fetch));
+    assert_eq!(remote.push_url(), Some(push));
+}
+
+#[rstest]
+#[case::second_fetch(
+    b"[remote \"origin\"]\nurl=https://user:secret@host/repo\nurl=https://[::1]:bad/repo\npushurl=host:\n",
+    "url", 2, false, ConfiguredUrlError::Port
+)]
+#[case::push_before_refspec(
+    b"[remote \"origin\"]\nurl=custom://host/repo\npushurl=https://user:secret@host:bad/repo\nfetch=bad..ref\n",
+    "pushurl", 1, false, ConfiguredUrlError::Port
+)]
+#[case::fetch_rewrite(
+    b"[url \"https://user:secret@HOST:bad/\"]\ninsteadOf=alias:\n[remote \"origin\"]\nurl=alias:repo\n",
+    "url", 1, true, ConfiguredUrlError::Port
+)]
+#[case::escaped_path(
+    b"[remote \"origin\"]\nurl=https://user:secret@HOST/%ZZ\n",
+    "url",
+    1,
+    false,
+    ConfiguredUrlError::PathEscape
+)]
+fn broader_urls_preserve_occurrence_errors(
+    #[case] body: &[u8],
+    #[case] key: &'static str,
+    #[case] occurrence: usize,
+    #[case] rewritten: bool,
+    #[case] source: ConfiguredUrlError,
+) {
+    let error = find(body).unwrap_err();
+    assert_eq!(
+        error,
+        ConfiguredRemoteError::Url {
+            key,
+            occurrence,
+            rewritten,
+            source
+        }
+    );
+    assert!(!format!("{error:?}: {error}").contains("secret"));
 }

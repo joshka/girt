@@ -13,10 +13,10 @@ use crate::Config;
 /// destination. Names are exact subsection bytes and are not validated as reference names or
 /// filesystem paths.
 ///
-/// URL handling covers ordinary local paths, file URLs, scp-like SSH, SSH URLs and HTTP(S) URLs.
-/// ASCII network hosts are lowercased and numeric ports are serialized without leading zeroes.
-/// Unknown protocols, IPv6, passwords, authority percent escapes and other uncharacterized
-/// normalization return [`ConfiguredRemoteError::UnsupportedUrlSyntax`]. A caller can then use a
+/// URL handling uses [`super::normalize_configured_url`], including credentials, IPv6, authority
+/// escapes, query/fragment components and custom schemes. Relative local paths are not expanded;
+/// normalization never accesses the filesystem. Remaining uncharacterized syntax returns
+/// [`ConfiguredRemoteError::UnsupportedUrlSyntax`]. A caller can then use a
 /// compatibility implementation for the **whole remote**, without treating unsupported data as
 /// invalid. This type neither authorizes a transport nor changes [`super::Remote`] or
 /// [`super::RemoteUrls`]' stricter configuration policies.

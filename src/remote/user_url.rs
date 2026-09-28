@@ -27,6 +27,9 @@ pub enum UserUrlParseError {
     /// A scheme URL is malformed.
     #[error("invalid repository URL")]
     InvalidUrl,
+    /// A URL authority has an invalid host or user component.
+    #[error("repository URL has an invalid authority")]
+    InvalidAuthority,
     /// A network URL requiring an authority has no host.
     #[error("repository URL has no host")]
     MissingHost,
@@ -105,48 +108,85 @@ pub enum UserUrlPathError {
 /// # Ok::<(), girt::remote::UserUrlError>(())
 /// ```
 pub fn canonicalize_user_url(source: &[u8], base: &Path) -> Result<Vec<u8>, UserUrlError> {
-    use UserUrlParseError as Parse;
-    if source.is_empty() {
-        return Err(Parse::EmptyPath.into());
+    let form = UrlForm::parse(source)?;
+    match form {
+        UrlForm::Local => resolve_path(source, base).map_err(Into::into),
+        UrlForm::File { path_start } => {
+            let path = resolve_path(&source[path_start..], base)?;
+            Ok([&source[..path_start], path.as_slice()].concat())
+        }
+        _ => form.render(source).map_err(Into::into),
     }
-    let colon = authority_colon(source);
-    let local = source.starts_with(b"/")
-        || source.starts_with(b"./")
-        || source.starts_with(b"../")
-        || source.starts_with(b"\\\\")
-        || windows_drive(source)
-        || colon.is_none_or(|at| source[..at].contains(&b'/'));
-    if local {
-        return resolve_path(source, base).map_err(Into::into);
-    }
-    let colon = colon.expect("nonlocal input contains a colon");
-    if source.get(colon + 1..colon + 3) == Some(b"//") {
+}
+
+/// Normalizes presentation without accessing the filesystem or expanding relative paths.
+pub(super) fn normalize(source: &[u8]) -> Result<Vec<u8>, UserUrlParseError> {
+    UrlForm::parse(source)?.render(source)
+}
+
+enum UrlForm {
+    Local,
+    File { path_start: usize },
+    Network { colon: usize },
+    Scp { colon: usize },
+}
+
+impl UrlForm {
+    fn parse(source: &[u8]) -> Result<Self, UserUrlParseError> {
+        use UserUrlParseError as Parse;
+        if source.is_empty() {
+            return Err(Parse::EmptyPath);
+        }
+        let colon = authority_colon(source);
+        let local = source.starts_with(b"/")
+            || source.starts_with(b"./")
+            || source.starts_with(b"../")
+            || source.starts_with(b"\\\\")
+            || windows_drive(source)
+            || colon.is_none_or(|at| source[..at].contains(&b'/'));
+        if local {
+            return Ok(Self::Local);
+        }
+        let colon = colon.expect("nonlocal input contains a colon");
+        if source.get(colon + 1..colon + 3) != Some(b"//") {
+            return Ok(Self::Scp { colon });
+        }
         let scheme = &source[..colon];
         if !scheme.first().is_some_and(u8::is_ascii_alphabetic)
             || !scheme
                 .iter()
                 .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(b))
         {
-            return Err(Parse::InvalidUrl.into());
+            return Err(Parse::InvalidUrl);
         }
         if scheme == b"file" {
-            let rest = &source[colon + 3..];
-            let slash = rest
+            let slash = source[colon + 3..]
                 .iter()
                 .position(|b| *b == b'/')
                 .ok_or(Parse::MissingUrlPath)?;
-            let path = resolve_path(&rest[slash..], base)?;
-            return Ok([&source[..colon + 3 + slash], path.as_slice()].concat());
+            return Ok(Self::File {
+                path_start: colon + 3 + slash,
+            });
         }
-        return normalize_network(source, colon).map_err(Into::into);
+        Ok(Self::Network { colon })
     }
-    let path = &source[colon + 1..];
-    if path.is_empty() {
-        return Err(Parse::MissingScpPath.into());
+
+    fn render(self, source: &[u8]) -> Result<Vec<u8>, UserUrlParseError> {
+        use UserUrlParseError as Parse;
+        match self {
+            Self::Local | Self::File { .. } => Ok(source.to_vec()),
+            Self::Network { colon } => normalize_network(source, colon),
+            Self::Scp { colon } => {
+                let path = &source[colon + 1..];
+                if path.is_empty() {
+                    return Err(Parse::MissingScpPath);
+                }
+                let authority = normalize_authority(&source[..colon], AuthorityKind::Scp)
+                    .map_err(|_| Parse::InvalidScp)?;
+                Ok([authority.as_slice(), b":", path].concat())
+            }
+        }
     }
-    let authority =
-        normalize_authority(&source[..colon], AuthorityKind::Scp).map_err(|_| Parse::InvalidScp)?;
-    Ok([authority.as_slice(), b":", path].concat())
 }
 
 fn normalize_network(source: &[u8], colon: usize) -> Result<Vec<u8>, UserUrlParseError> {
@@ -186,7 +226,7 @@ enum AuthorityKind {
 }
 
 fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, UserUrlParseError> {
-    use UserUrlParseError::InvalidUrl as Error;
+    use UserUrlParseError::InvalidAuthority as Error;
     let port_allowed = kind != AuthorityKind::Scp;
     let (userinfo, host_port) = match bytes.iter().rposition(|b| *b == b'@') {
         Some(at) => (Some(&bytes[..at]), &bytes[at + 1..]),
@@ -260,7 +300,7 @@ fn normalize_authority(bytes: &[u8], kind: AuthorityKind) -> Result<Vec<u8>, Use
         (kind != AuthorityKind::Scp && !byte.is_ascii())
             || (kind == AuthorityKind::Other && b"[]:?#".contains(&byte))
     };
-    if host.iter().copied().any(escape_host) {
+    if host.contains(&b'%') || host.iter().copied().any(escape_host) {
         for &byte in host {
             if escape_host(byte) {
                 push_escape(&mut out, byte);
@@ -516,6 +556,7 @@ mod tests {
     #[case::ssh_unicode_host("ssh://münich/r", "ssh://m%C3%BCnich/r")]
     #[case::scp_bracket_host("[host]:repo", "host:repo")]
     #[case::scp_unmatched_bracket("a[b:repo", "a[b:repo")]
+    #[case::encoded_host_case("https://HOST%2Eexample/r", "https://HOST%2Eexample/r")]
     #[case::encoded_host("https://ho%73t/x", "https://ho%73t/x")]
     // The public reference API drops brackets for fully expanded IPv6. Retaining them is an
     // intentional correction: the resulting authority stays unambiguous and parseable.
@@ -555,7 +596,7 @@ mod tests {
     #[case::missing_scp_path("host:", UserUrlParseError::MissingScpPath)]
     #[case::missing_scp_host(":repo", UserUrlParseError::InvalidScp)]
     #[case::space("https://host/a b", UserUrlParseError::InvalidUrl)]
-    #[case::unicode_host("https://münich.example/repo", UserUrlParseError::InvalidUrl)]
+    #[case::unicode_host("https://münich.example/repo", UserUrlParseError::InvalidAuthority)]
     fn rejects_invalid_locations(#[case] source: &str, #[case] expected: UserUrlParseError) {
         let error = canonicalize_user_url(source.as_bytes(), Path::new(".")).unwrap_err();
         assert!(matches!(error, UserUrlError::Parse(actual) if actual == expected));

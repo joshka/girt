@@ -26,8 +26,9 @@ pub enum ConfiguredUrlError {
 
 /// Validates and serializes one configured destination, without applying URL rewrites.
 ///
-/// Supports ordinary local byte paths, file URLs, scp-like SSH, SSH URLs and HTTP(S) URLs.
-/// ASCII network hosts are lowercased and numeric ports lose leading zeroes; explicit default
+/// Supports ordinary local byte paths, file URLs, scp-like SSH, and scheme-based network URLs.
+/// Ordinary ASCII hosts are lowercased; percent-encoded host spelling is preserved. Numeric ports
+/// lose leading zeroes; explicit default
 /// ports and ordinary dot path segments are retained. File-host case is preserved. An HTTP(S)
 /// URL without a path gains `/`. Local paths can contain non-UTF-8 bytes and spaces.
 /// File URL paths also retain literal spaces, without encoding or trimming them.
@@ -39,12 +40,18 @@ pub enum ConfiguredUrlError {
 /// authorize a transport, access the network or check whether a repository exists.
 /// Returned bytes may contain private paths or credentials; do not log them by default.
 ///
+/// Accepts IPv6, credentials, authority escapes, query/fragment components, custom schemes and
+/// retained scheme case using the same pure normalization as [`super::canonicalize_user_url`].
+/// Relative local paths and file paths remain unchanged: no filesystem access or canonicalization
+/// occurs. Parsing a custom scheme does not authorize its transport.
+///
 /// # Errors
 ///
-/// Returns a value-free diagnostic for malformed supported syntax. Unknown protocols, helpers,
-/// IPv6, passwords, authority percent escapes, query/fragment handling, Unicode normalization,
-/// uppercase schemes and Windows drive/UNC syntax return [`ConfiguredUrlError::Unsupported`]. That
-/// result requests compatibility handling; it does not establish that the destination is malformed.
+/// Returns a value-free diagnostic for malformed supported syntax. Helper syntax, control bytes,
+/// Windows drive/UNC paths, bracketed scp hosts with an explicit user, and uncharacterized file
+/// authorities return
+/// [`ConfiguredUrlError::Unsupported`]. That result requests compatibility handling; it does not
+/// establish that the destination is malformed.
 ///
 /// ```
 /// use girt::remote::{ConfiguredUrlError, normalize_configured_url};
@@ -88,56 +95,38 @@ pub(super) fn normalize(bytes: &[u8]) -> Result<Vec<u8>, ConfiguredUrlError> {
     }
     let colon = bytes.iter().position(|b| *b == b':');
     let slash = bytes.iter().position(|b| *b == b'/');
-    let Some(colon) = colon.filter(|colon| slash.is_none_or(|slash| *colon < slash)) else {
-        return Ok(bytes.to_vec());
-    };
-    if bytes.get(colon + 1) == Some(&b':') {
-        return Err(Error::Unsupported);
-    }
-    if bytes.get(colon + 1..colon + 3) != Some(b"//") {
-        return scp(bytes, colon);
-    }
-    let scheme = &bytes[..colon];
-    if scheme == b"file" {
-        return file_url(bytes, colon + 3);
-    }
-    if !matches!(scheme, b"ssh" | b"http" | b"https") {
-        return Err(Error::Unsupported);
-    }
-    std::str::from_utf8(bytes).map_err(|_| Error::Encoding)?;
-    let rest = &bytes[colon + 3..];
-    if rest.iter().any(|b| matches!(b, b'?' | b'#' | b'\\')) {
-        return Err(Error::Unsupported);
-    }
-    let (authority, path) = match rest.iter().position(|b| *b == b'/') {
-        Some(slash) => (&rest[..slash], &rest[slash..]),
-        None => (rest, b"".as_slice()),
-    };
-    let authority = network_authority(authority, true)?;
-    let path = if path.is_empty() {
-        if scheme == b"ssh" {
-            return Err(Error::MissingPath);
+    if let Some(colon) = colon.filter(|colon| slash.is_none_or(|slash| *colon < slash)) {
+        // Only an explicit user in the scp authority triggers this compatibility boundary;
+        // the same bytes in a local path or scp repository path remain literal.
+        if bytes.get(colon + 1..colon + 3) != Some(b"//")
+            && bytes[..colon].windows(2).any(|part| part == b"@[")
+        {
+            return Err(Error::Unsupported);
         }
-        b"/".as_slice()
-    } else {
-        network_path(path)?;
-        path
-    };
-    Ok([scheme, b"://", &authority, path].concat())
-}
-
-fn scp(bytes: &[u8], colon: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
-    let path = &bytes[colon + 1..];
-    // Byte paths and escaping beyond ordinary ASCII need separate URL normalization evidence.
-    if bytes.contains(&b'\\') || !bytes.is_ascii() {
-        return Err(ConfiguredUrlError::Unsupported);
+        if bytes.get(colon + 1) == Some(&b':')
+            && bytes[..colon]
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(b))
+        {
+            return Err(Error::Unsupported);
+        }
+        if bytes.starts_with(b"file://") {
+            return file_url(bytes, 7);
+        }
+        if bytes.get(colon + 1..colon + 3) == Some(b"//") {
+            std::str::from_utf8(bytes).map_err(|_| Error::Encoding)?;
+        }
     }
-    let authority = network_authority(&bytes[..colon], false)?;
-    if path.is_empty() {
-        return Err(ConfiguredUrlError::MissingPath);
-    }
-    plain_path(path)?;
-    Ok([authority.as_slice(), b":", path].concat())
+    super::user_url::normalize(bytes).map_err(|error| {
+        use super::UserUrlParseError as Parse;
+        match error {
+            Parse::EmptyPath | Parse::MissingUrlPath | Parse::MissingScpPath => Error::MissingPath,
+            Parse::MissingHost | Parse::InvalidAuthority | Parse::InvalidScp => Error::Authority,
+            Parse::InvalidPort => Error::Port,
+            Parse::InvalidEscape | Parse::InvalidEncoding => Error::PathEscape,
+            Parse::InvalidUrl => Error::Unsupported,
+        }
+    })
 }
 
 fn file_url(bytes: &[u8], start: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
@@ -161,97 +150,6 @@ fn file_url(bytes: &[u8], start: usize) -> Result<Vec<u8>, ConfiguredUrlError> {
     }
     // File authorities are preserved, unlike the network host case normalization.
     Ok(bytes.to_vec())
-}
-
-fn network_authority(bytes: &[u8], port_allowed: bool) -> Result<Vec<u8>, ConfiguredUrlError> {
-    use ConfiguredUrlError as Error;
-    if bytes
-        .iter()
-        .any(|b| matches!(b, b'[' | b']' | b'%' | b'\\'))
-        || !bytes.is_ascii()
-    {
-        return Err(Error::Unsupported);
-    }
-    let (user, host_port) = match bytes.iter().position(|b| *b == b'@') {
-        Some(at) => {
-            let user = &bytes[..at];
-            if user.is_empty()
-                || !user
-                    .iter()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'~'))
-            {
-                return Err(Error::Unsupported);
-            }
-            (Some(user), &bytes[at + 1..])
-        }
-        None => (None, bytes),
-    };
-    let (host, port) = match host_port.iter().position(|b| *b == b':') {
-        Some(colon) if port_allowed => (&host_port[..colon], Some(&host_port[colon + 1..])),
-        Some(_) => return Err(Error::Unsupported),
-        None => (host_port, None),
-    };
-    if host.is_empty() || host.contains(&b' ') || host.contains(&b'@') {
-        return Err(Error::Authority);
-    }
-    if !host
-        .iter()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
-    {
-        return Err(Error::Unsupported);
-    }
-    let mut normalized = Vec::new();
-    if let Some(user) = user {
-        normalized.extend_from_slice(user);
-        normalized.push(b'@');
-    }
-    normalized.extend(host.iter().map(u8::to_ascii_lowercase));
-    if let Some(port) = port {
-        normalized.push(b':');
-        if !port.is_empty() {
-            if !port.iter().all(u8::is_ascii_digit) {
-                return Err(Error::Port);
-            }
-            let number = std::str::from_utf8(port)
-                .ok()
-                .and_then(|p| p.parse::<u16>().ok())
-                .filter(|number| *number != 0)
-                .ok_or(Error::Port)?;
-            normalized.extend_from_slice(number.to_string().as_bytes());
-        }
-    }
-    Ok(normalized)
-}
-
-fn network_path(mut path: &[u8]) -> Result<(), ConfiguredUrlError> {
-    plain_path(path)?;
-    if !path.contains(&b'%') {
-        return Ok(());
-    }
-    let mut decoded = Vec::with_capacity(path.len());
-    while let Some((&first, rest)) = path.split_first() {
-        if first == b'%' {
-            let pair = rest.get(..2).ok_or(ConfiguredUrlError::PathEscape)?;
-            let high = hex_digit(pair[0]).ok_or(ConfiguredUrlError::PathEscape)?;
-            let low = hex_digit(pair[1]).ok_or(ConfiguredUrlError::PathEscape)?;
-            decoded.push(high * 16 + low);
-            path = &rest[2..];
-        } else {
-            decoded.push(first);
-            path = rest;
-        }
-    }
-    std::str::from_utf8(&decoded).map_err(|_| ConfiguredUrlError::PathEscape)?;
-    Ok(())
-}
-
-fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn plain_path(path: &[u8]) -> Result<(), ConfiguredUrlError> {
@@ -301,13 +199,12 @@ mod tests {
     #[case::bad_port(b"http://host:bad/repo", ConfiguredUrlError::Port)]
     #[case::zero_port(b"http://host:0/repo", ConfiguredUrlError::Port)]
     #[case::large_port(b"http://host:65536/repo", ConfiguredUrlError::Port)]
+    #[case::host_space(b"http://bad host/repo", ConfiguredUrlError::Authority)]
+    #[case::user_without_host(b"http://user@/repo", ConfiguredUrlError::Authority)]
     #[case::empty_host(b"http:///repo", ConfiguredUrlError::Authority)]
     #[case::network_bytes(b"http://host/\xff", ConfiguredUrlError::Encoding)]
     #[case::helper(b"foo::repo", ConfiguredUrlError::Unsupported)]
-    #[case::scheme(b"foo://host/repo", ConfiguredUrlError::Unsupported)]
-    #[case::ipv6(b"ssh://[::1]/repo", ConfiguredUrlError::Unsupported)]
-    #[case::password(b"https://user:secret@host/repo", ConfiguredUrlError::Unsupported)]
-    #[case::authority_escape(b"https://host%20name/repo", ConfiguredUrlError::Unsupported)]
+    #[case::scp_bracket_user(b"user@[::1]:repo", ConfiguredUrlError::Unsupported)]
     fn failures(#[case] input: &[u8], #[case] error: ConfiguredUrlError) {
         assert_eq!(
             crate::remote::normalize_configured_url(input).unwrap_err(),
@@ -318,8 +215,8 @@ mod tests {
     #[test]
     fn single_url_error_does_not_disclose_input() {
         let error =
-            normalize_configured_url(b"https://user:private-password@host/repo").unwrap_err();
-        assert_eq!(error, ConfiguredUrlError::Unsupported);
+            normalize_configured_url(b"https://user:private-password@host:bad/repo").unwrap_err();
+        assert_eq!(error, ConfiguredUrlError::Port);
         assert!(!format!("{error:?}: {error}").contains("private-password"));
     }
     // Original public-gix 0.87.1 percent-path fixtures; serialized bytes remain encoded.
@@ -374,18 +271,19 @@ mod tests {
     }
 
     #[rstest]
-    #[case::host(b"https://HOST%2Eexample/repo")]
-    #[case::user(b"https://user%20name@HOST/repo")]
-    #[case::query(b"https://HOST/a%20b?query")]
-    #[case::fragment(b"https://HOST/a%20b#fragment")]
-    #[case::credentials(b"https://user:secret@HOST/a%20b")]
-    #[case::ipv6(b"https://[::1]/a%20b")]
-    #[case::scheme(b"HTTPS://HOST/a%20b")]
-    fn percent_paths_do_not_expand_other_syntax(#[case] input: &[u8]) {
-        assert_eq!(
-            crate::remote::normalize_configured_url(input),
-            Err(ConfiguredUrlError::Unsupported)
-        );
+    #[case::host(b"https://HOST%2Eexample/repo", b"https://HOST%2Eexample/repo")]
+    #[case::user(b"https://user%20name@HOST/repo", b"https://user%20name@host/repo")]
+    #[case::query(b"https://HOST/a%20b?query", b"https://host/a%20b?query")]
+    #[case::fragment(b"https://HOST/a%20b#fragment", b"https://host/a%20b#fragment")]
+    #[case::credentials(b"https://user:secret@HOST/a%20b", b"https://user:secret@host/a%20b")]
+    #[case::ipv6(b"https://[::1]/a%20b", b"https://[::1]/a%20b")]
+    #[case::scheme(b"HTTPS://HOST/a%20b", b"HTTPS://host/a%20b")]
+    #[case::custom(b"foo://HOST/repo", b"foo://host/repo")]
+    #[case::ssh_ipv6(b"ssh://[::1]/repo", b"ssh://[::1]/repo")]
+    #[case::authority_escape(b"https://host%20name/repo", b"https://host%20name/repo")]
+    #[case::scp_space(b"HOST:repo name", b"host:repo name")]
+    fn additional_presentation_syntax(#[case] input: &[u8], #[case] expected: &[u8]) {
+        assert_eq!(normalize_configured_url(input).unwrap(), expected);
     }
     // Original gix 0.87.1 public URL oracle: file path spaces serialize byte-for-byte.
     #[rstest]
@@ -413,11 +311,96 @@ mod tests {
     #[case::encoding(b"file:///a\xff b")]
     #[case::ssh(b"ssh://host/repo name")]
     #[case::http(b"https://host/repo name")]
-    #[case::scp(b"host:repo name")]
     fn file_spaces_do_not_change_other_boundaries(#[case] input: &[u8]) {
         assert_eq!(
             crate::remote::normalize_configured_url(input),
             Err(ConfiguredUrlError::Unsupported)
         );
+    }
+    #[rstest]
+    #[case::credentials(
+        b"https://user:secret@HOST:00443/repo",
+        b"https://user:secret@host:443/repo"
+    )]
+    #[case::escaped_user(b"https://u%41:p%3a@HOST/repo", b"https://uA:p:@host/repo")]
+    #[case::query_fragment(b"https://HOST/repo?token=x#part", b"https://host/repo?token=x#part")]
+    #[case::opaque_authority(b"custom://HOST?x/repo", b"custom://HOST%3Fx/repo")]
+    #[case::uppercase(b"HTTPS://HOST/repo", b"HTTPS://host/repo")]
+    #[case::custom_utf8(b"custom://HOST/\xc3\xa9", b"custom://host/\xc3\xa9")]
+    #[case::local_bracket(b"./repo@[backup", b"./repo@[backup")]
+    #[case::absolute_bracket(b"/tmp/repo@[backup", b"/tmp/repo@[backup")]
+    #[case::scp_path_bracket(b"HOST:repo@[backup", b"host:repo@[backup")]
+    #[case::local_bracket_colon(b"./repo@[backup:old", b"./repo@[backup:old")]
+    #[case::relative_parent(b"../missing/./repo", b"../missing/./repo")]
+    #[case::relative_byte(b"./missing/\xff", b"./missing/\xff")]
+    #[case::file_dots(b"file:///missing/a/../repo  ", b"file:///missing/a/../repo  ")]
+    #[case::expanded_ipv6(
+        b"ssh://[2001:db8:0:0:0:0:0:1]/repo",
+        b"ssh://[2001:db8:0:0:0:0:0:1]/repo"
+    )]
+    fn pure_normalization_retains_config_meaning(#[case] input: &[u8], #[case] expected: &[u8]) {
+        assert_eq!(normalize_configured_url(input).unwrap(), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_paths_do_not_follow_symlinks_or_resolve_parent_components() {
+        let directory = tempfile::tempdir().unwrap();
+        let link = directory.path().join("loop");
+        std::os::unix::fs::symlink("loop", &link).unwrap();
+        let input = format!("file://{}/loop/../repo name ", directory.path().display());
+        assert_eq!(
+            normalize_configured_url(input.as_bytes()).unwrap(),
+            input.as_bytes()
+        );
+        assert_eq!(
+            std::fs::read_link(link).unwrap(),
+            std::path::Path::new("loop")
+        );
+    }
+
+    #[cfg(feature = "http")]
+    #[rstest]
+    #[case::credentials(b"https://user:secret@HOST/repo")]
+    #[case::query(b"https://HOST/repo?secret=value")]
+    #[case::fragment(b"https://HOST/repo#secret")]
+    #[case::custom(b"custom://HOST/repo")]
+    fn config_acceptance_does_not_authorize_http(#[case] input: &[u8]) {
+        let normalized = normalize_configured_url(input).unwrap();
+        let url = std::str::from_utf8(&normalized).unwrap();
+        let error = crate::transport::http::HttpRemote::new(url, &[], &[]).unwrap_err();
+        assert!(!format!("{error:?}: {error}").contains("secret"));
+    }
+
+    #[cfg(all(feature = "ssh", unix))]
+    #[rstest]
+    #[case::credentials(b"ssh://user:secret@HOST/repo")]
+    #[case::query(b"ssh://HOST/repo?secret=value")]
+    #[case::fragment(b"ssh://HOST/repo#secret")]
+    #[case::escape(b"ssh://HOST/repo%20name")]
+    fn config_acceptance_does_not_authorize_ssh(#[case] input: &[u8]) {
+        use crate::remote::{ProtocolEnvironment, Remote};
+        use crate::transport::ssh::{OpenSshOptions, SshRemote};
+        let normalized = normalize_configured_url(input).unwrap();
+        let mut document = crate::config::Document::parse(b"").unwrap();
+        document
+            .append("remote", Some(b"r"), "url", &normalized)
+            .unwrap();
+        let config = document.config();
+        let destination = Remote::find(config, b"r")
+            .unwrap()
+            .unwrap()
+            .fetch_destination(config, &ProtocolEnvironment::default())
+            .unwrap();
+        let error = SshRemote::openssh(
+            config,
+            &destination,
+            OpenSshOptions {
+                default_executable: "/usr/bin/ssh".into(),
+                ..OpenSshOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(!format!("{error:?}: {error}").contains("secret"));
     }
 }
