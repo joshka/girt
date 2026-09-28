@@ -229,9 +229,32 @@ pub(crate) fn write_controlled(
     compression: PackCompression,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
 ) -> Result<PackWritten, PackWriteError> {
+    write_controlled_observed(
+        format,
+        objects,
+        (pack, index),
+        limits,
+        compression,
+        check,
+        &mut |_, _| {},
+    )
+}
+
+pub(crate) fn write_controlled_observed(
+    format: crate::ObjectFormat,
+    objects: &[PackObject<'_>],
+    outputs: (&mut impl Write, &mut impl Write),
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    observe: &mut impl FnMut(u64, u64),
+) -> Result<PackWritten, PackWriteError> {
+    let (pack, index) = outputs;
     let objects = validate(format, objects, limits, check)?;
     check()?;
     let count = objects.len() as u32;
+    observe(0, u64::from(count));
+    check()?;
     let mut pack = Output::new(format, pack, limits.max_pack_bytes, "pack bytes");
     pack.put(b"PACK")?;
     pack.put(&2u32.to_be_bytes())?;
@@ -269,6 +292,8 @@ pub(crate) fn write_controlled(
             offset,
             crc: pack.crc.clone().finalize(),
         });
+        observe(position as u64 + 1, u64::from(count));
+        check()?;
     }
     let checksum = pack.finish()?;
     let pack_bytes = pack.bytes;
@@ -1367,6 +1392,24 @@ mod dual_format_tests {
         ));
         assert!(pack.is_empty());
         assert!(index.is_empty());
+    }
+
+    #[test]
+    fn observed_pack_entries_do_not_imply_index_success() {
+        let mut pack = Vec::new();
+        let mut index = FlushFailure(Vec::new());
+        let mut events = Vec::new();
+        let result = write_controlled_observed(
+            ObjectFormat::Sha1,
+            &[blob(ObjectFormat::Sha1)],
+            (&mut pack, &mut index),
+            PackWriteLimits::default(),
+            PackCompression::Ordinary,
+            &mut || Ok(()),
+            &mut |done, total| events.push((done, total)),
+        );
+        assert!(matches!(result, Err(PackWriteError::Io(_))));
+        assert_eq!(events, [(0, 1), (1, 1)]);
     }
 
     struct FlushFailure(Vec<u8>);

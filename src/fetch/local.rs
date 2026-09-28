@@ -87,6 +87,28 @@ pub fn receive_local_with_known(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
+    receive_local_with_known_and_progress(source, select, known, limits, control, progress, |_| {})
+}
+
+/// Reads a local source with synchronous typed construction progress.
+///
+/// Uses [`receive_local_with_known`]'s history and storage contract. `observe` reports
+/// [`super::LocalFetchProgress`] after completed work and must return promptly. It cannot fail;
+/// set `control.cancel` to stop at the next cooperative check. The original `progress` callback
+/// retains its cancellation behavior. No destination is touched by this operation.
+///
+/// # Errors
+///
+/// Returns [`receive_local_with_known`]'s failures without a completion notification.
+pub fn receive_local_with_known_and_progress(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(super::LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -100,7 +122,7 @@ pub fn receive_local_with_known(
         control.check()?;
         let source = crate::Repository::open(source)
             .map_err(|_| FetchError::Protocol("local repository"))?;
-        super::local_native::receive(&source, select, known, limits, control, progress)
+        super::local_native::receive(&source, select, known, limits, control, progress, observe)
     };
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);

@@ -2,7 +2,7 @@ use rstest::rstest;
 
 use super::*;
 use crate::InitKind;
-use crate::fetch::AdvertisedRef;
+use crate::fetch::{AdvertisedRef, LocalFetchProgress};
 
 fn name(value: &str) -> RefName {
     RefName::new(value).unwrap()
@@ -244,4 +244,32 @@ fn mismatched_known_shallow_roots_fail_before_transfer() {
             "known shallow boundaries differ from destination"
         ))
     ));
+}
+
+#[test]
+fn local_progress_plan_failure_has_no_completion() {
+    let (root, request) = request(&["refs/heads/main:refs/heads/main"]);
+    let source = Repository::init(
+        crate::ObjectFormat::Sha1,
+        root.path().join("source"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let id = source.loose_objects().write_blob(b"source").unwrap();
+    std::fs::write(source.git_dir().join("refs/heads/main"), format!("{id}\n")).unwrap();
+    let mut events = Vec::new();
+    let result = request.receive_local_with_progress(
+        source.git_dir(),
+        &KnownHistory::default(),
+        FetchLimits::default(),
+        TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+        |event| events.push(event),
+    );
+    assert!(matches!(
+        result,
+        Err(FetchWorkflowError::Plan(FetchPlanError::Destination(_)))
+    ));
+    assert!(!events.contains(&LocalFetchProgress::Complete));
+    assert_eq!(events, [LocalFetchProgress::Reading { objects: 0 }]);
 }

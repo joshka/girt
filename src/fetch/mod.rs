@@ -100,7 +100,7 @@ pub use discovery::{
     ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
 };
 mod progress;
-pub use progress::ValidationProgress;
+pub use progress::{LocalFetchProgress, ValidationProgress};
 
 mod import;
 mod install;
@@ -119,7 +119,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use install::NativeContents;
 pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
-pub use local::{receive_local, receive_local_with_control, receive_local_with_known};
+pub use local::{
+    receive_local, receive_local_with_control, receive_local_with_known,
+    receive_local_with_known_and_progress,
+};
 pub use protocol::{
     AdvertisedRef, Advertisement, receive, receive_with_known, receive_with_known_depth,
 };

@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::ControlFlow;
 
 use super::{
-    AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, NativeContents,
-    ReceivedFetch,
+    AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
+    NativeContents, ReceivedFetch,
 };
 use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
@@ -18,6 +18,7 @@ pub(super) fn receive(
     limits: FetchLimits,
     control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    mut observe: impl FnMut(LocalFetchProgress),
 ) -> Result<ReceivedFetch, FetchError> {
     check(control)?;
     if !source.shallow_roots().is_empty() {
@@ -44,7 +45,10 @@ pub(super) fn receive(
             return Err(FetchError::Unsupported("local object format"));
         }
     }
+    observe(LocalFetchProgress::Reading { objects: 0 });
+    check(control)?;
     if wants.is_empty() {
+        observe(LocalFetchProgress::Complete);
         return Ok(ReceivedFetch::native(
             advertisement,
             wants,
@@ -124,12 +128,18 @@ pub(super) fn receive(
         } else {
             selected.push((id, object));
         }
+        observe(LocalFetchProgress::Reading {
+            objects: observed.len() as u64,
+        });
+        check(control)?;
     }
     check(control)?;
     if progress(&[]) == ControlFlow::Break(()) {
         return Err(FetchError::Cancelled);
     }
+    check(control)?;
     if selected.is_empty() {
+        observe(LocalFetchProgress::Complete);
         return Ok(ReceivedFetch::native(
             advertisement,
             wants,
@@ -154,11 +164,10 @@ pub(super) fn receive(
         .collect();
     let mut pack = Vec::new();
     let mut index = Vec::new();
-    let written = crate::write_pack(
+    let written = crate::pack::write_controlled_observed(
         source.object_format(),
         &inputs,
-        &mut pack,
-        &mut index,
+        (&mut pack, &mut index),
         PackWriteLimits {
             max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
             max_object_bytes: limits.max_object_bytes as u64,
@@ -166,9 +175,22 @@ pub(super) fn receive(
             max_pack_bytes: limits.max_pack_bytes as u64,
             ..Default::default()
         },
-    )
-    .map_err(FetchError::PackWrite)?;
+        crate::PackCompression::Ordinary,
+        &mut || control.check().map_err(crate::PackWriteError::Io),
+        &mut |done, total| {
+            observe(LocalFetchProgress::Packing {
+                objects: (done, total),
+            })
+        },
+    );
+    let written = written.map_err(|error| match error {
+        crate::PackWriteError::Io(error) if crate::transport::interruption(&error).is_some() => {
+            FetchError::from(error)
+        }
+        error => FetchError::PackWrite(error),
+    })?;
     check(control)?;
+    observe(LocalFetchProgress::Complete);
     Ok(ReceivedFetch::native(
         advertisement,
         wants,
@@ -300,3 +322,6 @@ fn add_ref(
 fn check(control: TransportControl<'_>) -> Result<(), FetchError> {
     control.check().map_err(FetchError::from)
 }
+
+#[cfg(test)]
+mod tests;

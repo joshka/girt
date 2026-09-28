@@ -992,6 +992,15 @@ caller-owned stream read or one inflation/hash. The local adapter now provides
 [owned transport interruption](#owned-transport-interruption), including absolute deadlines and
 process-group cleanup on macOS/Linux. Generic streams must provide their own interruption.
 
+Native local fetch can separately report typed source-reading and pack-construction events through
+`receive_local_with_known_and_progress` or `FetchRequest::receive_local_with_progress`. Source reads
+count unique reachable objects, including verified history omitted from the outgoing pack; their
+total is unknown during traversal. Packing counts only selected outgoing entries. Completing those
+counts does not establish a finished index. The terminal `Complete` event follows construction and
+the final cancellation/deadline check, before installation or reference publication. Observers run
+synchronously, must return promptly, and can request cancellation through `TransportControl`.
+Cancellation from the terminal event cannot undo completed construction.
+
 ### Installation and Reference Policy
 
 The received result owns validated pack/index buffers and makes no filesystem changes. Explicit

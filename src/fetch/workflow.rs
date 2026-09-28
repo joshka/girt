@@ -322,25 +322,54 @@ impl FetchRequest {
         control: TransportControl<'_>,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<FetchReady, FetchWorkflowError> {
+        self.receive_local_with_progress(source, known, limits, control, progress, |_| {})
+    }
+
+    /// Constructs a local fetch while reporting completed source reads and pack entries.
+    ///
+    /// Uses [`Self::receive_local`]'s planning and storage contract and
+    /// [`super::receive_local_with_known_and_progress`]'s callback contract. Completion describes
+    /// construction, not installation or reference publication. Observers must return promptly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::receive_local`]'s failures without a completion notification.
+    pub fn receive_local_with_progress(
+        self,
+        source: impl AsRef<Path>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        mut observe: impl FnMut(super::LocalFetchProgress),
+    ) -> Result<FetchReady, FetchWorkflowError> {
         self.check_known(known)?;
         if self.depth.is_some() {
             return Err(FetchError::Unsupported("native local depth").into());
         }
         let mut plan = None;
-        let received = super::receive_local_with_known(
+        let received = super::receive_local_with_known_and_progress(
             source,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
             limits,
             control,
             progress,
+            |event| {
+                if event != super::LocalFetchProgress::Complete {
+                    observe(event);
+                }
+            },
         );
         let updates = selected(plan, &received)?;
-        Ok(FetchReady {
+        let ready = FetchReady {
             request: self,
             updates,
             received: received?,
-        })
+        };
+        control.check().map_err(FetchError::from)?;
+        observe(super::LocalFetchProgress::Complete);
+        Ok(ready)
     }
 
     /// Transfers from a caller-owned v0/v1 upload-pack stream using this request's depth policy.
