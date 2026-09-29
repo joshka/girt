@@ -127,6 +127,100 @@ pub enum CreateWorktreeError {
     },
 }
 
+struct SelectedIndexAlias {
+    path: PathBuf,
+    target: PathBuf,
+    spelling: PathBuf,
+    link_metadata: fs::Metadata,
+    target_metadata: Option<fs::Metadata>,
+}
+
+impl SelectedIndexAlias {
+    fn capture(path: &Path) -> Result<Option<Self>, CreateWorktreeError> {
+        let path = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            std::env::current_dir()
+                .map_err(|source| io_error(path, None, source))?
+                .join(path)
+        };
+        let link_metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => metadata,
+            Ok(_) => return Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(&path, None, error)),
+        };
+        #[cfg(not(unix))]
+        return Err(CreateWorktreeError::IndexStorage {
+            registration: None,
+            source: crate::index::StorageError::NotRegular(path),
+        });
+        #[cfg(unix)]
+        {
+            let spelling = fs::read_link(&path).map_err(|source| io_error(&path, None, source))?;
+            let linked = if spelling.is_absolute() {
+                spelling.clone()
+            } else {
+                path.parent().expect("absolute path").join(&spelling)
+            };
+            let name = linked
+                .file_name()
+                .ok_or_else(|| CreateWorktreeError::Path(linked.clone()))?;
+            let parent = fs::canonicalize(linked.parent().expect("path with filename"))
+                .map_err(|source| io_error(&linked, None, source))?;
+            let target = parent.join(name);
+            let target_metadata = match fs::symlink_metadata(&target) {
+                Ok(metadata) if metadata.is_file() => Some(metadata),
+                Ok(_) => {
+                    return Err(CreateWorktreeError::IndexStorage {
+                        registration: None,
+                        source: crate::index::StorageError::NotRegular(target),
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(io_error(&target, None, error)),
+            };
+            Ok(Some(Self {
+                path,
+                target,
+                spelling,
+                link_metadata,
+                target_metadata,
+            }))
+        }
+    }
+
+    fn check(&self, registration: Option<&Path>) -> Result<(), CreateWorktreeError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let current_link = fs::symlink_metadata(&self.path).ok();
+            let current_target = fs::symlink_metadata(&self.target).ok();
+            let same_identity = |left: &fs::Metadata, right: &fs::Metadata| {
+                left.file_type() == right.file_type()
+                    && left.dev() == right.dev()
+                    && left.ino() == right.ino()
+            };
+            let link_unchanged = current_link
+                .as_ref()
+                .is_some_and(|current| same_identity(&self.link_metadata, current))
+                && fs::read_link(&self.path).ok().as_ref() == Some(&self.spelling);
+            let target_unchanged = match (&self.target_metadata, current_target.as_ref()) {
+                (None, None) => true,
+                (Some(before), Some(after)) => same_identity(before, after),
+                _ => false,
+            };
+            if link_unchanged && target_unchanged {
+                return Ok(());
+            }
+        }
+        Err(CreateWorktreeError::IndexStorage {
+            registration: registration.map(Path::to_owned),
+            source: crate::index::StorageError::Changed(self.path.clone()),
+        })
+    }
+}
+
 impl Repository {
     /// Registers an empty linked worktree with an unborn branch and private empty index.
     ///
@@ -187,8 +281,9 @@ impl Repository {
     ///
     /// Uses the existing branch, path, link and exclusion rules. The selected index is read under
     /// its ordinary lock and replaced with an empty standalone draft; missing shared dependencies
-    /// fail before registration or destination creation. A selected symlink is refused before
-    /// registration. The source default index is ignored.
+    /// fail before registration or destination creation. A selected symlink to a regular or
+    /// missing file retains its leaf and locks and publishes the referent; nested leaf symlinks
+    /// are refused. The source default index is ignored.
     /// Private configuration bytes are copied, not reread or transformed. No hook is run.
     ///
     /// Shared permissions affect the worktrees root, refs/reftable directories, HEAD, selected
@@ -340,18 +435,24 @@ fn create_orphan_worktree(
     })?;
     let configured_relative = super::extension_boolean(&config, &config_path, "relativeworktrees")?;
     let relative = options.link_style.uses_relative(configured_relative);
-    let selected_missing = options
+    let selected_alias = options
         .index_path
+        .as_deref()
+        .map(SelectedIndexAlias::capture)
+        .transpose()?
+        .flatten();
+    let selected_index = selected_alias
         .as_ref()
+        .map(|alias| &alias.target)
+        .or(options.index_path.as_ref());
+    let selected_missing = selected_index
         .map(|path| match fs::symlink_metadata(path) {
             Ok(_) => Ok(false),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
             Err(error) => Err(io_error(path, None, error)),
         })
         .transpose()?;
-    let mut index_edit = options
-        .index_path
-        .as_ref()
+    let mut index_edit = selected_index
         .map(|path| {
             crate::index::IndexEdit::acquire(
                 references.object_format,
@@ -370,15 +471,16 @@ fn create_orphan_worktree(
         .transpose()?;
     if let (Some(missing), Some(edit)) = (selected_missing, index_edit.as_ref()) {
         if missing != edit.original_missing() {
-            let path = options
-                .index_path
-                .as_ref()
-                .expect("selected index path")
-                .clone();
+            let path = selected_index.expect("selected index path").clone();
             let error = CreateWorktreeError::IndexStorage {
                 registration: None,
                 source: crate::index::StorageError::Changed(path),
             };
+            return finish_creation(Err(error), index_edit);
+        }
+    }
+    if let Some(alias) = &selected_alias {
+        if let Err(error) = alias.check(None) {
             return finish_creation(Err(error), index_edit);
         }
     }
@@ -470,6 +572,9 @@ fn create_orphan_worktree(
         }
         if let Some(bytes) = &options.private_config {
             write_file(&registration.join("config.worktree"), bytes, &registration)?;
+        }
+        if let Some(alias) = &selected_alias {
+            alias.check(Some(&registration))?;
         }
         if index_edit.is_none() {
             index_edit = Some(
@@ -740,6 +845,60 @@ mod policy_tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_alias_rejects_retarget_and_replaced_referent() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = root.path().join("selected");
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        std::os::unix::fs::symlink("first", &selected).unwrap();
+        let alias = SelectedIndexAlias::capture(&selected).unwrap().unwrap();
+        assert!(alias.check(None).is_ok());
+
+        fs::remove_file(&selected).unwrap();
+        std::os::unix::fs::symlink("second", &selected).unwrap();
+        assert!(matches!(
+            alias.check(None),
+            Err(CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: crate::index::StorageError::Changed(_),
+            })
+        ));
+
+        fs::remove_file(&selected).unwrap();
+        std::os::unix::fs::symlink("first", &selected).unwrap();
+        let alias = SelectedIndexAlias::capture(&selected).unwrap().unwrap();
+        fs::write(root.path().join("replacement"), b"replacement").unwrap();
+        fs::rename(root.path().join("replacement"), &first).unwrap();
+        assert!(matches!(
+            alias.check(None),
+            Err(CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: crate::index::StorageError::Changed(_),
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_selected_alias_rejects_new_referent_before_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let selected = root.path().join("selected");
+        std::os::unix::fs::symlink("referent", &selected).unwrap();
+        let alias = SelectedIndexAlias::capture(&selected).unwrap().unwrap();
+        fs::write(root.path().join("referent"), b"foreign").unwrap();
+        assert!(matches!(
+            alias.check(None),
+            Err(CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: crate::index::StorageError::Changed(_),
+            })
+        ));
+    }
 
     #[cfg(unix)]
     #[test]

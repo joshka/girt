@@ -52,6 +52,41 @@ fn git_orphan_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) -> Vec<u
     fs::read(selected).unwrap()
 }
 
+#[cfg(unix)]
+fn git_orphan_symlink_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) -> Vec<u8> {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("git-main");
+    let selected = root.path().join("selected.index");
+    let referent = root.path().join("referent.index");
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .arg(format!("--object-format={format}"))
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    if let Some(bytes) = initial {
+        fs::write(&referent, bytes).unwrap();
+    }
+    std::os::unix::fs::symlink("referent.index", &selected).unwrap();
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["worktree", "add", "--orphan", "-b", "policy-fixture"])
+        .arg(root.path().join("git-linked"))
+        .env("GIT_INDEX_FILE", &selected)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_link(&selected).unwrap(),
+        std::path::Path::new("referent.index")
+    );
+    fs::read(referent).unwrap()
+}
+
 #[rstest]
 #[case::none(false, false)]
 #[case::index(true, false)]
@@ -272,15 +307,97 @@ fn regular_git_empty_index_retains_canonical_bytes(
 
 #[cfg(unix)]
 #[rstest]
-fn selected_symlink_refuses_before_registration(
+#[case::dangling("dangling")]
+#[case::empty("empty")]
+#[case::populated("populated")]
+fn selected_symlink_writes_referent_without_replacing_link(
     #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] state: &str,
+) {
+    use std::os::unix::fs::MetadataExt;
+    let (root, repo) = repository(format, Backend::Files);
+    let referent = root.path().join("referent.index");
+    let selected = root.path().join("alternate.index");
+    let original = match state {
+        "dangling" => None,
+        "empty" => Some(Index::empty(format).encode(Limits::default()).unwrap()),
+        "populated" => {
+            let entry = Entry::new(
+                b"tracked".to_vec(),
+                Mode::Regular,
+                ObjectId::for_blob(format, b"content"),
+            );
+            Some(
+                Index::new(format, vec![entry], Limits::default())
+                    .unwrap()
+                    .encode(Limits::default())
+                    .unwrap(),
+            )
+        }
+        _ => unreachable!(),
+    };
+    if let Some(bytes) = &original {
+        fs::write(&referent, bytes).unwrap();
+    }
+    std::os::unix::fs::symlink("referent.index", &selected).unwrap();
+    let link_inode = fs::symlink_metadata(&selected).unwrap().ino();
+    let target_inode = original
+        .as_ref()
+        .map(|_| fs::metadata(&referent).unwrap().ino());
+    let linked = repo
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!linked.git_dir().join("index").exists());
+    assert_eq!(
+        fs::read_link(&selected).unwrap(),
+        std::path::Path::new("referent.index")
+    );
+    assert_eq!(fs::symlink_metadata(&selected).unwrap().ino(), link_inode);
+    if let Some(before) = target_inode {
+        assert_ne!(fs::metadata(&referent).unwrap().ino(), before);
+    }
+    assert_eq!(
+        fs::read(&referent).unwrap(),
+        git_orphan_symlink_index_bytes(format, original.as_deref())
+    );
+    assert!(!selected.with_extension("index.lock").exists());
+    assert!(!referent.with_extension("index.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::corrupt("corrupt")]
+#[case::directory("directory")]
+#[case::nested("nested")]
+fn selected_symlink_rejects_invalid_referent_before_registration(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] state: &str,
 ) {
     let (root, repo) = repository(format, Backend::Files);
     let referent = root.path().join("referent.index");
     let selected = root.path().join("alternate.index");
-    let bytes = Index::empty(format).encode(Limits::default()).unwrap();
-    fs::write(&referent, &bytes).unwrap();
-    std::os::unix::fs::symlink(&referent, &selected).unwrap();
+    match state {
+        "corrupt" => fs::write(&referent, b"corrupt").unwrap(),
+        "directory" => fs::create_dir(&referent).unwrap(),
+        "nested" => {
+            fs::write(
+                root.path().join("final.index"),
+                Index::empty(format).encode(Limits::default()).unwrap(),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink("final.index", &referent).unwrap();
+        }
+        _ => unreachable!(),
+    }
+    std::os::unix::fs::symlink("referent.index", &selected).unwrap();
     let error = repo
         .create_orphan_worktree_with_options(
             root.path().join("linked"),
@@ -296,14 +413,69 @@ fn selected_symlink_refuses_before_registration(
         error,
         girt::CreateWorktreeError::IndexStorage {
             registration: None,
-            source: girt::index::StorageError::NotRegular(_),
+            ..
         }
     ));
-    assert_eq!(fs::read_link(&selected).unwrap(), referent);
-    assert_eq!(fs::read(&selected).unwrap(), bytes);
-    assert!(!selected.with_extension("index.lock").exists());
+    assert_eq!(
+        fs::read_link(&selected).unwrap(),
+        std::path::Path::new("referent.index")
+    );
     assert!(!repo.common_dir().join("worktrees").exists());
     assert!(!root.path().join("linked").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::selected(false)]
+#[case::referent(true)]
+fn selected_symlink_uses_referent_lock(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] referent_locked: bool,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    let referent = root.path().join("referent.index");
+    let selected = root.path().join("alternate.index");
+    fs::write(
+        &referent,
+        Index::empty(format).encode(Limits::default()).unwrap(),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("referent.index", &selected).unwrap();
+    let selected_lock = root.path().join("alternate.index.lock");
+    let referent_lock = root.path().join("referent.index.lock");
+    let occupied = if referent_locked {
+        &referent_lock
+    } else {
+        &selected_lock
+    };
+    fs::write(occupied, b"foreign lock").unwrap();
+    let result = repo.create_orphan_worktree_with_options(
+        root.path().join("linked"),
+        &branch(),
+        4,
+        OrphanWorktreeOptions {
+            index_path: Some(selected.clone()),
+            ..Default::default()
+        },
+    );
+    if referent_locked {
+        assert!(matches!(
+            result,
+            Err(girt::CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: girt::index::StorageError::Locked(_),
+            })
+        ));
+        assert!(!root.path().join("linked").exists());
+    } else {
+        assert!(result.is_ok());
+        assert!(root.path().join("linked").exists());
+    }
+    assert_eq!(fs::read(occupied).unwrap(), b"foreign lock");
+    assert_eq!(
+        fs::read_link(&selected).unwrap(),
+        std::path::Path::new("referent.index")
+    );
 }
 
 #[cfg(unix)]
