@@ -144,7 +144,9 @@ pub async fn receive_http_with_depth_and_progress(
             .as_ref()
             .is_some_and(|history| !history.applies_to(&wants))
         {
-            known = None;
+            known = known
+                .as_ref()
+                .map(|history| Arc::new(history.shallow_only()));
         }
         let history = known.as_deref().unwrap_or(&empty);
         // Include the service prelude in the aggregate HTTP payload budget.

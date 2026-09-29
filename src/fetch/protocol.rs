@@ -152,7 +152,7 @@ pub fn receive_with_known_depth(
         let advertisement = advertise(&mut wire, limits)?;
         check_cancelled(cancel)?;
         let wants = select(&advertisement);
-        let empty = KnownHistory::default();
+        let empty = known.shallow_only();
         let known = if known.applies_to(&wants) {
             known
         } else {

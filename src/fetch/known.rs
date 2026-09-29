@@ -37,6 +37,16 @@ impl KnownHistory {
     pub(super) fn applies_to(&self, wants: &[ObjectId]) -> bool {
         !self.only_when_all_wants_known || wants.iter().all(|id| self.objects.contains_key(id))
     }
+
+    /// Keep the destination's shallow declarations without offering local objects as haves.
+    /// An unknown selected tip still needs a self-contained retained pack, but the server must
+    /// see existing boundaries so it can report any roots it removes during deepening.
+    pub(super) fn shallow_only(&self) -> Self {
+        Self {
+            shallow: self.shallow.clone(),
+            ..Self::default()
+        }
+    }
     /// Reads a bounded, identity-verified local graph without changing storage.
     ///
     /// Local object count, retained bytes, edges and per-read decoding use the `max_known_*` and

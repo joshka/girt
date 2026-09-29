@@ -533,8 +533,8 @@ impl FetchReady {
 
     /// Installs a self-contained pack under retention before publishing shallow metadata or refs.
     ///
-    /// Supports complete transfers and initial depth-limited transfers into a destination whose
-    /// captured shallow roots are empty. Known-local dependencies and empty transfers are refused.
+    /// Supports self-contained complete and depth-limited transfers, including refresh of an
+    /// existing shallow destination. Known-local dependencies and empty transfers are refused.
     /// Holds the conditional shallow lock from installation through the returned phase's
     /// publication, including depth requests whose response has no boundaries. An existing pack or
     /// index is refused because a collector may already have selected it for removal.
@@ -559,12 +559,6 @@ impl FetchReady {
     ) -> Result<RetainedFetchReady, RetainedFetchFinishError> {
         let mut report = self.take_report();
         let prepare = || {
-            if !self.request.shallow_before.is_empty() {
-                return Err(FetchFinishFailure::Installation(FetchError::Unsupported(
-                    "retained workflow requires an initially nonshallow destination",
-                ))
-                .into());
-            }
             let checksum = self
                 .received
                 .retention_checksum(&self.request.repository, cancel)

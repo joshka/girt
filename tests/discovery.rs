@@ -736,10 +736,13 @@ fn retained_workflow_rejects_changed_shallow_snapshot_before_pack_writes() {
     assert!(!destination.path().join("shallow.lock").exists());
 }
 
-#[test]
-fn retained_workflow_rejects_captured_shallow_destination() {
-    let (source, destination, repo, tip) = retained_fixture(ObjectFormat::Sha1);
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn retained_workflow_refreshes_captured_shallow_destination(#[case] format: ObjectFormat) {
+    let (source, destination, repo, tip) = retained_fixture(format);
     publish_depth(&source, &repo, &KnownHistory::default(), 1);
+    let next = child_commit(&source, tip);
     let reopened = Repository::open(destination.path()).unwrap();
     let known = KnownHistory::new(
         &reopened.objects(PackLimits::default()).unwrap(),
@@ -747,24 +750,50 @@ fn retained_workflow_rejects_captured_shallow_destination() {
         FetchLimits::default(),
         &AtomicBool::new(false),
     )
-    .unwrap();
+    .unwrap()
+    .only_when_all_wants_known();
     let ready = receive_depth(&source, &reopened, &known, 2);
-    let error = ready
+    assert_eq!(ready.received().shallow_roots(), &[tip]);
+    let competitor = receive_depth(&source, &reopened, &known, 2);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let marker = installed.retention().path().to_owned();
+    assert!(marker.exists());
+    assert!(destination.path().join("shallow.lock").exists());
+    let blocked = competitor
         .install_retained(FetchUpdateLimits::default(), &AtomicBool::new(false))
         .unwrap_err();
     assert!(matches!(
-        *error.source,
-        girt::fetch::FetchFinishFailure::Installation(FetchError::Unsupported(
-            "retained workflow requires an initially nonshallow destination"
-        ))
+        *blocked.source,
+        girt::fetch::FetchFinishFailure::Shallow(_)
     ));
-    assert!(error.retention.is_none());
-    assert!(error.report.installed.is_none());
-    assert!(!destination.path().join("shallow.lock").exists());
+    assert!(blocked.retention.is_none());
+    assert!(marker.exists());
     assert_eq!(
         std::fs::read_to_string(destination.path().join("shallow")).unwrap(),
         format!("{tip}\n")
     );
+    let (report, retention) = installed.finish(&AtomicBool::new(false)).unwrap();
+    assert!(!report.shallow_published);
+    assert_eq!(report.references.len(), 1);
+    assert!(!destination.path().join("shallow.lock").exists());
+    let refreshed = Repository::open(destination.path()).unwrap();
+    assert_eq!(
+        refreshed.shallow_roots().iter().collect::<Vec<_>>(),
+        vec![tip]
+    );
+    assert_eq!(
+        refreshed
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/remotes/origin/main").unwrap())
+            .unwrap(),
+        Some(Target::Direct(next))
+    );
+    git(destination.path(), &["fsck", "--full"], b"", None);
+    retention.release().unwrap();
+    assert!(!marker.exists());
 }
 
 #[test]

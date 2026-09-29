@@ -228,7 +228,7 @@ impl ReceivedFetch {
     /// is refused: a collector may already have selected that old artifact for deletion before
     /// the marker was created. This operation does not protect shallow metadata, HEAD, worktrees,
     /// or objects outside the received pack. Use [`super::FetchReady::install_retained`] for a
-    /// coordinated initial shallow transfer. The ordinary installation's trusted-path and
+    /// coordinated shallow transfer. The ordinary installation's trusted-path and
     /// durability requirements still apply.
     ///
     /// # Errors

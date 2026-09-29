@@ -134,7 +134,9 @@ pub async fn receive_ssh_with_progress(
             .as_ref()
             .is_some_and(|history| !history.applies_to(&wants))
         {
-            known = None;
+            known = known
+                .as_ref()
+                .map(|history| Arc::new(history.shallow_only()));
         }
         let history = known.as_deref().unwrap_or(&empty);
         let remaining = limits.max_wire_bytes - bytes.len();

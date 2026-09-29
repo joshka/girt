@@ -13,7 +13,7 @@
 //!   conditionally publishes selected refs. [`FetchReady::install_retained`] instead holds a
 //!   shallow lock and pack retention while the caller checks installed objects, before
 //!   [`RetainedFetchReady::finish`] publishes boundaries and refs. This supports self-contained
-//!   complete or initial depth-limited transfers into a nonshallow destination.
+//!   complete or depth-limited transfers, including refresh with an existing shallow boundary.
 //!
 //! HTTP and SSH downloads keep network I/O separate from synchronous pack validation. Callers
 //! bound worker concurrency and join validation work before dropping its owned result.
