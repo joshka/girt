@@ -183,6 +183,7 @@ pub(super) fn send(
                 checksum: prepared.checksum,
                 objects: prepared.object_count() as usize,
                 dependencies: Vec::new(),
+                shallow: Vec::new(),
                 limits,
             },
         );

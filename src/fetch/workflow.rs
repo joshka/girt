@@ -194,8 +194,9 @@ impl FetchRequest {
             .any(|namespace| is_descendant(name, namespace))
     }
 
-    /// Requests a positive commit depth on HTTP/SSH upload-pack and permits a resulting
-    /// shallow-boundary change during coordinated publication.
+    /// Requests a positive commit depth on HTTP/SSH upload-pack or depth one from a native local
+    /// source. Local depth requires one selected commit tip and a nonshallow source. This permits
+    /// a resulting shallow-boundary change during coordinated publication.
     pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
         self.depth = Some(depth);
         self
@@ -365,14 +366,12 @@ impl FetchRequest {
         mut observe: impl FnMut(super::LocalFetchProgress),
     ) -> Result<FetchReady, FetchWorkflowError> {
         self.check_known(known)?;
-        if self.depth.is_some() {
-            return Err(FetchError::Unsupported("native local depth").into());
-        }
         let mut plan = None;
-        let received = super::receive_local_with_known_and_progress(
+        let received = super::local::receive_local_with_known_depth_and_progress(
             source,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
+            self.depth,
             limits,
             control,
             progress,

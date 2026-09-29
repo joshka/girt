@@ -34,6 +34,7 @@ pub(crate) struct NativeContents {
     pub checksum: Option<ObjectId>,
     pub objects: usize,
     pub dependencies: Vec<ObjectId>,
+    pub shallow: Vec<ObjectId>,
     pub limits: FetchLimits,
 }
 
@@ -67,7 +68,7 @@ impl ReceivedFetch {
             checksum: contents.checksum,
             objects: contents.objects,
             dependencies: contents.dependencies,
-            shallow: vec![],
+            shallow: contents.shallow,
             limits: contents.limits,
         }
     }

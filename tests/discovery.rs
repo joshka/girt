@@ -627,6 +627,66 @@ fn retained_fixture(
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
+fn native_local_depth_one_retains_only_tip_closure(#[case] format: ObjectFormat) {
+    let source = repository(format);
+    let first = commit(&source);
+    let tip = child_commit(&source, first);
+    let destination = repository(format);
+    let repo = Repository::open(destination.path()).unwrap();
+    let request = FetchRequest::prepare(
+        repo,
+        Refspecs::parse(
+            Direction::Fetch,
+            [b"refs/heads/main:refs/remotes/origin/main"],
+        )
+        .unwrap(),
+        BTreeSet::new(),
+        Reflog::Preserve,
+    )
+    .unwrap()
+    .with_depth(NonZeroU32::new(1).unwrap());
+    let cancel = AtomicBool::new(false);
+    let ready = request
+        .receive_local(
+            source.path(),
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| ControlFlow::Continue(()),
+        )
+        .unwrap();
+    assert_eq!(ready.received().shallow_roots(), &[tip]);
+    let retained = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let (report, marker) = retained.finish(&cancel).unwrap();
+    assert!(report.shallow_published);
+    let opened = Repository::open(destination.path()).unwrap();
+    let objects = opened.objects(PackLimits::default()).unwrap();
+    assert_eq!(opened.shallow_roots().iter().collect::<Vec<_>>(), vec![tip]);
+    assert!(objects.read(tip, ReadLimits::default()).unwrap().is_some());
+    assert!(
+        objects
+            .read(first, ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        git(
+            destination.path(),
+            &["rev-list", "--count", "refs/remotes/origin/main"],
+            b"",
+            None
+        ),
+        b"1\n"
+    );
+    git(destination.path(), &["fsck", "--full"], b"", None);
+    marker.release().unwrap();
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
 fn retained_shallow_phase_holds_lock_until_publication(#[case] format: ObjectFormat) {
     let (source, destination, repo, tip) = retained_fixture(format);
     let ready = receive_depth(&source, &repo, &KnownHistory::default(), 1);

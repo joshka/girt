@@ -1,6 +1,7 @@
-//! Native local advertisement and complete reachable-pack construction.
+//! Native local advertisement and reachable-pack construction.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
 use super::{
@@ -11,16 +12,42 @@ use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
 use crate::{Object, ObjectId, ObjectKind, PackObject, PackWriteLimits, Repository};
 
+#[cfg(test)]
 pub(super) fn receive(
     source: &Repository,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: &KnownHistory,
     limits: FetchLimits,
     control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_depth(
+        source, select, known, None, limits, control, progress, observe,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local transfer keeps explicit selection and progress policy"
+)]
+pub(super) fn receive_depth(
+    source: &Repository,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     mut observe: impl FnMut(LocalFetchProgress),
 ) -> Result<ReceivedFetch, FetchError> {
     check(control)?;
+    if depth.is_some_and(|depth| depth.get() != 1) {
+        return Err(FetchError::Unsupported("native local depth beyond one"));
+    }
+    if depth.is_some() && !known.shallow.is_empty() {
+        return Err(FetchError::Unsupported("native local shallow refresh"));
+    }
     if !source.shallow_roots().is_empty() {
         return Err(FetchError::Unsupported("shallow local source"));
     }
@@ -29,6 +56,9 @@ pub(super) fn receive(
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
     let wants = select(&advertisement);
+    if depth.is_some() && wants.iter().copied().collect::<HashSet<_>>().len() != 1 {
+        return Err(FetchError::Unsupported("native local depth selection"));
+    }
     let empty = KnownHistory::default();
     let known = if known.applies_to(&wants) {
         known
@@ -65,6 +95,7 @@ pub(super) fn receive(
                 checksum: None,
                 objects: 0,
                 dependencies: Vec::new(),
+                shallow: Vec::new(),
                 limits,
             },
         ));
@@ -74,6 +105,7 @@ pub(super) fn receive(
     let mut observed = HashMap::<ObjectId, ObjectKind>::new();
     let mut selected = Vec::<(ObjectId, Object)>::new();
     let mut dependencies = Vec::new();
+    let mut shallow = Vec::new();
     let mut bytes = 0_usize;
     let mut edges = 0_usize;
     while let Some((id, kind)) = pending.pop_front() {
@@ -113,6 +145,11 @@ pub(super) fn receive(
         if kind.is_some_and(|kind| kind != object.kind()) {
             return Err(FetchError::Kind(id));
         }
+        if depth.is_some() && id == wants[0] && object.kind() != ObjectKind::Commit {
+            return Err(FetchError::Unsupported(
+                "native local depth requires commit tip",
+            ));
+        }
         observed.insert(id, object.kind());
         bytes = bytes
             .checked_add(object.data().len())
@@ -122,6 +159,14 @@ pub(super) fn receive(
         }
         crate::edges::visit(id, &object, |target, kind| {
             check(control)?;
+            if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
+                // Depth one cuts only the selected commit's parent edges. Its tree and all
+                // reachable content stay in the self-contained pack.
+                if shallow.is_empty() {
+                    shallow.push(id);
+                }
+                return Ok(());
+            }
             edges += 1;
             if edges > limits.max_connectivity_edges {
                 return Err(FetchError::Limit("local edges"));
@@ -156,6 +201,7 @@ pub(super) fn receive(
                 checksum: None,
                 objects: 0,
                 dependencies,
+                shallow,
                 limits,
             },
         ));
@@ -207,6 +253,7 @@ pub(super) fn receive(
             checksum: Some(written.checksum),
             objects: selected.len(),
             dependencies,
+            shallow,
             limits,
         },
     ))
