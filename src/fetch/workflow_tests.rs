@@ -189,6 +189,48 @@ fn additional_tag_namespace_prunes_missing_sources_only() {
 }
 
 #[test]
+fn retained_missing_exact_source_keeps_only_its_cached_destination() {
+    let (_root, mut request) = request(&[
+        "+refs/heads/main:refs/remotes/origin/main",
+        "+refs/tags/v1:refs/jj/remote-tags/origin/v1",
+        "+refs/tags/v2:refs/jj/remote-tags/origin/v2",
+    ]);
+    for tag in ["v1", "v2"] {
+        request.snapshot.insert(
+            name(&format!("refs/jj/remote-tags/origin/{tag}")),
+            Target::Direct(id(3)),
+        );
+    }
+    let request = request
+        .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+        .with_prune()
+        .with_retained_missing_sources([name("refs/tags/v1")]);
+    let plan = request.plan(&advertisement()).unwrap();
+    assert!(plan.iter().any(|update| {
+        update.mapping.destination == Some(name("refs/remotes/origin/main"))
+            && update.kind == FetchUpdateKind::Create
+    }));
+    assert!(!plan.iter().any(|update| {
+        update.mapping.destination == Some(name("refs/jj/remote-tags/origin/v1"))
+    }));
+    assert!(plan.iter().any(|update| {
+        update.mapping.destination == Some(name("refs/jj/remote-tags/origin/v2"))
+            && update.kind == FetchUpdateKind::Prune
+    }));
+    let mut advertised = advertisement();
+    advertised.refs.push(AdvertisedRef {
+        name: name("refs/tags/v1"),
+        id: id(3),
+        peeled: false,
+    });
+    let plan = request.plan(&advertised).unwrap();
+    assert!(plan.iter().any(|update| {
+        update.mapping.destination == Some(name("refs/jj/remote-tags/origin/v1"))
+            && update.kind == FetchUpdateKind::Unchanged
+    }));
+}
+
+#[test]
 fn symbolic_destination_cannot_redirect_to_branch() {
     let (_root, mut request) = request(&["refs/heads/main:refs/remotes/origin/main"]);
     request.snapshot.insert(

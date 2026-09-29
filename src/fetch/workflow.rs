@@ -66,6 +66,7 @@ pub struct FetchRequest {
     namespace_reflogs: Vec<(RefName, Reflog, Reflog)>,
     kind_reflogs: Vec<(RefName, FetchUpdateKind, Reflog)>,
     additional_tag_namespaces: Vec<RefName>,
+    retained_missing_sources: BTreeSet<Vec<u8>>,
     prune: bool,
     pub(super) depth: Option<NonZeroU32>,
     shallow_before: Vec<ObjectId>,
@@ -110,6 +111,7 @@ impl FetchRequest {
             namespace_reflogs: Vec::new(),
             kind_reflogs: Vec::new(),
             additional_tag_namespaces: Vec::new(),
+            retained_missing_sources: BTreeSet::new(),
             prune: false,
             depth: None,
             shallow_before,
@@ -207,6 +209,20 @@ impl FetchRequest {
         self
     }
 
+    /// Retains destinations for absent exact sources while pruning other stale refs.
+    ///
+    /// The caller supplies only exact positive source names whose cached destinations Git would
+    /// keep after a missing-ref retry. This applies to the advertisement from this transfer, so
+    /// no second discovery or fetch is needed. The source remains selected if it is advertised.
+    pub fn with_retained_missing_sources(
+        mut self,
+        sources: impl IntoIterator<Item = RefName>,
+    ) -> Self {
+        self.retained_missing_sources
+            .extend(sources.into_iter().map(|source| source.as_bytes().to_vec()));
+        self
+    }
+
     /// Maps an advertisement against the captured destination values, without I/O or mutation.
     ///
     /// Useful for previewing policy. Transfer adapters always recompute this plan from their own
@@ -284,7 +300,12 @@ impl FetchRequest {
                     continue;
                 }
                 let sources = self.specs.prune_sources(name);
-                if sources.is_empty() || sources.iter().any(|source| advertised.contains(source)) {
+                if sources.is_empty()
+                    || sources.iter().any(|source| {
+                        advertised.contains(source)
+                            || self.retained_missing_sources.contains(source.as_slice())
+                    })
+                {
                     continue;
                 }
                 let Target::Direct(previous) = target else {
