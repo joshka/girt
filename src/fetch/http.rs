@@ -103,7 +103,7 @@ pub async fn receive_http_with_progress(
 pub async fn receive_http_with_depth_and_progress(
     remote: &HttpRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: Option<Arc<KnownHistory>>,
+    mut known: Option<Arc<KnownHistory>>,
     depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
@@ -139,6 +139,14 @@ pub async fn receive_http_with_depth_and_progress(
         };
         let advertisement = protocol::advertise(&mut wire, limits)?;
         wire.end()?;
+        let wants = select(&advertisement);
+        if known
+            .as_ref()
+            .is_some_and(|history| !history.applies_to(&wants))
+        {
+            known = None;
+        }
+        let history = known.as_deref().unwrap_or(&empty);
         // Include the service prelude in the aggregate HTTP payload budget.
         let remaining = limits.max_wire_bytes - advertisement_bytes;
         control.check()?;
@@ -146,7 +154,7 @@ pub async fn receive_http_with_depth_and_progress(
         let negotiation = protocol::request(
             &mut request,
             &advertisement,
-            select(&advertisement),
+            wants,
             history,
             depth,
             limits,

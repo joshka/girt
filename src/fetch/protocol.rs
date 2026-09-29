@@ -151,15 +151,14 @@ pub fn receive_with_known_depth(
         };
         let advertisement = advertise(&mut wire, limits)?;
         check_cancelled(cancel)?;
-        let negotiation = request(
-            writer,
-            &advertisement,
-            select(&advertisement),
-            known,
-            depth,
-            limits,
-            cancel,
-        )?;
+        let wants = select(&advertisement);
+        let empty = KnownHistory::default();
+        let known = if known.applies_to(&wants) {
+            known
+        } else {
+            &empty
+        };
+        let negotiation = request(writer, &advertisement, wants, known, depth, limits, cancel)?;
         if !negotiation.needs_pack {
             wire.end()?;
             return ReceivedFetch::without_pack(

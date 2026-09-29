@@ -91,7 +91,7 @@ pub async fn receive_ssh_with_depth(
 pub async fn receive_ssh_with_progress(
     remote: &SshRemote,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: Option<Arc<KnownHistory>>,
+    mut known: Option<Arc<KnownHistory>>,
     options: FetchOptions,
     control: TransportControl<'_>,
     mut diagnostics: impl FnMut(&[u8]),
@@ -129,13 +129,21 @@ pub async fn receive_ssh_with_progress(
         };
         let advertisement = protocol::advertise(&mut wire, limits)?;
         wire.end()?;
+        let wants = select(&advertisement);
+        if known
+            .as_ref()
+            .is_some_and(|history| !history.applies_to(&wants))
+        {
+            known = None;
+        }
+        let history = known.as_deref().unwrap_or(&empty);
         let remaining = limits.max_wire_bytes - bytes.len();
         control.check()?;
         let mut request = Vec::new();
         let negotiation = protocol::request(
             &mut request,
             &advertisement,
-            select(&advertisement),
+            wants,
             history,
             depth,
             limits,

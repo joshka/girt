@@ -19,9 +19,24 @@ pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
     pub(super) haves: Vec<ObjectId>,
     pub(super) shallow: Vec<ObjectId>,
+    pub(super) only_when_all_wants_known: bool,
 }
 
 impl KnownHistory {
+    /// Uses this history only when it contains every selected advertised tip.
+    ///
+    /// A selection with any unknown tip instead requests a complete transfer. This avoids
+    /// producing a pack that depends on local objects when the caller can retain only the new
+    /// pack against concurrent collection. The caller must still keep verified local objects
+    /// available until a known-only result publishes its references.
+    pub fn only_when_all_wants_known(mut self) -> Self {
+        self.only_when_all_wants_known = true;
+        self
+    }
+
+    pub(super) fn applies_to(&self, wants: &[ObjectId]) -> bool {
+        !self.only_when_all_wants_known || wants.iter().all(|id| self.objects.contains_key(id))
+    }
     /// Reads a bounded, identity-verified local graph without changing storage.
     ///
     /// Local object count, retained bytes, edges and per-read decoding use the `max_known_*` and

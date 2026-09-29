@@ -459,6 +459,67 @@ fn known(repo: &Repository, roots: &[ObjectId]) -> girt::fetch::KnownHistory {
     )
     .unwrap()
 }
+
+#[rstest::rstest]
+#[case(girt::ObjectFormat::Sha1)]
+#[case(girt::ObjectFormat::Sha256)]
+fn complete_transfer_when_any_selected_tip_is_not_known(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let destination = Repository::open(root.path()).unwrap();
+    let initial = fetch(fixture.root.path());
+    initial
+        .install(&destination, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let history = known(&destination, initial.wants()).only_when_all_wants_known();
+    assert_eq!(negotiated(fixture.root.path(), &history).pack_bytes(), 0);
+
+    let main: ObjectId = String::from_utf8(git(fixture.root.path(), &["rev-parse", "main"], b""))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let next = child(&fixture, &[main], b"next");
+    set_main(&fixture, next);
+    let received = negotiated(fixture.root.path(), &history);
+    assert!(received.pack_bytes() > 0);
+    let fresh_root = tempfile::tempdir().unwrap();
+    git(
+        fresh_root.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let fresh = Repository::open(fresh_root.path()).unwrap();
+    received
+        .install(&fresh, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert!(
+        fresh
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(main, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
 fn negotiated(path: &Path, known: &girt::fetch::KnownHistory) -> ReceivedFetch {
     girt::fetch::receive_local_with_known(
         path,

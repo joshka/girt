@@ -29,6 +29,12 @@ pub(super) fn receive(
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
     let wants = select(&advertisement);
+    let empty = KnownHistory::default();
+    let known = if known.applies_to(&wants) {
+        known
+    } else {
+        &empty
+    };
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));
     }
