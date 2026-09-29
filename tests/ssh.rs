@@ -215,6 +215,61 @@ fn ssh_workflow_publishes_depth_and_tracking_ref(#[case] format: girt::ObjectFor
         tip(&fixture.repo, "refs/heads/main")
     );
 }
+
+#[rstest]
+#[case::truncated_sha1(girt::ObjectFormat::Sha1, "fetch-truncate")]
+#[case::truncated_sha256(girt::ObjectFormat::Sha256, "fetch-truncate")]
+#[case::corrupt_sha1(girt::ObjectFormat::Sha1, "fetch-corrupt-pack")]
+#[case::corrupt_sha256(girt::ObjectFormat::Sha256, "fetch-corrupt-pack")]
+fn ssh_bad_pack_never_reaches_publication(#[case] format: girt::ObjectFormat, #[case] fault: &str) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), fault);
+    let remote = server.remote("config");
+    let (_root, destination) = destination_for(format);
+    let path = destination.git_dir().to_path_buf();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        ["refs/heads/main:refs/remotes/origin/main"],
+    )
+    .unwrap();
+    let request = fetch::FetchRequest::prepare(
+        destination,
+        specs,
+        Default::default(),
+        girt::refs::Reflog::Preserve,
+    )
+    .unwrap()
+    .with_depth(NonZeroU32::new(1).unwrap());
+    let cancel = AtomicBool::new(false);
+    let failed = match runtime().block_on(request.receive_ssh(
+        &remote,
+        None,
+        FetchLimits::default(),
+        TransportControl::new(&cancel),
+    )) {
+        Ok(download) => download
+            .validate(&cancel, |_| ControlFlow::Continue(()))
+            .is_err(),
+        Err(_) => true,
+    };
+    assert!(failed, "{fault} must fail before a ready publication phase");
+    let opened = Repository::open(path).unwrap();
+    assert!(opened.shallow_roots().is_empty());
+    assert!(
+        opened
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/remotes/origin/main").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read_dir(opened.object_dir().join("pack"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
 fn tip(repo: &Repository, name: &str) -> ObjectId {
     repo.references()
         .unwrap()

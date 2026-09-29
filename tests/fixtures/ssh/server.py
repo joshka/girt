@@ -12,7 +12,59 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+
+
+def faulty_upload_pack(original, env, fault):
+    child = subprocess.Popen(["/bin/sh", "-c", original], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, env=env, start_new_session=True)
+    def write_all(data):
+        while data:
+            data = data[os.write(1, data):]
+    def copy_request():
+        try:
+            while data := os.read(0, 8192):
+                child.stdin.write(data)
+                child.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                child.stdin.close()
+            except OSError:
+                pass
+    try:
+        # Upload-pack advertises before the client sends wants. Relay that prefix live.
+        while True:
+            header = child.stdout.read(4)
+            if len(header) != 4:
+                return 1
+            length = int(header, 16)
+            payload = child.stdout.read(length - 4) if length else b""
+            if len(payload) != max(length - 4, 0):
+                return 1
+            write_all(header + payload)
+            if length == 0:
+                break
+        threading.Thread(target=copy_request, daemon=True).start()
+        response = child.stdout.read()
+        child.wait(timeout=20)
+        if b"PACK" in response and fault == "fetch-corrupt-pack":
+            pack = response.index(b"PACK")
+            altered = bytearray(response)
+            altered[pack + 12] ^= 1
+            response = bytes(altered)
+        elif b"PACK" in response:
+            response = response[:-5]
+        write_all(response)
+        return 0
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        child.wait()
 
 
 def service(args):
@@ -37,6 +89,8 @@ def service(args):
         return 1
     if args.fault == "diagnostics":
         os.write(2, b"private diagnostic\n" * 100000)
+    if args.fault in ("fetch-corrupt-pack", "fetch-truncate") and words[0] == "git-upload-pack":
+        return faulty_upload_pack(original, env, args.fault)
     if args.fault in ("after-report", "partial-report", "exit-failure", "blocked-upload", "exit-stall"):
         advertisement = b"0" * 40 + b" capabilities^{}\x00report-status\n"
         os.write(1, f"{len(advertisement)+4:04x}".encode() + advertisement + b"0000")
