@@ -1,10 +1,10 @@
 //! Original explicit orphan-creation policy fixtures; no ambient configuration or umask mutation.
 use std::fs;
 
-use girt::index::{Index, Limits};
+use girt::index::{Entry, Index, Limits, Mode, Version};
 use girt::refs::{Backend, RefName};
 use girt::{
-    InitKind, ObjectFormat, OrphanWorktreeOptions, Repository, SharedPermissions,
+    InitKind, ObjectFormat, ObjectId, OrphanWorktreeOptions, Repository, SharedPermissions,
     WorktreeDurability, WorktreeLinkStyle,
 };
 use rstest::rstest;
@@ -22,6 +22,34 @@ fn repository(format: ObjectFormat, backend: Backend) -> (tempfile::TempDir, Rep
 }
 fn branch() -> RefName {
     RefName::new(b"refs/heads/policy-fixture").unwrap()
+}
+
+fn git_orphan_index_bytes(format: ObjectFormat, initial: Option<&[u8]>) -> Vec<u8> {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("git-main");
+    let selected = root.path().join("selected.index");
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .arg(format!("--object-format={format}"))
+        .arg(&repo)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    if let Some(bytes) = initial {
+        fs::write(&selected, bytes).unwrap();
+    }
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["worktree", "add", "--orphan", "-b", "policy-fixture"])
+        .arg(root.path().join("git-linked"))
+        .env("GIT_INDEX_FILE", &selected)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    fs::read(selected).unwrap()
 }
 
 #[rstest]
@@ -101,11 +129,9 @@ fn redirected_index_and_captured_private_config(
         )
         .unwrap();
     assert!(!linked.git_dir().join("index").exists());
-    assert!(
-        Index::parse(format, &fs::read(selected).unwrap(), Limits::default())
-            .unwrap()
-            .entries()
-            .is_empty()
+    assert_eq!(
+        fs::read(selected).unwrap(),
+        git_orphan_index_bytes(format, None)
     );
     assert_eq!(
         fs::read(linked.git_dir().join("config.worktree")).unwrap(),
@@ -116,6 +142,168 @@ fn redirected_index_and_captured_private_config(
         source_private
     );
     assert_eq!(fs::read(config_path).unwrap(), config);
+}
+
+#[rstest]
+fn missing_redirected_index_is_created_without_a_private_index(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Backend::Files, Backend::Reftable)] backend: Backend,
+) {
+    let (root, repo) = repository(format, backend);
+    let selected = root.path().join("alternate.index");
+    let linked = repo
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!linked.git_dir().join("index").exists());
+    assert!(!root.path().join("alternate.index.lock").exists());
+    assert_eq!(
+        fs::read(selected).unwrap(),
+        git_orphan_index_bytes(format, None)
+    );
+}
+
+#[rstest]
+#[case::empty(false)]
+#[case::populated(true)]
+fn regular_redirected_index_is_rewritten_to_canonical_empty(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[case] populated: bool,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    let selected = root.path().join("alternate.index");
+    let canonical = Index::empty(format).encode(Limits::default()).unwrap();
+    let original = if populated {
+        let entry = Entry::new(
+            b"tracked".to_vec(),
+            Mode::Regular,
+            ObjectId::for_blob(format, b"content"),
+        );
+        Index::new(format, vec![entry], Limits::default())
+            .unwrap()
+            .encode(Limits::default())
+            .unwrap()
+    } else {
+        canonical.clone()
+    };
+    fs::write(&selected, &original).unwrap();
+    #[cfg(unix)]
+    let previous_inode = {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(&selected).unwrap().ino()
+    };
+    let linked = repo
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!linked.git_dir().join("index").exists());
+    assert_eq!(
+        fs::read(&selected).unwrap(),
+        git_orphan_index_bytes(format, Some(&original))
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_ne!(fs::metadata(&selected).unwrap().ino(), previous_inode);
+    }
+}
+
+#[rstest]
+fn regular_empty_index_version_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(Version::V3, Version::V4)] version: Version,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    let selected = root.path().join("alternate.index");
+    let mut index = Index::empty(format);
+    index.set_version(version, Limits::default()).unwrap();
+    let original = index.encode(Limits::default()).unwrap();
+    fs::write(&selected, &original).unwrap();
+    repo.create_orphan_worktree_with_options(
+        root.path().join("linked"),
+        &branch(),
+        4,
+        OrphanWorktreeOptions {
+            index_path: Some(selected.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(&selected).unwrap(),
+        git_orphan_index_bytes(format, Some(&original))
+    );
+}
+
+#[rstest]
+fn regular_git_empty_index_retains_canonical_bytes(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    let selected = root.path().join("alternate.index");
+    let original = git_orphan_index_bytes(format, None);
+    fs::write(&selected, &original).unwrap();
+    repo.create_orphan_worktree_with_options(
+        root.path().join("linked"),
+        &branch(),
+        4,
+        OrphanWorktreeOptions {
+            index_path: Some(selected.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(fs::read(&selected).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[rstest]
+fn selected_symlink_refuses_before_registration(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (root, repo) = repository(format, Backend::Files);
+    let referent = root.path().join("referent.index");
+    let selected = root.path().join("alternate.index");
+    let bytes = Index::empty(format).encode(Limits::default()).unwrap();
+    fs::write(&referent, &bytes).unwrap();
+    std::os::unix::fs::symlink(&referent, &selected).unwrap();
+    let error = repo
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch(),
+            4,
+            OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        girt::CreateWorktreeError::IndexStorage {
+            registration: None,
+            source: girt::index::StorageError::NotRegular(_),
+        }
+    ));
+    assert_eq!(fs::read_link(&selected).unwrap(), referent);
+    assert_eq!(fs::read(&selected).unwrap(), bytes);
+    assert!(!selected.with_extension("index.lock").exists());
+    assert!(!repo.common_dir().join("worktrees").exists());
+    assert!(!root.path().join("linked").exists());
 }
 
 #[cfg(unix)]
@@ -247,10 +435,7 @@ fn metadata_creation_ignores_shallow_and_default_index(
     assert_eq!(observed.object_format(), format);
     assert_eq!(observed.reference_backend(), backend);
     let index = fs::read(linked.git_dir().join("index")).unwrap();
-    assert_eq!(
-        index,
-        Index::empty(format).encode(Limits::default()).unwrap()
-    );
+    assert_eq!(index, git_orphan_index_bytes(format, None));
     for name in ["shallow", "index"] {
         let path = repo.git_dir().join(name);
         if directory {

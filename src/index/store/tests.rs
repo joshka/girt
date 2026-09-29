@@ -92,6 +92,85 @@ fn absent_is_distinct_from_published_empty(#[case] format: crate::ObjectFormat) 
     );
     assert!(!repo.git_dir().join("index.lock").exists());
 }
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_commit_creates_missing_index(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.original_missing());
+    edit.commit_new_with_options(IndexCommitOptions::default())
+        .unwrap();
+    assert!(Index::parse(format, &fs::read(&path).unwrap(), Limits::default()).is_ok());
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_commit_preserves_foreign_index(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    fs::write(&path, b"foreign").unwrap();
+    assert!(matches!(
+        edit.commit_new_with_options(IndexCommitOptions::default()),
+        Err(StorageError::Changed(_))
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"foreign");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_publication_does_not_replace_last_moment_writer(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let error = edit.publish_with_policy(
+        IndexCommitOptions::default(),
+        crate::file_policy::sync_file,
+        |lock, selected| {
+            fs::write(selected, b"last moment writer")?;
+            fs::hard_link(lock, selected)
+        },
+    );
+    assert!(matches!(error, Err(StorageError::Io { .. })));
+    edit.abort().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"last moment writer");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_publication_reports_post_install_cleanup_failure(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let lock = repo.git_dir().join("index.lock");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    let error = edit.commit_new_with_cleanup(IndexCommitOptions::default(), |_| {
+        Err(io::Error::other("injected cleanup failure"))
+    });
+    assert!(matches!(
+        error,
+        Err(StorageError::PublishedCleanup {
+            path: published,
+            lock: retained,
+            ..
+        }) if published == path && retained == lock
+    ));
+    assert!(Index::parse(format, &fs::read(&path).unwrap(), Limits::default()).is_ok());
+    assert!(lock.exists());
+    fs::remove_file(lock).unwrap();
+}
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]

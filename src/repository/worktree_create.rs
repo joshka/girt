@@ -187,8 +187,8 @@ impl Repository {
     ///
     /// Uses the existing branch, path, link and exclusion rules. The selected index is read under
     /// its ordinary lock and replaced with an empty standalone draft; missing shared dependencies
-    /// fail before registration or destination creation. A selected symlink is replaced without
-    /// writing its referent. The source default index is ignored.
+    /// fail before registration or destination creation. A selected symlink is refused before
+    /// registration. The source default index is ignored.
     /// Private configuration bytes are copied, not reread or transformed. No hook is run.
     ///
     /// Shared permissions affect the worktrees root, refs/reftable directories, HEAD, selected
@@ -324,8 +324,6 @@ fn create_orphan_worktree(
         Err(e) if e.kind() == io::ErrorKind::NotFound => (),
         Err(e) => return Err(io_error(&destination, None, e)),
     }
-    let empty_index = crate::index::Index::empty(references.object_format);
-    empty_index.encode(options.index_limits)?;
     let table = if references.reference_backend == Backend::Reftable {
         Some(
             initial_head_table(references.object_format, branch)
@@ -342,6 +340,15 @@ fn create_orphan_worktree(
     })?;
     let configured_relative = super::extension_boolean(&config, &config_path, "relativeworktrees")?;
     let relative = options.link_style.uses_relative(configured_relative);
+    let selected_missing = options
+        .index_path
+        .as_ref()
+        .map(|path| match fs::symlink_metadata(path) {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(io_error(path, None, error)),
+        })
+        .transpose()?;
     let mut index_edit = options
         .index_path
         .as_ref()
@@ -352,7 +359,7 @@ fn create_orphan_worktree(
                 options.index_limits,
                 crate::index::EditOptions {
                     resolve_split: true,
-                    follow_symlink: true,
+                    follow_symlink: false,
                 },
             )
             .map_err(|source| CreateWorktreeError::IndexStorage {
@@ -361,6 +368,28 @@ fn create_orphan_worktree(
             })
         })
         .transpose()?;
+    if let (Some(missing), Some(edit)) = (selected_missing, index_edit.as_ref()) {
+        if missing != edit.original_missing() {
+            let path = options
+                .index_path
+                .as_ref()
+                .expect("selected index path")
+                .clone();
+            let error = CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: crate::index::StorageError::Changed(path),
+            };
+            return finish_creation(Err(error), index_edit);
+        }
+    }
+    let version = match index_edit.as_ref().map(|edit| edit.index().version()) {
+        Some(crate::index::Version::V4) => crate::index::Version::V4,
+        _ => crate::index::Version::V2,
+    };
+    let empty_index = crate::index::Index::empty_for_orphan(references.object_format, version);
+    if let Err(error) = empty_index.encode(options.index_limits) {
+        return finish_creation(Err(CreateWorktreeError::Index(error)), index_edit);
+    }
     let result = (|| {
         let registrations = references.common_dir.join("worktrees");
         fs::create_dir_all(&registrations).map_err(|e| io_error(&registrations, None, e))?;
@@ -463,17 +492,22 @@ fn create_orphan_worktree(
             .as_mut()
             .expect("selected or private index acquired")
             .replace_index(empty_index)?;
-        index_edit
+        let edit = index_edit
             .take()
-            .expect("selected or private index acquired")
-            .commit_with_options(crate::index::IndexCommitOptions {
-                shared_permissions: options.shared_permissions,
-                sync: options.durability.index,
-            })
-            .map_err(|source| CreateWorktreeError::IndexStorage {
-                registration: Some(registration.clone()),
-                source,
-            })?;
+            .expect("selected or private index acquired");
+        let commit_options = crate::index::IndexCommitOptions {
+            shared_permissions: options.shared_permissions,
+            sync: options.durability.index,
+        };
+        let publication = if selected_missing == Some(true) {
+            edit.commit_new_with_options(commit_options)
+        } else {
+            edit.commit_with_options(commit_options)
+        };
+        publication.map_err(|source| CreateWorktreeError::IndexStorage {
+            registration: Some(registration.clone()),
+            source,
+        })?;
         create_dir(&destination, &registration)?;
         write_file(
             &destination.join(".git"),

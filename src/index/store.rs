@@ -159,6 +159,17 @@ pub enum StorageError {
         #[source]
         source: Error,
     },
+    /// The new index was published, but its owned lock could not be removed.
+    #[error("new index published at {path}, but cannot remove owned lock {lock}: {source}")]
+    PublishedCleanup {
+        /// Published index path.
+        path: PathBuf,
+        /// Owned lock requiring manual cleanup.
+        lock: PathBuf,
+        /// Original OS error.
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl Repository {
@@ -429,6 +440,14 @@ impl IndexEdit {
         &self.index
     }
 
+    pub(crate) fn original_missing(&self) -> bool {
+        self.original.is_none()
+            && self
+                .leaf
+                .as_ref()
+                .is_none_or(|leaf| leaf.metadata.is_none())
+    }
+
     /// Validates and replaces drafts under the guard's resource and extension policy.
     ///
     /// # Errors
@@ -686,6 +705,50 @@ impl IndexEdit {
         crate::trace::finish(&span, &result, |error| crate::trace::index(error, &span));
 
         result
+    }
+
+    /// Publishes a missing index without replacing a concurrently created path.
+    ///
+    /// The owned lock is linked to the destination atomically, then removed. A competing path
+    /// makes publication fail without changing its bytes. This operation requires an absent
+    /// snapshot; callers with existing indexes must use the ordinary guarded commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Changed`] if the acquired snapshot already had a destination,
+    /// an I/O error if conditional publication fails, or
+    /// [`StorageError::PublishedCleanup`] if the destination was installed but lock cleanup
+    /// failed. The last case requires inspection before retrying.
+    pub(crate) fn commit_new_with_options(
+        self,
+        options: IndexCommitOptions,
+    ) -> Result<(), StorageError> {
+        self.commit_new_with_cleanup(options, |path| fs::remove_file(path))
+    }
+
+    fn commit_new_with_cleanup(
+        mut self,
+        options: IndexCommitOptions,
+        remove_lock: impl FnOnce(&Path) -> io::Result<()>,
+    ) -> Result<(), StorageError> {
+        let operation = (|| {
+            if !self.original_missing() {
+                return Err(StorageError::Changed(self.destination.clone()));
+            }
+            self.publish_with_policy(options, crate::file_policy::sync_file, |from, to| {
+                fs::hard_link(from, to)
+            })?;
+            remove_lock(&self.lock_path).map_err(|source| StorageError::PublishedCleanup {
+                path: self.destination.clone(),
+                lock: self.lock_path.clone(),
+                source,
+            })
+        })();
+        match operation {
+            Ok(()) => Ok(()),
+            Err(operation) if self.published => Err(operation),
+            Err(operation) => Err(with_cleanup(operation, self.abort())),
+        }
     }
 
     /// Releases the owned lock without publishing and reports cleanup failure.

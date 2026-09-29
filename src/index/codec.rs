@@ -153,6 +153,21 @@ impl Index {
         }
     }
 
+    /// Builds Git's empty worktree index, including its cache of the empty tree.
+    pub(crate) fn empty_for_orphan(format: crate::ObjectFormat, version: Version) -> Self {
+        let mut index = Self::empty(format);
+        index.version = version;
+        let empty_tree = format.hash_object(crate::ObjectKind::Tree, b"");
+        let mut data = b"\0".to_vec();
+        data.extend_from_slice(b"0 0\n");
+        data.extend_from_slice(empty_tree.as_bytes());
+        index.extensions.push(Extension {
+            signature: *b"TREE",
+            data,
+        });
+        index
+    }
+
     /// Returns the format used by every entry and the file checksum.
     pub fn object_format(&self) -> crate::ObjectFormat {
         self.format
