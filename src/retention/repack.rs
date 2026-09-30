@@ -134,6 +134,7 @@ impl Repository {
             let object = objects
                 .read_controlled(id, policy.read, cancel)
                 .map_err(|source| RepackError::Read { id, source })?
+                .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
             let len = object.data().len() as u64;
             if len > limits.write.max_object_bytes {

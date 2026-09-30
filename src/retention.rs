@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
-use crate::{Commit, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index};
+use crate::{
+    Commit, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index,
+};
 
 mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
@@ -623,6 +625,7 @@ fn walk(
         let object = store
             .read_controlled(id, policy.read, cancel)
             .map_err(|e| e.to_string())?
+            .or_else(|| canonical_empty_tree(id))
             .ok_or_else(|| format!("missing reachable object {id}"))?;
         if expected.get(&id).is_some_and(|kind| *kind != object.kind()) {
             return Err(format!("wrong reachable kind {id}"));
@@ -685,6 +688,16 @@ fn walk(
         reachable.insert(id);
     }
     Ok(reachable)
+}
+
+fn canonical_empty_tree(id: ObjectId) -> Option<Object> {
+    // Git can name this fixed tree from a commit or index without storing the object.
+    let empty = Object {
+        kind: ObjectKind::Tree,
+        format: id.format(),
+        data: Vec::new(),
+    };
+    (id == empty.id()).then_some(empty)
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), String> {

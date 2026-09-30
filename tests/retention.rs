@@ -10,7 +10,7 @@ use girt::retention::{
     ExpireCause, MaintenanceIsolation, PruneCause, RepackError, RepackLimits, RetentionOutcome,
     RetentionPolicy,
 };
-use girt::{ObjectId, PackLimits, ReadLimits, Repository};
+use girt::{ObjectId, ObjectKind, PackLimits, ReadLimits, Repository};
 
 fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
     let mut command = Command::new("git");
@@ -788,6 +788,55 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
     assert_eq!(again.written.checksum, result.written.checksum);
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn unstored_canonical_empty_tree_is_retained_and_repacked(#[case] format: &str) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={format}"),
+            ".",
+        ],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let empty = repo.object_format().hash_object(ObjectKind::Tree, b"");
+    assert!(
+        repo.objects(PackLimits::default())
+            .unwrap()
+            .read(empty, ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    let content =
+        format!("tree {empty}\nauthor A <a@b> 0 +0000\ncommitter A <a@b> 0 +0000\n\nempty\n");
+    let commit = git(
+        root.path(),
+        &["hash-object", "-t", "commit", "-w", "--stdin"],
+        content.as_bytes(),
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &commit],
+        b"",
+    );
+    let policy = RetentionPolicy::default();
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.required.contains(&empty));
+    repo.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &empty.to_string()], b""),
+        "tree"
+    );
 }
 
 #[test]
