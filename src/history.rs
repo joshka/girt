@@ -312,7 +312,7 @@ pub enum HistoryError {
     #[error("object {0} is not a commit")]
     NotCommit(ObjectId),
     /// Storage verification or a per-read resource bound failed.
-    #[error("reading commit {id}: {source}")]
+    #[error("reading commit {id}")]
     Read {
         /// Object being read.
         id: ObjectId,
@@ -321,7 +321,7 @@ pub enum HistoryError {
         source: ObjectReadError,
     },
     /// Verified bytes do not have supported commit syntax.
-    #[error("parsing commit {id}: {source}")]
+    #[error("parsing commit {id}")]
     Parse {
         /// Object being parsed.
         id: ObjectId,

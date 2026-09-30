@@ -644,7 +644,7 @@ pub enum OpenError {
     #[error("no repository at {0}")]
     NotFound(PathBuf),
     /// Filesystem access failed; the path and original cause are retained.
-    #[error("cannot read {path}: {source}")]
+    #[error("cannot read {path}")]
     Io {
         /// Failed path.
         path: PathBuf,
@@ -661,7 +661,7 @@ pub enum OpenError {
         reason: String,
     },
     /// Configuration syntax is invalid or unsupported.
-    #[error("invalid configuration at {path}: {source}")]
+    #[error("invalid configuration at {path}")]
     Config {
         /// Configuration source path.
         path: PathBuf,

@@ -32,7 +32,7 @@ pub struct RetireReport {
 #[derive(Debug, thiserror::Error)]
 pub enum RetireCause {
     /// The caller could not exclude writers, old readers or alternate dependents.
-    #[error("maintenance isolation unavailable: {0}")]
+    #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// Directory durability is unavailable for this platform.
     #[error("pack retirement is unsupported on this platform")]
@@ -56,13 +56,13 @@ pub enum RetireCause {
     #[error("pack retirement cancelled")]
     Cancelled,
     /// An artifact or directory operation failed.
-    #[error("pack retirement I/O: {0}")]
+    #[error("pack retirement I/O")]
     Io(#[source] io::Error),
 }
 
 /// Failure with the known successful effects and any uncertain artifact.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("pack retirement failed")]
 pub struct RetireFailure {
     /// Failure class.
     #[source]

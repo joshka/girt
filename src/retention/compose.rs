@@ -22,7 +22,7 @@ pub struct MaintenanceReport {
 #[derive(Debug, thiserror::Error)]
 pub enum MaintenanceCause {
     /// The caller could not hold a repository-wide exclusion boundary.
-    #[error("maintenance isolation unavailable: {0}")]
+    #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// Directory durability for destructive publication is not established on this platform.
     #[error("composed maintenance is unsupported on this platform")]
@@ -43,7 +43,7 @@ pub enum MaintenanceCause {
 
 /// Failure with completed earlier phases and a partial current phase in its cause.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("maintenance failed")]
 pub struct MaintenanceFailure {
     /// The phase that stopped.
     #[source]

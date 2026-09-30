@@ -515,7 +515,7 @@ pub enum ObjectReadError {
     #[error("unsupported object storage: {0}")]
     Unsupported(&'static str),
     /// Filesystem access failed at this artifact or directory.
-    #[error("object storage at {path}: {source}")]
+    #[error("object storage at {path}")]
     Path {
         /// Artifact or directory being accessed.
         path: PathBuf,
@@ -524,7 +524,7 @@ pub enum ObjectReadError {
         source: io::Error,
     },
     /// Validation of an index/pack pair failed during snapshot opening.
-    #[error("object storage pair {index} / {pack}: {source}")]
+    #[error("object storage pair {index} / {pack}")]
     PackArtifacts {
         /// Index identifying the pair.
         index: PathBuf,
@@ -535,7 +535,7 @@ pub enum ObjectReadError {
         source: Box<ObjectReadError>,
     },
     /// The existing loose reader rejected the object; preserves its concrete cause.
-    #[error("loose object: {0}")]
+    #[error("loose object")]
     Loose(#[from] crate::Error),
     /// The index version is neither supported headerless v1 nor headered v2.
     #[error("unsupported pack index version {0}")]

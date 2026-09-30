@@ -145,7 +145,7 @@ pub enum ReferenceError {
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Filesystem failure, with its original cause and path.
-    #[error("reference I/O at {path}: {source}")]
+    #[error("reference I/O at {path}")]
     Io {
         /// Affected file or directory.
         path: PathBuf,
@@ -155,7 +155,7 @@ pub enum ReferenceError {
     },
     /// Packed deletion succeeded, but removing the loose file failed. Packed bytes are not
     /// restored.
-    #[error("packed reference removed, but loose deletion failed at {path}: {source}")]
+    #[error("packed reference removed, but loose deletion failed at {path}")]
     PackedDeleted {
         /// Loose reference that could not be removed.
         path: PathBuf,

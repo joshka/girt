@@ -19,10 +19,10 @@ pub struct ColocationEdit<'a> {
 #[derive(Debug, thiserror::Error)]
 pub enum ColocationError {
     /// Index publication failed; HEAD was not attempted. The storage error retains cleanup causes.
-    #[error("colocation index publication failed: {0}")]
+    #[error("colocation index publication failed")]
     Index(#[source] StorageError),
     /// HEAD validation or locking failed before publication. Neither index nor HEAD changed.
-    #[error("colocation HEAD preparation failed: {source}")]
+    #[error("colocation HEAD preparation failed")]
     Prepare {
         /// Conditional reference preparation failure.
         #[source]
@@ -31,10 +31,10 @@ pub enum ColocationError {
         cleanup: Option<Box<StorageError>>,
     },
     /// The index is published; HEAD publication failed. Do not blindly retry.
-    #[error("index published but HEAD transaction failed: {0}")]
+    #[error("index published but HEAD transaction failed")]
     Head(#[source] TransactionError),
     /// The reference store could not be opened; index publication was not attempted.
-    #[error("cannot open colocation references: {source}")]
+    #[error("cannot open colocation references")]
     References {
         /// Reference backend failure.
         #[source]

@@ -233,14 +233,14 @@ pub enum FetchError {
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-    #[error("{0}")]
-    Ssh(#[source] crate::transport::ssh::SshError),
+    #[error(transparent)]
+    Ssh(crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
-    #[error("{0}")]
-    Http(#[source] crate::transport::http::HttpError),
+    #[error(transparent)]
+    Http(crate::transport::http::HttpError),
     /// Stream or filesystem failure; protocol I/O propagates interruption without retrying.
-    #[error("fetch I/O: {0}")]
+    #[error("fetch I/O")]
     Io(#[source] std::io::Error),
     /// Invalid or unexpected protocol framing or state.
     #[error("invalid upload-pack response: {0}")]
@@ -264,16 +264,16 @@ pub enum FetchError {
     #[error("transport deadline expired")]
     Deadline,
     /// Pack framing, checksum, delta reconstruction, or storage validation failed.
-    #[error("received pack: {0}")]
+    #[error("received pack")]
     Pack(#[from] crate::ObjectReadError),
     /// Native local pack construction failed before destination publication.
-    #[error("local pack construction: {0}")]
+    #[error("local pack construction")]
     PackWrite(#[source] crate::PackWriteError),
     /// Local annotated-tag advertisement could not be verified.
-    #[error("local tag peeling: {0}")]
+    #[error("local tag peeling")]
     Peel(#[source] Box<crate::PeelError>),
     /// Reopening the destination failed before dependency checks or publication.
-    #[error("destination object snapshot: {0}")]
+    #[error("destination object snapshot")]
     Destination(#[source] crate::ObjectReadError),
     /// The remote and local repositories use different object formats.
     #[error("the remote repository uses {remote} object IDs but this repository uses {local}")]
@@ -284,10 +284,10 @@ pub enum FetchError {
         local: crate::ObjectFormat,
     },
     /// The local source repository could not be opened.
-    #[error("cannot open source repository: {0}")]
+    #[error("cannot open source repository")]
     Source(#[source] Box<crate::OpenError>),
     /// A local dependency failed during history preparation or installation rechecking.
-    #[error("local fetch dependency {id}: {source}")]
+    #[error("local fetch dependency {id}")]
     LocalRead {
         /// Local object being read.
         id: ObjectId,
@@ -296,7 +296,7 @@ pub enum FetchError {
         source: crate::ObjectReadError,
     },
     /// Received index encoding or thin-pack completion failed before installation.
-    #[error("received pack/index construction: {0}")]
+    #[error("received pack/index construction")]
     Index(#[from] crate::PackWriteError),
     /// A selected tip or reachable object is absent from both received and verified local objects.
     #[error("missing reachable object {0}")]
@@ -305,7 +305,7 @@ pub enum FetchError {
     #[error("reachable object {0} has the wrong kind")]
     Kind(ObjectId),
     /// Reachable commit syntax is unsupported or invalid.
-    #[error("reachable commit {id}: {source}")]
+    #[error("reachable commit {id}")]
     Commit {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -314,7 +314,7 @@ pub enum FetchError {
         source: crate::CommitError,
     },
     /// Reachable tree syntax or entries are invalid.
-    #[error("reachable tree {id}: {source}")]
+    #[error("reachable tree {id}")]
     Tree {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -323,7 +323,7 @@ pub enum FetchError {
         source: crate::TreeError,
     },
     /// Reachable tag syntax is unsupported or invalid.
-    #[error("reachable tag {id}: {source}")]
+    #[error("reachable tag {id}")]
     Tag {
         /// Object whose payload failed validation.
         id: ObjectId,

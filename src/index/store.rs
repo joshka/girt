@@ -118,7 +118,7 @@ pub struct IndexEdit {
 pub enum StorageError {
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
-    #[error("{operation}; additionally, lock cleanup failed: {cleanup}")]
+    #[error("operation failed and lock cleanup also failed: {cleanup}")]
     Cleanup {
         /// Primary failure.
         #[source]
@@ -128,7 +128,7 @@ pub enum StorageError {
     },
     /// Read, lock write, metadata update or rename failed. Original index bytes are unchanged
     /// by a failed publication; a concurrent writer's changes are never rolled back.
-    #[error("cannot {operation} {path}: {source}")]
+    #[error("cannot {operation} {path}")]
     Io {
         /// Operation that failed.
         operation: &'static str,
@@ -151,7 +151,7 @@ pub enum StorageError {
     #[error("index is not a regular file: {0}")]
     NotRegular(PathBuf),
     /// Format or limit validation failed before publication.
-    #[error("invalid index at {path}: {source}")]
+    #[error("invalid index at {path}")]
     Format {
         /// Index destination path.
         path: PathBuf,
@@ -160,7 +160,7 @@ pub enum StorageError {
         source: Error,
     },
     /// The new index was published, but its owned lock could not be removed.
-    #[error("new index published at {path}, but cannot remove owned lock {lock}: {source}")]
+    #[error("new index published at {path}, but cannot remove owned lock {lock}")]
     PublishedCleanup {
         /// Published index path.
         path: PathBuf,

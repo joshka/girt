@@ -32,7 +32,7 @@ pub struct PruneReport {
 #[derive(Debug, thiserror::Error)]
 pub enum PruneCause {
     /// Caller isolation could not be established.
-    #[error("maintenance isolation unavailable: {0}")]
+    #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// A root, object or storage scan was incomplete.
     #[error("retention scan incomplete: {0}")]
@@ -44,13 +44,13 @@ pub enum PruneCause {
     #[error("maintenance cancelled")]
     Cancelled,
     /// A filesystem operation failed; inspect the report for completed deletions.
-    #[error("maintenance I/O: {0}")]
+    #[error("maintenance I/O")]
     Io(#[source] io::Error),
 }
 
 /// A failed sweep retains the known successful deletion prefix and any uncertain unlink.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("loose object pruning failed")]
 pub struct PruneFailure {
     /// The reason the sweep stopped.
     #[source]

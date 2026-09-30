@@ -26,7 +26,7 @@ pub enum WorktreeAdminError {
     #[error("unsupported worktree metadata path: {0}")]
     Path(PathBuf),
     /// Filesystem failure; written paths, if any, need inspection before retry.
-    #[error("worktree administration failed at {path}: {source}")]
+    #[error("worktree administration failed at {path}")]
     Io {
         /// Failed filesystem path.
         path: PathBuf,

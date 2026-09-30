@@ -13,10 +13,10 @@ pub enum FetchShallowError {
     #[error("shallow metadata changed since fetch preparation")]
     Changed,
     /// Existing shallow metadata is invalid, inaccessible, or exceeds the byte budget.
-    #[error("shallow metadata: {0}")]
+    #[error("shallow metadata")]
     Read(#[from] crate::ShallowError),
     /// Lock creation, file sync, or replacement failed.
-    #[error("shallow metadata I/O: {0}")]
+    #[error("shallow metadata I/O")]
     Io(#[from] io::Error),
 }
 

@@ -68,7 +68,7 @@ enum Node {
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
     /// Filesystem access failed; no inspection operation writes anything.
-    #[error("cannot access operation metadata {path}: {source}")]
+    #[error("cannot access operation metadata {path}")]
     Io {
         /// Affected path.
         path: PathBuf,
@@ -89,7 +89,7 @@ pub enum OperationError {
 
 /// Cleanup stopped after these exact removals; retry requires inspecting current state again.
 #[derive(Debug, thiserror::Error)]
-#[error("operation cleanup failed after {} removals: {source}", removed.len())]
+#[error("operation cleanup failed after {} removals", removed.len())]
 pub struct OperationCleanupError {
     /// Successfully removed paths relative to this worktree's Git directory, in deletion order.
     /// Empty directories count as removals too. Earlier removals are never rolled back.

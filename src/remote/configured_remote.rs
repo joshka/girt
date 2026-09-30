@@ -59,7 +59,7 @@ pub enum ConfiguredRemoteError {
     #[error("unsupported remote tagOpt inheritance across configuration sections")]
     UnsupportedTagOptionInheritance,
     /// A URL in the supported syntax is malformed.
-    #[error("remote {key}, occurrence {occurrence}, rewritten={rewritten}: {source}")]
+    #[error("remote {key}, occurrence {occurrence}, rewritten={rewritten}")]
     Url {
         /// `url` or `pushurl`.
         key: &'static str,
@@ -72,7 +72,7 @@ pub enum ConfiguredRemoteError {
         source: ConfiguredUrlError,
     },
     /// A configured refspec is malformed.
-    #[error("remote {key}, occurrence {occurrence}: {source}")]
+    #[error("remote {key}, occurrence {occurrence}")]
     Refspec {
         /// `fetch` or `push`.
         key: &'static str,

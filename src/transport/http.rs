@@ -74,7 +74,7 @@ pub enum HttpError {
     #[error("invalid HTTP configuration: {0}")]
     Configuration(&'static str),
     /// Credential helper lifecycle failed. Its configured values and process output are redacted.
-    #[error("HTTP credential lifecycle failed: {0}")]
+    #[error("HTTP credential lifecycle failed")]
     Credential(#[from] crate::remote::CredentialError),
     /// Status other than 200, including refused redirects, authentication rejection and errors.
     #[error("HTTP status {0}")]

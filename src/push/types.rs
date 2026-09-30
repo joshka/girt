@@ -229,13 +229,13 @@ pub enum PushError {
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
     /// Native local destination could not be opened.
-    #[error("local destination: {0}")]
+    #[error("local destination")]
     Destination(#[source] Box<crate::OpenError>),
     /// Native object installation failed before reference publication.
-    #[error("local object installation: {0}")]
+    #[error("local object installation")]
     Install(#[source] Box<crate::fetch::FetchError>),
     /// Native reference publication failed after mutation may have begun.
-    #[error("local reference publication: {0}")]
+    #[error("local reference publication")]
     Reference(#[source] Box<crate::refs::ReferenceError>),
     /// Explicit reflog identity is invalid for a new record.
     #[error("invalid push reflog identity")]
@@ -245,14 +245,14 @@ pub enum PushFailure {
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-    #[error("{0}")]
-    Ssh(#[source] crate::transport::ssh::SshError),
+    #[error(transparent)]
+    Ssh(crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
-    #[error("{0}")]
-    Http(#[source] crate::transport::http::HttpError),
+    #[error(transparent)]
+    Http(crate::transport::http::HttpError),
     /// I/O failure; protocol interruption is returned without retrying.
-    #[error("push I/O: {0}")]
+    #[error("push I/O")]
     Io(#[source] std::io::Error),
     /// Malformed or unexpected receive-pack framing or state.
     #[error("invalid receive-pack response: {0}")]
@@ -288,7 +288,7 @@ pub enum PushFailure {
     #[error("wrong reachable object kind for {0}")]
     Kind(ObjectId),
     /// Bounded object storage read failed.
-    #[error("push object {id}: {source}")]
+    #[error("push object {id}")]
     Read {
         /// Reachable object being read.
         id: ObjectId,
@@ -297,10 +297,10 @@ pub enum PushFailure {
         source: crate::ObjectReadError,
     },
     /// Pack construction failed before sending commands.
-    #[error("push pack: {0}")]
+    #[error("push pack")]
     Pack(#[from] crate::PackWriteError),
     /// Reachable commit payload invalid or unsupported.
-    #[error("push commit {id}: {source}")]
+    #[error("push commit {id}")]
     Commit {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -309,7 +309,7 @@ pub enum PushFailure {
         source: crate::CommitError,
     },
     /// Reachable tree payload invalid or unsupported.
-    #[error("push tree {id}: {source}")]
+    #[error("push tree {id}")]
     Tree {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -318,7 +318,7 @@ pub enum PushFailure {
         source: crate::TreeError,
     },
     /// Reachable tag payload invalid or unsupported.
-    #[error("push tag {id}: {source}")]
+    #[error("push tag {id}")]
     Tag {
         /// Object whose payload failed validation.
         id: ObjectId,

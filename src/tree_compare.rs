@@ -344,7 +344,7 @@ pub enum TreeCompareError {
     /// Storage, identity verification or per-read decoding failed.
     ///
     /// The effective object-byte limit also includes the remaining cumulative tree-byte budget.
-    #[error("reading tree {id} at {path:?}: {source}")]
+    #[error("reading tree {id} at {path:?}")]
     Read {
         /// Tree being read.
         id: ObjectId,
@@ -355,7 +355,7 @@ pub enum TreeCompareError {
         source: Box<ObjectReadError>,
     },
     /// A visited tree has unsupported syntax, invalid names, duplicates or invalid Git ordering.
-    #[error("invalid tree {id} at {path:?}: {source}")]
+    #[error("invalid tree {id} at {path:?}")]
     Invalid {
         /// Tree being parsed or validated.
         id: ObjectId,

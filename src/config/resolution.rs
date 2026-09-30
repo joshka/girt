@@ -11,7 +11,7 @@ use super::{
 
 /// Contextual resolution failure. Source locations may contain private paths; tracing omits them.
 #[derive(Debug, thiserror::Error)]
-#[error("configuration resolution failed: {source}")]
+#[error("configuration resolution failed")]
 pub struct ResolveError {
     /// Location being loaded or interpreted.
     pub location: SourceLocation,
@@ -29,7 +29,7 @@ pub enum ResolveFailure {
     #[error("source I/O failure")]
     Io(#[source] std::io::Error),
     /// Invalid source bytes.
-    #[error("invalid source syntax: {0}")]
+    #[error("invalid source syntax")]
     Parse(#[source] ConfigError),
     /// A finite work budget was exhausted.
     #[error("configuration limit: {0}")]

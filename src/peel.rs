@@ -39,7 +39,7 @@ pub struct PeeledObject {
 
 /// A failed read-only resolution, with the exact link being examined.
 #[derive(Debug, thiserror::Error)]
-#[error("peeling {original} at {id}: {source}")]
+#[error("peeling {original} at {id}")]
 pub struct PeelError {
     /// Original requested tip.
     pub original: ObjectId,

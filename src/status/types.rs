@@ -146,7 +146,7 @@ pub enum Error {
     #[error("concurrent status change at {0:?}")]
     Changed(Vec<u8>),
     /// Contextual worktree I/O failure, including disappearance after enumeration.
-    #[error("status I/O at {path:?}: {source}")]
+    #[error("status I/O at {path:?}")]
     Io {
         /// Raw relative path (empty for root).
         path: Vec<u8>,
@@ -164,10 +164,10 @@ pub enum Error {
     #[error(transparent)]
     Tree(#[from] crate::TreeCompareError),
     /// Opening the pack snapshot failed.
-    #[error("cannot open status object reader: {0}")]
+    #[error("cannot open status object reader")]
     Objects(#[source] crate::ObjectReadError),
     /// Reading a HEAD commit or an index blob failed.
-    #[error("reading status object {id} at {path:?}: {source}")]
+    #[error("reading status object {id} at {path:?}")]
     Object {
         /// Object identity requested.
         id: ObjectId,
@@ -188,7 +188,7 @@ pub enum Error {
         reason: &'static str,
     },
     /// HEAD resolved to an invalid commit payload.
-    #[error("invalid HEAD commit: {0}")]
+    #[error("invalid HEAD commit")]
     Commit(#[from] crate::CommitError),
 }
 

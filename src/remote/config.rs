@@ -60,7 +60,7 @@ pub enum RemoteError {
         occurrence: usize,
     },
     /// A configured refspec is invalid or outside the supported subset.
-    #[error("remote key {key}, occurrence {occurrence}: {source}")]
+    #[error("remote key {key}, occurrence {occurrence}")]
     Refspec {
         /// `fetch` or `push`.
         key: &'static str,

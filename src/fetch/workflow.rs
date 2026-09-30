@@ -944,7 +944,7 @@ impl RetainedFetchReady {
 
 /// Retained workflow failure with completed effects and ownership of any acquired marker.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("fetch finish failed")]
 pub struct RetainedFetchFinishError {
     /// Completed effects. No successful installation does not exclude partial pack artifacts.
     pub report: Box<FetchReport>,
@@ -1047,7 +1047,7 @@ pub enum FetchPlanError {
     #[error(transparent)]
     Worktree(#[from] crate::OpenError),
     /// Worktree enumeration failed.
-    #[error("worktree enumeration: {0}")]
+    #[error("worktree enumeration")]
     Io(#[from] std::io::Error),
     /// HEAD or its symbolic branch chain escapes the protected branch namespace.
     #[error("unsupported HEAD chain at {0:?}")]
@@ -1067,7 +1067,7 @@ pub enum FetchWorkflowError {
 
 /// Installation/publication failure retaining completed effects.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("fetch finish failed")]
 pub struct FetchFinishError {
     /// Transfer and installation effects before failure; installed objects are never rolled back.
     pub report: Box<FetchReport>,
@@ -1081,26 +1081,26 @@ pub struct FetchFinishError {
 #[derive(Debug, thiserror::Error)]
 pub enum FetchFinishFailure {
     /// Installation failed; refs unchanged, possibly leaving an unindexed pack.
-    #[error("fetch installation: {0}")]
+    #[error("fetch installation")]
     Installation(#[source] FetchError),
     /// Shallow lock, snapshot comparison, or metadata publication failed.
-    #[error("fetch shallow publication: {0}")]
+    #[error("fetch shallow publication")]
     Shallow(#[from] super::FetchShallowError),
     /// Repository could not be reopened with freshly published shallow boundaries.
-    #[error("fetch repository reopen: {0}")]
+    #[error("fetch repository reopen")]
     Reopen(#[from] crate::OpenError),
     /// Cancellation or installed-object verification failed before the reference transaction.
-    #[error("before fetch publication: {0}")]
+    #[error("before fetch publication")]
     BeforePublication(#[source] FetchError),
     /// Worktree/HEAD safety recheck failed after installation; refs unchanged.
-    #[error("fetch publication safety: {0}")]
+    #[error("fetch publication safety")]
     Safety(#[from] FetchPlanError),
     /// Object-kind/ancestry validation or update authorization failed; installed objects remain,
     /// but no refs have changed.
-    #[error("fetch update validation: {0}")]
+    #[error("fetch update validation")]
     Update(#[from] super::FetchUpdateError),
     /// Exact transaction preparation or partial publication failure; objects remain installed.
-    #[error("fetch reference publication: {0}")]
+    #[error("fetch reference publication")]
     Publication(#[from] crate::refs::TransactionError),
 }
 

@@ -44,7 +44,7 @@ pub enum RepackError {
     #[error("required object missing: {0}")]
     Missing(ObjectId),
     /// A required object could not be read.
-    #[error("cannot read required object {id}: {source}")]
+    #[error("cannot read required object {id}")]
     Read {
         /// Object requested by the plan.
         id: ObjectId,

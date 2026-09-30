@@ -335,7 +335,7 @@ pub enum TagError {
     #[error("invalid or misplaced extra tag header")]
     InvalidHeader,
     /// Tagger identity or date parsing/validation failed; retains the shared metadata error.
-    #[error("invalid tagger metadata: {0}")]
+    #[error("invalid tagger metadata")]
     Tagger(#[source] CommitError),
 }
 

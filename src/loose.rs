@@ -359,7 +359,7 @@ pub enum Error {
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// A filesystem operation failed. Missing loose objects use [`std::io::ErrorKind::NotFound`].
-    #[error("loose object I/O: {0}")]
+    #[error("loose object I/O")]
     Io(#[from] std::io::Error),
     /// A loose object has a different type from the requested operation.
     #[error("object type does not match the requested operation")]
@@ -374,13 +374,13 @@ pub enum Error {
     #[error("object exceeds the size limit")]
     TooLarge,
     /// The verified tree payload cannot be parsed; preserves the underlying parsing failure.
-    #[error("invalid tree payload: {0}")]
+    #[error("invalid tree payload")]
     Tree(#[from] TreeError),
     /// The verified commit payload cannot be parsed; preserves the underlying cause.
-    #[error("invalid commit payload: {0}")]
+    #[error("invalid commit payload")]
     Commit(#[from] CommitError),
     /// The verified tag payload cannot be parsed; preserves the underlying cause.
-    #[error("invalid tag payload: {0}")]
+    #[error("invalid tag payload")]
     Tag(#[from] TagError),
     /// An existing valid object has the same identity but different content.
     #[error("existing object has different content")]

@@ -76,7 +76,7 @@ pub enum InitError {
     #[error("invalid initial branch name: {0}")]
     InvalidBranch(String),
     /// A filesystem operation failed. Newly created files may remain; see [`Repository::init`].
-    #[error("cannot initialize {path}: {source}")]
+    #[error("cannot initialize {path}")]
     Io {
         /// Path being accessed or created.
         path: PathBuf,

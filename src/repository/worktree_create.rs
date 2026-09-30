@@ -74,7 +74,7 @@ pub enum CreateWorktreeError {
     #[error(transparent)]
     Index(#[from] crate::index::Error),
     /// Selected index read, lock or publication failed. Partial registration is retained.
-    #[error("cannot initialize worktree index: {source}")]
+    #[error("cannot initialize worktree index")]
     IndexStorage {
         /// Reserved registration, if any.
         registration: Option<PathBuf>,
@@ -83,7 +83,7 @@ pub enum CreateWorktreeError {
         source: crate::index::StorageError,
     },
     /// Creation failed and the selected index lock could not be cleaned up safely.
-    #[error("{operation}; index lock cleanup also failed: {cleanup}")]
+    #[error("worktree creation failed and index lock cleanup also failed: {cleanup}")]
     Cleanup {
         /// Original creation failure.
         #[source]
@@ -95,7 +95,7 @@ pub enum CreateWorktreeError {
     #[error(transparent)]
     Reftable(#[from] crate::refs::reftable::Error),
     /// Filesystem failure; registration identifies retained partial state, if any.
-    #[error("cannot create {path}: {source}")]
+    #[error("cannot create {path}")]
     Io {
         /// Failed path.
         path: PathBuf,
@@ -106,7 +106,7 @@ pub enum CreateWorktreeError {
         source: io::Error,
     },
     /// A created reference file could not be synchronized. The file and registration remain.
-    #[error("created worktree file {path} could not be synchronized: {source}")]
+    #[error("created worktree file {path} could not be synchronized")]
     Synchronize {
         /// File whose contents were written but whose requested synchronization failed.
         path: PathBuf,
@@ -117,7 +117,7 @@ pub enum CreateWorktreeError {
         source: io::Error,
     },
     /// Written metadata could not be reopened.
-    #[error("created worktree metadata failed validation: {source}")]
+    #[error("created worktree metadata failed validation")]
     Open {
         /// Registration retained for inspection.
         registration: PathBuf,
