@@ -77,6 +77,7 @@ pub(crate) struct FilePack {
     legacy: bool,
     ranges: Vec<(usize, usize)>,
     offsets: Vec<usize>,
+    base_cache: super::reader::BaseCache,
 }
 
 impl FilePack {
@@ -150,6 +151,7 @@ impl FilePack {
             legacy,
             ranges,
             offsets: index.offsets,
+            base_cache: super::reader::BaseCache::new(),
         })
     }
 
@@ -241,6 +243,10 @@ impl Source for FilePack {
 
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
         self.find(id)
+    }
+
+    fn base_cache(&self) -> Option<&super::reader::BaseCache> {
+        Some(&self.base_cache)
     }
 
     fn at_offset(&self, offset: usize) -> Result<usize, Error> {
