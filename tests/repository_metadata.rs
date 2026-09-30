@@ -246,8 +246,8 @@ fn explicit_include_placement_preserves_metadata_and_layer_scopes(
         }
         format!(
             "[include]\npath={}\npath={}\n",
-            directory.join("a").display(),
-            directory.join("b").display()
+            config_path(&directory.join("a")),
+            config_path(&directory.join("b"))
         )
     };
     let mut inputs = ConfigInputs::default();
@@ -445,4 +445,9 @@ fn storage_open_retries_shallow_without_refreshing_bootstrap(
     let later = metadata.open_storage().unwrap();
     assert_eq!(later.shallow_roots().iter().len(), 0);
     assert!(opened.shallow_roots().contains(id));
+}
+
+/// Renders a path as a config value; backslashes (Windows separators) must be escaped.
+fn config_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "\\\\")
 }
