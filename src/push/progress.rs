@@ -7,8 +7,8 @@
 /// cooperative check; one storage read, hash or compression call cannot be interrupted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreparationProgress {
-    /// Unique reachable objects read and checked so far, including history later excluded from
-    /// the outgoing pack. The total remains unknown during traversal.
+    /// Objects read from storage so far, including known receiver history read to find the
+    /// exclusion boundary. The total remains unknown during traversal.
     Reading {
         /// Completed source objects; begins at zero and never decreases.
         objects: u64,

@@ -52,16 +52,18 @@ pub struct PushLimits {
     pub max_command_bytes: usize,
     /// Status bytes including framing (default 4 MiB).
     pub max_status_bytes: usize,
-    /// Reachable edge occurrences, including duplicates (default 4 million).
+    /// Edge occurrences from objects selected for sending, including duplicates (default 4
+    /// million). Reading known receiver history has a separate allowance of the same size.
     pub max_edges: usize,
     /// Cumulative commit visits and parent edge occurrences across fast-forward proofs
-    /// (default 4 million), including duplicates.
+    /// (default 4 million), including duplicates. Both the new and old tips' ancestry count.
     pub max_ancestry_steps: usize,
     /// Per-object storage decoding bounds. Payload reads are additionally capped by remaining
     /// aggregate pack input bytes so preparation cannot retain more than that payload budget.
     pub read: ReadLimits,
     /// Selected count/payload and generated artifact bounds. The index is generated into a sink;
-    /// its bound still applies. Full selected count/payload bounds apply before exclusion.
+    /// its bound still applies. Count/payload bounds cover every object read as a candidate for
+    /// sending, including commits later found in receiver history.
     pub pack: PackWriteLimits,
     /// Explicit pack compression policy; ordinary entries by default. Delta bases stay internal
     /// after receiver-history exclusion and need no receive-pack capability negotiation.

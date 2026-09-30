@@ -847,8 +847,9 @@ fn merge_push_excludes_receiver_second_parent_and_preserves_other_side() {
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
 
+/// A rewritten receiver tip still proves its ancestry, so only the divergent commit is sent.
 #[test]
-fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_possession() {
+fn divergent_receiver_tip_excludes_shared_history() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let left = commit_with_parents(&f, &[main(&f)], b"left\n");
@@ -866,22 +867,151 @@ fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_posses
         force: ForcePolicy::Allow,
         ..command("refs/heads/main", Some(right), left)
     };
-    let full = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
-        vec![update.clone()],
-        PushLimits::default(),
-        &AtomicBool::new(false),
-    )
-    .unwrap();
     let prepared = prepare(&f.repo, vec![update]);
-    assert_eq!(prepared.object_count(), full.object_count());
-    assert_eq!(prepared.pack_bytes(), full.pack_bytes());
+    assert_eq!(prepared.object_count(), 1);
     assert!(
         send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
             .unwrap()
             .all_succeeded()
     );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(left));
     git(dest.git_dir(), &["fsck", "--strict"], b"");
+}
+
+/// Imports commits described by space-separated `parents@seconds` entries, such as `@100 0@200
+/// 1,0@300`, with Git's fast-import. Parents are comma-separated indexes of earlier entries.
+/// Commit `i` is `refs/heads/c<i>` and adds file `f<i>`, so each has a new tree and blob.
+fn import(spec: &str) -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--quiet",
+            "--object-format=sha1",
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let mut stream = String::new();
+    let entries: Vec<_> = spec.split_whitespace().collect();
+    for (index, entry) in entries.iter().enumerate() {
+        let (parents, seconds) = entry.split_once('@').unwrap();
+        let message = format!("c{index}\n");
+        let content = format!("content {index}\n");
+        stream += &format!(
+            "commit refs/heads/c{index}\nmark :{}\ncommitter C <c@example.com> {seconds} +0000\n\
+             data {}\n{message}",
+            index + 1,
+            message.len()
+        );
+        for (position, parent) in parents.split(',').filter(|p| !p.is_empty()).enumerate() {
+            let parent: usize = parent.parse().unwrap();
+            let verb = ["from", "merge"][usize::from(position > 0)];
+            stream += &format!("{verb} :{}\n", parent + 1);
+        }
+        stream += &format!(
+            "M 100644 inline f{index}\ndata {}\n{content}\n",
+            content.len()
+        );
+    }
+    git(root.path(), &["fast-import", "--quiet"], stream.as_bytes());
+    let names: Vec<_> = (0..entries.len()).map(|i| format!("c{i}")).collect();
+    let mut args = vec!["rev-parse"];
+    args.extend(names.iter().map(String::as_str));
+    let ids = String::from_utf8(git(root.path(), &args, b""))
+        .unwrap()
+        .lines()
+        .map(|line| line.parse().unwrap())
+        .collect();
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo, ids)
+}
+
+/// A receiver holding only `known`'s history, pushed there by Git.
+fn receiver_with(source: &tempfile::TempDir, known: ObjectId) -> (tempfile::TempDir, Repository) {
+    let (root, dest) = destination(true);
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            dest.git_dir().to_str().unwrap(),
+            &format!("{known}:refs/heads/main"),
+        ],
+        b"",
+    );
+    (root, dest)
+}
+
+/// With skewed committer dates, a fast-forward over the receiver's only tip sends exactly the new
+/// commits, and Git accepts the result as complete.
+#[rstest]
+#[case::new_commit_older_than_parent("@100 0@200 1@300 2@50", 2, 3, 1)]
+#[case::known_parent_newer_than_child("@500 0@100 1@600 2@700 3@50 4@800", 3, 5, 2)]
+#[case::merge_with_new_side_older_than_base("@500 0@600 0@10 1,2@700", 1, 3, 2)]
+#[case::new_side_forks_deep_with_old_dates("@100 0@200 1@300 2@400 0@50 3,4@500", 3, 5, 2)]
+#[case::known_second_parent_skewed("@100 0@900 0@200 2,1@300", 1, 3, 2)]
+fn skewed_fast_forward_sends_complete_new_history(
+    #[case] spec: &str,
+    #[case] known: usize,
+    #[case] new: usize,
+    #[case] new_commits: u32,
+) {
+    let (source, repo, ids) = import(spec);
+    let (_root, dest) = receiver_with(&source, ids[known]);
+    let prepared = prepare(
+        &repo,
+        vec![command("refs/heads/main", Some(ids[known]), ids[new])],
+    );
+    assert_eq!(prepared.object_count(), 3 * new_commits);
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(ids[new]));
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+}
+
+/// Annotated tags of new and known commits send only the tags and new history.
+#[test]
+fn tags_over_known_history_send_only_new_objects() {
+    let (source, repo, ids) = import("@500 0@100 1@600 2@50");
+    let (_root, dest) = receiver_with(&source, ids[2]);
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "new\n", "new", "c3"],
+        b"",
+    );
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "old\n", "old", "c1"],
+        b"",
+    );
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "nested\n", "nested", "old"],
+        b"",
+    );
+    let commands = vec![
+        command("refs/heads/main", Some(ids[2]), ids[3]),
+        command("refs/tags/new", None, tip(&repo, "refs/tags/new").unwrap()),
+        command(
+            "refs/tags/nested",
+            None,
+            tip(&repo, "refs/tags/nested").unwrap(),
+        ),
+    ];
+    let prepared = prepare(&repo, commands);
+    assert_eq!(prepared.object_count(), 3 + 3);
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
 }
 
 #[test]

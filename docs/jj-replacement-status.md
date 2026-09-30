@@ -128,6 +128,12 @@ State values: not started, code written (compiles or nearly), tests pass, done (
     empty tree unstored, so `fsck` reports it missing. The test now stores it before `fsck`.
   - `malformed_backlink`: retention accepted a multi-line `gitdir` backlink. It now refuses to plan.
   All 5223 girt tests and 65 doctests pass; Clippy and docs.rs checks are clean.
+- 2026-09-30: Push preparation walks commits from the tips and receiver roots in committer-date
+  order and stops at known history, instead of reading everything reachable from the tips. On a
+  5,000-commit fast-import fixture (25,005 packed objects, 200 files in 20×10 directories), pushing
+  one commit over the old tip read 232 objects in about 4 ms (release build, macOS arm64) instead of
+  25,005 objects in about 1.0 s; at 20,000 commits it still read 232 objects. Fast-forward proofs
+  stay exact under skewed dates.
 
 ## Known limitations and follow-ups
 
@@ -139,9 +145,9 @@ State values: not started, code written (compiles or nearly), tests pass, done (
   example Homebrew's `/opt/homebrew/etc/gitconfig`).
 - The colocated index is rebuilt from jj's tree iteration rather than girt building it from the tree
   directly. Measure performance on large repositories.
-- Push preparation (`PreparedPush`) still walks the complete reachable history from the pushed tips
-  before excluding receiver roots. Correct, but slow on large repositories; needs a revision walk
-  that stops at uninteresting commits. (Fetch negotiation is fixed.)
+- Push preparation reads the full tree of each known commit adjacent to a sent commit to mark shared
+  content, as Git does. On repositories with very large trees this dominates an incremental push; a
+  path-aligned comparison against the sent trees would read less.
 - Connectivity checks trust any object present locally, where Git trusts only objects reachable from
   refs. jj keeps refs for every commit it writes, so this matters only for dangling partial history
   left by interrupted external operations.

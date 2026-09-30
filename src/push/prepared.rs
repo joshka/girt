@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::graph::Graph;
-use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits};
+use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits, graph};
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects, PackObject};
 
@@ -43,9 +42,10 @@ impl PreparedPush {
     ///
     /// Follows commit parents/trees, tree entries and typed tag targets; gitlinks name external
     /// submodule commits and are not followed. Branch tips must be commits. No reachable object
-    /// may be missing, except Git's canonical empty tree, even when it is expected to exist
-    /// remotely. An old branch tip outside the new history requires explicit force; it need not
-    /// be present locally when force is allowed.
+    /// may be missing, except Git's canonical empty tree. An old branch tip outside the new
+    /// history requires explicit force; it need not be present locally when force is allowed.
+    /// The fast-forward proof is exact whatever the commit dates; it walks from the new tip in
+    /// committer-date order and usually stops soon after reaching the old tip.
     /// Unchanged IDs are sent as conditional commands and remain subject to server policy.
     ///
     /// Cancellation is checked between graph steps, pack input checks and hashes, pack writes,
@@ -69,26 +69,38 @@ impl PreparedPush {
         Self::new_excluding(objects, commands, &[], limits, cancel)
     }
 
-    /// Prepares a non-thin pack excluding complete histories of explicit receiver roots.
+    /// Prepares a non-thin pack omitting objects the receiver has because it has the roots.
     ///
-    /// Each usable root must belong to the fully validated selected graph. Its complete reachable
-    /// closure (including trees and tags, excluding gitlinks) is omitted. Missing roots and roots
-    /// outside that graph are ignored: arbitrary local possession never proves remote possession.
-    /// This deliberately sends a complete pack for many disconnected/rewritten histories.
-    /// [`super::send`] requires every root used for exclusion to appear in the live advertisement
-    /// as a ref tip or `.have`, independently of command expectations. If a root has disappeared,
-    /// prepare a full transfer or retry using fresh knowledge. Coordinate with server pruning/GC;
-    /// advertisements cannot guarantee object retention against concurrent deletion.
+    /// Like `git rev-list --objects <tips> --not <roots>`, preparation walks commits from the tips
+    /// and the locally present roots together in committer-date order. Commits reachable from a
+    /// root are marked known, and the walk stops once every queued commit is known (plus a small
+    /// allowance for clock skew). The trees of known commits whose children are sent are then
+    /// marked known, and the sent commits' trees are walked, skipping known objects. Preparation
+    /// cost therefore follows the new history and the boundary trees rather than the whole
+    /// repository. Roots may be commits, trees, blobs or tags (peeled); gitlinks stay external.
     ///
-    /// Selection and force proofs use the same full-graph budgets as [`Self::new`]. Exclusion has
-    /// a separate `max_edges` allowance, visits at most the selected object count, and accepts at
-    /// most `max_refs` root occurrences. Preparation can therefore cost more despite a smaller
-    /// wire pack. Pack limits still bound the full selected payload/count before exclusion.
+    /// An object is omitted only when a mark from a root reaches it through parsed edges, so
+    /// omitted objects always lie in a root's closure; dates only order the walk. With skewed
+    /// dates, commits the receiver already has can occasionally be sent. A tagged tree or blob
+    /// is sent when no commit is sent, even if a root's tree contains it, as Git does. The
+    /// receiver's copy of a root's closure is trusted: known objects are not validated and may be
+    /// absent locally. Roots missing locally are ignored.
+    ///
+    /// [`super::send`] requires every root that omitted objects rely on to appear in the live
+    /// advertisement as a ref tip or `.have`, independently of command expectations; roots whose
+    /// closure omitted nothing are not required. If a root has disappeared, prepare a full
+    /// transfer or retry using fresh knowledge. Coordinate with server pruning/GC; advertisements
+    /// cannot guarantee object retention against concurrent deletion.
+    ///
+    /// Sent objects, including their edges, are charged to [`PushLimits::max_edges`] and the pack
+    /// count/payload bounds. Reading known history has a separate `max_edges` allowance, and at
+    /// most `max_refs` root occurrences are accepted.
     ///
     /// # Errors
     ///
     /// Returns [`Self::new`]'s errors or exhausted receiver-root/exclusion bounds. Missing objects
-    /// in the selected history fail even if expected remotely. No commands are transmitted.
+    /// outside every root's closure fail. A known object read locally with the wrong kind or an
+    /// invalid payload also fails. No commands are transmitted.
     pub fn new_excluding(
         objects: &Objects,
         commands: Vec<PushCommand>,
@@ -101,7 +113,7 @@ impl PreparedPush {
 
     /// Prepares a native local push in the source format.
     ///
-    /// This has the same complete-graph, force, exclusion and work bounds as
+    /// This has the same selection, force, exclusion and work bounds as
     /// [`Self::new_excluding`]. Git's canonical empty tree is materialized when it is named by a
     /// commit but absent from source storage. Other missing objects still fail. The result can be
     /// passed to [`super::send_local`].
@@ -191,11 +203,15 @@ impl PreparedPush {
                     progress: false,
                 });
             }
-            let mut graph = Graph::select(objects, &commands, limits, cancel, |objects| {
-                observe(PreparationProgress::Reading { objects });
-            })?;
-            let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
-            let inputs: Vec<_> = graph
+            let selection = graph::select(
+                objects,
+                &commands,
+                receiver_roots,
+                limits,
+                cancel,
+                |objects| observe(PreparationProgress::Reading { objects }),
+            )?;
+            let inputs: Vec<_> = selection
                 .objects
                 .iter()
                 .map(|(&id, object)| PackObject {
@@ -239,7 +255,7 @@ impl PreparedPush {
                 checksum: Some(written.checksum),
                 limits,
                 objects: written.objects,
-                receiver_roots,
+                receiver_roots: selection.receiver_roots,
                 has_options: false,
                 options: vec![],
                 progress: false,

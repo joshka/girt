@@ -1293,17 +1293,23 @@ the combined graph. Installation rechecks at most the retained local dependency 
 budget, with the same per-read bound. Knowledge preparation is outside the transport deadline;
 blocking local I/O, parsing and hashing retain the existing cooperative cancellation contract.
 
-Push adds `PreparedPush::new_excluding` with explicit receiver roots. It first validates the
-complete selected graph and proves force policy, then omits each usable root's entire closure. A
-usable root must itself be in that graph; missing or disconnected roots are ignored, producing a
-conservative full transfer where necessary. A rewritten receiver tip outside the selected graph
-cannot establish shared descendants in this implementation, even if that tip happens to exist
-locally. Tags and shared trees/blobs are supported; gitlinks remain external. Exclusion gets a
-separate `max_edges` allowance and at most `max_refs` root occurrences, and visits at most the
-selected object count.
+Push adds `PreparedPush::new_excluding` with explicit receiver roots. Like
+`git rev-list --objects <tips> --not <roots>`, it walks commits from the tips and the locally
+present roots together in committer-date order, marks the roots' ancestry known, and stops once
+every queued commit is known, after a five-commit allowance for clock skew. Trees of known commits
+adjacent to sent commits are marked known before the sent trees are walked. Omission never depends
+on dates: an object is omitted only when a mark propagated from a root through parsed edges reaches
+it. Skew can only cause redundant sending. A rewritten receiver tip outside the new history still
+proves the shared ancestry. As with `git rev-list --objects`, a tagged tree or blob is sent when no
+commit is sent even if a known commit's tree contains it. Roots missing locally are ignored. Tags
+and shared trees/blobs are supported; gitlinks remain external. Known history is trusted rather than
+validated and may be absent locally. Reading it gets a separate `max_edges` allowance, and at most
+`max_refs` root occurrences are accepted. Fast-forward proofs walk both tips' ancestry in date order
+and answer exactly regardless of dates: a path from the new tip to the old tip never passes through
+a strict ancestor of the old tip, so the proof prunes those and ends when no unpruned path remains.
 
-Every root actually used for exclusion must still appear in the live receive-pack advertisement as a
-tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can explicitly retry
+Every root that omitted objects rely on must still appear in the live receive-pack advertisement as
+a tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can explicitly retry
 with full preparation. Command expectations are independently checked before transmission and again
 by the server when committing refs. Races after advertisement retain server rejection or uncertain
 outcome semantics; complete and partial statuses are unchanged. Server-side concurrent object

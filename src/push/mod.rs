@@ -9,8 +9,10 @@
 //! known acknowledgements when the final outcome is uncertain; read destination refs before
 //! retrying.
 //!
-//! Preparation validates the complete reachable graph and buffers a non-thin pack before any
-//! commands can reach a server. Preparation leaves local refs and reflogs untouched.
+//! Preparation validates every object it sends and buffers a non-thin pack before any commands
+//! can reach a server. With receiver roots, it reads only the history they do not cover plus a
+//! boundary; see [`PreparedPush::new_excluding`]. Preparation leaves local refs and reflogs
+//! untouched.
 //!
 //! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
 //! deletion requires the advertised `delete-refs` capability, and supplied push options require

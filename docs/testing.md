@@ -548,9 +548,11 @@ Windows transport support remain outside this evidence.
 
 - [x] Explicit verified local history supports bounded upload-pack have/ACK negotiation, known-only
   no-ops and combined received/local connectivity; delta bases remain pack-internal.
-- [x] Explicit push receiver roots exclude only closures inside the fully validated selected graph,
-  with live advertisement confirmation and unchanged force/expected-ref policy. Unavailable or
-  disconnected roots preserve full transfer; changed advertised knowledge fails before commands.
+- [x] Explicit push receiver roots exclude their closures through a date-ordered walk that reads
+      only new history and the boundary, with live advertisement confirmation of relied-on roots and
+      exact force/expected-ref policy. Unavailable roots preserve full transfer; changed advertised
+      knowledge fails before commands. Skewed-date histories, merges with one known side and tags
+      are checked with `git fsck --strict` on a receiver holding only the root history.
 - [x] Unit coverage includes local count/byte/edge/root bounds, cancellation, missing/corrupt local
       objects, gitlinks, typed closure validation, ACK states/truncation/repetition and `.have`
       proof.
@@ -563,7 +565,7 @@ Windows transport support remain outside this evidence.
   cached-storage timing evidence are retained in the incremental benchmark section.
 
 The supported boundary remains SHA-1 protocol v0 with non-thin packs. A single have batch is not an
-optimal graph negotiation algorithm. Full graph validation and local dependency rechecks
+optimal graph negotiation algorithm. Fetch's full graph validation and local dependency rechecks
 intentionally retain traversal costs; default pack-snapshot limits apply when installation opens the
 destination. No GC retention lock or whole-call deadline is added. Runtime evidence for this
 increment is macOS arm64 with Git 2.55.0; earlier platform CI does not establish Linux runtime
