@@ -485,10 +485,43 @@ fn charges_reconstruction_against_cumulative_limit() {
     ));
 }
 
+/// A base cached while reconstructing a dependent is still checked when it's read itself.
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn validates_intermediate_identity(#[case] format: ObjectFormat) {
+fn cached_base_is_checked_when_requested(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"wrong");
+    let id = ObjectId::for_blob(format, b"ab");
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
+    ];
+    let (index, data) = fixture(format, &entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    let read = |id| {
+        pack.read(
+            pack.find(id).unwrap().unwrap(),
+            ReadLimits::default(),
+            &cancelled,
+        )
+    };
+    assert_eq!(read(id).unwrap().data(), b"ab");
+    assert!(matches!(read(base), Err(Error::Corrupt("object identity"))));
+    assert_eq!(read(id).unwrap().data(), b"ab");
+}
+
+/// Only the requested object's identity is checked, as with Git's reads: a mislabelled base
+/// fails when read itself, but doesn't hide a dependent whose reconstructed content is correct.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn checks_identity_of_requested_object(#[case] format: ObjectFormat) {
     let base = ObjectId::for_blob(format, b"wrong");
     let id = ObjectId::for_blob(format, b"ab");
     let entries = [
@@ -496,9 +529,15 @@ fn validates_intermediate_identity(#[case] format: ObjectFormat) {
         (id, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
     ];
     assert!(matches!(
-        open_read(format, &entries, id, ReadLimits::default()),
+        open_read(format, &entries, base, ReadLimits::default()),
         Err(Error::Corrupt("object identity"))
     ));
+    assert_eq!(
+        open_read(format, &entries, id, ReadLimits::default())
+            .unwrap()
+            .data(),
+        b"ab"
+    );
 }
 
 #[rstest]

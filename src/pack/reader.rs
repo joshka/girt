@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use flate2::{Decompress, FlushDecompress, Status};
 
@@ -71,6 +72,94 @@ pub(super) trait Source {
         expected: usize,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error>;
+    /// Decoded objects kept to avoid re-inflating shared delta bases, if this source has one.
+    fn base_cache(&self) -> Option<&BaseCache> {
+        None
+    }
+}
+
+/// Recently decoded pack entries, keyed by entry position, like Git's delta base cache.
+///
+/// Reading a deltified object reconstructs its whole chain, and neighbouring objects usually
+/// share bases, so caching them avoids inflating the same bases repeatedly. Entries record
+/// whether their identity was checked; an unchecked entry is checked before being returned as
+/// the requested object.
+pub(crate) struct BaseCache {
+    inner: Mutex<CacheInner>,
+}
+
+impl std::fmt::Debug for BaseCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseCache").finish_non_exhaustive()
+    }
+}
+
+#[derive(Default)]
+struct CacheInner {
+    entries: HashMap<usize, Cached>,
+    order: VecDeque<usize>,
+    bytes: usize,
+}
+
+#[derive(Clone)]
+struct Cached {
+    kind: ObjectKind,
+    data: Arc<Vec<u8>>,
+    verified: bool,
+}
+
+impl BaseCache {
+    /// Total decoded bytes retained, matching Git's default `core.deltaBaseCacheLimit`.
+    const LIMIT: usize = 96 * 1024 * 1024;
+
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Mutex::new(CacheInner::default()),
+        }
+    }
+
+    fn get(&self, position: usize) -> Option<Cached> {
+        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner.entries.get(&position).cloned()
+    }
+
+    fn insert(&self, position: usize, object: &Object, verified: bool) {
+        let size = object.data.len();
+        // One large object shouldn't evict every shared base.
+        if size > Self::LIMIT / 8 {
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(existing) = inner.entries.get_mut(&position) {
+            existing.verified |= verified;
+            return;
+        }
+        while inner.bytes + size > Self::LIMIT {
+            let Some(oldest) = inner.order.pop_front() else {
+                break;
+            };
+            if let Some(evicted) = inner.entries.remove(&oldest) {
+                inner.bytes -= evicted.data.len();
+            }
+        }
+        inner.bytes += size;
+        inner.order.push_back(position);
+        inner.entries.insert(
+            position,
+            Cached {
+                kind: object.kind,
+                data: Arc::new(object.data.clone()),
+                verified,
+            },
+        );
+    }
+
+    fn mark_verified(&self, position: usize) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = inner.entries.get_mut(&position) {
+            entry.verified = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -121,11 +210,27 @@ pub(super) fn decode(
     let mut input_remaining = limits.max_input_bytes;
     let mut pending = Vec::new();
     let mut seen = HashSet::new();
+    let cache = source.base_cache();
+    let requested = position;
     let mut object = loop {
         if !seen.insert(position) {
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
+        if let Some(hit) = cache.and_then(|cache| cache.get(position)) {
+            let object = Object {
+                kind: hit.kind,
+                data: hit.data.as_ref().clone(),
+                format,
+            };
+            if position == requested && !hit.verified {
+                verify_identity(&object, source.entry(position)?.id)?;
+                cache
+                    .expect("hit came from the cache")
+                    .mark_verified(position);
+            }
+            break object;
+        }
         let entry = source.entry(position)?;
         input_remaining = input_remaining
             .checked_sub(entry.end - entry.offset)
@@ -197,7 +302,15 @@ pub(super) fn decode(
                 _ => unreachable!("non-delta kinds validated above"),
             };
             let object = Object { kind, data, format };
-            verify_identity(&object, entry.id)?;
+            // Only the requested object's identity is checked: a corrupt base changes every
+            // object reconstructed from it, so the final check still catches it.
+            let verified = position == requested;
+            if verified {
+                verify_identity(&object, entry.id)?;
+            }
+            if let Some(cache) = cache {
+                cache.insert(position, &object, verified);
+            }
             break object;
         }
     };
@@ -209,7 +322,13 @@ pub(super) fn decode(
             limits.max_object_bytes,
             &mut remaining,
         )?;
-        verify_identity(&object, source.entry(position)?.id)?;
+        let verified = position == requested;
+        if verified {
+            verify_identity(&object, source.entry(position)?.id)?;
+        }
+        if let Some(cache) = cache {
+            cache.insert(position, &object, verified);
+        }
     }
     Ok(object)
 }
