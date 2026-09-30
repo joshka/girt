@@ -155,7 +155,11 @@ impl Repository {
             }
         }
         let backlink = git_dir.join("gitdir");
-        metadata_path(&backlink, &read(&backlink)?)?;
+        let target = metadata_path(&backlink, &read(&backlink)?)?;
+        // Git writes the backlink as one line; anything else is not a registration it made.
+        if target.as_os_str().as_encoded_bytes().contains(&b'\n') {
+            return Err(super::malformed(&backlink, "backlink spans several lines"));
+        }
         let repository = self.open_worktree(git_dir)?;
         if repository.git_dir != git_dir {
             return Err(super::malformed(

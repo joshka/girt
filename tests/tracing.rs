@@ -473,7 +473,7 @@ fn sha1_transfer_cannot_publish_into_sha256_repository() {
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         received.install(&repo, PackLimits::default(), &AtomicBool::new(false))
     });
-    assert!(matches!(result, Err(FetchError::Unsupported(_))));
+    assert!(matches!(result, Err(FetchError::FormatMismatch { .. })));
     assert_eq!(std::fs::read_dir(pack_dir).unwrap().count(), 0);
     assert_eq!(
         capture.named("fetch.install").fields["failure_class"],

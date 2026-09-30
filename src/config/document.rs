@@ -216,7 +216,8 @@ impl Document {
     ) -> Result<(), ConfigError> {
         validate_variable_name(name)?;
         let Some(last) = self.layout.sections.iter().rposition(|s| {
-            s.section.eq_ignore_ascii_case(section.as_bytes()) && s.subsection.as_deref() == subsection
+            s.section.eq_ignore_ascii_case(section.as_bytes())
+                && s.subsection.as_deref() == subsection
         }) else {
             return self.append_section(section, subsection, &[(name, value)]);
         };
@@ -410,7 +411,10 @@ fn whole_blank_line(bytes: &[u8], range: Range<usize>) -> Range<usize> {
         .iter()
         .position(|b| *b == b'\n')
         .map_or(bytes.len(), |i| range.end + i + 1);
-    let is_blank = |part: &[u8]| part.iter().all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'));
+    let is_blank = |part: &[u8]| {
+        part.iter()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+    };
     if is_blank(&bytes[line_start..range.start]) && is_blank(&bytes[range.end..line_end]) {
         line_start..line_end
     } else {

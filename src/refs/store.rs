@@ -108,6 +108,21 @@ pub enum Expected {
     AbsentOr(Target),
 }
 
+/// Formats a stored value as Git shows it: a hex ID, `ref: <name>`, or `nothing`.
+struct DisplayTarget<'a>(Option<&'a Target>);
+
+impl std::fmt::Display for DisplayTarget<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            None => f.write_str("nothing"),
+            Some(Target::Direct(id)) => write!(f, "{id}"),
+            Some(Target::Symbolic(name)) => {
+                write!(f, "ref: {}", String::from_utf8_lossy(name.as_bytes()))
+            }
+        }
+    }
+}
+
 /// The terminal name and optional object identity reached by symbolic resolution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Resolution {
@@ -166,7 +181,7 @@ pub enum ReferenceError {
     #[error("reference lock already exists: {0}")]
     Locked(PathBuf),
     /// The destination did not satisfy the caller's precondition.
-    #[error("reference expectation did not match; actual target: {actual:?}")]
+    #[error("reference value did not match the expected value (found {})", DisplayTarget(actual.as_ref()))]
     Mismatch {
         /// Actual stored value under the lock, or absence.
         actual: Option<Target>,

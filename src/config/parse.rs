@@ -364,7 +364,10 @@ impl Config {
     /// ```
     /// use girt::Config;
     /// let config = Config::parse(b"[core]\nexcludesFile = a\nexcludesFile = b\n")?;
-    /// assert_eq!(config.string("core", None, "excludesfile"), Some(b"b".as_slice()));
+    /// assert_eq!(
+    ///     config.string("core", None, "excludesfile"),
+    ///     Some(b"b".as_slice())
+    /// );
     /// # Ok::<(), girt::ConfigError>(())
     /// ```
     pub fn string(&self, section: &str, subsection: Option<&[u8]>, name: &str) -> Option<&[u8]> {

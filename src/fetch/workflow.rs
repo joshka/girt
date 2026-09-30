@@ -830,9 +830,40 @@ impl FetchReady {
             .references()
             .map_err(FetchPlanError::from)
             .map_err(FetchFinishFailure::Safety)?;
+        // Like `git fetch --prune`, prune before updating so a pruned name can become a
+        // namespace for new references (or the reverse).
+        let (prunes, updates): (Vec<_>, Vec<_>) =
+            edits.into_iter().partition(|edit| edit.target.is_none());
         report.references = refs
-            .transaction(&edits)
+            .transaction(&prunes)
             .map_err(FetchFinishFailure::Publication)?;
+        match refs.transaction(&updates) {
+            Ok(outcomes) => report.references.extend(outcomes),
+            Err(crate::refs::TransactionError::Prepare { source, .. })
+                if !report.references.is_empty() =>
+            {
+                return Err(Box::new(FetchFinishFailure::Publication(
+                    crate::refs::TransactionError::Publish {
+                        outcomes: std::mem::take(&mut report.references),
+                        source,
+                    },
+                )));
+            }
+            Err(crate::refs::TransactionError::Publish {
+                mut outcomes,
+                source,
+            }) => {
+                let mut all = std::mem::take(&mut report.references);
+                all.append(&mut outcomes);
+                return Err(Box::new(FetchFinishFailure::Publication(
+                    crate::refs::TransactionError::Publish {
+                        outcomes: all,
+                        source,
+                    },
+                )));
+            }
+            Err(error) => return Err(Box::new(FetchFinishFailure::Publication(error))),
+        }
         Ok(())
     }
 }

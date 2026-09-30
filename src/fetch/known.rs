@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, check_cancelled};
@@ -17,12 +19,122 @@ use crate::{Object, ObjectId, ObjectKind, Objects};
 #[derive(Debug, Default)]
 pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
+    /// Destination store whose objects are trusted to have complete history, as Git trusts
+    /// local objects. Consulted after `objects`.
+    pub(super) store: Option<Arc<Objects>>,
     pub(super) haves: Vec<ObjectId>,
     pub(super) shallow: Vec<ObjectId>,
     pub(super) only_when_all_wants_known: bool,
 }
 
+/// Objects the destination already has, for delta bases and connectivity.
+pub(crate) trait KnownObjects {
+    /// Returns a known object.
+    fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>>;
+
+    /// Whether a known object's history is trusted to be complete, so connectivity checks can
+    /// stop at it rather than walking its history.
+    fn trusted_complete(&self) -> bool {
+        false
+    }
+}
+
+impl KnownObjects for HashMap<ObjectId, Object> {
+    fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>> {
+        HashMap::get(self, &id).map(Cow::Borrowed)
+    }
+}
+
+impl KnownObjects for KnownHistory {
+    fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>> {
+        if let Some(object) = self.objects.get(&id) {
+            return Some(Cow::Borrowed(object));
+        }
+        let limits = crate::ReadLimits {
+            max_object_bytes: usize::MAX / 4,
+            max_delta_bytes: usize::MAX / 4,
+            max_decode_bytes: usize::MAX / 4,
+            max_input_bytes: usize::MAX / 4,
+            max_delta_depth: 10_000,
+        };
+        self.store
+            .as_ref()?
+            .read(id, limits)
+            .ok()
+            .flatten()
+            .map(Cow::Owned)
+    }
+
+    fn trusted_complete(&self) -> bool {
+        self.store.is_some()
+    }
+}
+
 impl KnownHistory {
+    /// Describes a destination store for negotiation without reading its complete history.
+    ///
+    /// Up to [`FetchLimits::max_haves`] commits reachable from `tips` (breadth-first, peeling
+    /// tags) are offered as haves. The store's shallow roots are declared. Like Git, objects
+    /// already in the store are trusted to have complete history: received objects may depend on
+    /// any of them, and connectivity checks stop there. Callers must keep those objects
+    /// available (e.g. exclude pruning) until the fetch publishes its references.
+    ///
+    /// # Errors
+    ///
+    /// Fails on cancellation or when a tip can't be read. Unreadable ancestors end the walk.
+    pub fn from_store(
+        store: Objects,
+        tips: &[ObjectId],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
+        let shallow: Vec<_> = store.shallow_roots().iter().collect();
+        let shallow_set: HashSet<_> = shallow.iter().copied().collect();
+        let mut haves = Vec::new();
+        let mut seen = HashSet::new();
+        let mut pending = VecDeque::new();
+        for &tip in tips {
+            check_cancelled(cancel)?;
+            let Ok(peeled) = store.peel(tip, crate::PeelLimits::default(), cancel) else {
+                continue;
+            };
+            if peeled.kind == ObjectKind::Commit && seen.insert(peeled.target) {
+                pending.push_back(peeled.target);
+            }
+        }
+        while let Some(id) = pending.pop_front() {
+            if haves.len() >= limits.max_haves {
+                break;
+            }
+            check_cancelled(cancel)?;
+            let Ok(Some(object)) = store.read(id, limits.known_read) else {
+                continue;
+            };
+            if object.kind() != ObjectKind::Commit {
+                continue;
+            }
+            haves.push(id);
+            if shallow_set.contains(&id) {
+                continue;
+            }
+            let Ok(commit) = crate::Commit::parse(store.object_format(), object.data()) else {
+                continue;
+            };
+            for &parent in commit.parents() {
+                if seen.insert(parent) {
+                    pending.push_back(parent);
+                }
+            }
+        }
+        Ok(Self {
+            objects: HashMap::new(),
+            store: Some(Arc::new(store)),
+            haves,
+            shallow,
+            only_when_all_wants_known: false,
+        })
+    }
+
     /// Uses this history only when it contains every selected advertised tip.
     ///
     /// A selection with any unknown tip instead requests a complete transfer. This avoids
@@ -46,6 +158,7 @@ impl KnownHistory {
     pub(super) fn shallow_only(&self) -> Self {
         Self {
             shallow: self.shallow.clone(),
+            store: self.store.clone(),
             ..Self::default()
         }
     }
@@ -334,5 +447,43 @@ mod tests {
             ),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn store_history_offers_commits_and_reads_objects_on_demand() {
+        let (_root, objects, commit, blob) = graph();
+        let known = KnownHistory::from_store(
+            objects,
+            &[commit],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(known.haves(), &[commit]);
+        assert_eq!(known.object_count(), 0);
+        assert!(known.trusted_complete());
+        assert_eq!(known.get(blob).unwrap().kind(), ObjectKind::Blob);
+    }
+
+    #[test]
+    fn connectivity_stops_at_trusted_store_objects() {
+        let (_root, objects, commit, _blob) = graph();
+        let known = KnownHistory::from_store(
+            objects,
+            &[commit],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let dependencies = super::super::connectivity::validate_with_boundaries(
+            &HashMap::new(),
+            &known,
+            &[commit],
+            &[],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(dependencies, [commit]);
     }
 }

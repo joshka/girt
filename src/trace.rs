@@ -131,6 +131,8 @@ pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
         Kind(_) => "wrong_kind",
         Commit { .. } | Tree { .. } | Tag { .. } => "corrupt",
         Existing(_) => "conflict",
+        Source(_) => "missing",
+        FormatMismatch { .. } => "unsupported",
     }
 }
 

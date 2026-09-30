@@ -47,6 +47,7 @@ mod http;
 pub use http::{HttpPushOutcome, send_http, send_http_checked, send_http_checked_with_progress};
 
 mod graph;
+mod hooks;
 mod local;
 mod local_native;
 mod prepared;

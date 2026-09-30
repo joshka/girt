@@ -141,12 +141,22 @@ fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
     );
     let repo = Repository::open(root.path()).unwrap();
     let empty_tree = repo.object_format().hash_object(ObjectKind::Tree, b"");
+    // Git stores no object for the canonical empty tree, but reads it in every repository.
+    let hex = empty_tree.to_string();
+    assert!(
+        !root
+            .path()
+            .join("objects")
+            .join(&hex[..2])
+            .join(&hex[2..])
+            .exists()
+    );
     assert!(
         repo.objects(PackLimits::default())
             .unwrap()
             .read(empty_tree, ReadLimits::default())
             .unwrap()
-            .is_none()
+            .is_some()
     );
     let content =
         format!("tree {empty_tree}\nauthor A <a@b> 0 +0000\ncommitter A <a@b> 0 +0000\n\nempty\n");
@@ -241,13 +251,25 @@ fn stale_expected_value_rejects_only_its_ref() {
         &dest,
         vec![
             command("refs/heads/other", None, old),
-            command("refs/heads/main", None, old),
+            command("refs/heads/main", None, next(&f)),
         ],
     );
     let report = result.unwrap();
     assert_eq!(report.refs[0].status, Some(Status::Ok));
     assert!(matches!(report.refs[1].status, Some(Status::Rejected(_))));
     assert_eq!(tip(&dest, "refs/heads/other"), Some(old));
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
+}
+/// Observed with `git push --force-with-lease=refs/heads/main:`: a ref that already has the pushed
+/// value is reported up to date, even though the lease expected it to be absent.
+#[test]
+fn unchanged_ref_is_up_to_date_despite_stale_expected_value() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    let old = main(&f);
+    push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
+    let report = push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
+    assert!(report.all_succeeded());
     assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
 }
 #[test]
@@ -391,7 +413,7 @@ fn hook(repo: &Repository, name: &str, script: &str) {
 }
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_update_hook_before_publication() {
+fn native_push_update_hook_rejects_only_its_ref() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(
@@ -407,19 +429,19 @@ fn native_push_refuses_update_hook_before_publication() {
             command("refs/heads/reject", None, main(&f)),
         ],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
-    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    let report = result.unwrap();
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert_eq!(
+        report.refs[1].status,
+        Some(Status::Rejected(b"hook declined".to_vec()))
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
     assert_eq!(tip(&dest, "refs/heads/reject"), None);
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_pre_receive_hook() {
+fn native_push_pre_receive_hook_rejects_every_ref() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(&dest, "pre-receive", "#!/bin/sh\ncat >/dev/null\nexit 1\n");
@@ -428,12 +450,10 @@ fn native_push_refuses_pre_receive_hook() {
         &dest,
         vec![command("refs/heads/main", None, main(&f))],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
+    assert_eq!(
+        result.unwrap().refs[0].status,
+        Some(Status::Rejected(b"pre-receive hook declined".to_vec()))
+    );
     assert_eq!(tip(&dest, "refs/heads/main"), None);
 }
 #[test]
@@ -554,36 +574,25 @@ fn empty_push_to_empty_repository_succeeds_without_pack() {
 
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_racing_update_hook() {
+fn native_push_update_hook_racing_the_ref_fails_its_lease() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let root = main(&f);
     let newer = next(&f);
-    push(
-        &f.repo,
-        &dest,
-        vec![command("refs/heads/main", None, newer)],
-    )
-    .unwrap();
-    // The update hook runs after discovery and changes the ref before receive-pack's conditional
-    // ref transaction. Both IDs already exist in the destination; no quarantine write is needed.
-    hook(
-        &dest,
-        "update",
-        &format!("#!/bin/sh\ngit update-ref \"$1\" {root}\n"),
-    );
+    push(&f.repo, &dest, vec![command("refs/heads/main", None, root)]).unwrap();
+    // The update hook runs after the lease was checked and deletes the ref before the conditional
+    // reference transaction publishes the push.
+    hook(&dest, "update", "#!/bin/sh\ngit update-ref -d \"$1\"\n");
     let result = push(
         &f.repo,
         &dest,
-        vec![command("refs/heads/main", Some(newer), newer)],
+        vec![command("refs/heads/main", Some(root), newer)],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
+    assert!(!matches!(
+        result.as_ref().map(|report| &report.refs[0].status),
+        Ok(Some(Status::Ok))
     ));
-    assert_eq!(tip(&dest, "refs/heads/main"), Some(newer));
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
 }
 
 #[test]
@@ -621,27 +630,23 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
 #[rstest]
 #[case::pre("pre-receive")]
 #[case::post("post-receive")]
-fn native_push_refuses_stalled_hooks_without_running_them(#[case] hook_name: &str) {
-    use girt::push::send_local_with_control;
-    use girt::transport::TransportControl;
+fn native_push_passes_updates_to_receive_hooks(#[case] hook_name: &str) {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
-    hook(
+    hook(&dest, hook_name, "#!/bin/sh\ncat >hook-input\n");
+    let report = push(
+        &f.repo,
         &dest,
-        hook_name,
-        "#!/bin/sh\nprintf ready >hook-ready\nsleep 5\n",
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert!(report.all_succeeded());
+    let null = ObjectId::null(girt::ObjectFormat::Sha1);
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-input")).unwrap(),
+        format!("{null} {} refs/heads/main\n", main(&f)).into_bytes()
     );
-    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
-    let cancel = AtomicBool::new(false);
-    let result = send_local_with_control(dest.git_dir(), &prepared, TransportControl::new(&cancel));
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
-    assert!(!dest.git_dir().join("hook-ready").exists());
-    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

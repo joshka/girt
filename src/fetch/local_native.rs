@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
+use super::known::KnownObjects as _;
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
     NativeContents, ReceivedFetch,
@@ -174,7 +175,7 @@ pub(super) fn receive_depth(
             pending.push_back((target, Some(kind)));
             Ok(())
         })?;
-        if limits.max_haves > 0 && known.objects.get(&id).is_some_and(|known| known == &object) {
+        if limits.max_haves > 0 && known.get(id).is_some_and(|known| *known == object) {
             dependencies.push(id);
         } else {
             selected.push((id, object));

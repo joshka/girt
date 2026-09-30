@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
 use super::import::Imported;
+use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::{ObjectId, Repository};
@@ -82,7 +83,7 @@ impl ReceivedFetch {
     ) -> Result<Self, FetchError> {
         let dependencies = connectivity::validate_with_boundaries(
             &Default::default(),
-            &known.objects,
+            known,
             &wants,
             &known.shallow,
             limits,
@@ -110,18 +111,21 @@ impl ReceivedFetch {
         let super::FetchOptions { limits, depth } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
-        let mut imported =
-            Imported::read_observed(format, &pack, &known.objects, limits, observer)?;
+        let mut imported = Imported::read_observed(format, &pack, known, limits, observer)?;
         let mut dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
-            &known.objects,
+            known,
             &wants,
             &shallow,
             limits,
             cancel,
         )?;
         let mut objects = imported.objects.len();
-        if depth.is_some() && !dependencies.is_empty() && !imported.objects.is_empty() {
+        if depth.is_some()
+            && !dependencies.is_empty()
+            && !imported.objects.is_empty()
+            && !known.trusted_complete()
+        {
             objects += dependencies.len();
             materialize_dependencies(&mut imported, known, &dependencies, limits, cancel)?;
             dependencies.clear();
@@ -280,7 +284,10 @@ impl ReceivedFetch {
     ) -> Result<ObjectId, FetchError> {
         check_cancelled(cancel)?;
         if repository.object_format() != self.format {
-            return Err(FetchError::Unsupported("destination object format differs"));
+            return Err(FetchError::FormatMismatch {
+                remote: self.format,
+                local: repository.object_format(),
+            });
         }
         if !self.dependencies.is_empty() {
             return Err(FetchError::Unsupported(
@@ -330,7 +337,10 @@ impl ReceivedFetch {
 
         let operation = || {
             if repository.object_format() != self.format {
-                return Err(FetchError::Unsupported("destination object format differs"));
+                return Err(FetchError::FormatMismatch {
+                    remote: self.format,
+                    local: repository.object_format(),
+                });
             }
             check_cancelled(cancel)?;
             if !allow_shallow && !self.shallow.is_empty() {
@@ -419,13 +429,13 @@ fn materialize_dependencies(
             data: object.data(),
         })
         .collect();
-    inputs.extend(dependencies.iter().map(|&id| {
-        let object = &known.objects[&id];
-        crate::PackObject {
+    inputs.extend(dependencies.iter().filter_map(|&id| {
+        let object = known.objects.get(&id)?;
+        Some(crate::PackObject {
             id,
             kind: object.kind(),
             data: object.data(),
-        }
+        })
     }));
     inputs.sort_unstable_by_key(|object| object.id);
     let mut complete_pack = Vec::new();

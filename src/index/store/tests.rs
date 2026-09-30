@@ -353,11 +353,11 @@ fn directory_is_not_a_missing_index(#[case] format: crate::ObjectFormat) {
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
-fn publication_preserves_stat_words_and_invalidates_timestamp_trust(
+fn publication_preserves_old_stat_words_and_smudges_racy_entries(
     #[case] format: crate::ObjectFormat,
 ) {
     let (_root, repo) = repository(format);
-    let stat = Stat {
+    let old = Stat {
         mtime: Timestamp {
             seconds: 42,
             nanoseconds: 123,
@@ -365,30 +365,36 @@ fn publication_preserves_stat_words_and_invalidates_timestamp_trust(
         size: 17,
         ..Stat::default()
     };
-    let mut entry = Entry::new(
-        b"a".to_vec(),
-        Mode::Regular,
-        ObjectId::for_blob(repo.object_format(), b"a"),
-    );
-    entry.stat = stat;
+    let future = Stat {
+        mtime: Timestamp {
+            seconds: u32::MAX,
+            nanoseconds: 0,
+        },
+        size: 5,
+        ..Stat::default()
+    };
+    let entry = |path: &[u8], stat| {
+        let mut entry = Entry::new(
+            path.to_vec(),
+            Mode::Regular,
+            ObjectId::for_blob(repo.object_format(), path),
+        );
+        entry.stat = stat;
+        entry
+    };
+    let before = std::time::SystemTime::now() - std::time::Duration::from_secs(2);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
-    edit.replace_entries(vec![entry]).unwrap();
+    edit.replace_entries(vec![entry(b"a", old), entry(b"b", future)])
+        .unwrap();
     edit.commit().unwrap();
-    assert_eq!(
-        repo.read_index(Limits::default())
-            .unwrap()
-            .unwrap()
-            .entries()[0]
-            .stat,
-        stat
-    );
-    assert_eq!(
-        fs::metadata(repo.git_dir().join("index"))
-            .unwrap()
-            .modified()
-            .unwrap(),
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)
-    );
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries()[0].stat, old);
+    assert_eq!(index.entries()[1].stat, Stat { size: 0, ..future });
+    let modified = fs::metadata(repo.git_dir().join("index"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(modified >= before);
 }
 
 #[cfg(unix)]

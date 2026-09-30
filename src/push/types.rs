@@ -211,11 +211,11 @@ impl PushReport {
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
     /// No update commands were attempted; this operation did not mutate destination refs.
-    #[error("push not sent: {0}")]
+    #[error("push not sent")]
     NotSent(#[source] PushFailure),
     /// Command transmission began. Some or all updates may have happened; do not blindly retry.
     /// Retained acknowledgements are evidence, while missing results require remote inspection.
-    #[error("push outcome uncertain: {cause}")]
+    #[error("push outcome uncertain")]
     Uncertain {
         /// Transport, protocol, cancellation, resource or process failure.
         #[source]

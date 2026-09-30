@@ -399,6 +399,15 @@ impl Objects {
                 }
             }
             check_cancelled(cancelled)?;
+            // Git treats the canonical empty tree as present in every repository, even when it
+            // is not stored.
+            if id == self.format.hash_object(ObjectKind::Tree, b"") {
+                return Ok(Some(Object {
+                    kind: ObjectKind::Tree,
+                    format: self.format,
+                    data: Vec::new(),
+                }));
+            }
             Ok(None)
         };
         #[cfg(feature = "tracing")]

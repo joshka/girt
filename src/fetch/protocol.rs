@@ -4,6 +4,7 @@ use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 
+use super::known::KnownObjects as _;
 use super::{
     FetchError as Error, FetchLimits, FetchOptions, KnownHistory, ReceivedFetch, check_cancelled,
 };
@@ -262,7 +263,7 @@ pub(super) fn request(
     }
     let wire_wants: Vec<_> = wants
         .iter()
-        .filter(|id| depth.is_some() || !known.objects.contains_key(id))
+        .filter(|id| depth.is_some() || known.get(**id).is_none())
         .copied()
         .collect();
     if wire_wants.is_empty() {

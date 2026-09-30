@@ -458,6 +458,22 @@ impl Index {
         Ok(())
     }
 
+    /// Zeroes the cached size of entries modified at or after `threshold`, as Git does for
+    /// racily clean entries (see Git's racy-git notes), so readers recheck their contents.
+    pub(super) fn smudge_racy_entries(&mut self, threshold: crate::index::Timestamp) {
+        let key = |time: crate::index::Timestamp| (time.seconds, time.nanoseconds);
+        let mut changed = false;
+        for entry in &mut self.entries {
+            if entry.stat.size != 0 && key(entry.stat.mtime) >= key(threshold) {
+                entry.stat.size = 0;
+                changed = true;
+            }
+        }
+        if changed {
+            self.original = None;
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn discard_tree_cache(&mut self) {
         self.original = None;

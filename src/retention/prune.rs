@@ -109,7 +109,27 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<PruneReport, PruneFailure> {
-        self.prune_unreachable_loose_at(policy, cancel, || {}, || {}, |path| fs::remove_file(path))
+        let report = self.prune_unreachable_loose_at(
+            policy,
+            cancel,
+            || {},
+            || {},
+            |path| fs::remove_file(path),
+        )?;
+        if !report.deleted.is_empty() {
+            // A commit-graph can name pruned commits; Git rebuilds it when needed, as `git gc`
+            // does.
+            let info = self.object_dir().join("info");
+            let remove = |result: io::Result<()>| match result {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    Err(failure(PruneCause::Io(error), report.clone()))
+                }
+                _ => Ok(()),
+            };
+            remove(fs::remove_file(info.join("commit-graph")))?;
+            remove(fs::remove_dir_all(info.join("commit-graphs")))?;
+        }
+        Ok(report)
     }
 
     // Checkpoints keep generation changes and post-deletion cancellation deterministic in tests.

@@ -142,8 +142,8 @@ pub(super) fn receive_local_with_known_depth_and_progress(
 
     let operation = || {
         control.check()?;
-        let source = crate::Repository::open(source)
-            .map_err(|_| FetchError::Protocol("local repository"))?;
+        let source =
+            crate::Repository::open(source).map_err(|error| FetchError::Source(Box::new(error)))?;
         super::local_native::receive_depth(
             &source, select, known, depth, limits, control, progress, observe,
         )

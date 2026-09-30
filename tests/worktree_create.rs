@@ -27,7 +27,8 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
         .unwrap();
     assert!(
         output.status.success(),
-        "{}",
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
@@ -96,6 +97,12 @@ fn creates_git_usable_orphan(
         repo.create_orphan_worktree(root.path().join("later"), &branch, 2),
         Err(CreateWorktreeError::ExistingBranch)
     ));
+    // The first commit on an empty index names the canonical empty tree without storing it; Git
+    // 2.55's own `worktree add --orphan` behaves the same, and `fsck` reports the tree missing.
+    git(
+        &destination,
+        &["hash-object", "-w", "-t", "tree", "/dev/null"],
+    );
     git(&destination, &["fsck", "--no-reflogs"]);
     assert_eq!(git(&main, &["symbolic-ref", "HEAD"]), b"refs/heads/main\n");
     git(&main, &["worktree", "list", "--porcelain"]);

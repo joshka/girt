@@ -10,12 +10,17 @@
 //! usual behavior.
 //!
 //! ```no_run
-//! use girt::transfer::{Environment, FetchOptions, NoCallbacks};
 //! use girt::Repository;
+//! use girt::transfer::{Environment, FetchOptions, NoCallbacks};
 //!
 //! let repo = Repository::open("project")?;
 //! let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
-//! let outcome = repo.fetch("origin", &options, &Environment::from_process(), &mut NoCallbacks)?;
+//! let outcome = repo.fetch(
+//!     "origin",
+//!     &options,
+//!     &Environment::from_process(),
+//!     &mut NoCallbacks,
+//! )?;
 //! println!("{} references updated", outcome.updated.len());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -28,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use crate::fetch::{
-    FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits,
-    FetchWorkflowError, KnownHistory, RemoteHead,
+    FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits, FetchWorkflowError,
+    KnownHistory, RemoteHead,
 };
 use crate::push::{PreparedPush, PushCommand, PushLimits, PushReport};
 use crate::refs::{RefName, Reflog};
@@ -44,6 +49,7 @@ use crate::{ObjectId, Repository};
 #[derive(Clone, Default)]
 pub struct Environment {
     vars: BTreeMap<OsString, OsString>,
+    current_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -56,9 +62,18 @@ impl std::fmt::Debug for Environment {
 }
 
 impl Environment {
-    /// Captures the current process environment.
+    /// Captures the current process environment and working directory.
     pub fn from_process() -> Self {
-        std::env::vars_os().collect()
+        let mut environment: Self = std::env::vars_os().collect();
+        environment.current_dir = std::env::current_dir().ok();
+        environment
+    }
+
+    /// Sets the directory that relative local remote paths are resolved against, as Git resolves
+    /// them against its working directory.
+    pub fn with_current_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.current_dir = Some(directory.into());
+        self
     }
 
     /// Returns a variable's value.
@@ -79,7 +94,8 @@ impl Environment {
     }
 
     fn bytes(&self, name: &str) -> Option<Vec<u8>> {
-        self.get(name).map(|value| value.as_encoded_bytes().to_vec())
+        self.get(name)
+            .map(|value| value.as_encoded_bytes().to_vec())
     }
 
     fn string(&self, name: &str) -> Option<String> {
@@ -94,6 +110,7 @@ impl<K: Into<OsString>, V: Into<OsString>> FromIterator<(K, V)> for Environment 
                 .into_iter()
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect(),
+            current_dir: None,
         }
     }
 }
@@ -359,7 +376,9 @@ fn url_parts(bytes: &[u8]) -> Option<UrlParts> {
     let text = std::str::from_utf8(bytes).ok()?;
     let (scheme, rest) = text.split_once("://")?;
     let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     Some(UrlParts {
         scheme: scheme.to_ascii_lowercase(),
         authority: authority.to_owned(),
@@ -490,7 +509,13 @@ fn http_environment(
         ssl_no_verify: environment
             .bytes("GIT_SSL_NO_VERIFY")
             .map(|value| crate::config::boolean(Some(&value)).unwrap_or(true)),
-        proxy: proxy_var(&["https_proxy", "HTTPS_PROXY", "http_proxy", "all_proxy", "ALL_PROXY"]),
+        proxy: proxy_var(&[
+            "https_proxy",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "all_proxy",
+            "ALL_PROXY",
+        ]),
         no_proxy: proxy_var(&["no_proxy", "NO_PROXY"]),
         proxy_credentials: None,
         allow_insecure_tls: true,
@@ -507,7 +532,11 @@ fn ssh_endpoint(
     // Git runs a configured command through the shell with the SSH arguments appended.
     let configured = environment
         .bytes("GIT_SSH_COMMAND")
-        .or_else(|| config.string("core", None, "sshcommand").map(<[u8]>::to_vec))
+        .or_else(|| {
+            config
+                .string("core", None, "sshcommand")
+                .map(<[u8]>::to_vec)
+        })
         .map(|command| (command.clone(), command))
         .or_else(|| {
             environment.bytes("GIT_SSH").map(|program| {
@@ -553,8 +582,9 @@ impl Repository {
         let remote = Remote::find(config, remote_name.as_bytes())
             .map_err(|error| TransferError::Configuration(error.to_string()))?
             .ok_or_else(|| TransferError::NoSuchRemote(remote_name.to_owned()))?;
-        let protocol_environment = ProtocolEnvironment::from_environment(|name| environment.bytes(name))
-            .map_err(|error| TransferError::Configuration(error.to_string()))?;
+        let protocol_environment =
+            ProtocolEnvironment::from_environment(|name| environment.bytes(name))
+                .map_err(|error| TransferError::Configuration(error.to_string()))?;
         let destination = match direction {
             Direction::Fetch => remote.fetch_destination(config, &protocol_environment),
             Direction::Push => remote
@@ -577,8 +607,13 @@ impl Repository {
                 let path = destination
                     .local_path()
                     .map_err(|error| TransferError::Configuration(error.to_string()))?;
-                // Relative paths are relative to the working tree (or Git directory).
-                let base = self.worktree().unwrap_or(self.git_dir());
+                // Like Git, relative paths are relative to the working directory, falling back to
+                // the working tree (or Git directory).
+                let base = environment
+                    .current_dir
+                    .as_deref()
+                    .or(self.worktree())
+                    .unwrap_or(self.git_dir());
                 Endpoint::Local(base.join(path))
             }
             #[cfg(feature = "http")]
@@ -619,8 +654,11 @@ impl Repository {
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
-                let result = runtime
-                    .block_on(crate::fetch::discover_http(&http.remote(None)?, limits, control));
+                let result = runtime.block_on(crate::fetch::discover_http(
+                    &http.remote(None)?,
+                    limits,
+                    control,
+                ));
                 if is_unauthorized_fetch(&result) {
                     let session = http.credentials(callbacks)?;
                     runtime.block_on(crate::fetch::discover_http(
@@ -647,7 +685,8 @@ impl Repository {
     ///
     /// Destinations must be remote-tracking references (`refs/remotes/`), tags, or a namespace
     /// allowed with [`FetchOptions::tag_namespace`]. Exact sources the remote doesn't have are
-    /// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD` is written and tags are not followed implicitly.
+    /// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
+    /// is written and tags are not followed implicitly.
     ///
     /// # Errors
     ///
@@ -678,9 +717,8 @@ impl Repository {
             .collect();
         let cancel = AtomicBool::new(false);
         let limits = fetch_limits();
-        let known = KnownHistory::new(&objects, &tips, limits, &cancel).map_err(|error| {
-            TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error)))
-        })?;
+        let known = KnownHistory::from_store(objects, &tips, limits, &cancel)
+            .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))?;
         let request = || self.fetch_request(options);
         let control = TransportControl::new(&cancel);
         let mut on_message = |message: &[u8]| {
@@ -688,13 +726,9 @@ impl Repository {
             ControlFlow::Continue(())
         };
         let ready = match endpoint {
-            Endpoint::Local(path) => request()?.receive_local(
-                path,
-                &known,
-                limits,
-                control,
-                &mut on_message,
-            ),
+            Endpoint::Local(path) => {
+                request()?.receive_local(path, &known, limits, control, &mut on_message)
+            }
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
@@ -716,9 +750,11 @@ impl Repository {
                 let mut download = receive(http.remote(None)?, &mut on_message)?;
                 if matches!(
                     &download,
-                    Err(FetchWorkflowError::Transfer(crate::fetch::FetchError::Http(
-                        crate::transport::http::HttpError::Status(401)
-                    )))
+                    Err(FetchWorkflowError::Transfer(
+                        crate::fetch::FetchError::Http(crate::transport::http::HttpError::Status(
+                            401
+                        ))
+                    ))
                 ) {
                     let session = http.credentials(callbacks)?;
                     download = receive(http.remote(Some(session))?, &mut |message| {
@@ -726,7 +762,8 @@ impl Repository {
                         ControlFlow::Continue(())
                     })?;
                 }
-                download.and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
+                download
+                    .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
             }
             #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Endpoint::Ssh(ssh) => {
@@ -739,7 +776,8 @@ impl Repository {
                     |message| callbacks.borrow_mut().transport_message(message),
                     |message| callbacks.borrow_mut().remote_message(message),
                 ));
-                download.and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
+                download
+                    .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
             }
         }
         .map_err(|error| TransferError::Fetch(Box::new(error)))?;
@@ -845,9 +883,7 @@ impl Repository {
             let prepared =
                 PreparedPush::new_local(&objects, commands.clone(), roots, push_limits(), &cancel)
                     .map_err(|error| {
-                        TransferError::Push(Box::new(crate::push::PushError::NotSent(
-                            error.into(),
-                        )))
+                        TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
                     })?;
             let prepared = if options.push_options.is_empty() {
                 prepared
@@ -855,25 +891,37 @@ impl Repository {
                 prepared
                     .with_push_options(options.push_options.clone())
                     .map_err(|error| {
-                        TransferError::Push(Box::new(crate::push::PushError::NotSent(
-                            error.into(),
-                        )))
+                        TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
                     })?
             };
             Ok(prepared.with_progress())
         };
         let result = match endpoint {
             Endpoint::Local(path) => {
-                let prepared = prepare(&receiver_roots)?;
-                crate::push::send_local_with_context(
-                    path,
-                    &prepared,
-                    control,
-                    crate::push::LocalPushContext {
-                        config_inputs: &crate::config::ConfigInputs::default(),
-                        identity: options.identity.as_ref(),
-                    },
-                )
+                let send = |roots: &[ObjectId]| -> Result<_, TransferError> {
+                    let prepared = prepare(roots)?;
+                    Ok(crate::push::send_local_with_context(
+                        &path,
+                        &prepared,
+                        control,
+                        crate::push::LocalPushContext {
+                            config_inputs: &crate::config::ConfigInputs::default(),
+                            identity: options.identity.as_ref(),
+                        },
+                    ))
+                };
+                let mut result = send(&receiver_roots)?;
+                // An expected value the remote doesn't have can't be excluded from the pack.
+                if is_knowledge_changed(&result) {
+                    result = send(&[])?;
+                }
+                // Receive hook output arrives with the report rather than live.
+                if let Ok(report) = &result {
+                    for message in &report.progress {
+                        callbacks.remote_message(message);
+                    }
+                }
+                result
             }
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
@@ -882,15 +930,26 @@ impl Repository {
                             roots: &[ObjectId],
                             callbacks: &mut dyn TransferCallbacks| {
                     let prepared = prepare(roots)?;
-                    Ok::<_, TransferError>(runtime.block_on(
-                        crate::push::send_http_checked_with_progress(
-                            remote,
-                            prepared,
-                            control,
-                            |_| true,
-                            |message| callbacks.remote_message(message),
-                        ),
-                    ))
+                    let names: Vec<RefName> =
+                        prepared.commands().iter().map(|c| c.name.clone()).collect();
+                    let advertised = std::cell::RefCell::new(BTreeMap::new());
+                    let result = runtime.block_on(crate::push::send_http_checked_with_progress(
+                        remote,
+                        prepared,
+                        control,
+                        |advertisement| {
+                            record_targets(advertisement, &names, &advertised);
+                            true
+                        },
+                        |message| callbacks.remote_message(message),
+                    ));
+                    Ok::<_, TransferError>(result.map(|outcome| match outcome {
+                        crate::push::HttpPushOutcome::Sent(mut report) => {
+                            mark_up_to_date(&mut report, &advertised.into_inner());
+                            crate::push::HttpPushOutcome::Sent(report)
+                        }
+                        outcome => outcome,
+                    }))
                 };
                 let remote = http.remote(None)?;
                 let mut result = send(&remote, &receiver_roots, callbacks)?;
@@ -914,17 +973,28 @@ impl Repository {
                 let runtime = runtime()?;
                 let send = |roots: &[ObjectId], callbacks: &mut dyn TransferCallbacks| {
                     let prepared = prepare(roots)?;
+                    let names: Vec<RefName> =
+                        prepared.commands().iter().map(|c| c.name.clone()).collect();
+                    let advertised = std::cell::RefCell::new(BTreeMap::new());
                     let callbacks = std::cell::RefCell::new(callbacks);
-                    Ok::<_, TransferError>(runtime.block_on(
-                        crate::push::send_ssh_checked_with_progress(
-                            &ssh,
-                            &prepared,
-                            control,
-                            |_| true,
-                            |message| callbacks.borrow_mut().transport_message(message),
-                            |message| callbacks.borrow_mut().remote_message(message),
-                        ),
-                    ))
+                    let result = runtime.block_on(crate::push::send_ssh_checked_with_progress(
+                        &ssh,
+                        &prepared,
+                        control,
+                        |advertisement| {
+                            record_targets(advertisement, &names, &advertised);
+                            true
+                        },
+                        |message| callbacks.borrow_mut().transport_message(message),
+                        |message| callbacks.borrow_mut().remote_message(message),
+                    ));
+                    Ok::<_, TransferError>(result.map(|outcome| match outcome {
+                        crate::push::SshPushOutcome::Sent(mut report) => {
+                            mark_up_to_date(&mut report, &advertised.into_inner());
+                            crate::push::SshPushOutcome::Sent(report)
+                        }
+                        outcome => outcome,
+                    }))
                 };
                 let mut result = send(&receiver_roots, callbacks)?;
                 if is_knowledge_changed(&result) {
@@ -938,7 +1008,120 @@ impl Repository {
                 })
             }
         };
-        result.map_err(|error| TransferError::Push(Box::new(error)))
+        let report = result.map_err(|error| TransferError::Push(Box::new(error)))?;
+        self.update_tracking_refs(remote_name, &report, options.identity.as_ref());
+        Ok(report)
+    }
+
+    /// Updates local remote-tracking references for successfully pushed references, as `git
+    /// push` does, using the remote's fetch refspecs. Failures are ignored: the next fetch
+    /// corrects them.
+    fn update_tracking_refs(
+        &self,
+        remote_name: &str,
+        report: &PushReport,
+        identity: Option<&crate::Signature>,
+    ) {
+        let Ok(Some(remote)) =
+            crate::remote::ConfiguredRemote::find(self.config(), remote_name.as_bytes())
+        else {
+            return;
+        };
+        let Ok(refs) = self.references() else {
+            return;
+        };
+        let succeeded = report.unpack == Some(crate::push::Status::Ok);
+        for status in &report.refs {
+            if !succeeded || status.status != Some(crate::push::Status::Ok) {
+                continue;
+            }
+            let Some(name) = tracking_ref(remote.fetch_refspecs(), status.command.name.as_bytes())
+            else {
+                continue;
+            };
+            let deleted = status.command.deletes();
+            let edit = crate::refs::RefEdit {
+                name,
+                dereference: false,
+                target: (!deleted).then_some(crate::refs::Target::Direct(status.command.new)),
+                expected: crate::refs::Expected::Any,
+                reflog: match (deleted, identity) {
+                    (true, _) => Reflog::Delete,
+                    (false, Some(identity)) => Reflog::AppendIfChanged {
+                        committer: identity.clone(),
+                        message: b"update by push".to_vec(),
+                    },
+                    (false, None) => Reflog::Preserve,
+                },
+            };
+            // Applied independently so one conflicting name doesn't block the others.
+            let _ = refs.transaction(std::slice::from_ref(&edit));
+        }
+    }
+}
+
+/// Maps a remote reference name through fetch refspecs to its remote-tracking reference.
+fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> Option<RefName> {
+    use crate::remote::ConfiguredRefspecKind;
+    let matches = |pattern: &[u8]| -> Option<Vec<u8>> {
+        match pattern.iter().position(|b| *b == b'*') {
+            None => (pattern == name).then(Vec::new),
+            Some(star) => {
+                let (prefix, suffix) = (&pattern[..star], &pattern[star + 1..]);
+                (name.len() >= prefix.len() + suffix.len()
+                    && name.starts_with(prefix)
+                    && name.ends_with(suffix))
+                .then(|| name[prefix.len()..name.len() - suffix.len()].to_vec())
+            }
+        }
+    };
+    let excluded = refspecs.iter().any(|spec| {
+        spec.kind() == ConfiguredRefspecKind::Exclusion && spec.source().and_then(matches).is_some()
+    });
+    if excluded {
+        return None;
+    }
+    refspecs
+        .iter()
+        .filter(|spec| spec.kind() == ConfiguredRefspecKind::Mapping)
+        .find_map(|spec| {
+            let captured = matches(spec.source()?)?;
+            let destination = spec.destination()?;
+            let destination = match destination.iter().position(|b| *b == b'*') {
+                None => destination.to_vec(),
+                Some(star) => [&destination[..star], &captured, &destination[star + 1..]].concat(),
+            };
+            RefName::new(destination).ok()
+        })
+}
+
+/// Records the advertised values of the pushed references.
+#[cfg(any(feature = "http", feature = "ssh"))]
+fn record_targets(
+    advertisement: &crate::push::PushAdvertisement,
+    names: &[RefName],
+    advertised: &std::cell::RefCell<BTreeMap<RefName, Option<ObjectId>>>,
+) {
+    let mut advertised = advertised.borrow_mut();
+    for name in names {
+        advertised.insert(name.clone(), advertisement.target(name));
+    }
+}
+
+/// Like Git, treats a rejected reference whose remote value already equals the requested value as
+/// up to date.
+#[cfg(any(feature = "http", feature = "ssh"))]
+fn mark_up_to_date(report: &mut PushReport, advertised: &BTreeMap<RefName, Option<ObjectId>>) {
+    for status in &mut report.refs {
+        let Some(current) = advertised.get(&status.command.name) else {
+            continue;
+        };
+        // Deletions are never up to date; see `git push --force-with-lease`.
+        let up_to_date = !status.command.deletes() && *current == Some(status.command.new);
+        if up_to_date && status.status != Some(crate::push::Status::Ok) {
+            status.status = Some(crate::push::Status::Ok);
+            status.rejection_origin = None;
+        }
     }
 }
 
@@ -955,9 +1138,9 @@ fn is_knowledge_changed<T>(result: &Result<T, crate::push::PushError>) -> bool {
 fn is_unauthorized_push<T>(result: &Result<T, crate::push::PushError>) -> bool {
     matches!(
         result,
-        Err(crate::push::PushError::NotSent(crate::push::PushFailure::Http(
-            crate::transport::http::HttpError::Status(401)
-        )))
+        Err(crate::push::PushError::NotSent(
+            crate::push::PushFailure::Http(crate::transport::http::HttpError::Status(401))
+        ))
     )
 }
 
@@ -997,4 +1180,3 @@ fn push_limits() -> PushLimits {
         ..PushLimits::default()
     }
 }
-

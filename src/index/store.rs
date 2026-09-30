@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use super::{Entry, Error, Index, Limits};
+use super::{Entry, Error, Index, Limits, Timestamp};
 use crate::{ObjectFormat, Repository};
 
 /// Prepublication policy for an index lock file.
@@ -517,7 +517,7 @@ impl IndexEdit {
     /// Matches path, stage, mode, object ID and all flags. Changed/new entries retain the caller's
     /// supplied stat words; no filesystem verification occurs. The caller still owns staging and
     /// skip-worktree/intent-to-add choices. Derived cache extensions are invalidated exactly as in
-    /// [`Self::replace_entries`]. Publication retains the conservative racy-stat timestamp policy.
+    /// [`Self::replace_entries`]. Publication smudges racily clean entries; see [`Self::commit`].
     ///
     /// # Errors
     ///
@@ -655,12 +655,11 @@ impl IndexEdit {
     /// noncooperating changes observed before rename, but cannot exclude a noncooperating writer
     /// racing after that comparison. Cooperating writers remain excluded for the entire lifecycle.
     ///
-    /// The lock's modification time is set to one second after the Unix epoch before publication,
-    /// conservatively keeping nonzero cached entry mtimes racy in Git until Git refreshes them.
-    /// This avoids making a previously racy entry appear clean merely by rewriting the index
-    /// later. Entry stat words remain exact; filesystem support for setting that timestamp is
-    /// required. Callers supplying new stat data still own its correctness and any future
-    /// worktree-comparison policy.
+    /// Like Git, entries that could be racily clean have their cached size zeroed so readers
+    /// recheck their contents: those modified at or after the earlier of the previous index's
+    /// modification time and the time of writing. This keeps a previously racy entry from
+    /// appearing clean merely because the index was rewritten later. Other stat words remain
+    /// exact. Callers supplying new stat data still own its correctness.
     ///
     /// # Errors
     ///
@@ -821,6 +820,22 @@ impl IndexEdit {
             .shared_permissions
             .validate()
             .map_err(|source| io_error("validate index permissions", &self.lock_path, source))?;
+        // Racily clean entries: cached stat data isn't trustworthy for files modified at or after
+        // the time the stat was recorded relative to an index. Entries may carry stat data from
+        // the previous index, so the earlier of its modification time and now is the threshold.
+        let now = std::time::SystemTime::now();
+        let previous = fs::metadata(&self.destination)
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        let threshold = previous.map_or(now, |previous| previous.min(now));
+        let threshold = threshold.duration_since(std::time::UNIX_EPOCH).map_or(
+            Timestamp::default(),
+            |duration| Timestamp {
+                seconds: u32::try_from(duration.as_secs()).unwrap_or(u32::MAX),
+                nanoseconds: duration.subsec_nanos(),
+            },
+        );
+        self.index.smudge_racy_entries(threshold);
         let bytes = self
             .index
             .encode(self.limits)
@@ -890,8 +905,6 @@ impl IndexEdit {
             .map_err(|source| io_error("write lock", &self.lock_path, source))?;
         file.flush()
             .map_err(|source| io_error("flush lock", &self.lock_path, source))?;
-        file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
-            .map_err(|source| io_error("set lock timestamp", &self.lock_path, source))?;
         Ok(())
     }
 }

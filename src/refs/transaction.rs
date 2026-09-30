@@ -82,7 +82,7 @@ pub struct RefEditOutcome {
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError {
     /// No reference or log contents were changed. Empty directories can remain.
-    #[error("reference transaction preparation failed: {source}")]
+    #[error("reference transaction preparation failed")]
     Prepare {
         /// Input index when the failure belongs to one operation; otherwise a batch/lock failure.
         operation: Option<usize>,
@@ -91,7 +91,7 @@ pub enum TransactionError {
         source: ReferenceError,
     },
     /// Publication stopped at the first error, without rollback.
-    #[error("reference transaction publication failed: {source}")]
+    #[error("reference transaction publication failed")]
     Publish {
         /// Exact completed effects in caller order; later operations can have packed removals.
         outcomes: Vec<RefEditOutcome>,
@@ -111,8 +111,9 @@ impl References<'_> {
     /// Preparation holds `packed-refs.lock`, discovers symbolic chains, locks their union in
     /// name-byte order, and rechecks every stored chain value and precondition. Reflog locks follow
     /// in name-byte order. Duplicate/overlapping chains and ancestor/descendant names are rejected,
-    /// including delete/create namespace swaps. Existing packed conflicts are rejected. Contention
-    /// fails immediately; locks are never stolen. A changed chain fails rather than being retried.
+    /// including delete/create namespace swaps. Existing packed conflicts are rejected. Contended
+    /// locks are retried for Git's default durations ([`FilesTransactionOptions::GIT_DEFAULT`]);
+    /// locks are never stolen. A changed chain fails rather than being retried.
     ///
     /// Publication first removes all selected packed records in one replacement. It then publishes
     /// refs in caller order, appending each operation's requested logs after its ref succeeds.
@@ -350,7 +351,7 @@ impl References<'_> {
     ) -> Result<Prepared, TransactionError> {
         self.prepare_files_transaction_with_options(
             edits,
-            FilesTransactionOptions::default(),
+            FilesTransactionOptions::GIT_DEFAULT,
             &AtomicBool::new(false),
             LogIdentity::Resolved,
         )

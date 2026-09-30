@@ -412,7 +412,7 @@ pub fn discover_local(
     traced("local", || {
         control.check()?;
         let source =
-            Repository::open(source).map_err(|_| FetchError::Protocol("local repository"))?;
+            Repository::open(source).map_err(|error| FetchError::Source(Box::new(error)))?;
         let advertisement = local_native::advertise(&source, limits, control)?;
         let mut discovered = RemoteDiscovery::from_advertisement(advertisement)?;
         discovered.version = ProtocolVersion::Native;
@@ -422,17 +422,16 @@ pub fn discover_local(
             .map_err(|_| FetchError::Protocol("local references"))?
             .read(&head)
             .map_err(|_| FetchError::Protocol("local HEAD"))?
-        {
-            if !discovered
+            && !discovered
                 .advertisement
                 .refs
                 .iter()
                 .any(|reference| reference.name == head && reference.id == id && !reference.peeled)
-            {
-                return Err(FetchError::Protocol("local HEAD changed during discovery"));
-            }
-            discovered.head = RemoteHead::Detached { id };
+        {
+            return Err(FetchError::Protocol("local HEAD changed during discovery"));
         }
+        // Like upload-pack's advertisement, a detached HEAD matching exactly one branch is
+        // reported as that branch (`RemoteHead::Inferred`).
         control.check()?;
         Ok(discovered)
     })

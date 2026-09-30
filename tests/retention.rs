@@ -808,12 +808,22 @@ fn unstored_canonical_empty_tree_is_retained_and_repacked(#[case] format: &str) 
     );
     let repo = Repository::open(root.path()).unwrap();
     let empty = repo.object_format().hash_object(ObjectKind::Tree, b"");
+    // Git stores no object for the canonical empty tree, but reads it in every repository.
+    let hex = empty.to_string();
+    assert!(
+        !root
+            .path()
+            .join("objects")
+            .join(&hex[..2])
+            .join(&hex[2..])
+            .exists()
+    );
     assert!(
         repo.objects(PackLimits::default())
             .unwrap()
             .read(empty, ReadLimits::default())
             .unwrap()
-            .is_none()
+            .is_some()
     );
     let content =
         format!("tree {empty}\nauthor A <a@b> 0 +0000\ncommitter A <a@b> 0 +0000\n\nempty\n");

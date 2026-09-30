@@ -89,12 +89,9 @@ fn packet(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn initialized(ready: &CloneReady) -> (Repository, CloneReport) {
-    let repo = Repository::init(
-        crate::ObjectFormat::Sha1,
-        &ready.request.destination,
-        ready.request.kind,
-    )
-    .unwrap();
+    fs::create_dir_all(&ready.request.destination).unwrap();
+    let repo =
+        Repository::init_reserved_clone(&ready.request.destination, ready.request.kind).unwrap();
     let report = CloneReport {
         destination: ready.request.destination.clone(),
         reserved: true,
@@ -199,7 +196,10 @@ fn head_lock_failure_retains_config_and_fetch_without_local_branch() {
         &AtomicBool::new(false),
         &mut report,
     );
-    assert!(matches!(result, Err(CloneFailure::Publication(_))));
+    assert!(
+        matches!(result, Err(CloneFailure::Publication(_))),
+        "{result:?}"
+    );
     assert!(report.configured);
     assert!(report.fetch.is_some());
     assert!(report.repository.is_none());

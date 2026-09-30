@@ -275,6 +275,17 @@ pub enum FetchError {
     /// Reopening the destination failed before dependency checks or publication.
     #[error("destination object snapshot: {0}")]
     Destination(#[source] crate::ObjectReadError),
+    /// The remote and local repositories use different object formats.
+    #[error("the remote repository uses {remote} object IDs but this repository uses {local}")]
+    FormatMismatch {
+        /// Remote object format.
+        remote: crate::ObjectFormat,
+        /// Local object format.
+        local: crate::ObjectFormat,
+    },
+    /// The local source repository could not be opened.
+    #[error("cannot open source repository: {0}")]
+    Source(#[source] Box<crate::OpenError>),
     /// A local dependency failed during history preparation or installation rechecking.
     #[error("local fetch dependency {id}: {source}")]
     LocalRead {

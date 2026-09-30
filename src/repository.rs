@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 pub use colocation::{ColocationEdit, ColocationError};
-pub use init::{InitError, InitKind};
+pub use init::{InitError, InitKind, InitOptions};
 pub(crate) use init::{initial_branch, initial_config};
 pub use operation::{OperationCleanupError, OperationError, OperationLimits, OperationState};
 pub use shallow::{ShallowError, ShallowRoots};
@@ -600,7 +600,7 @@ impl RepositoryMetadata {
 /// assert_eq!(bytes, b"hello\n");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Repository {
     git_dir: PathBuf,
     common_dir: PathBuf,
@@ -615,6 +615,20 @@ pub struct Repository {
 }
 
 /// Repository location, metadata, configuration or supported-format failure.
+/// Summarizes the layout; configuration values are omitted because they can contain secrets.
+impl std::fmt::Debug for Repository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Repository")
+            .field("git_dir", &self.git_dir)
+            .field("common_dir", &self.common_dir)
+            .field("worktree", &self.worktree)
+            .field("bare", &self.bare)
+            .field("object_format", &self.object_format)
+            .field("reference_backend", &self.reference_backend)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum OpenError {
     /// Reftable HEAD metadata could not be read for branch-conditional configuration.

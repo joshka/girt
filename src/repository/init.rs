@@ -18,12 +18,63 @@ pub enum InitKind {
     Bare,
 }
 
+/// Choices for [`Repository::init_with_options`].
+///
+/// Defaults follow `git init` without configuration: SHA-1, the files reference backend and an
+/// unborn `master` branch.
+#[derive(Clone, Debug)]
+pub struct InitOptions {
+    kind: InitKind,
+    format: crate::ObjectFormat,
+    backend: crate::refs::Backend,
+    initial_branch: RefName,
+}
+
+impl InitOptions {
+    /// Options for a repository of the given layout.
+    pub fn new(kind: InitKind) -> Self {
+        Self {
+            kind,
+            format: crate::ObjectFormat::Sha1,
+            backend: crate::refs::Backend::Files,
+            initial_branch: RefName::new("refs/heads/master").expect("valid branch name"),
+        }
+    }
+
+    /// Selects the object format (hash function).
+    pub fn object_format(mut self, format: crate::ObjectFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Selects the reference storage backend.
+    pub fn reference_backend(mut self, backend: crate::refs::Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Selects the unborn branch HEAD points to, e.g. from `init.defaultBranch`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InitError::InvalidBranch`] unless `name` is a valid branch name without the
+    /// `refs/heads/` prefix.
+    pub fn initial_branch(mut self, name: &str) -> Result<Self, InitError> {
+        self.initial_branch = RefName::new(format!("refs/heads/{name}"))
+            .map_err(|_| InitError::InvalidBranch(name.to_owned()))?;
+        Ok(self)
+    }
+}
+
 /// Initialization refusal, filesystem failure, or final metadata validation failure.
 #[derive(Debug, Error)]
 pub enum InitError {
     /// A destination or repository marker already exists; it was not modified.
     #[error("initialization destination already exists: {0}")]
     AlreadyExists(PathBuf),
+    /// The initial branch name is not a valid branch name.
+    #[error("invalid initial branch name: {0}")]
+    InvalidBranch(String),
     /// A filesystem operation failed. Newly created files may remain; see [`Repository::init`].
     #[error("cannot initialize {path}: {source}")]
     Io {
@@ -53,12 +104,7 @@ impl Repository {
                 git_dir
             }
         };
-        populate(
-            &git_dir,
-            kind,
-            crate::ObjectFormat::Sha1,
-            crate::refs::Backend::Files,
-        )?;
+        populate_minimal(&git_dir, kind)?;
         Ok(Self::open(path)?)
     }
 
@@ -107,6 +153,23 @@ impl Repository {
         Self::init_with_backend(format, path, kind, crate::refs::Backend::Files)
     }
 
+    /// Creates a repository like `git init`, with the given options.
+    ///
+    /// Writes Git's default configuration for the layout (including `logallrefupdates` for a
+    /// non-bare repository and probed `ignorecase`/`precomposeunicode` filesystem settings), an
+    /// empty `hooks` directory and `info/exclude`, and points HEAD at the unborn initial branch.
+    /// Creation is exclusive; see [`Self::init_with_backend`] for failure behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InitError`] as for [`Self::init_with_backend`].
+    pub fn init_with_options(
+        path: impl AsRef<Path>,
+        options: &InitOptions,
+    ) -> Result<Self, InitError> {
+        Self::init_inner(path.as_ref(), options)
+    }
+
     /// Creates an empty repository with explicit object format and reference backend.
     ///
     /// Reftable initialization writes version-1 configuration, an unborn HEAD record and Git's
@@ -123,7 +186,20 @@ impl Repository {
         kind: InitKind,
         backend: crate::refs::Backend,
     ) -> Result<Self, InitError> {
-        let path = path.as_ref();
+        let mut options = InitOptions::new(kind)
+            .object_format(format)
+            .reference_backend(backend);
+        options.initial_branch = initial_branch();
+        Self::init_inner(path.as_ref(), &options)
+    }
+
+    fn init_inner(path: &Path, options: &InitOptions) -> Result<Self, InitError> {
+        let InitOptions {
+            kind,
+            format,
+            backend,
+            initial_branch,
+        } = options.clone();
         if has_marker(path)? {
             // Preserve unsupported format/layout errors before any mutation.
             Self::open(path)?;
@@ -148,20 +224,13 @@ impl Repository {
                 git_dir
             }
         };
-        populate(&git_dir, kind, format, backend)?;
+        populate(&git_dir, kind, format, backend, &initial_branch)?;
         Ok(Self::open(path)?)
     }
 }
 
-fn populate(
-    git_dir: &Path,
-    kind: InitKind,
-    format: crate::ObjectFormat,
-    backend: crate::refs::Backend,
-) -> Result<(), InitError> {
-    if backend == crate::refs::Backend::Reftable {
-        return populate_reftable(git_dir, kind, format);
-    }
+/// Creates the layout used internally by clone, whose exact config bytes it later checks.
+fn populate_minimal(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
     for name in [
         "objects",
         "objects/info",
@@ -172,18 +241,123 @@ fn populate(
     ] {
         create_directory(&git_dir.join(name))?;
     }
-    create_file(&git_dir.join("config"), &format_config(kind, format))?;
-    // HEAD is last so a partially initialized directory does not look ready to open.
+    create_file(
+        &git_dir.join("config"),
+        &format_config(kind, crate::ObjectFormat::Sha1),
+    )?;
     let mut head = b"ref: ".to_vec();
     head.extend_from_slice(initial_branch().as_bytes());
     head.push(b'\n');
     create_file(&git_dir.join("HEAD"), &head)
 }
 
+fn populate(
+    git_dir: &Path,
+    kind: InitKind,
+    format: crate::ObjectFormat,
+    backend: crate::refs::Backend,
+    initial_branch: &RefName,
+) -> Result<(), InitError> {
+    if backend == crate::refs::Backend::Reftable {
+        return populate_reftable(git_dir, kind, format, initial_branch);
+    }
+    for name in [
+        "objects",
+        "objects/info",
+        "objects/pack",
+        "refs",
+        "refs/heads",
+        "refs/tags",
+        "hooks",
+        "info",
+    ] {
+        create_directory(&git_dir.join(name))?;
+    }
+    create_file(&git_dir.join("info/exclude"), b"")?;
+    create_file(
+        &git_dir.join("config"),
+        &git_config(git_dir, kind, format, false),
+    )?;
+    // HEAD is last so a partially initialized directory does not look ready to open.
+    let mut head = b"ref: ".to_vec();
+    head.extend_from_slice(initial_branch.as_bytes());
+    head.push(b'\n');
+    create_file(&git_dir.join("HEAD"), &head)
+}
+
+/// Configuration written by `git init`: format and layout settings plus probed filesystem
+/// behavior.
+fn git_config(
+    git_dir: &Path,
+    kind: InitKind,
+    format: crate::ObjectFormat,
+    reftable: bool,
+) -> Vec<u8> {
+    let mut config = String::new();
+    let extensions = format == crate::ObjectFormat::Sha256 || reftable;
+    if extensions {
+        config.push_str("[extensions]\n");
+        if format == crate::ObjectFormat::Sha256 {
+            config.push_str("\tobjectformat = sha256\n");
+        }
+        if reftable {
+            config.push_str("\trefStorage = reftable\n");
+        }
+    }
+    config.push_str("[core]\n");
+    config.push_str(&format!(
+        "\trepositoryformatversion = {}\n",
+        u8::from(extensions)
+    ));
+    config.push_str(&format!("\tfilemode = {}\n", probe_filemode(git_dir)));
+    config.push_str(&format!("\tbare = {}\n", kind == InitKind::Bare));
+    if kind == InitKind::Worktree {
+        config.push_str("\tlogallrefupdates = true\n");
+    }
+    if probe_ignorecase(git_dir) {
+        config.push_str("\tignorecase = true\n");
+    }
+    if cfg!(target_os = "macos") {
+        config.push_str("\tprecomposeunicode = true\n");
+    }
+    config.into_bytes()
+}
+
+/// Whether the filesystem keeps executable bits.
+fn probe_filemode(git_dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let probe = git_dir.join("config.filemode-probe");
+        let result = (|| -> io::Result<bool> {
+            fs::write(&probe, b"")?;
+            let mut permissions = fs::metadata(&probe)?.permissions();
+            permissions.set_mode(permissions.mode() ^ 0o100);
+            let expected = permissions.mode();
+            fs::set_permissions(&probe, permissions)?;
+            Ok(fs::metadata(&probe)?.permissions().mode() == expected)
+        })();
+        let _ = fs::remove_file(&probe);
+        result.unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = git_dir;
+        false
+    }
+}
+
+/// Whether the filesystem treats names differing only in ASCII case as the same file.
+fn probe_ignorecase(git_dir: &Path) -> bool {
+    // `objects` has already been created.
+    git_dir.join("OBJECTS").exists()
+}
+
 fn populate_reftable(
     git_dir: &Path,
     kind: InitKind,
     format: crate::ObjectFormat,
+    initial_branch: &RefName,
 ) -> Result<(), InitError> {
     use crate::refs::Target;
     use crate::refs::reftable::{Limits, RefRecord, Table};
@@ -213,7 +387,7 @@ fn populate_reftable(
         references: vec![RefRecord {
             name: RefName::new(b"HEAD").unwrap().into(),
             update_index: 1,
-            target: Some(Target::Symbolic(initial_branch())),
+            target: Some(Target::Symbolic(initial_branch.clone())),
             peeled: None,
         }],
         logs: Vec::new(),
@@ -369,7 +543,8 @@ mod tests {
                 root.path(),
                 InitKind::Bare,
                 crate::ObjectFormat::Sha1,
-                crate::refs::Backend::Files
+                crate::refs::Backend::Files,
+                &initial_branch(),
             )
             .is_err()
         );

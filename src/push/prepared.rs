@@ -34,7 +34,7 @@ pub struct PreparedPush {
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
     pub(super) has_options: bool,
-    options: Vec<Vec<u8>>,
+    pub(super) options: Vec<Vec<u8>>,
     pub(super) progress: bool,
 }
 impl PreparedPush {
@@ -280,11 +280,12 @@ impl PreparedPush {
         &self.commands
     }
 
-    /// Adds byte-preserving push options to a prepared wire push.
+    /// Adds byte-preserving push options to a prepared push.
     ///
     /// The server must advertise `push-options`; otherwise sending refuses the push before any
     /// command. Options are sent after the command flush, in caller order. Native local transport
-    /// refuses options because it does not execute receive hooks.
+    /// requires the destination's `receive.advertisePushOptions` and passes the options to its
+    /// receive hooks.
     ///
     /// # Errors
     ///

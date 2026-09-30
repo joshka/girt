@@ -34,6 +34,15 @@ pub struct FilesTransactionOptions {
     pub packed_refs_lock_wait: LockWait,
 }
 
+impl FilesTransactionOptions {
+    /// Git's default waits: 100 ms for each loose reference lock (`core.filesRefLockTimeout`)
+    /// and one second for `packed-refs.lock` (`core.packedRefsTimeout`).
+    pub const GIT_DEFAULT: Self = Self {
+        reference_lock_wait: LockWait::For(Duration::from_millis(100)),
+        packed_refs_lock_wait: LockWait::For(Duration::from_secs(1)),
+    };
+}
+
 pub(super) fn check_cancelled(cancel: &AtomicBool) -> Result<(), ReferenceError> {
     if cancel.load(Ordering::Relaxed) {
         Err(ReferenceError::Cancelled)

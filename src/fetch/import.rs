@@ -5,6 +5,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 
+use super::known::KnownObjects;
 use super::progress::ValidationObserver;
 use super::{FetchError, FetchLimits, check_cancelled};
 use crate::pack::delta::{apply, byte, charge, size};
@@ -37,7 +38,7 @@ impl Imported {
     pub fn read_with_known(
         format: crate::ObjectFormat,
         data: &[u8],
-        known: &HashMap<ObjectId, Object>,
+        known: &(impl KnownObjects + ?Sized),
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
@@ -53,7 +54,7 @@ impl Imported {
     pub fn read_observed(
         format: crate::ObjectFormat,
         data: &[u8],
-        known: &HashMap<ObjectId, Object>,
+        known: &(impl KnownObjects + ?Sized),
         limits: FetchLimits,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
@@ -267,7 +268,7 @@ fn base(
 fn resolve(
     format: crate::ObjectFormat,
     entries: &mut [ReceivedEntry],
-    known: &HashMap<ObjectId, Object>,
+    known: &(impl KnownObjects + ?Sized),
     limits: FetchLimits,
     remaining: &mut usize,
     observer: &mut ValidationObserver<'_>,
@@ -280,6 +281,8 @@ fn resolve(
         .collect();
     let mut identities = HashMap::new();
     let mut objects: HashMap<ObjectId, Object> = HashMap::new();
+    // Local objects used as delta bases for a thin pack.
+    let mut external_bases: HashMap<ObjectId, Object> = HashMap::new();
     let mut work = limits.max_resolution_steps;
     let mut external = false;
     while objects.len() < entries.len() {
@@ -304,27 +307,33 @@ fn resolve(
                     Some(base)
                 }
                 Base::Id(id) => {
-                    let Some(depth) = identities
-                        .get(&id)
-                        .copied()
-                        .or_else(|| known.contains_key(&id).then_some(0))
-                    else {
-                        continue;
-                    };
-                    if !identities.contains_key(&id) {
-                        if known[&id].id() != id {
-                            return Err(Error::Corrupt("external delta base identity").into());
+                    if let Some(depth) = identities.get(&id).copied() {
+                        Some((id, depth))
+                    } else {
+                        if let std::collections::hash_map::Entry::Vacant(entry) =
+                            external_bases.entry(id)
+                        {
+                            let Some(base) = known.get(id) else {
+                                continue;
+                            };
+                            if base.id() != id {
+                                return Err(Error::Corrupt("external delta base identity").into());
+                            }
+                            entry.insert(base.into_owned());
                         }
                         external = true;
+                        Some((id, 0))
                     }
-                    Some((id, depth))
                 }
             };
             let (object, depth) = if let Some((id, depth)) = base {
                 if depth >= limits.max_delta_depth {
                     return Err(FetchError::Limit("delta depth"));
                 }
-                let base = objects.get(&id).or_else(|| known.get(&id)).unwrap();
+                let base = objects
+                    .get(&id)
+                    .or_else(|| external_bases.get(&id))
+                    .unwrap();
                 let data = apply(
                     &base.data,
                     &entries[i].payload,
