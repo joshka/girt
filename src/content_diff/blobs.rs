@@ -116,7 +116,7 @@ pub enum ContentReadError {
         actual: ObjectKind,
     },
     /// Storage, identity verification or decoding bounds failed.
-    #[error("reading blob {id}: {source}")]
+    #[error("reading blob {id}")]
     Read {
         /// Blob being read.
         id: ObjectId,

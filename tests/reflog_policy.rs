@@ -4,7 +4,7 @@ mod git {
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    // UTC isolates publication policy from the independently tracked reftable timezone codec.
+    // UTC keeps this fixture focused on publication policy.
     pub fn git(root: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         let mut command = Command::new("git");
         for (key, _) in std::env::vars_os() {
@@ -535,4 +535,88 @@ fn existing_append_treats_empty_files_log_as_present_matching_git(
         refs.reflog(&name("HEAD")).unwrap(),
         oracle.references().unwrap().reflog(&name("HEAD")).unwrap()
     );
+}
+
+/// `Repository::logs_updates_to` agrees with whether `git update-ref` creates a log.
+#[rstest]
+fn update_logging_matches_git(
+    #[values(false, true)] bare: bool,
+    #[values(None, Some("true"), Some("false"), Some("always"), Some("Always"))] setting: Option<
+        &str,
+    >,
+    #[values(
+        "HEAD",
+        "refs/heads/main",
+        "refs/remotes/origin/main",
+        "refs/notes/commits",
+        "refs/tags/v1",
+        "refs/stash",
+        "refs/jj/keep/1"
+    )]
+    reference: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let mut init = vec!["init", "--quiet"];
+    if bare {
+        init.push("--bare");
+    }
+    init.push("repo");
+    git::git(root.path(), &init, b"");
+    let path = root.path().join("repo");
+    if let Some(setting) = setting {
+        git::git(&path, &["config", "core.logAllRefUpdates", setting], b"");
+    }
+    let repo = Repository::open(&path).unwrap();
+    let predicted = repo.logs_updates_to(&name(reference)).unwrap();
+    let tree = git::git(&path, &["mktree"], b"");
+    let tree = String::from_utf8(tree).unwrap();
+    let commit = git::git(&path, &["commit-tree", tree.trim(), "-m", "x"], b"");
+    let commit = String::from_utf8(commit).unwrap();
+    git::git(
+        &path,
+        &[
+            "update-ref",
+            "--no-deref",
+            "-m",
+            "update",
+            reference,
+            commit.trim(),
+        ],
+        b"",
+    );
+    let logs = repo.git_dir().join("logs").join(reference);
+    assert_eq!(predicted, logs.is_file());
+}
+
+/// An existing log is appended to even when configuration disables new logs.
+#[test]
+fn existing_log_is_updated_when_logging_is_disabled() {
+    let root = tempfile::tempdir().unwrap();
+    git::git(root.path(), &["init", "--quiet", "repo"], b"");
+    let path = root.path().join("repo");
+    git::git(&path, &["config", "core.logAllRefUpdates", "false"], b"");
+    let logs = path.join(".git/logs/refs/tags");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(logs.join("v1"), b"").unwrap();
+    let repo = Repository::open(&path).unwrap();
+    assert!(repo.logs_updates_to(&name("refs/tags/v1")).unwrap());
+    assert!(!repo.logs_updates_to(&name("refs/tags/v2")).unwrap());
+}
+
+/// Git refuses reference updates when the setting is invalid or has no value.
+#[rstest]
+#[case::invalid("[core]\n\tlogAllRefUpdates = sometimes\n")]
+#[case::implicit("[core]\n\tlogAllRefUpdates\n")]
+fn invalid_logging_setting_is_an_error(#[case] config: &str) {
+    let root = tempfile::tempdir().unwrap();
+    git::git(root.path(), &["init", "--quiet", "--bare", "repo"], b"");
+    let path = root.path().join("repo");
+    let mut bytes = std::fs::read(path.join("config")).unwrap();
+    bytes.extend_from_slice(config.as_bytes());
+    std::fs::write(path.join("config"), bytes).unwrap();
+    let repo = Repository::open(&path).unwrap();
+    assert!(matches!(
+        repo.logs_updates_to(&name("refs/heads/main")),
+        Err(girt::ReflogPolicyError::Config(_))
+    ));
 }

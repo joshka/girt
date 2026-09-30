@@ -19,8 +19,11 @@ use crate::transport::TransportControl;
 /// Opens an explicit path through [`crate::Repository::open`], checks receiver-history
 /// dependencies, installs the pack, then applies each command with a conditional reference
 /// transaction against its exact expected old value. A stale command rejects independently.
-/// It invokes no Git executable or hook. Existing receive hooks or a configured hooks path cause
-/// refusal before publication. Current-branch, hidden-ref and reflog behavior follows supported
+/// It invokes no Git executable. Like `git-receive-pack`, it runs the destination's
+/// `pre-receive`, `update`, `post-receive` and `post-update` hooks (honoring `core.hooksPath`) and
+/// returns their output in [`PushReport::progress`]; `proc-receive`, `reference-transaction` and
+/// `push-to-checkout` hooks cause refusal before publication. Current-branch, hidden-ref and
+/// reflog behavior follows supported
 /// receive configuration; use [`send_local_with_identity`] when an append needs a caller identity.
 /// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
@@ -30,7 +33,7 @@ use crate::transport::TransportControl;
 /// overwrites. Callers must exclude external GC/pruning, checkout, symbolic-HEAD/branch changes and
 /// worktree registration changes from preparation through publication. Ref locks do not enforce
 /// this exclusion. Deletion and non-fast-forward receive restrictions apply. `updateInstead`,
-/// namespace-specific policy, hooks and unsupported receive settings refuse before mutation.
+/// namespace-specific policy and unsupported receive settings refuse before mutation.
 /// Object installation can leave an indexed pack when later refs reject or fail.
 /// # Errors
 ///

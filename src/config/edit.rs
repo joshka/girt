@@ -47,7 +47,7 @@ pub enum EditError {
     Limit,
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
-    #[error("{operation}; additionally, lock cleanup failed: {cleanup}")]
+    #[error("operation failed and lock cleanup also failed: {cleanup}")]
     Cleanup {
         /// Primary failure.
         #[source]
@@ -57,7 +57,7 @@ pub enum EditError {
     },
     /// Read, lock write, metadata update or rename failed. Original config bytes are unchanged
     /// by a failed publication; a concurrent writer's changes are never rolled back.
-    #[error("cannot {operation} {path}: {source}")]
+    #[error("cannot {operation} {path}")]
     Io {
         /// Operation that failed.
         operation: &'static str,
@@ -77,7 +77,7 @@ pub enum EditError {
     #[error("config is not a regular file: {0}")]
     NotRegular(PathBuf),
     /// Format or limit validation failed before publication.
-    #[error("invalid config at {path}: {source}")]
+    #[error("invalid config at {path}")]
     Format {
         /// Configuration destination path.
         path: PathBuf,

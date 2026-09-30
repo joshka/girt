@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicBool;
 
+use super::known::KnownObjects;
 use super::{FetchError, FetchLimits, check_cancelled};
 use crate::{Object, ObjectId};
 
@@ -28,7 +30,7 @@ pub(super) fn validate_with_known(
 
 pub(super) fn validate_with_boundaries(
     objects: &HashMap<ObjectId, Object>,
-    known: &HashMap<ObjectId, Object>,
+    known: &(impl KnownObjects + ?Sized),
     wants: &[ObjectId],
     shallow: &[ObjectId],
     limits: FetchLimits,
@@ -42,19 +44,21 @@ pub(super) fn validate_with_boundaries(
         failure_class = tracing::field::Empty,
         effects = tracing::field::Empty,
         received_objects = objects.len(),
-        known_objects = known.len(),
         wants = wants.len(),
         visited = tracing::field::Empty,
         edges = tracing::field::Empty,
     );
 
     let operation = || {
+        let lookup = |id: ObjectId| -> Option<Cow<'_, Object>> {
+            objects
+                .get(&id)
+                .map(Cow::Borrowed)
+                .or_else(|| known.get(id))
+        };
         let shallow: HashSet<_> = shallow.iter().copied().collect();
         for &id in &shallow {
-            let object = objects
-                .get(&id)
-                .or_else(|| known.get(&id))
-                .ok_or(FetchError::Missing(id))?;
+            let object = lookup(id).ok_or(FetchError::Missing(id))?;
             if object.kind() != crate::ObjectKind::Commit {
                 return Err(FetchError::Kind(id));
             }
@@ -63,7 +67,7 @@ pub(super) fn validate_with_boundaries(
         let mut pending = VecDeque::new();
         let mut seen = HashSet::new();
         for &id in wants {
-            if !(objects.contains_key(&id) || known.contains_key(&id)) {
+            if !objects.contains_key(&id) && known.get(id).is_none() {
                 return Err(FetchError::Missing(id));
             }
             if seen.insert(id) {
@@ -73,9 +77,13 @@ pub(super) fn validate_with_boundaries(
         let mut remaining = limits.max_connectivity_edges;
         while let Some(id) = pending.pop_front() {
             check_cancelled(cancel)?;
-            let object = objects.get(&id).or_else(|| known.get(&id)).unwrap();
+            let object = lookup(id).ok_or(FetchError::Missing(id))?;
             if !objects.contains_key(&id) {
                 dependencies.push(id);
+                if known.trusted_complete() {
+                    // Local history is trusted to be complete.
+                    continue;
+                }
             }
             let shallow_commit =
                 shallow.contains(&id) && object.kind() == crate::ObjectKind::Commit;
@@ -87,19 +95,17 @@ pub(super) fn validate_with_boundaries(
                 remaining = remaining
                     .checked_sub(1)
                     .ok_or(FetchError::Limit("connectivity edges"))?;
-                let object = objects
-                    .get(&id)
-                    .or_else(|| known.get(&id))
-                    .ok_or(FetchError::Missing(id))?;
-                if object.kind() != kind {
-                    return Err(FetchError::Kind(id));
-                }
-                if seen.insert(id) {
+                if !seen.contains(&id) {
+                    let object = lookup(id).ok_or(FetchError::Missing(id))?;
+                    if object.kind() != kind {
+                        return Err(FetchError::Kind(id));
+                    }
+                    seen.insert(id);
                     pending.push_back(id);
                 }
                 Ok(())
             };
-            crate::edges::visit(id, object, edge)?;
+            crate::edges::visit(id, &object, edge)?;
         }
         #[cfg(feature = "tracing")]
         span.record("visited", seen.len())

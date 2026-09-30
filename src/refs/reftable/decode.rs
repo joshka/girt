@@ -517,7 +517,7 @@ fn decode_log(
             name: cursor.string()?.to_vec(),
             email: cursor.string()?.to_vec(),
             seconds: cursor.varint()?,
-            offset_minutes: i16::from_be_bytes(cursor.take(2)?.try_into().unwrap()),
+            offset_minutes: super::timezone::decode(cursor.take(2)?.try_into().unwrap()),
             message: cursor.string()?.to_vec(),
         }),
         _ => return Err(Error::Unsupported("log value type")),

@@ -39,11 +39,19 @@ impl Fixture {
         .unwrap();
         self.repo.loose_objects().write_tree(&tree).unwrap()
     }
+    /// A tree holding one blob with `payload`, so distinct payloads give distinct trees.
+    fn tree_with(&self, payload: &[u8]) -> ObjectId {
+        let blob = self.repo.loose_objects().write_blob(payload).unwrap();
+        self.tree(blob, EntryMode::Blob)
+    }
     fn commit(&self, tree: ObjectId, parents: Vec<ObjectId>) -> ObjectId {
+        self.commit_at(tree, parents, 0)
+    }
+    fn commit_at(&self, tree: ObjectId, parents: Vec<ObjectId>, seconds: i64) -> ObjectId {
         let signature = Signature {
             name: b"A".to_vec(),
             email: b"a@example.com".to_vec(),
-            seconds: 0,
+            seconds,
             offset_minutes: 0,
         };
         let commit = Commit::new(CommitFields {
@@ -1065,21 +1073,250 @@ fn excludes_nested_tags_and_skips_external_gitlinks() {
     assert_eq!(prepared.receiver_roots, vec![inner]);
 }
 
+/// The receiver's copy of a root's closure is trusted, so preparation need not read or validate it.
 #[test]
-fn exclusion_requires_selected_graph_to_be_complete() {
+fn receiver_root_closure_is_trusted_without_local_validation() {
     let f = Fixture::new();
     let tree = f.tree(
         ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
         EntryMode::Blob,
     );
-    let result = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(tree)],
         &[tree],
         PushLimits::default(),
         &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 0);
+    assert_eq!(prepared.receiver_roots, vec![tree]);
+}
+
+/// Objects outside every root's closure must still be present locally.
+#[test]
+fn missing_new_object_fails_despite_receiver_roots() {
+    let f = Fixture::new();
+    let known = f.tree_with(b"known");
+    let old = f.commit(known, vec![]);
+    let tree = f.tree(
+        ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
+        EntryMode::Blob,
+    );
+    let new = f.commit(tree, vec![old]);
+    let result = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", Some(old), new)],
+        &[old],
+        PushLimits::default(),
+        &AtomicBool::new(false),
     );
     assert!(matches!(result, Err(PushFailure::Missing(_))));
+}
+
+/// A present root whose closure omits nothing is not reported, so sending does not require it.
+#[test]
+fn unrelated_present_root_is_not_relied_on() {
+    let f = Fixture::new();
+    let unrelated = f.repo.loose_objects().write_blob(b"unrelated").unwrap();
+    let tip = f.commit(f.tree_with(b"tip"), vec![]);
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", None, tip)],
+        &[unrelated],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 3);
+    assert!(prepared.receiver_roots.is_empty());
+}
+
+/// Reading known history has its own edge allowance: marking a three-entry boundary tree needs
+/// four exclusion edges, while the new commit needs three.
+#[rstest]
+#[case::exhausted(3, Some("push limit exceeded: exclusion edges"))]
+#[case::exact(4, None)]
+fn bounds_exclusion_edges_separately(#[case] max_edges: usize, #[case] error: Option<&str>) {
+    let f = Fixture::new();
+    let entries = [b"a", b"b", b"c"].map(|name| TreeEntry {
+        mode: EntryMode::Blob,
+        id: f.repo.loose_objects().write_blob(name).unwrap(),
+        name: name.to_vec(),
+    });
+    let known = Tree::new(crate::ObjectFormat::Sha1, entries.to_vec()).unwrap();
+    let old = f.commit(f.repo.loose_objects().write_tree(&known).unwrap(), vec![]);
+    let new = f.commit(f.tree_with(b"new"), vec![old]);
+    let result = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", Some(old), new)],
+        &[old],
+        PushLimits {
+            max_edges,
+            ..PushLimits::default()
+        },
+        &AtomicBool::new(false),
+    );
+    assert_eq!(result.err().map(|e| e.to_string()).as_deref(), error);
+}
+
+/// Builds commits from a space-separated spec of `parents@seconds` entries, such as `@100 0@200
+/// 1,0@300`. Parents are comma-separated indexes of earlier entries. Every commit has a distinct
+/// tree and blob.
+fn history(f: &Fixture, spec: &str) -> Vec<ObjectId> {
+    let mut ids: Vec<ObjectId> = Vec::new();
+    for (index, entry) in spec.split_whitespace().enumerate() {
+        let (parents, seconds) = entry.split_once('@').unwrap();
+        let parents = parents
+            .split(',')
+            .filter(|p| !p.is_empty())
+            .map(|p| ids[p.parse::<usize>().unwrap()])
+            .collect();
+        let tree = f.tree_with(format!("commit {index}").as_bytes());
+        ids.push(f.commit_at(tree, parents, seconds.parse().unwrap()));
+    }
+    ids
+}
+
+/// Pushes `new` over the receiver's `old` with `old` as the only receiver root.
+fn prepare_over(
+    f: &Fixture,
+    old: ObjectId,
+    new: ObjectId,
+    observe: impl FnMut(PreparationProgress),
+) -> Result<PreparedPush, PushFailure> {
+    PreparedPush::new_local_with_progress(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", Some(old), new)],
+        &[old],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        observe,
+    )
+}
+
+/// Reading one new commit over a known tip is independent of the known history's length.
+#[rstest]
+#[case::short(16)]
+#[case::long(1000)]
+fn incremental_push_reads_are_independent_of_known_history(#[case] length: usize) {
+    let f = Fixture::new();
+    let spec: Vec<_> = (1..length).map(|i| format!("{}@{i}", i - 1)).collect();
+    let old = *history(&f, &format!("@0 {}", spec.join(" ")))
+        .last()
+        .unwrap();
+    let new = f.commit_at(f.tree_with(b"new"), vec![old], length as i64);
+    let mut reads = 0;
+    let prepared = prepare_over(&f, old, new, |event| {
+        if let PreparationProgress::Reading { objects } = event {
+            reads = objects;
+        }
+    })
+    .unwrap();
+    assert_eq!(prepared.object_count(), 3);
+    assert_eq!(prepared.receiver_roots, vec![old]);
+    assert_eq!(reads, 10);
+}
+
+/// Fast-forward proofs are exact whatever the committer dates, with or without the old tip as a
+/// receiver root.
+#[rstest]
+#[case::ancestor_dated_after_descendants("@900 0@100 1@200", 0, 2, false)]
+#[case::parent_dated_after_child("@100 0@300 1@200 2@150", 1, 3, false)]
+#[case::second_parent_skewed("@100 0@900 0@200 2,1@300", 1, 3, false)]
+#[case::deep_ancestor_behind_newer_side("@100 0@110 1@120 0@800 2,3@130", 0, 4, false)]
+#[case::older_sibling("@100 0@150 0@200", 1, 2, true)]
+#[case::newer_sibling("@100 0@900 0@200", 1, 2, true)]
+#[case::rewind("@100 0@200", 1, 0, true)]
+#[case::rewind_skewed("@900 0@200", 1, 0, true)]
+#[case::unrelated("@100 @200 1@50", 0, 2, true)]
+#[case::sibling_of_merge_parent("@100 0@300 0@50 0@60 1,2@400", 3, 4, true)]
+fn fast_forward_proof_ignores_commit_dates(
+    #[case] spec: &str,
+    #[case] old: usize,
+    #[case] new: usize,
+    #[case] rejected: bool,
+    #[values(0, 1)] roots: usize,
+) {
+    let f = Fixture::new();
+    let ids = history(&f, spec);
+    let result = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", Some(ids[old]), ids[new])],
+        &[ids[old]][..roots],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(matches!(result, Err(PushFailure::WouldForce(_))), rejected);
+    assert_eq!(result.is_ok(), !rejected);
+}
+
+/// A merge of a known commit and new history sends exactly the new side, whatever the dates.
+/// Commits: 0 base, 1 known tip, 2 new side, 3 merge.
+#[rstest]
+#[case::ordered("@100 0@200 0@300 1,2@400")]
+#[case::known_first_parent_newest("@100 0@900 0@300 1,2@400")]
+#[case::new_side_older_than_base("@500 0@600 0@10 1,2@700")]
+#[case::new_side_first("@100 0@200 0@300 2,1@400")]
+#[case::merge_oldest("@100 0@200 0@300 1,2@1")]
+fn merge_sends_only_new_side(#[case] spec: &str) {
+    let f = Fixture::new();
+    let ids = history(&f, spec);
+    let prepared = prepare_over(&f, ids[1], ids[3], |_| {}).unwrap();
+    assert_eq!(prepared.object_count(), 6);
+    assert_eq!(prepared.receiver_roots, vec![ids[1]]);
+}
+
+/// Receiver history with commits older than their parents and a new tip.
+/// Commits: 0-3 known (1 is dated before 0), 4 new with a date before every known commit.
+fn skewed_history(f: &Fixture) -> Vec<ObjectId> {
+    history(f, "@500 0@100 1@600 2@700 3@50")
+}
+
+fn tag_new_commit(f: &Fixture, ids: &[ObjectId]) -> ObjectId {
+    f.tag(ids[4], ObjectKind::Commit)
+}
+fn nested_tag_of_known_commit(f: &Fixture, ids: &[ObjectId]) -> ObjectId {
+    let inner = f.tag(ids[1], ObjectKind::Commit);
+    f.tag(inner, ObjectKind::Tag)
+}
+fn tag_of_known_tree(f: &Fixture, _: &[ObjectId]) -> ObjectId {
+    f.tag(f.tree_with(b"commit 2"), ObjectKind::Tree)
+}
+fn tag_of_known_blob(f: &Fixture, _: &[ObjectId]) -> ObjectId {
+    let blob = f.repo.loose_objects().write_blob(b"commit 3").unwrap();
+    f.tag(blob, ObjectKind::Blob)
+}
+fn tag_of_new_tree(f: &Fixture, _: &[ObjectId]) -> ObjectId {
+    f.tag(f.tree_with(b"tagged"), ObjectKind::Tree)
+}
+
+/// Pushed annotated tags omit known commits and the trees of known commits adjacent to sent
+/// commits, including when the known history has skewed dates. Nested tags peel to their final
+/// target. Like `git rev-list --objects`, a tagged tree or blob is sent when no commit is sent,
+/// even if a known commit's tree contains it.
+#[rstest]
+#[case::new_commit(tag_new_commit as fn(&Fixture, &[ObjectId]) -> ObjectId, 4)]
+#[case::nested_known_commit(nested_tag_of_known_commit, 2)]
+#[case::known_tree(tag_of_known_tree, 3)]
+#[case::known_blob(tag_of_known_blob, 2)]
+#[case::new_tree(tag_of_new_tree, 3)]
+fn tags_send_objects_outside_marked_closure(
+    #[case] tag: fn(&Fixture, &[ObjectId]) -> ObjectId,
+    #[case] objects: u32,
+) {
+    let f = Fixture::new();
+    let ids = skewed_history(&f);
+    let tag = tag(&f, &ids);
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![tag_command(tag)],
+        &[ids[3]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), objects);
 }
 
 #[test]
@@ -1170,4 +1407,242 @@ fn refuses_wrong_format_before_graph_reads(#[case] old: Option<ObjectId>, #[case
         PushLimits::default(),
     );
     assert!(matches!(result, Err(PushFailure::ObjectFormat(_))));
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn preparation_progress_observes_source_and_pack(#[case] format: crate::ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("source"), crate::InitKind::Bare).unwrap();
+    let id = repo.loose_objects().write_blob(b"source bytes").unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(id)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Reading { objects: 1 },
+            PreparationProgress::Packing { objects: (0, 1) },
+            PreparationProgress::Packing { objects: (1, 1) },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_counts_shared_objects_once_and_excludes_known_pack_entries() {
+    let f = Fixture::new();
+    let blob = f.blob();
+    let tree = f.tree(blob, EntryMode::Blob);
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(tree), command("refs/tags/also", None, tree)],
+        &[blob],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Reading { objects: 1 },
+            PreparationProgress::Reading { objects: 2 },
+            PreparationProgress::Packing { objects: (0, 1) },
+            PreparationProgress::Packing { objects: (1, 1) },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[rstest]
+#[case::reading_start(PreparationProgress::Reading { objects: 0 })]
+#[case::reading(PreparationProgress::Reading { objects: 1 })]
+#[case::packing_start(PreparationProgress::Packing { objects: (0, 1) })]
+#[case::packing(PreparationProgress::Packing { objects: (1, 1) })]
+fn preparation_progress_cancellation_has_no_prepared_result(#[case] stop: PreparationProgress) {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |event| {
+            events.push(event);
+            if event == stop {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    );
+    assert!(matches!(result, Err(PushFailure::Cancelled)));
+    assert!(!events.contains(&PreparationProgress::Complete));
+    assert_eq!(events.last(), Some(&stop));
+}
+
+#[test]
+fn preparation_progress_completion_is_not_retroactively_cancelled() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |event| {
+            if event == PreparationProgress::Complete {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(prepared.object_count(), 1);
+    assert!(cancel.load(Ordering::Relaxed));
+}
+
+#[test]
+fn preparation_progress_empty_batch_has_no_pack_events() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.pack_bytes(), 0);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_deletion_only_has_no_pack_events() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let delete = command(
+        "refs/tags/test",
+        Some(f.blob()),
+        ObjectId::null(crate::ObjectFormat::Sha1),
+    );
+    let mut events = Vec::new();
+    let prepared = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![delete],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    )
+    .unwrap();
+    assert_eq!(prepared.pack_bytes(), 0);
+    assert_eq!(
+        events,
+        [
+            PreparationProgress::Reading { objects: 0 },
+            PreparationProgress::Complete
+        ]
+    );
+}
+
+#[test]
+fn preparation_progress_missing_object_has_no_completion() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let missing = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"absent");
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(missing)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    );
+    assert!(matches!(result, Err(PushFailure::Missing(id)) if id == missing));
+    assert_eq!(events, [PreparationProgress::Reading { objects: 0 }]);
+}
+
+#[test]
+fn preparation_progress_index_failure_has_no_completion() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let mut limits = PushLimits::default();
+    limits.pack.max_index_bytes = 0;
+    let mut events = Vec::new();
+    let result = PreparedPush::new_local_with_progress(
+        &objects,
+        vec![tag_command(f.blob())],
+        &[],
+        limits,
+        &AtomicBool::new(false),
+        |event| events.push(event),
+    );
+    assert!(matches!(
+        result,
+        Err(PushFailure::Pack(crate::PackWriteError::Limit(
+            "index bytes"
+        )))
+    ));
+    assert_eq!(
+        events.last(),
+        Some(&PreparationProgress::Packing { objects: (1, 1) })
+    );
+    assert!(!events.contains(&PreparationProgress::Complete));
+}
+
+#[test]
+fn preparation_progress_preserves_prepared_bytes() {
+    let f = Fixture::new();
+    let objects = f.repo.objects(PackLimits::default()).unwrap();
+    let commands = vec![tag_command(f.blob())];
+    let cancel = AtomicBool::new(false);
+    let original = PreparedPush::new_local(
+        &objects,
+        commands.clone(),
+        &[],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let observed = PreparedPush::new_local_with_progress(
+        &objects,
+        commands,
+        &[],
+        PushLimits::default(),
+        &cancel,
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(observed.request, original.request);
+    assert_eq!(observed.pack, original.pack);
+    assert_eq!(observed.index, original.index);
 }

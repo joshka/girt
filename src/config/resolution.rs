@@ -1,14 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use super::parse::{SectionName, SectionOccurrence};
+use super::placement::{IncludePlacement, SectionPlacement};
 use super::{
-    Config, ConfigError, ConfigInputs, ConfigScope, Entry, Origin, SourceLocation, wildmatch,
+    Config, ConfigError, ConfigInputs, ConfigScope, Entry, IncludeConditionVisibility,
+    IncludeDirectiveCase, Origin, ResolveOptions, SourceLocation, UnresolvedIncludePath, wildmatch,
 };
 
 /// Contextual resolution failure. Source locations may contain private paths; tracing omits them.
 #[derive(Debug, thiserror::Error)]
-#[error("configuration resolution failed: {source}")]
+#[error("configuration resolution failed")]
 pub struct ResolveError {
     /// Location being loaded or interpreted.
     pub location: SourceLocation,
@@ -26,7 +29,7 @@ pub enum ResolveFailure {
     #[error("source I/O failure")]
     Io(#[source] std::io::Error),
     /// Invalid source bytes.
-    #[error("invalid source syntax: {0}")]
+    #[error("invalid source syntax")]
     Parse(#[source] ConfigError),
     /// A finite work budget was exhausted.
     #[error("configuration limit: {0}")]
@@ -59,6 +62,119 @@ impl Config {
     /// file origin and fail; use absolute paths. Unix paths preserve bytes; other platforms require
     /// valid UTF-8 in path values. `~user` and prefix expansion require explicit context mappings.
     pub fn resolve(inputs: &ConfigInputs) -> Result<Self, ResolveError> {
+        Self::resolve_with_include_placement(inputs, IncludePlacement::InPlace)
+    }
+
+    /// Resolves explicit sources with a selected placement of included sections.
+    ///
+    /// [`IncludePlacement::AfterSectionReverse`] changes output order after sources have been
+    /// validated in the same forward, depth-first order as [`Self::resolve`]. Includes keep their
+    /// original scope, directive ancestry and source line. Conditional matching, source caching
+    /// and all resolution budgets remain unchanged. This does not emulate another opener's
+    /// source selection, trust rules or parsing. No environment is read and no files are written.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same source, include and budget failures as [`Self::resolve`], in the same
+    /// order. Placement adds temporary entry/section slots bounded by those existing budgets.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::config::{ConfigInputs, IncludePlacement};
+    /// let inputs = ConfigInputs::default();
+    /// let config =
+    ///     Config::resolve_with_include_placement(&inputs, IncludePlacement::AfterSectionReverse)?;
+    /// assert!(config.entries().is_empty());
+    /// # Ok::<(), girt::config::ResolveError>(())
+    /// ```
+    pub fn resolve_with_include_placement(
+        inputs: &ConfigInputs,
+        placement: IncludePlacement,
+    ) -> Result<Self, ResolveError> {
+        Self::resolve_with_options(
+            inputs,
+            ResolveOptions {
+                placement,
+                ..ResolveOptions::default()
+            },
+        )
+    }
+
+    /// Resolves explicit sources with caller-selected include evaluation and placement.
+    ///
+    /// Defaults match [`Self::resolve`]. Resource budgets, provenance, physical section identity
+    /// and fresh-read guarantees are unchanged. Evaluation order and output placement are separate.
+    ///
+    /// # Errors
+    ///
+    /// Reports the source, input and resource failures of [`Self::resolve`]. The selected policy
+    /// determines which conditional descendants are read and whether missing interpolation context
+    /// is an error; errors from selected sources are never silently retried under another policy.
+    /// Root-snapshot URL views are independently bounded by the input entry and byte limits;
+    /// seeding an oversized caller-owned root may report a limit before traversing its entries.
+    ///
+    /// ```
+    /// use girt::config::{Config, ConfigInputs, IncludeConditionVisibility, ResolveOptions};
+    /// let options = ResolveOptions {
+    ///     conditions: IncludeConditionVisibility::RootSnapshot,
+    ///     ..ResolveOptions::default()
+    /// };
+    /// let config = Config::resolve_with_options(&ConfigInputs::default(), options)?;
+    /// assert!(config.entries().is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn resolve_with_options(
+        inputs: &ConfigInputs,
+        options: ResolveOptions,
+    ) -> Result<Self, ResolveError> {
+        Self::resolve_with_lookup(inputs, options, None)
+    }
+
+    /// Resolves includes with an explicit fallback lookup for `~username/` paths.
+    ///
+    /// Caller-supplied `user_homes` take precedence. The callback receives exact username bytes
+    /// only when expansion reaches an unmapped named home. Positive and negative results are
+    /// cached for this resolution across roots and passes; a later call starts a fresh cache.
+    /// The default condition policy may reach includes during its preliminary validation pass,
+    /// including unmatched hasconfig descendants. Root-snapshot policy visits only selected
+    /// descendants. Callback order follows traversal, independently of output placement.
+    ///
+    /// Cache entries and retained username/path bytes are independently bounded by the input
+    /// entry and byte limits. The caller bounds its own callback work and temporary allocations.
+    /// No ambient home lookup or user enumeration occurs. `~/` and prefix expansion use only
+    /// explicit context. Returning `None` follows the selected unresolved-path policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::resolve_with_options`]'s errors and cache resource-limit failures. An
+    /// oversized callback result is rejected before retention. Earlier callback effects are not
+    /// rolled back on failure; callbacks should perform read-only lookup.
+    ///
+    /// ```
+    /// use girt::config::{Config, ConfigInputs, ResolveOptions};
+    /// let config = Config::resolve_with_user_home_lookup(
+    ///     &ConfigInputs::default(),
+    ///     ResolveOptions::default(),
+    ///     |_name| None,
+    /// )?;
+    /// assert!(config.entries().is_empty());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn resolve_with_user_home_lookup(
+        inputs: &ConfigInputs,
+        options: ResolveOptions,
+        mut lookup: impl FnMut(&[u8]) -> Option<PathBuf>,
+    ) -> Result<Self, ResolveError> {
+        Self::resolve_with_lookup(inputs, options, Some(&mut lookup))
+    }
+
+    fn resolve_with_lookup<'a>(
+        inputs: &'a ConfigInputs,
+        options: ResolveOptions,
+        lookup: Option<&'a mut UserHomeLookup<'a>>,
+    ) -> Result<Self, ResolveError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -66,7 +182,11 @@ impl Config {
             outcome = "incomplete",
             failure_class = tracing::field::Empty
         );
-        let operation = || Resolver::new(inputs).resolve();
+        let operation = || {
+            let mut resolver = Resolver::new(inputs, options);
+            resolver.user_home_lookup = lookup;
+            resolver.resolve()
+        };
         #[cfg(feature = "tracing")]
         {
             let result = span.in_scope(operation);
@@ -124,6 +244,7 @@ impl Config {
             });
         }
         let mut entries = Vec::new();
+        let mut occurrences = Vec::new();
         for index in 0..count {
             let line = index + 1;
             let error = |reason| ConfigError { line, reason };
@@ -149,6 +270,14 @@ impl Config {
             {
                 return Err(error("invalid environment pair"));
             }
+            occurrences.push(SectionOccurrence {
+                name: SectionName {
+                    section: section.to_vec(),
+                    subsection: (first != last).then(|| key[first + 1..last].to_vec()),
+                },
+                start: index,
+                entries: vec![index],
+            });
             entries.push(Entry {
                 section: section.to_vec(),
                 subsection: (first != last).then(|| key[first + 1..last].to_vec()),
@@ -158,47 +287,74 @@ impl Config {
                 origin: None,
             });
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            sections: Vec::new(),
+            occurrences,
+        })
     }
 }
 
+type UserHomeLookup<'a> = dyn FnMut(&[u8]) -> Option<PathBuf> + 'a;
+
 struct Resolver<'a> {
     inputs: &'a ConfigInputs,
+    options: ResolveOptions,
     cache: HashMap<PathBuf, Config>,
+    user_home_lookup: Option<&'a mut UserHomeLookup<'a>>,
+    user_homes: HashMap<Vec<u8>, Option<PathBuf>>,
+    user_home_bytes: usize,
     bytes: usize,
     visited: usize,
     expanded_bytes: usize,
+    section_bytes: usize,
+    occurrences: Vec<SectionOccurrence>,
     stack: Vec<PathBuf>,
     ancestry: Vec<SourceLocation>,
     urls: Vec<Vec<u8>>,
+    url_bytes: usize,
     output: Vec<Entry>,
+    sections: BTreeSet<super::parse::SectionName>,
     scanning: bool,
 }
 
 impl<'a> Resolver<'a> {
-    fn new(inputs: &'a ConfigInputs) -> Self {
+    fn new(inputs: &'a ConfigInputs, options: ResolveOptions) -> Self {
         Self {
             inputs,
+            options,
             cache: HashMap::new(),
+            user_home_lookup: None,
+            user_homes: HashMap::new(),
+            user_home_bytes: 0,
             bytes: 0,
             visited: 0,
             expanded_bytes: 0,
+            section_bytes: 0,
+            occurrences: Vec::new(),
             stack: Vec::new(),
             ancestry: Vec::new(),
             urls: Vec::new(),
+            url_bytes: 0,
             output: Vec::new(),
+            sections: BTreeSet::new(),
             scanning: true,
         }
     }
 
     fn resolve(mut self) -> Result<Config, ResolveError> {
-        self.roots()?;
+        if self.options.conditions == IncludeConditionVisibility::AllInputs {
+            self.roots()?;
+        }
         self.scanning = false;
         self.visited = 0;
         self.expanded_bytes = 0;
+        self.section_bytes = 0;
         self.roots()?;
         Ok(Config {
             entries: self.output,
+            sections: self.sections.into_iter().collect(),
+            occurrences: self.occurrences,
         })
     }
 
@@ -295,11 +451,79 @@ impl<'a> Resolver<'a> {
         scope: ConfigScope,
         prohibited: bool,
     ) -> Result<(), ResolveError> {
-        for entry in config.entries() {
+        let root_snapshot = self.options.conditions == IncludeConditionVisibility::RootSnapshot;
+        let root = self.ancestry.is_empty();
+        if root_snapshot && root {
+            self.urls.clear();
+            self.url_bytes = 0;
+            append_remote_urls(
+                &mut self.urls,
+                &mut self.url_bytes,
+                &config.entries,
+                self.inputs.limits,
+            )
+            .map_err(|source| {
+                self.error(
+                    &SourceLocation {
+                        path: path.map(Path::to_path_buf),
+                        line: 1,
+                    },
+                    source,
+                )
+            })?;
+        }
+        if !self.scanning {
+            self.sections.extend(config.sections.iter().cloned());
+        }
+        // Inputs may themselves be resolved: headers can begin between members of an outer
+        // occurrence. Replay header positions without regrouping the flat entry stream.
+        let mut owners = vec![0; config.entries.len()];
+        for (ordinal, occurrence) in config.occurrences.iter().enumerate() {
+            for &index in &occurrence.entries {
+                owners[index] = ordinal;
+            }
+        }
+        let mut placement = (!self.scanning
+            && self.options.placement == IncludePlacement::AfterSectionReverse)
+            .then(|| {
+                SectionPlacement::new(
+                    self.output.len(),
+                    self.occurrences.len(),
+                    config.occurrences.len(),
+                )
+            });
+        let mut mapped = Vec::new();
+        let mut headers = config.occurrences.iter().peekable();
+        for index in 0..=config.entries.len() {
+            while headers.peek().is_some_and(|header| header.start == index) {
+                let header = headers.next().expect("peeked header");
+                let location = SourceLocation {
+                    path: path.map(Path::to_path_buf),
+                    line: 1,
+                };
+                self.section_budget(
+                    128usize
+                        .saturating_add(header.name.section.len())
+                        .saturating_add(header.name.subsection.as_ref().map_or(0, Vec::len)),
+                    &location,
+                )?;
+                if !self.scanning {
+                    mapped.push(self.occurrences.len());
+                    self.occurrences.push(SectionOccurrence {
+                        name: header.name.clone(),
+                        start: self.output.len(),
+                        entries: Vec::new(),
+                    });
+                }
+            }
+            let Some(entry) = config.entries.get(index) else {
+                break;
+            };
             let location = SourceLocation {
                 path: path.map(Path::to_path_buf),
                 line: entry.line,
             };
+            self.section_budget(8, &location)?;
             self.visited += 1;
             self.expanded_bytes = self
                 .expanded_bytes
@@ -333,6 +557,9 @@ impl<'a> Resolver<'a> {
                     location: location.clone(),
                     included_from: self.ancestry.clone(),
                 });
+                self.occurrences[mapped[owners[index]]]
+                    .entries
+                    .push(self.output.len());
                 self.output.push(entry);
             }
             if !entry.name.eq_ignore_ascii_case(b"path") {
@@ -340,9 +567,9 @@ impl<'a> Resolver<'a> {
             }
             let mut hasconfig = false;
             let include =
-                if entry.section.eq_ignore_ascii_case(b"include") && entry.subsection.is_none() {
+                if self.include_section(&entry.section, b"include") && entry.subsection.is_none() {
                     true
-                } else if entry.section.eq_ignore_ascii_case(b"includeif") {
+                } else if self.include_section(&entry.section, b"includeIf") {
                     if let Some(condition) = &entry.subsection {
                         hasconfig = condition.starts_with(b"hasconfig:remote.*.url:");
                         if hasconfig && self.scanning {
@@ -363,7 +590,9 @@ impl<'a> Resolver<'a> {
                 if value.is_empty() {
                     continue;
                 }
-                let target = self.expand(value, &location)?;
+                let Some(target) = self.expand(value, &location)? else {
+                    continue;
+                };
                 let target = if target.is_absolute() {
                     target
                 } else {
@@ -375,39 +604,164 @@ impl<'a> Resolver<'a> {
                     })?;
                     parent.join(target)
                 };
+                let first_section = self.occurrences.len();
+                let first_entry = self.output.len();
                 self.ancestry.push(location);
-                let result = self.file(&target, scope, true, prohibited || hasconfig);
+                let result = self.file(
+                    &target,
+                    scope,
+                    true,
+                    prohibited || (hasconfig && !root_snapshot),
+                );
                 self.ancestry.pop();
                 result?;
+                if root_snapshot && root {
+                    append_remote_urls(
+                        &mut self.urls,
+                        &mut self.url_bytes,
+                        &self.output[first_entry..],
+                        self.inputs.limits,
+                    )
+                    .map_err(|source| {
+                        self.error(
+                            &SourceLocation {
+                                path: path.map(Path::to_path_buf),
+                                line: entry.line,
+                            },
+                            source,
+                        )
+                    })?;
+                }
+                if let Some(placement) = &mut placement {
+                    placement.included(owners[index], first_section..self.occurrences.len());
+                }
             }
+        }
+        if let Some(placement) = placement {
+            placement.apply(mapped, &mut self.output, &mut self.occurrences);
         }
         Ok(())
     }
 
-    fn expand(&self, bytes: &[u8], location: &SourceLocation) -> Result<PathBuf, ResolveError> {
+    // Independent logical metadata units, not an allocator-size estimate. Keeping this budget
+    // separate preserves both the variable-count and expanded-value-byte contracts.
+    fn section_budget(
+        &mut self,
+        bytes: usize,
+        location: &SourceLocation,
+    ) -> Result<(), ResolveError> {
+        self.section_bytes = self
+            .section_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("section metadata bytes")))?;
+        if self.section_bytes > self.inputs.limits.bytes {
+            return Err(self.error(location, ResolveFailure::Limit("section metadata bytes")));
+        }
+        Ok(())
+    }
+
+    fn include_section(&self, actual: &[u8], canonical: &[u8]) -> bool {
+        match self.options.directive_case {
+            IncludeDirectiveCase::Insensitive => actual.eq_ignore_ascii_case(canonical),
+            IncludeDirectiveCase::Canonical => actual == canonical,
+        }
+    }
+
+    fn expand(
+        &mut self,
+        bytes: &[u8],
+        location: &SourceLocation,
+    ) -> Result<Option<PathBuf>, ResolveError> {
+        if self.user_home_lookup.is_some() {
+            if bytes.contains(&0) {
+                return Err(
+                    self.error(location, ResolveFailure::Input("include path contains NUL"))
+                );
+            }
+            path_bytes(bytes).map_err(|source| self.error(location, source))?;
+        }
         let context = &self.inputs.context;
         let expanded = if let Some(rest) = bytes.strip_prefix(b"~/") {
-            context.home.as_ref().map(|home| (home, rest))
+            context.home.clone().map(|home| (home, rest))
         } else if let Some(rest) = bytes.strip_prefix(b"%(prefix)/") {
-            context.prefix.as_ref().map(|prefix| (prefix, rest))
+            context.prefix.clone().map(|prefix| (prefix, rest))
         } else if bytes.starts_with(b"~") {
-            bytes.iter().position(|b| *b == b'/').and_then(|slash| {
-                context
-                    .user_homes
-                    .iter()
-                    .find(|(name, _)| name == &bytes[1..slash])
-                    .map(|(_, home)| (home, &bytes[slash + 1..]))
-            })
+            match bytes.iter().position(|b| *b == b'/') {
+                Some(slash) => self
+                    .named_home(&bytes[1..slash], location)?
+                    .map(|home| (home, &bytes[slash + 1..])),
+                None => None,
+            }
         } else {
-            return path_bytes(bytes).map_err(|e| self.error(location, e));
+            return path_bytes(bytes)
+                .map(Some)
+                .map_err(|e| self.error(location, e));
         };
+        if expanded.is_none() && self.options.unresolved_paths == UnresolvedIncludePath::Skip {
+            if bytes.contains(&0) {
+                return Err(
+                    self.error(location, ResolveFailure::Input("include path contains NUL"))
+                );
+            }
+            path_bytes(bytes).map_err(|source| self.error(location, source))?;
+            return Ok(None);
+        }
         let (base, rest) = expanded.ok_or_else(|| {
             self.error(
                 location,
                 ResolveFailure::Input("missing path expansion context"),
             )
         })?;
-        Ok(base.join(path_bytes(rest).map_err(|e| self.error(location, e))?))
+        Ok(Some(base.join(
+            path_bytes(rest).map_err(|e| self.error(location, e))?,
+        )))
+    }
+
+    fn named_home(
+        &mut self,
+        name: &[u8],
+        location: &SourceLocation,
+    ) -> Result<Option<PathBuf>, ResolveError> {
+        if let Some((_, home)) = self
+            .inputs
+            .context
+            .user_homes
+            .iter()
+            .find(|(user, _)| user == name)
+        {
+            return Ok(Some(home.clone()));
+        }
+        if let Some(home) = self.user_homes.get(name) {
+            return Ok(home.clone());
+        }
+        if self.user_home_lookup.is_none() {
+            return Ok(None);
+        }
+        if name.contains(&0) {
+            return Err(self.error(
+                location,
+                ResolveFailure::Input("include username contains NUL"),
+            ));
+        }
+        if self.user_homes.len() >= self.inputs.limits.entries {
+            return Err(self.error(location, ResolveFailure::Limit("user home cache entries")));
+        }
+        let names_bytes = self
+            .user_home_bytes
+            .checked_add(name.len())
+            .filter(|total| *total <= self.inputs.limits.bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("user home cache bytes")))?;
+        let home = self.user_home_lookup.as_mut().expect("lookup present")(name);
+        let retained_bytes = names_bytes
+            .checked_add(
+                home.as_ref()
+                    .map_or(0, |path| path.as_os_str().as_encoded_bytes().len()),
+            )
+            .filter(|total| *total <= self.inputs.limits.bytes)
+            .ok_or_else(|| self.error(location, ResolveFailure::Limit("user home cache bytes")))?;
+        self.user_home_bytes = retained_bytes;
+        self.user_homes.insert(name.to_vec(), home.clone());
+        Ok(home)
     }
 
     fn glob(
@@ -421,7 +775,11 @@ impl<'a> Resolver<'a> {
             .ok_or_else(|| self.error(location, ResolveFailure::Limit("wildcard work")))
     }
 
-    fn condition(&self, condition: &[u8], location: &SourceLocation) -> Result<bool, ResolveError> {
+    fn condition(
+        &mut self,
+        condition: &[u8],
+        location: &SourceLocation,
+    ) -> Result<bool, ResolveError> {
         if let Some(pattern) = condition.strip_prefix(b"hasconfig:remote.*.url:") {
             for url in &self.urls {
                 if self.glob(pattern, url, false, location)? {
@@ -464,7 +822,9 @@ impl<'a> Resolver<'a> {
         } else if let Some(rest) = pattern.strip_prefix(b"~/") {
             // Keep glob syntax out of PathBuf::join: Windows verbatim paths normalize
             // components and lose the trailing slash that requests recursive matching.
-            let home = self.expand(b"~/", location)?;
+            let Some(home) = self.expand(b"~/", location)? else {
+                return Ok(false);
+            };
             let mut bytes = os_bytes(&home);
             if bytes.last() != Some(&b'/') {
                 bytes.push(b'/');
@@ -488,6 +848,39 @@ impl<'a> Resolver<'a> {
         }
         Ok(false)
     }
+}
+
+// Root snapshots can be seeded from caller-owned runtime data before normal traversal charges
+// its entries. Charge this retained URL view before cloning, including later completed subtrees.
+fn append_remote_urls(
+    urls: &mut Vec<Vec<u8>>,
+    bytes: &mut usize,
+    entries: &[Entry],
+    limits: super::ResolveLimits,
+) -> Result<(), ResolveFailure> {
+    for entry in entries {
+        if !entry.section.eq_ignore_ascii_case(b"remote")
+            || entry.subsection.is_none()
+            || !entry.name.eq_ignore_ascii_case(b"url")
+        {
+            continue;
+        }
+        let Some(url) = &entry.value else {
+            continue;
+        };
+        let next = bytes
+            .checked_add(url.len())
+            .ok_or(ResolveFailure::Limit("condition URL bytes"))?;
+        if next > limits.bytes {
+            return Err(ResolveFailure::Limit("condition URL bytes"));
+        }
+        if urls.len() >= limits.entries {
+            return Err(ResolveFailure::Limit("condition URLs"));
+        }
+        *bytes = next;
+        urls.push(url.clone());
+    }
+    Ok(())
 }
 
 fn trailing_glob(pattern: &[u8]) -> Vec<u8> {
@@ -529,6 +922,346 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn repeated_includes_resume_outer_membership_with_fresh_headers() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config");
+        std::fs::write(
+            &path,
+            b"[include]\npath=child\nmarker=outer\npath=child\n[empty]\n[core]\nx=end\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("child"), b"[core]\nx=child\n[empty]\n").unwrap();
+        let config = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path: path.clone(),
+                scope: ConfigScope::Local,
+                optional: false,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let sections: Vec<_> = config.section_occurrences().collect();
+        assert_eq!(
+            sections
+                .iter()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 2, 3][..], &[1], &[], &[4], &[], &[], &[5]]
+        );
+        assert_eq!(
+            config
+                .entries()
+                .iter()
+                .map(|entry| entry.value.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"outer".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"end".as_slice())
+            ]
+        );
+        assert_eq!(
+            config.entries()[1].origin.as_ref().unwrap().included_from[0].line,
+            2
+        );
+        assert_eq!(
+            config.entries()[4].origin.as_ref().unwrap().included_from[0].line,
+            4
+        );
+        assert_eq!(
+            config.entries()[2]
+                .origin
+                .as_ref()
+                .unwrap()
+                .location
+                .path
+                .as_ref(),
+            Some(&path)
+        );
+    }
+
+    #[test]
+    fn runtime_pairs_and_command_headers_remain_distinct() {
+        let environment = Config::from_environment(
+            |key| match key {
+                "GIT_CONFIG_COUNT" => Some(b"2".to_vec()),
+                "GIT_CONFIG_KEY_0" | "GIT_CONFIG_KEY_1" => Some(b"core.x".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(b"first".to_vec()),
+                "GIT_CONFIG_VALUE_1" => Some(Vec::new()),
+                _ => None,
+            },
+            2,
+        )
+        .unwrap();
+        let config = Config::resolve(&ConfigInputs {
+            environment: Some(environment),
+            command: Some(Config::parse(b"[core]\nx\nx=last\n[empty]\n").unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            config
+                .section_occurrences()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0][..], &[1], &[2, 3], &[]]
+        );
+        assert_eq!(config.entries()[1].value.as_deref(), Some(b"".as_slice()));
+        assert_eq!(
+            config.entries()[0].origin.as_ref().unwrap().scope,
+            ConfigScope::Environment
+        );
+        assert_eq!(
+            config.entries()[2].origin.as_ref().unwrap().scope,
+            ConfigScope::Command
+        );
+    }
+
+    #[test]
+    fn resolved_runtime_input_keeps_interleaved_entries_and_headers() {
+        let root = tempfile::tempdir().unwrap();
+        let child = root.path().join("child");
+        std::fs::write(&child, b"[core]\nx=child\n[empty]\n").unwrap();
+        let source = format!(
+            "[include]\npath={}\nmarker=outer\n[tail]\n",
+            child.display()
+        );
+        let first = Config::resolve(&ConfigInputs {
+            command: Some(Config::parse(source.as_bytes()).unwrap()),
+            ..Default::default()
+        })
+        .unwrap();
+        // Missing optional include avoids a second expansion while replaying an already-resolved
+        // snapshot. Its retained child header and entries still precede the resumed outer member.
+        std::fs::remove_file(child).unwrap();
+        let second = Config::resolve(&ConfigInputs {
+            command: Some(first),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            second
+                .section_occurrences()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 2][..], &[1], &[], &[]]
+        );
+        assert_eq!(
+            second.entries()[1].value.as_deref(),
+            Some(b"child".as_slice())
+        );
+        assert_eq!(
+            second.entries()[2].value.as_deref(),
+            Some(b"outer".as_slice())
+        );
+    }
+
+    #[rstest]
+    #[case::exhausted(924, false)]
+    #[case::exact(925, true)]
+    fn repeated_empty_include_headers_consume_metadata_budget(
+        #[case] bytes: usize,
+        #[case] succeeds: bool,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config");
+        std::fs::write(&path, b"[include]\npath=child\npath=child\n").unwrap();
+        std::fs::write(root.path().join("child"), b"[x]\n[y]\n[z]\n").unwrap();
+        let result = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path,
+                scope: ConfigScope::Local,
+                optional: false,
+            }],
+            limits: super::super::ResolveLimits {
+                bytes,
+                entries: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert_eq!(result.is_ok(), succeeds);
+        assert!(result.as_ref().err().is_none_or(|error| matches!(
+            error.source,
+            ResolveFailure::Limit("section metadata bytes")
+        )));
+    }
+
+    #[test]
+    fn metadata_accounting_rejects_arithmetic_overflow() {
+        let inputs = ConfigInputs {
+            limits: super::super::ResolveLimits {
+                bytes: usize::MAX,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut resolver = Resolver::new(&inputs, ResolveOptions::default());
+        let location = SourceLocation {
+            path: None,
+            line: 1,
+        };
+        resolver.section_budget(1, &location).unwrap();
+        assert!(matches!(
+            resolver
+                .section_budget(usize::MAX, &location)
+                .unwrap_err()
+                .source,
+            ResolveFailure::Limit("section metadata bytes")
+        ));
+    }
+
+    #[test]
+    fn subsection_names_include_inherited_headers_and_runtime_assignments() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("child"),
+            b"[remote \"empty\"]\n[remote \"duplicate\"]\n",
+        )
+        .unwrap();
+        let environment = Config::from_environment(
+            |name| match name {
+                "GIT_CONFIG_COUNT" => Some(b"2".to_vec()),
+                "GIT_CONFIG_KEY_0" => Some(b"remote.runtime.url".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(Vec::new()),
+                "GIT_CONFIG_KEY_1" => Some(b"remote.duplicate.url".to_vec()),
+                "GIT_CONFIG_VALUE_1" => Some(b"repo".to_vec()),
+                _ => None,
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            environment.subsection_names("REMOTE"),
+            [b"duplicate".as_slice(), b"runtime"]
+        );
+        let mut input = ConfigInputs {
+            environment: Some(environment),
+            command: Some(
+                Config::parse(b"[include]\npath=~/child\npath=~/child\n[remote \"command\"]\n")
+                    .unwrap(),
+            ),
+            ..Default::default()
+        };
+        input.context.home = Some(root.path().into());
+        let config = Config::resolve(&input).unwrap();
+        assert_eq!(
+            config.subsection_names("remote"),
+            [b"command".as_slice(), b"duplicate", b"empty", b"runtime"]
+        );
+        assert_eq!(
+            config
+                .entries()
+                .iter()
+                .filter(|entry| entry.section == b"remote")
+                .count(),
+            2
+        );
+    }
+
+    #[rstest]
+    #[case::empty(b"", false)]
+    #[case::header(b"[ReMoTe \"Name\"]", true)]
+    #[case::nonempty(b"[remote \"Name\"]\nurl=value", true)]
+    #[case::different_case(b"[remote \"name\"]", false)]
+    #[case::missing_subsection(b"[remote]", false)]
+    fn section_existence_survives_resolution(#[case] bytes: &[u8], #[case] exists: bool) {
+        let parsed = Config::parse(bytes).unwrap();
+        assert_eq!(parsed.contains_section("remote", Some(b"Name")), exists);
+        let resolved = Config::resolve(&ConfigInputs {
+            command: Some(parsed),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(resolved.contains_section("REMOTE", Some(b"Name")), exists);
+    }
+
+    #[test]
+    fn included_empty_headers_survive_without_entry_or_provenance_changes() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("child"),
+            b"[remote \"empty\"]\n[remote \"\xff\"]\n[a]\nb=child\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("parent"),
+            b"[a]\nb=before\n[include]\npath=child\npath=child\n[a]\nb=after\n",
+        )
+        .unwrap();
+        let resolved = Config::resolve(&ConfigInputs {
+            files: vec![super::super::ConfigFile {
+                path: root.path().join("parent"),
+                scope: ConfigScope::Global,
+                optional: false,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(resolved.contains_section("remote", Some(b"empty")));
+        // Repeated includes retain existence once, without multiplying header storage.
+        assert_eq!(resolved.sections.len(), 4);
+        assert!(resolved.contains_section("remote", Some(b"\xff")));
+        assert_eq!(
+            resolved.values("a", None, "b").collect::<Vec<_>>(),
+            [
+                Some(b"before".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"child".as_slice()),
+                Some(b"after".as_slice())
+            ]
+        );
+        let child = resolved
+            .entries()
+            .iter()
+            .find(|entry| entry.name == b"b" && entry.value.as_deref() == Some(b"child"))
+            .unwrap();
+        let origin = child.origin.as_ref().unwrap();
+        assert_eq!(origin.scope, ConfigScope::Global);
+        assert_eq!(origin.location.path, Some(root.path().join("child")));
+        assert_eq!(origin.included_from.len(), 1);
+        assert!(
+            crate::remote::ConfiguredRemoteRecord::find(&resolved, b"empty")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn runtime_assignment_implies_section_existence() {
+        let environment = Config::from_environment(
+            |name| match name {
+                "GIT_CONFIG_COUNT" => Some(b"1".to_vec()),
+                "GIT_CONFIG_KEY_0" => Some(b"remote.origin.url".to_vec()),
+                "GIT_CONFIG_VALUE_0" => Some(Vec::new()),
+                _ => None,
+            },
+            10,
+        )
+        .unwrap();
+        assert!(environment.contains_section("remote", Some(b"origin")));
+        let resolved = Config::resolve(&ConfigInputs {
+            environment: Some(environment),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(resolved.contains_section("remote", Some(b"origin")));
+        assert!(
+            crate::remote::ConfiguredRemoteRecord::find(&resolved, b"origin")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            !Config::resolve(&ConfigInputs::default())
+                .unwrap()
+                .contains_section("remote", Some(b"origin"))
+        );
+    }
 
     #[rstest]
     #[case::missing_key(Some(b"1".as_slice()), None, Some(b"v".as_slice()))]
@@ -637,7 +1370,7 @@ mod tests {
         let mut inputs = ConfigInputs::default();
         inputs.context.git_dirs.push(home.join("repo/.git"));
         inputs.context.home = Some(home);
-        let resolver = Resolver::new(&inputs);
+        let mut resolver = Resolver::new(&inputs, ResolveOptions::default());
         let location = SourceLocation {
             path: None,
             line: 1,

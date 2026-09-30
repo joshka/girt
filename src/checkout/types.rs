@@ -99,7 +99,7 @@ pub struct Report {
 
 /// Checkout failure with exact completed operations and independently reported cleanup failures.
 #[derive(Debug, thiserror::Error)]
-#[error("checkout failed during {stage:?}: {cause}", stage = .report.stage)]
+#[error("checkout failed during {stage:?}", stage = .report.stage)]
 pub struct Failure {
     /// Cause that stopped progress.
     #[source]
@@ -150,7 +150,7 @@ pub enum Error {
     #[error("missing or non-blob checkout object {0}")]
     InvalidBlob(ObjectId),
     /// Descriptor-relative filesystem operation failed.
-    #[error("checkout I/O at {path:?}: {source}")]
+    #[error("checkout I/O at {path:?}")]
     Io {
         /// Relative path; cleanup failures contain the owned temporary name.
         path: Vec<u8>,

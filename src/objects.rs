@@ -83,6 +83,22 @@ impl Default for PackLimits {
     }
 }
 
+impl PackLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            max_bytes: usize::MAX / 4,
+            max_index_bytes: usize::MAX / 8,
+            max_open_files: 4096,
+            max_directory_entries: usize::MAX / 4,
+            max_packs: 100_000,
+        }
+    }
+}
+
 /// Per-read bounds for loose payloads and iterative pack reconstruction.
 ///
 /// Every base and reconstructed payload must fit `max_object_bytes`. Delta programs have their
@@ -116,6 +132,24 @@ impl Default for ReadLimits {
             max_decode_bytes: 256 * 1024 * 1024,
             max_delta_depth: 64,
             max_input_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
+
+impl ReadLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    ///
+    /// Delta chains may be up to 10,000 edges deep, well beyond `git gc --aggressive`'s 250.
+    pub const fn trusted() -> Self {
+        Self {
+            max_object_bytes: usize::MAX / 4,
+            max_delta_bytes: usize::MAX / 4,
+            max_decode_bytes: usize::MAX / 4,
+            max_input_bytes: usize::MAX / 4,
+            max_delta_depth: 10_000,
         }
     }
 }
@@ -399,6 +433,15 @@ impl Objects {
                 }
             }
             check_cancelled(cancelled)?;
+            // Git treats the canonical empty tree as present in every repository, even when it
+            // is not stored.
+            if id == self.format.hash_object(ObjectKind::Tree, b"") {
+                return Ok(Some(Object {
+                    kind: ObjectKind::Tree,
+                    format: self.format,
+                    data: Vec::new(),
+                }));
+            }
             Ok(None)
         };
         #[cfg(feature = "tracing")]
@@ -506,7 +549,7 @@ pub enum ObjectReadError {
     #[error("unsupported object storage: {0}")]
     Unsupported(&'static str),
     /// Filesystem access failed at this artifact or directory.
-    #[error("object storage at {path}: {source}")]
+    #[error("object storage at {path}")]
     Path {
         /// Artifact or directory being accessed.
         path: PathBuf,
@@ -515,7 +558,7 @@ pub enum ObjectReadError {
         source: io::Error,
     },
     /// Validation of an index/pack pair failed during snapshot opening.
-    #[error("object storage pair {index} / {pack}: {source}")]
+    #[error("object storage pair {index} / {pack}")]
     PackArtifacts {
         /// Index identifying the pair.
         index: PathBuf,
@@ -526,7 +569,7 @@ pub enum ObjectReadError {
         source: Box<ObjectReadError>,
     },
     /// The existing loose reader rejected the object; preserves its concrete cause.
-    #[error("loose object: {0}")]
+    #[error("loose object")]
     Loose(#[from] crate::Error),
     /// The index version is neither supported headerless v1 nor headered v2.
     #[error("unsupported pack index version {0}")]

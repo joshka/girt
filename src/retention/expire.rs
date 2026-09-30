@@ -36,7 +36,7 @@ pub struct ExpireReport {
 #[derive(Debug, thiserror::Error)]
 pub enum ExpireCause {
     /// The caller could not exclude writers and dependent readers.
-    #[error("maintenance isolation unavailable: {0}")]
+    #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// A bounded root or log observation was incomplete.
     #[error("retention scan incomplete: {0}")]
@@ -54,16 +54,16 @@ pub enum ExpireCause {
     #[error("reflog expiry cancelled")]
     Cancelled,
     /// An artifact operation failed; inspect the partial report.
-    #[error("reflog expiry I/O: {0}")]
+    #[error("reflog expiry I/O")]
     Io(#[source] io::Error),
     /// A conditional reftable stack publication or cleanup failed.
-    #[error("reftable expiry: {0}")]
+    #[error("reftable expiry")]
     Reference(#[source] Box<ReferenceError>),
 }
 
 /// Expiry failure with known publications and a possible uncertain replacement.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("reflog expiry failed")]
 pub struct ExpireFailure {
     /// Failure class.
     #[source]

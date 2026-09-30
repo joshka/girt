@@ -51,8 +51,8 @@ impl DownloadedFetch {
     /// not imply a short execution time. Cancellation is cooperative between packets/objects/graph
     /// steps, not during a single hash, inflate or parse. The network deadline has ended. Progress
     /// callbacks run here, after network completion, replaying any notices already observed through
-    /// a live HTTP callback. Pass a no-op callback to avoid duplicate display. Installation is a
-    /// separate synchronous call.
+    /// a live HTTP or SSH callback. Pass a no-op callback to avoid duplicate display. Installation
+    /// is a separate synchronous call.
     ///
     /// # Errors
     ///

@@ -60,7 +60,7 @@ pub enum RemoteError {
         occurrence: usize,
     },
     /// A configured refspec is invalid or outside the supported subset.
-    #[error("remote key {key}, occurrence {occurrence}: {source}")]
+    #[error("remote key {key}, occurrence {occurrence}")]
     Refspec {
         /// `fetch` or `push`.
         key: &'static str,
@@ -75,8 +75,9 @@ pub enum RemoteError {
 impl Remote {
     /// Lists exact subsection names with at least one entry, once, in first-entry order.
     ///
-    /// Bare empty section headers are not retained by [`Config`]. Names are not validated as paths
-    /// or reference components; consumers must validate before using them in either context.
+    /// Empty headers are omitted here; [`Config::subsection_names`] includes them in sorted order.
+    /// Names are not validated as paths or reference components; consumers must validate before
+    /// using them in either context.
     pub fn names(config: &Config) -> Vec<&[u8]> {
         RemoteUrls::names(config)
     }
@@ -152,8 +153,9 @@ impl Remote {
 impl RemoteUrls {
     /// Lists exact subsection names with at least one entry, once, in first-entry order.
     ///
-    /// Bare empty section headers are not retained by [`Config`]. Names are not validated as paths
-    /// or reference components; consumers must validate before using them in either context.
+    /// Empty headers are omitted here; [`Config::subsection_names`] includes them in sorted order.
+    /// Names are not validated as paths or reference components; consumers must validate before
+    /// using them in either context.
     /// This enumeration does not parse URLs or refspecs.
     pub fn names(config: &Config) -> Vec<&[u8]> {
         let mut names = Vec::new();

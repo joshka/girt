@@ -20,6 +20,20 @@ cycles, depth beyond 32 hops, namespace overlaps, malformed data and predicate f
 content changes. Empty parent directories can remain. Contention returns immediately; callers must
 re-read before choosing any retry policy.
 
+`transaction_files_with_options` adds caller-selected waits for files storage. Each packed or
+reference lock gets a fresh `LockWait` budget: `Immediate`, `For(Duration)` or `UntilCancelled`.
+`FilesTransactionOptions` defaults both policies to `Immediate`; existing transaction methods keep
+that behavior. Reflog locks always fail immediately, and reftable rejects these files-only options
+before effects. Configuration conversion belongs to the caller.
+
+Waiting retries only an existing lock, using a monotonic budget and sleeps capped at 20 ms.
+Cancellation is checked during waits, before acquisitions and before publication; callers using
+`UntilCancelled` must provide a cancellation policy. Filesystem calls and scheduling can exceed the
+budget. Earlier locks stay held while later locks wait, and native name-byte acquisition order
+remains unchanged. Another writer using input order can therefore have different contention timing.
+Stored chains and expected values are rechecked under locks without refreshing preconditions.
+Publication starts once, runs without cancellation interruption and is never retried.
+
 Packed deletion publishes first, removing all selected records while preserving unrelated bytes.
 Refs then publish in input order, each followed by its requested log effects. Loose values shadow
 packed values. Deleting a shadow removes both so the older packed value cannot reappear. Readers can
@@ -120,16 +134,22 @@ is required before a publication that would exceed its resulting-stack budget.
 
 ### Reflog Timezone Interoperability
 
-Girt encodes reftable timezone fields as signed minutes, as required by the
-[published format](https://git-scm.com/docs/reftable#_log_record). Git 2.55.0 instead writes and
-interprets these fields as signed decimal `HHMM` values. For example, Git writes `-700` for `-0700`,
-which girt exposes as `offset_minutes = -700`; Git displays a girt-written `-420` (seven hours west
-of UTC) as `-0420`. This affects interpreted reflog timezone offsets in both SHA-1 and SHA-256
-repositories. Stored timestamps, reference targets and raw field preservation are unaffected.
+Girt encodes reftable timezone fields as signed decimal `HHMM`, matching independently observed Git
+behavior. Public `Signature::offset_minutes` and `reftable::LogValue::offset_minutes` remain
+semantic minutes: `-420` encodes as `-700`, and a stored `530` decodes to `330` minutes. Negative
+values use the same signed arithmetic. Noncanonical minute digits are interpreted arithmetically;
+re-encoding normalizes them. Encoding rejects minute offsets outside `-19679..=19679`, whose
+canonical `HHMM` values would exceed the signed two-byte field. Consequently, some noncanonical
+fields near the signed limits decode successfully but cannot be re-encoded.
 
-The file has no discriminator for these interpretations, and valid values overlap. Girt preserves
-the specified minute encoding without guessing from the value. UTC is interoperable; callers that
-require accurate non-UTC offsets across Git 2.55.0 and girt must treat this boundary as unsupported.
-The [timezone observations](evidence/r37.md#git-2550-timezone-discrepancy) record both directions
-and fixture provenance. Reassess this limitation when the specification or Git's behavior is
-clarified.
+This is an interim compatibility decision: the
+[published format](https://git-scm.com/docs/reftable#_log_record) describes signed minutes, but the
+observed Git encoding is treated as authoritative pending clarification in the
+[mailing-list follow-up](https://lore.kernel.org/git/85f7daa8-d60b-4348-ac2f-b1a68628af7b@app.fastmail.com/T/#u).
+The [timezone observations](evidence/r37.md#git-2550-timezone-discrepancy) record the discrepancy
+and bidirectional interoperability checks for both object formats.
+
+Earlier girt versions wrote the specified minute encoding. The file has no discriminator and the
+valid numeric ranges overlap, so those tables cannot be automatically distinguished from Git-written
+tables. They now receive the Git interpretation; no migration heuristic is applied. Reassess this
+decision if the format specification or Git behavior changes.

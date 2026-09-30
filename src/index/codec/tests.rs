@@ -588,3 +588,84 @@ fn compressed_edit_limits_use_actual_version(#[case] format: crate::ObjectFormat
     );
     assert_eq!(index, before);
 }
+
+#[rstest]
+#[case::tree(*b"TREE", false)]
+#[case::untracked(*b"UNTR", false)]
+#[case::fsmonitor(*b"FSMN", false)]
+#[case::offset_end(*b"EOIE", false)]
+#[case::offset_table(*b"IEOT", false)]
+#[case::resolve_undo(*b"REUC", true)]
+fn make_standalone_applies_split_extension_policy(
+    #[case] signature: [u8; 4],
+    #[case] retain: bool,
+) {
+    let bytes = extension(b"link", &[0; 20]);
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    index.extensions.push(Extension {
+        signature,
+        data: b"opaque\0\xff".to_vec(),
+    });
+    let entries = index.entries().to_vec();
+    let version = index.version();
+    index.make_standalone(Limits::default()).unwrap();
+    assert_eq!(index.entries(), entries);
+    assert_eq!(index.version(), version);
+    assert_eq!(index.extensions().len(), usize::from(retain));
+    assert!(
+        !index
+            .extensions()
+            .iter()
+            .any(|extension| extension.signature() == *b"link")
+    );
+    assert!(
+        index
+            .extensions()
+            .iter()
+            .all(|extension| extension.data() == b"opaque\0\xff")
+    );
+    let canonical = index.encode(Limits::default()).unwrap();
+    index.make_standalone(Limits::default()).unwrap();
+    assert_eq!(index.encode(Limits::default()).unwrap(), canonical);
+}
+
+#[rstest]
+#[case::unknown(*b"TEST")]
+#[case::sparse(*b"sdir")]
+fn make_standalone_refuses_extensions_without_changing_draft(#[case] signature: [u8; 4]) {
+    let bytes = extension(b"link", &[0; 20]);
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    index.extensions.push(Extension {
+        signature,
+        data: Vec::new(),
+    });
+    let before = index.clone();
+    assert_eq!(
+        index.make_standalone(Limits::default()),
+        Err(Error::ExtensionPreventsEdit(signature))
+    );
+    assert_eq!(index, before);
+}
+
+#[test]
+fn make_standalone_preserves_draft_on_output_limit() {
+    let bytes = extension(b"link", &[0; 20]);
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    let before = index.clone();
+    assert!(matches!(
+        index.make_standalone(Limits {
+            max_bytes: 1,
+            ..Limits::default()
+        }),
+        Err(Error::Limit(_))
+    ));
+    assert_eq!(index, before);
+}
+
+#[test]
+fn make_standalone_leaves_standalone_caches_byte_exact() {
+    let bytes = extension(b"TREE", b"opaque");
+    let mut index = Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).unwrap();
+    index.make_standalone(Limits::default()).unwrap();
+    assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
+}

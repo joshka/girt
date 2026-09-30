@@ -1,25 +1,54 @@
-//! Native local advertisement and complete reachable-pack construction.
+//! Native local advertisement and reachable-pack construction.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
+use super::known::KnownObjects as _;
 use super::{
-    AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, NativeContents,
-    ReceivedFetch,
+    AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
+    NativeContents, ReceivedFetch,
 };
 use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
 use crate::{Object, ObjectId, ObjectKind, PackObject, PackWriteLimits, Repository};
 
+#[cfg(test)]
 pub(super) fn receive(
     source: &Repository,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
     known: &KnownHistory,
     limits: FetchLimits,
     control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_depth(
+        source, select, known, None, limits, control, progress, observe,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local transfer keeps explicit selection and progress policy"
+)]
+pub(super) fn receive_depth(
+    source: &Repository,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    mut observe: impl FnMut(LocalFetchProgress),
 ) -> Result<ReceivedFetch, FetchError> {
     check(control)?;
+    if depth.is_some_and(|depth| depth.get() != 1) {
+        return Err(FetchError::Unsupported("native local depth beyond one"));
+    }
+    if depth.is_some() && !known.shallow.is_empty() {
+        return Err(FetchError::Unsupported("native local shallow refresh"));
+    }
     if !source.shallow_roots().is_empty() {
         return Err(FetchError::Unsupported("shallow local source"));
     }
@@ -28,6 +57,15 @@ pub(super) fn receive(
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
     let wants = select(&advertisement);
+    if depth.is_some() && wants.iter().copied().collect::<HashSet<_>>().len() != 1 {
+        return Err(FetchError::Unsupported("native local depth selection"));
+    }
+    let empty = KnownHistory::default();
+    let known = if known.applies_to(&wants) {
+        known
+    } else {
+        &empty
+    };
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));
     }
@@ -44,7 +82,10 @@ pub(super) fn receive(
             return Err(FetchError::Unsupported("local object format"));
         }
     }
+    observe(LocalFetchProgress::Reading { objects: 0 });
+    check(control)?;
     if wants.is_empty() {
+        observe(LocalFetchProgress::Complete);
         return Ok(ReceivedFetch::native(
             advertisement,
             wants,
@@ -55,6 +96,7 @@ pub(super) fn receive(
                 checksum: None,
                 objects: 0,
                 dependencies: Vec::new(),
+                shallow: Vec::new(),
                 limits,
             },
         ));
@@ -64,6 +106,7 @@ pub(super) fn receive(
     let mut observed = HashMap::<ObjectId, ObjectKind>::new();
     let mut selected = Vec::<(ObjectId, Object)>::new();
     let mut dependencies = Vec::new();
+    let mut shallow = Vec::new();
     let mut bytes = 0_usize;
     let mut edges = 0_usize;
     while let Some((id, kind)) = pending.pop_front() {
@@ -103,6 +146,11 @@ pub(super) fn receive(
         if kind.is_some_and(|kind| kind != object.kind()) {
             return Err(FetchError::Kind(id));
         }
+        if depth.is_some() && id == wants[0] && object.kind() != ObjectKind::Commit {
+            return Err(FetchError::Unsupported(
+                "native local depth requires commit tip",
+            ));
+        }
         observed.insert(id, object.kind());
         bytes = bytes
             .checked_add(object.data().len())
@@ -112,6 +160,14 @@ pub(super) fn receive(
         }
         crate::edges::visit(id, &object, |target, kind| {
             check(control)?;
+            if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
+                // Depth one cuts only the selected commit's parent edges. Its tree and all
+                // reachable content stay in the self-contained pack.
+                if shallow.is_empty() {
+                    shallow.push(id);
+                }
+                return Ok(());
+            }
             edges += 1;
             if edges > limits.max_connectivity_edges {
                 return Err(FetchError::Limit("local edges"));
@@ -119,17 +175,23 @@ pub(super) fn receive(
             pending.push_back((target, Some(kind)));
             Ok(())
         })?;
-        if limits.max_haves > 0 && known.objects.get(&id).is_some_and(|known| known == &object) {
+        if limits.max_haves > 0 && known.get(id).is_some_and(|known| *known == object) {
             dependencies.push(id);
         } else {
             selected.push((id, object));
         }
+        observe(LocalFetchProgress::Reading {
+            objects: observed.len() as u64,
+        });
+        check(control)?;
     }
     check(control)?;
     if progress(&[]) == ControlFlow::Break(()) {
         return Err(FetchError::Cancelled);
     }
+    check(control)?;
     if selected.is_empty() {
+        observe(LocalFetchProgress::Complete);
         return Ok(ReceivedFetch::native(
             advertisement,
             wants,
@@ -140,6 +202,7 @@ pub(super) fn receive(
                 checksum: None,
                 objects: 0,
                 dependencies,
+                shallow,
                 limits,
             },
         ));
@@ -154,11 +217,10 @@ pub(super) fn receive(
         .collect();
     let mut pack = Vec::new();
     let mut index = Vec::new();
-    let written = crate::write_pack(
+    let written = crate::pack::write_controlled_observed(
         source.object_format(),
         &inputs,
-        &mut pack,
-        &mut index,
+        (&mut pack, &mut index),
         PackWriteLimits {
             max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
             max_object_bytes: limits.max_object_bytes as u64,
@@ -166,9 +228,22 @@ pub(super) fn receive(
             max_pack_bytes: limits.max_pack_bytes as u64,
             ..Default::default()
         },
-    )
-    .map_err(FetchError::PackWrite)?;
+        crate::PackCompression::Ordinary,
+        &mut || control.check().map_err(crate::PackWriteError::Io),
+        &mut |done, total| {
+            observe(LocalFetchProgress::Packing {
+                objects: (done, total),
+            })
+        },
+    );
+    let written = written.map_err(|error| match error {
+        crate::PackWriteError::Io(error) if crate::transport::interruption(&error).is_some() => {
+            FetchError::from(error)
+        }
+        error => FetchError::PackWrite(error),
+    })?;
     check(control)?;
+    observe(LocalFetchProgress::Complete);
     Ok(ReceivedFetch::native(
         advertisement,
         wants,
@@ -179,6 +254,7 @@ pub(super) fn receive(
             checksum: Some(written.checksum),
             objects: selected.len(),
             dependencies,
+            shallow,
             limits,
         },
     ))
@@ -300,3 +376,6 @@ fn add_ref(
 fn check(control: TransportControl<'_>) -> Result<(), FetchError> {
     control.check().map_err(FetchError::from)
 }
+
+#[cfg(test)]
+mod tests;

@@ -22,7 +22,7 @@ impl References<'_> {
         max_entries: usize,
         cancel: &AtomicBool,
     ) -> Result<Vec<RefName>, ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return crate::refs::reftable::backend::imported_reflog_names(
                 self,
                 max_entries,
@@ -32,8 +32,8 @@ impl References<'_> {
         let mut names = BTreeSet::new();
         let mut visited = 0;
         let mut roots = BTreeSet::new();
-        roots.insert(self.repository.common_dir());
-        roots.insert(self.repository.git_dir());
+        roots.insert(self.common_dir);
+        roots.insert(self.git_dir);
         for root in roots {
             let directory = root.join("logs");
             let mut pending = vec![directory.clone()];

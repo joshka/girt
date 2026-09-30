@@ -2,7 +2,8 @@
 //!
 //! [`SshRemote::new`] accepts explicit endpoint and trusted executable inputs;
 //! [`SshRemote::configured`] resolves a selected [`Destination`] with [`crate::Config`] and
-//! [`SshEnvironment`]. [`ApprovedSshCommand`] lets the application authorize a configured
+//! [`SshEnvironment`]. [`SshRemote::openssh`] retains ordinary OpenSSH configuration with a
+//! caller-supplied environment. [`ApprovedSshCommand`] lets the application authorize a configured
 //! command before girt starts a process. [`TransportControl`] governs
 //! owned waits; the application owns the Tokio runtime and synchronous fetch validation worker.
 //!
@@ -11,12 +12,16 @@
 //! config (including includes and Match exec), remote account and service. The configured path
 //! accepts an R21 [`Destination`] and [`SshEnvironment`]. See [`SshRemote`].
 
+mod openssh;
 mod process;
+mod terminal;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub use openssh::OpenSshOptions;
 pub(crate) use process::Session;
+pub use terminal::{ForegroundTerminal, StoppedTerminal, TerminalEvents};
 
 use super::TransportControl;
 use crate::Config;
@@ -73,9 +78,11 @@ impl std::fmt::Debug for SshEnvironment {
     }
 }
 
-/// Explicit repository components and trusted OpenSSH configuration, with redacted Debug output.
+/// An SSH endpoint with explicit launch policy and redacted Debug output.
 ///
-/// Use with [`crate::fetch::receive_ssh`] and [`crate::push::send_ssh`]. Components are literal:
+/// Use with [`crate::fetch::receive_ssh`] and [`crate::push::send_ssh`]. [`Self::openssh`]
+/// delegates configuration and authentication policy to OpenSSH; the restrictions below apply to
+/// [`Self::new`] and [`Self::configured`]. Components are literal:
 /// host is a DNS name, IPv4 or bare IPv6 address; user is explicit; port is nonzero; path is a
 /// UTF-8 absolute or account-relative path. URL/scp syntax, percent decoding and tilde expansion
 /// are not supported. Spaces, quotes and shell metacharacters in paths are preserved literally.
@@ -106,23 +113,36 @@ impl std::fmt::Debug for SshEnvironment {
 /// the future kills/reaps the local SSH process group; remote mutations cannot be rolled back or
 /// guaranteed stopped. Prefer cancellation followed by awaiting a push's classified outcome.
 /// Callers must not globally reap these children. Descendants escaping the group are excluded.
+/// [`Self::with_terminal`] opts ordinary OpenSSH into foreground terminal leasing; its paired
+/// [`TerminalEvents`] must be driven independently of blocked display work. No default deadline
+/// is added, including while waiting for input or a resume permit.
 ///
-/// Stderr is drained and discarded to prevent blockage and credential/path leakage. Errors expose
+/// Stderr is drained and discarded by default to prevent blockage and credential/path leakage.
+/// [`crate::fetch::discover_ssh_with_diagnostics`] explicitly opts into raw local stderr delivery.
+/// Errors expose
 /// only static categories, I/O kinds and exit codes; Git progress/status bytes remain untrusted.
 /// An exit code of 255 indicates an SSH/service failure, not a Git ref rejection. OpenSSH cannot
 /// reliably distinguish authentication, host trust and network failures without parsing stderr.
 /// Debug and errors never include configuration values. Caller concurrency bounds total resources.
 pub struct SshRemote {
     host: String,
-    user: String,
-    port: u16,
+    user: Option<String>,
+    port: Option<u16>,
     path: String,
     executable: PathBuf,
-    config: PathBuf,
     arguments: Vec<String>,
-    agent_socket: Option<PathBuf>,
-    askpass: Option<PathBuf>,
-    path_environment: Option<OsString>,
+    policy: LaunchPolicy,
+    terminal: Option<std::sync::Arc<ForegroundTerminal>>,
+}
+
+enum LaunchPolicy {
+    Restricted {
+        config: PathBuf,
+        agent_socket: Option<PathBuf>,
+        askpass: Option<PathBuf>,
+        path_environment: Option<OsString>,
+    },
+    OpenSsh(std::collections::BTreeMap<OsString, OsString>),
 }
 
 impl std::fmt::Debug for SshRemote {
@@ -208,23 +228,7 @@ impl SshRemote {
         config: &Path,
         path_environment: Option<OsString>,
     ) -> Result<Self, SshError> {
-        let host_name = safe_name(host) && !host.contains('_');
-        if host.len() > 255 || !(host_name || host.parse::<std::net::Ipv6Addr>().is_ok()) {
-            return Err(SshError::Configuration("host"));
-        }
-        if user.len() > 255 || !safe_name(user) {
-            return Err(SshError::Configuration("user"));
-        }
-        if port == 0 {
-            return Err(SshError::Configuration("port"));
-        }
-        if path.is_empty()
-            || path.len() > 8192
-            || path.starts_with(['-', '~'])
-            || path.chars().any(char::is_control)
-        {
-            return Err(SshError::Configuration("repository path"));
-        }
+        validate_endpoint(host, Some(user), Some(port), path)?;
         for file in [executable, config] {
             if !file.is_absolute()
                 || file.as_os_str().len() > 8192
@@ -239,15 +243,18 @@ impl SshRemote {
         }
         Ok(Self {
             host: host.into(),
-            user: user.into(),
-            port,
+            user: Some(user.into()),
+            port: Some(port),
             path: path.into(),
             executable: executable.into(),
-            config: config.into(),
             arguments: Vec::new(),
-            agent_socket: None,
-            askpass: None,
-            path_environment,
+            terminal: None,
+            policy: LaunchPolicy::Restricted {
+                config: config.into(),
+                agent_socket: None,
+                askpass: None,
+                path_environment,
+            },
         })
     }
 
@@ -288,31 +295,11 @@ impl SshRemote {
                 configured_value(config, "core", "sshcommand")?.or(environment.git_ssh.as_deref())
             }
         };
-        let (executable, arguments) = match selected {
-            Some(value) => {
-                if value.is_empty() {
-                    return Err(SshError::Configuration("empty SSH command"));
-                }
-                let approved = environment.approved_command.ok_or(SshError::Configuration(
-                    "SSH command requires application approval",
-                ))?;
-                if approved.configured != value {
-                    return Err(SshError::Configuration("SSH command approval mismatch"));
-                }
-                if approved.arguments.iter().any(|arg| {
-                    arg.is_empty() || arg.len() > 8192 || arg.chars().any(char::is_control)
-                }) {
-                    return Err(SshError::Configuration("SSH command argument"));
-                }
-                (approved.executable, approved.arguments)
-            }
-            None => {
-                if environment.approved_command.is_some() {
-                    return Err(SshError::Configuration("unused SSH command approval"));
-                }
-                (environment.default_executable, Vec::new())
-            }
-        };
+        let (executable, arguments) = approve_command(
+            selected,
+            environment.approved_command,
+            environment.default_executable,
+        )?;
         let (host, user, port, path) =
             parse_destination(destination.bytes(), &environment.default_user)?;
         let mut remote = Self::from_components(
@@ -334,9 +321,43 @@ impl SshRemote {
             validate_file(file)?;
         }
         remote.arguments = arguments;
-        remote.agent_socket = environment.agent_socket;
-        remote.askpass = environment.askpass;
+        if let LaunchPolicy::Restricted {
+            agent_socket,
+            askpass,
+            ..
+        } = &mut remote.policy
+        {
+            *agent_socket = environment.agent_socket;
+            *askpass = environment.askpass;
+        }
         Ok(remote)
+    }
+
+    /// Attaches exclusive foreground terminal ownership to an ordinary OpenSSH remote.
+    ///
+    /// The paired terminal event receiver must remain alive and be polled while the operation
+    /// runs. See [`ForegroundTerminal`] for job-control and cleanup responsibilities. This opts in
+    /// to local terminal access without changing OpenSSH authentication or host-key policy.
+    ///
+    /// # Errors
+    ///
+    /// Rejects restricted launch policy and replacing an existing terminal attachment.
+    pub fn with_terminal(
+        mut self,
+        terminal: std::sync::Arc<ForegroundTerminal>,
+    ) -> Result<Self, SshError> {
+        if !matches!(self.policy, LaunchPolicy::OpenSsh(_)) || self.terminal.is_some() {
+            return Err(SshError::Configuration(
+                "terminal requires ordinary OpenSSH policy",
+            ));
+        }
+        self.terminal = Some(terminal);
+        Ok(self)
+    }
+
+    /// Returns whether this remote uses an explicit foreground terminal attachment.
+    pub fn has_terminal(&self) -> bool {
+        self.terminal.is_some()
     }
 
     pub(crate) fn connect(
@@ -345,83 +366,104 @@ impl SshRemote {
         control: TransportControl<'_>,
     ) -> Result<Session, SshError> {
         control.check()?;
-        Session::spawn(&mut self.command(service))
+        Session::spawn_with_terminal(&mut self.command(service), self.terminal.as_deref())
     }
 
     fn command(&self, service: &str) -> Command {
         let mut command = Command::new(&self.executable);
         command.env_clear();
-        // OpenSSH config can explicitly invoke programs. Pass only the caller-selected search
-        // path and authentication inputs; never inherit loader or Git-protocol variables.
-        if let Some(path) = &self.path_environment {
-            command.env("PATH", path);
+        match &self.policy {
+            LaunchPolicy::Restricted {
+                config,
+                agent_socket,
+                askpass,
+                path_environment,
+            } => {
+                // OpenSSH config can explicitly invoke programs. Pass only the caller-selected
+                // search path and authentication inputs; never inherit loader or
+                // Git-protocol variables.
+                if let Some(path) = &path_environment {
+                    command.env("PATH", path);
+                }
+                if let Some(socket) = &agent_socket {
+                    command.env("SSH_AUTH_SOCK", socket);
+                }
+                if let Some(askpass) = &askpass {
+                    command.env("SSH_ASKPASS", askpass);
+                    command.env("SSH_ASKPASS_REQUIRE", "force");
+                    command.env("DISPLAY", "girt-askpass");
+                } else {
+                    command.env("SSH_ASKPASS_REQUIRE", "never");
+                }
+                command.args(["-T", "-F"]).arg(config);
+                command.args([
+                    "-o",
+                    if askpass.is_some() {
+                        "BatchMode=no"
+                    } else {
+                        "BatchMode=yes"
+                    },
+                ]);
+                command.args([
+                    "-o",
+                    if agent_socket.is_some() {
+                        "IdentityAgent=SSH_AUTH_SOCK"
+                    } else {
+                        "IdentityAgent=none"
+                    },
+                ]);
+                for option in [
+                    "StrictHostKeyChecking=yes",
+                    "UpdateHostKeys=no",
+                    "PasswordAuthentication=no",
+                    "KbdInteractiveAuthentication=no",
+                    "PreferredAuthentications=publickey",
+                    "IdentityFile=none",
+                    "IdentitiesOnly=yes",
+                    "PKCS11Provider=none",
+                    "SecurityKeyProvider=internal",
+                    "ConnectionAttempts=1",
+                    "Tunnel=no",
+                    "ForwardAgent=no",
+                    "ForwardX11=no",
+                    "ClearAllForwardings=yes",
+                    "PermitLocalCommand=no",
+                    "ProxyCommand=none",
+                    "ProxyJump=none",
+                    "ControlMaster=no",
+                    "ControlPath=none",
+                    "ControlPersist=no",
+                    "ForkAfterAuthentication=no",
+                    "RequestTTY=no",
+                    "RemoteCommand=none",
+                    "SessionType=default",
+                    "StdinNull=no",
+                    "EscapeChar=none",
+                ] {
+                    command.args(["-o", option]);
+                }
+
+                command.args(&self.arguments);
+                command.args(["-p", &self.port.expect("restricted port").to_string(), "-l"]);
+                command.arg(self.user.as_deref().expect("restricted user"));
+                command.args(["--", &self.host]);
+            }
+            LaunchPolicy::OpenSsh(environment) => {
+                command.envs(environment);
+                command.args(&self.arguments);
+                if let Some(port) = self.port {
+                    command.args(["-p", &port.to_string()]);
+                }
+                match &self.user {
+                    Some(user) => {
+                        command.arg(format!("{user}@{}", self.host));
+                    }
+                    None => {
+                        command.arg(&self.host);
+                    }
+                }
+            }
         }
-        if let Some(socket) = &self.agent_socket {
-            command.env("SSH_AUTH_SOCK", socket);
-        }
-        if let Some(askpass) = &self.askpass {
-            command.env("SSH_ASKPASS", askpass);
-            command.env("SSH_ASKPASS_REQUIRE", "force");
-            command.env("DISPLAY", "girt-askpass");
-        } else {
-            command.env("SSH_ASKPASS_REQUIRE", "never");
-        }
-        command.args(["-T", "-F"]).arg(&self.config);
-        command.args([
-            "-o",
-            if self.askpass.is_some() {
-                "BatchMode=no"
-            } else {
-                "BatchMode=yes"
-            },
-        ]);
-        command.args([
-            "-o",
-            if self.agent_socket.is_some() {
-                "IdentityAgent=SSH_AUTH_SOCK"
-            } else {
-                "IdentityAgent=none"
-            },
-        ]);
-        for option in [
-            "StrictHostKeyChecking=yes",
-            "UpdateHostKeys=no",
-            "PasswordAuthentication=no",
-            "KbdInteractiveAuthentication=no",
-            "PreferredAuthentications=publickey",
-            "IdentityFile=none",
-            "IdentitiesOnly=yes",
-            "PKCS11Provider=none",
-            "SecurityKeyProvider=internal",
-            "ConnectionAttempts=1",
-            "Tunnel=no",
-            "ForwardAgent=no",
-            "ForwardX11=no",
-            "ClearAllForwardings=yes",
-            "PermitLocalCommand=no",
-            "ProxyCommand=none",
-            "ProxyJump=none",
-            "ControlMaster=no",
-            "ControlPath=none",
-            "ControlPersist=no",
-            "ForkAfterAuthentication=no",
-            "RequestTTY=no",
-            "RemoteCommand=none",
-            "SessionType=default",
-            "StdinNull=no",
-            "EscapeChar=none",
-        ] {
-            command.args(["-o", option]);
-        }
-        command.args(&self.arguments);
-        command.args([
-            "-p",
-            &self.port.to_string(),
-            "-l",
-            &self.user,
-            "--",
-            &self.host,
-        ]);
         command.arg(format!("{service} '{}'", self.path.replace('\'', "'\\''")));
         command
     }
@@ -466,6 +508,17 @@ fn parse_destination(
     raw: &[u8],
     default_user: &str,
 ) -> Result<(String, String, u16, String), SshError> {
+    let (host, user, port, path) = parse_endpoint(raw)?;
+    Ok((
+        host,
+        user.unwrap_or_else(|| default_user.to_owned()),
+        port.unwrap_or(22),
+        path,
+    ))
+}
+
+// Keep omission distinct from explicit endpoint choices for ordinary OpenSSH configuration.
+fn parse_endpoint(raw: &[u8]) -> Result<(String, Option<String>, Option<u16>, String), SshError> {
     let raw =
         std::str::from_utf8(raw).map_err(|_| SshError::Configuration("SSH endpoint encoding"))?;
     let (authority, path, url) = if let Some(rest) = raw.strip_prefix("ssh://") {
@@ -481,7 +534,9 @@ fn parse_destination(
     };
     let (user, host_port) = authority
         .split_once('@')
-        .map_or((default_user, authority), |(user, host)| (user, host));
+        .map_or((None, authority), |(user, host)| {
+            (Some(user.to_owned()), host)
+        });
     if authority.matches('@').count() > 1 || raw.contains(['?', '#', '%']) {
         return Err(SshError::Configuration("SSH endpoint syntax"));
     }
@@ -490,20 +545,28 @@ fn parse_destination(
             let (host, suffix) = bracketed
                 .split_once(']')
                 .ok_or(SshError::Configuration("SSH host"))?;
-            let port = suffix.strip_prefix(':').map_or(Ok(22), parse_port)?;
+            let port = if suffix.is_empty() {
+                None
+            } else {
+                Some(parse_port(
+                    suffix
+                        .strip_prefix(':')
+                        .ok_or(SshError::Configuration("SSH host"))?,
+                )?)
+            };
             (host, port)
         } else if let Some((host, port)) = host_port.split_once(':') {
-            (host, parse_port(port)?)
+            (host, Some(parse_port(port)?))
         } else {
-            (host_port, 22)
+            (host_port, None)
         }
     } else {
-        (host_port, 22)
+        (host_port, None)
     };
     if host.contains(['[', ']', ':']) && host.parse::<std::net::Ipv6Addr>().is_err() {
         return Err(SshError::Configuration("SSH host"));
     }
-    Ok((host.to_owned(), user.to_owned(), port, path))
+    Ok((host.to_owned(), user, port, path))
 }
 
 fn parse_port(port: &str) -> Result<u16, SshError> {
@@ -515,3 +578,63 @@ fn parse_port(port: &str) -> Result<u16, SshError> {
 
 #[cfg(test)]
 mod tests;
+
+fn validate_endpoint(
+    host: &str,
+    user: Option<&str>,
+    port: Option<u16>,
+    path: &str,
+) -> Result<(), SshError> {
+    let host_name = safe_name(host) && !host.contains('_');
+    if host.len() > 255 || !(host_name || host.parse::<std::net::Ipv6Addr>().is_ok()) {
+        return Err(SshError::Configuration("host"));
+    }
+    if user.is_some_and(|user| user.len() > 255 || !safe_name(user)) {
+        return Err(SshError::Configuration("user"));
+    }
+    if port == Some(0) {
+        return Err(SshError::Configuration("port"));
+    }
+    if path.is_empty()
+        || path.len() > 8192
+        || path.starts_with(['-', '~'])
+        || path.chars().any(char::is_control)
+    {
+        return Err(SshError::Configuration("repository path"));
+    }
+    Ok(())
+}
+
+fn approve_command(
+    selected: Option<&[u8]>,
+    approved_command: Option<ApprovedSshCommand>,
+    default_executable: PathBuf,
+) -> Result<(PathBuf, Vec<String>), SshError> {
+    match selected {
+        Some(value) => {
+            if value.is_empty() {
+                return Err(SshError::Configuration("empty SSH command"));
+            }
+            let approved = approved_command.ok_or(SshError::Configuration(
+                "SSH command requires application approval",
+            ))?;
+            if approved.configured != value {
+                return Err(SshError::Configuration("SSH command approval mismatch"));
+            }
+            if approved
+                .arguments
+                .iter()
+                .any(|arg| arg.is_empty() || arg.len() > 8192 || arg.chars().any(char::is_control))
+            {
+                return Err(SshError::Configuration("SSH command argument"));
+            }
+            Ok((approved.executable, approved.arguments))
+        }
+        None => {
+            if approved_command.is_some() {
+                return Err(SshError::Configuration("unused SSH command approval"));
+            }
+            Ok((default_executable, Vec::new()))
+        }
+    }
+}

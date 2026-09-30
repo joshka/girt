@@ -177,7 +177,7 @@ impl References<'_> {
     ///
     /// Returns unsafe path, filesystem or reftable snapshot failures.
     pub fn has_reflog(&self, name: &RefName) -> Result<bool, ReferenceError> {
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             return Ok(super::reftable::backend::reflog(self, name)?.is_some());
         }
         let path = self.reflog_path(name)?;
@@ -206,21 +206,21 @@ impl References<'_> {
     ///
     /// Reports filesystem, symlink, and malformed-record errors, including a truncated tail.
     pub fn reflog(&self, name: &RefName) -> Result<Option<Vec<ReflogEntry>>, ReferenceError> {
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             return super::reftable::backend::reflog(self, name);
         }
         let path = self.reflog_path(name)?;
         read_optional(&path)?
-            .map(|bytes| parse(self.repository.object_format(), &bytes, &path))
+            .map(|bytes| parse(self.object_format, &bytes, &path))
             .transpose()
     }
 
     pub(crate) fn reflog_path(&self, name: &RefName) -> Result<PathBuf, ReferenceError> {
         let path = self.path(name)?;
         let root = if name.per_worktree() {
-            self.repository.git_dir()
+            self.git_dir
         } else {
-            self.repository.common_dir()
+            self.common_dir
         };
         Ok(root.join("logs").join(path.strip_prefix(root).unwrap()))
     }

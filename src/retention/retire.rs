@@ -32,7 +32,7 @@ pub struct RetireReport {
 #[derive(Debug, thiserror::Error)]
 pub enum RetireCause {
     /// The caller could not exclude writers, old readers or alternate dependents.
-    #[error("maintenance isolation unavailable: {0}")]
+    #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// Directory durability is unavailable for this platform.
     #[error("pack retirement is unsupported on this platform")]
@@ -56,13 +56,13 @@ pub enum RetireCause {
     #[error("pack retirement cancelled")]
     Cancelled,
     /// An artifact or directory operation failed.
-    #[error("pack retirement I/O: {0}")]
+    #[error("pack retirement I/O")]
     Io(#[source] io::Error),
 }
 
 /// Failure with the known successful effects and any uncertain artifact.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("pack retirement failed")]
 pub struct RetireFailure {
     /// Failure class.
     #[source]
@@ -233,7 +233,27 @@ impl Repository {
         if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
             return Err(failed(RetireCause::Changed, report));
         }
-        for index in old_indices(&before, &first, &replacement_pack) {
+        let retiring = old_indices(&before, &first, &replacement_pack);
+        if !retiring.is_empty() {
+            // A multi-pack index (and its bitmaps) naming a retired pack would make the object
+            // store unreadable to Git; Git rebuilds it when needed, as `git repack -d` does.
+            for path in multi_pack_index_paths(&directory)
+                .map_err(|error| failed(RetireCause::Io(error), report.clone()))?
+            {
+                let result = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    remove(&path)
+                };
+                result.map_err(|error| RetireFailure {
+                    cause: RetireCause::Io(error),
+                    report: Box::new(report.clone()),
+                    uncertain: Some(path.clone()),
+                })?;
+                report.removed.push(path);
+            }
+        }
+        for index in retiring {
             check(cancel, &report)?;
             let old_pack = index.with_extension("pack");
             let artifacts = retirable_paths(&index, &before);
@@ -454,6 +474,37 @@ mod tests {
     }
 
     #[test]
+    fn retiring_packs_removes_multi_pack_index_so_git_can_read_the_store() {
+        let (root, _repository, policy, _old_index) = fixture();
+        let tree = git(root.path(), &["mktree"], b"");
+        let parent = git(root.path(), &["rev-parse", "refs/heads/main"], b"");
+        let commit = git(
+            root.path(),
+            &["commit-tree", &tree, "-p", &parent],
+            b"two\n",
+        );
+        git(
+            root.path(),
+            &["update-ref", "refs/heads/main", &commit],
+            b"",
+        );
+        git(
+            root.path(),
+            &["repack", "-d", "--no-write-bitmap-index"],
+            b"",
+        );
+        git(root.path(), &["multi-pack-index", "write"], b"");
+        let repository = Repository::open(root.path()).unwrap();
+        let report = repository
+            .retire_old_packs_exclusive(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
+        let midx = repository.object_dir().join("pack/multi-pack-index");
+        assert!(report.removed.contains(&midx));
+        assert!(!midx.exists());
+        git(root.path(), &["fsck", "--strict"], b"");
+    }
+
+    #[test]
     fn new_root_after_publication_refuses_old_pack_deletion() {
         let (root, repository, policy, old_index) = fixture();
         let result = repository.retire_old_packs_at(
@@ -542,4 +593,20 @@ mod tests {
         assert!(error.report.removed.is_empty());
         assert!(old_index.exists());
     }
+}
+
+/// Multi-pack index files in a pack directory: the index, its bitmaps and reverse indexes, and an
+/// incremental chain directory.
+#[cfg(unix)]
+pub(super) fn multi_pack_index_paths(directory: &Path) -> io::Result<Vec<std::path::PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.as_encoded_bytes().starts_with(b"multi-pack-index") {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
 }

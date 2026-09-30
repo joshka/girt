@@ -72,7 +72,10 @@ pub struct ResolveLimits {
     /// Maximum nested include edges; roots have depth zero. Default: 10.
     pub depth: usize,
     /// Maximum loaded source bytes and, independently, expanded key/value bytes per pass.
-    /// Cached file loads count unique path spellings. Default: 16 MiB.
+    /// Cached file loads count unique path spellings. Independently caps section metadata per
+    /// expansion pass: 128 logical bytes per occurrence plus section/subsection name lengths and
+    /// 8 per member entry. These deterministic units bound retained membership, not allocator
+    /// usage. Repeated include visits and empty headers count separately. Default: 16 MiB.
     pub bytes: usize,
     /// Maximum variable occurrences visited per pass. Default: 100,000.
     pub entries: usize,

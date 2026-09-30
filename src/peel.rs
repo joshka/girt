@@ -24,6 +24,20 @@ impl Default for PeelLimits {
     }
 }
 
+impl PeelLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            max_tags: 10_000,
+            max_bytes: usize::MAX / 4,
+            read: ReadLimits::trusted(),
+        }
+    }
+}
+
 /// Resolved identity and kind, retaining the original tip and every intervening tag identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeeledObject {
@@ -39,7 +53,7 @@ pub struct PeeledObject {
 
 /// A failed read-only resolution, with the exact link being examined.
 #[derive(Debug, thiserror::Error)]
-#[error("peeling {original} at {id}: {source}")]
+#[error("peeling {original} at {id}")]
 pub struct PeelError {
     /// Original requested tip.
     pub original: ObjectId,

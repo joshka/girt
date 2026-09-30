@@ -7,6 +7,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Repository::{fetch, push, remote_head}` run configured-remote transfers over local, HTTP(S) and
+  SSH transports, with credential helpers and `GIT_SSH_COMMAND`
+- `InitOptions` creates repositories like `git init`; `InitOptions::defaults_from` applies
+  `init.defaultBranch`
+- `Repository::logs_updates_to` decides reflog creation from `core.logAllRefUpdates`
+- `References::list_namespace_observations` lists a namespace with packed peeled hints
+- `trusted()` limits for reading, packs, peeling, the index and ignore rules in repositories the
+  caller trusts
+- `FetchError::FormatMismatch` for a remote with a different object format
+
+### Changed
+
+- Push preparation walks only history the receiver lacks, instead of every reachable object
+- Native local push runs receive hooks instead of refusing the push
+- Index writes smudge racily clean entries instead of writing an epoch modification time
+- Configuration edits write unquoted values where Git would, and remove whole lines
+
+### Fixed
+
+- Stop repeating an error's source in its `Display` message, so rendered error chains show each
+  cause once
+
 ## [0.2.0](https://github.com/joshka/girt/compare/v0.1.5...v0.2.0) - 2026-09-29
 
 ### Breaking

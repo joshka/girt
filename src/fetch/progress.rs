@@ -1,5 +1,28 @@
-//! Local pack-validation work, separate from receiver sideband messages.
+//! Local fetch construction and validation work, separate from receiver sideband messages.
 use std::sync::atomic::AtomicBool;
+
+/// Completed work while constructing a fetch from a local repository.
+///
+/// Observers run synchronously and must return promptly. Cancellation remains controlled by
+/// [`crate::transport::TransportControl`]; callbacks cannot undo a completed operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalFetchProgress {
+    /// Unique reachable source objects read and checked so far. The total is not yet known.
+    /// Includes objects excluded from the outgoing pack by verified known history.
+    Reading {
+        /// Completed source objects; begins at zero and never decreases.
+        objects: u64,
+    },
+    /// Successfully encoded outgoing entries and the selected unique-object total.
+    /// Finishing these counts does not establish a finished pack/index pair.
+    Packing {
+        /// `(done, total)`; excludes objects already in verified known history.
+        objects: (u64, u64),
+    },
+    /// Construction and the final cancellation/deadline check succeeded. Last notification;
+    /// setting cancellation here cannot undo completion. Installation and publication are separate.
+    Complete,
+}
 
 /// A snapshot of completed local fetch-validation work.
 ///

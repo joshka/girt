@@ -443,3 +443,70 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities() {
     );
     assert_mapping_ids(destination.path(), &mappings);
 }
+
+// Git get-url is an oracle for these shared rewrite cases. Implicit URL and malformed rewrite
+// handling is separately characterized through the consumer's public configuration API.
+#[rstest]
+#[case::ordinary(
+    b"[url \"https://host/\"]\ninsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\n"
+)]
+#[case::push_only(
+    b"[url \"ssh://host/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\n"
+)]
+#[case::explicit_push(b"[url \"ssh://unused/\"]\npushInsteadOf=short:\n[remote \"origin\"]\nurl=short:repo\npushurl=https://host/push\n")]
+#[case::percent_literal(b"[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_match(b"[url \"changed/\"]\ninsteadOf=https://host/a%2f\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_case_sensitive(b"[url \"changed/\"]\ninsteadOf=https://host/a%2F\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+#[case::percent_not_decoded(b"[url \"changed/\"]\ninsteadOf=https://host/a/\n[remote \"origin\"]\nurl=https://host/a%2frepo\n")]
+fn configured_remote_urls_match_git(#[case] body: &[u8]) {
+    let dir = init();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.path().join("config"))
+        .unwrap()
+        .write_all(body)
+        .unwrap();
+    let config = girt::Config::parse(body).unwrap();
+    let remote = girt::remote::ConfiguredRemote::find(&config, b"origin")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "origin"], b""),
+        [remote.fetch_url().unwrap(), b"\n"].concat()
+    );
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "--push", "origin"], b""),
+        [remote.push_url().unwrap(), b"\n"].concat()
+    );
+}
+
+// Remote-add validates tracking-reference names more strictly than raw config subsections.
+#[rstest]
+#[case::ordinary("origin", true)]
+#[case::reserved_by_consumer("git", true)]
+#[case::slash("team/fork", true)]
+#[case::trailing_dot("fork.", true)]
+#[case::dot_before_slash("a./b", true)]
+#[case::at("@", true)]
+#[case::leading_dash("-fork", true)]
+#[case::empty("", false)]
+#[case::space("a b", false)]
+#[case::wildcard("a*b", false)]
+#[case::multiple_wildcards("a**b", false)]
+#[case::lock_suffix("a.lock", false)]
+#[case::leading_dot(".a", false)]
+#[case::trailing_slash("a/", false)]
+#[case::colon(":", false)]
+fn remote_name_validation_agrees_with_git(#[case] name: &str, #[case] accepted: bool) {
+    let directory = init();
+    let output = attempt(
+        directory.path(),
+        &["remote", "add", "--", name, "/unused"],
+        b"",
+    );
+    assert_eq!(output.status.success(), accepted, "{output:?}");
+    assert_eq!(
+        girt::remote::validate_name(name.as_bytes()).is_ok(),
+        accepted
+    );
+}

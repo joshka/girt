@@ -13,7 +13,7 @@
 //!   conditionally publishes selected refs. [`FetchReady::install_retained`] instead holds a
 //!   shallow lock and pack retention while the caller checks installed objects, before
 //!   [`RetainedFetchReady::finish`] publishes boundaries and refs. This supports self-contained
-//!   complete or initial depth-limited transfers into a nonshallow destination.
+//!   complete or depth-limited transfers, including refresh with an existing shallow boundary.
 //!
 //! HTTP and SSH downloads keep network I/O separate from synchronous pack validation. Callers
 //! bound worker concurrency and join validation work before dropping its owned result.
@@ -49,7 +49,13 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use ssh::{receive_ssh, receive_ssh_with_depth};
+pub use ssh::{receive_ssh, receive_ssh_with_depth, receive_ssh_with_progress};
+
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+mod live_progress;
 
 #[cfg(feature = "http")]
 mod http;
@@ -93,14 +99,14 @@ mod connectivity;
 mod discovery;
 #[cfg(feature = "http")]
 pub use discovery::discover_http;
-#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-pub use discovery::discover_ssh;
 pub(crate) use discovery::interpret_head;
 pub use discovery::{
     ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
 };
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub use discovery::{discover_ssh, discover_ssh_with_diagnostics};
 mod progress;
-pub use progress::ValidationProgress;
+pub use progress::{LocalFetchProgress, ValidationProgress};
 
 mod import;
 mod install;
@@ -119,7 +125,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use install::NativeContents;
 pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
-pub use local::{receive_local, receive_local_with_control, receive_local_with_known};
+pub use local::{
+    receive_local, receive_local_with_control, receive_local_with_known,
+    receive_local_with_known_and_progress,
+};
 pub use protocol::{
     AdvertisedRef, Advertisement, receive, receive_with_known, receive_with_known_depth,
 };
@@ -224,14 +233,14 @@ pub enum FetchError {
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-    #[error("{0}")]
-    Ssh(#[source] crate::transport::ssh::SshError),
+    #[error(transparent)]
+    Ssh(crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
-    #[error("{0}")]
-    Http(#[source] crate::transport::http::HttpError),
+    #[error(transparent)]
+    Http(crate::transport::http::HttpError),
     /// Stream or filesystem failure; protocol I/O propagates interruption without retrying.
-    #[error("fetch I/O: {0}")]
+    #[error("fetch I/O")]
     Io(#[source] std::io::Error),
     /// Invalid or unexpected protocol framing or state.
     #[error("invalid upload-pack response: {0}")]
@@ -255,19 +264,30 @@ pub enum FetchError {
     #[error("transport deadline expired")]
     Deadline,
     /// Pack framing, checksum, delta reconstruction, or storage validation failed.
-    #[error("received pack: {0}")]
+    #[error("received pack")]
     Pack(#[from] crate::ObjectReadError),
     /// Native local pack construction failed before destination publication.
-    #[error("local pack construction: {0}")]
+    #[error("local pack construction")]
     PackWrite(#[source] crate::PackWriteError),
     /// Local annotated-tag advertisement could not be verified.
-    #[error("local tag peeling: {0}")]
+    #[error("local tag peeling")]
     Peel(#[source] Box<crate::PeelError>),
     /// Reopening the destination failed before dependency checks or publication.
-    #[error("destination object snapshot: {0}")]
+    #[error("destination object snapshot")]
     Destination(#[source] crate::ObjectReadError),
+    /// The remote and local repositories use different object formats.
+    #[error("the remote repository uses {remote} object IDs but this repository uses {local}")]
+    FormatMismatch {
+        /// Remote object format.
+        remote: crate::ObjectFormat,
+        /// Local object format.
+        local: crate::ObjectFormat,
+    },
+    /// The local source repository could not be opened.
+    #[error("cannot open source repository")]
+    Source(#[source] Box<crate::OpenError>),
     /// A local dependency failed during history preparation or installation rechecking.
-    #[error("local fetch dependency {id}: {source}")]
+    #[error("local fetch dependency {id}")]
     LocalRead {
         /// Local object being read.
         id: ObjectId,
@@ -276,7 +296,7 @@ pub enum FetchError {
         source: crate::ObjectReadError,
     },
     /// Received index encoding or thin-pack completion failed before installation.
-    #[error("received pack/index construction: {0}")]
+    #[error("received pack/index construction")]
     Index(#[from] crate::PackWriteError),
     /// A selected tip or reachable object is absent from both received and verified local objects.
     #[error("missing reachable object {0}")]
@@ -285,7 +305,7 @@ pub enum FetchError {
     #[error("reachable object {0} has the wrong kind")]
     Kind(ObjectId),
     /// Reachable commit syntax is unsupported or invalid.
-    #[error("reachable commit {id}: {source}")]
+    #[error("reachable commit {id}")]
     Commit {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -294,7 +314,7 @@ pub enum FetchError {
         source: crate::CommitError,
     },
     /// Reachable tree syntax or entries are invalid.
-    #[error("reachable tree {id}: {source}")]
+    #[error("reachable tree {id}")]
     Tree {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -303,7 +323,7 @@ pub enum FetchError {
         source: crate::TreeError,
     },
     /// Reachable tag syntax is unsupported or invalid.
-    #[error("reachable tag {id}: {source}")]
+    #[error("reachable tag {id}")]
     Tag {
         /// Object whose payload failed validation.
         id: ObjectId,

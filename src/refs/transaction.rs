@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::sync::atomic::AtomicBool;
 
+use super::lock_wait::check_cancelled;
 use super::store::{
     Lock, check_expected, conflicts, io_error, read_optional, remove_loose, validate_target,
 };
 use super::{
-    Expected, RefName, ReferenceError, References, Reflog, ReflogEntry, Target, packed, reflog,
+    Expected, FilesTransactionOptions, LockWait, RefName, ReferenceError, References, Reflog,
+    ReflogEntry, Target, packed, reflog,
 };
 use crate::ObjectId;
 
@@ -79,7 +82,7 @@ pub struct RefEditOutcome {
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError {
     /// No reference or log contents were changed. Empty directories can remain.
-    #[error("reference transaction preparation failed: {source}")]
+    #[error("reference transaction preparation failed")]
     Prepare {
         /// Input index when the failure belongs to one operation; otherwise a batch/lock failure.
         operation: Option<usize>,
@@ -88,7 +91,7 @@ pub enum TransactionError {
         source: ReferenceError,
     },
     /// Publication stopped at the first error, without rollback.
-    #[error("reference transaction publication failed: {source}")]
+    #[error("reference transaction publication failed")]
     Publish {
         /// Exact completed effects in caller order; later operations can have packed removals.
         outcomes: Vec<RefEditOutcome>,
@@ -108,8 +111,9 @@ impl References<'_> {
     /// Preparation holds `packed-refs.lock`, discovers symbolic chains, locks their union in
     /// name-byte order, and rechecks every stored chain value and precondition. Reflog locks follow
     /// in name-byte order. Duplicate/overlapping chains and ancestor/descendant names are rejected,
-    /// including delete/create namespace swaps. Existing packed conflicts are rejected. Contention
-    /// fails immediately; locks are never stolen. A changed chain fails rather than being retried.
+    /// including delete/create namespace swaps. Existing packed conflicts are rejected. Contended
+    /// locks are retried for Git's default durations ([`FilesTransactionOptions::GIT_DEFAULT`]);
+    /// locks are never stolen. A changed chain fails rather than being retried.
     ///
     /// Publication first removes all selected packed records in one replacement. It then publishes
     /// refs in caller order, appending each operation's requested logs after its ref succeeds.
@@ -155,7 +159,7 @@ impl References<'_> {
                 return Ok(Vec::new());
             }
             for (index, edit) in edits.iter().enumerate() {
-                validate_edit(self.repository.object_format(), edit).map_err(|source| {
+                validate_edit(self.object_format, edit).map_err(|source| {
                     TransactionError::Prepare {
                         operation: Some(index),
                         source,
@@ -176,11 +180,163 @@ impl References<'_> {
         result
     }
 
+    /// Applies a files-only transaction with cancellable, per-acquisition lock waits.
+    ///
+    /// Holds the packed lock first, then reference locks in name-byte order, then reflog locks
+    /// in name-byte order. Each packed/reference acquisition gets its own configured budget;
+    /// earlier locks remain held. Reflog contention always fails immediately. This sorted order
+    /// need not match another writer's edit order, so contention timing can differ.
+    ///
+    /// Cancellation is checked before acquisitions, during waits at intervals of at most 20 ms
+    /// excluding scheduling/filesystem delays, and after preparation before publication. Callers
+    /// choosing [`LockWait::UntilCancelled`] must arrange cancellation if an unbounded wait is
+    /// unacceptable. Cancellation does not interrupt publication once it starts.
+    ///
+    /// Uses the same locked rechecks, expected values, cleanup and publication as
+    /// [`Self::transaction`]. It never refreshes preconditions or retries preparation/publication.
+    /// No configuration or environment is read. Existing transaction methods still fail
+    /// immediately on contention.
+    ///
+    /// # Errors
+    ///
+    /// Reftable returns [`TransactionError::Prepare`] with [`ReferenceError::Unsupported`] before
+    /// effects. Cancellation, timeout and other preparation failures preserve ref/log contents.
+    /// Publication failures retain their effects in [`TransactionError::Publish`]; never retry
+    /// them without inspecting current state.
+    ///
+    /// ```no_run
+    /// use std::sync::atomic::AtomicBool;
+    /// use std::time::Duration;
+    /// use girt::refs::{FilesTransactionOptions, LockWait};
+    /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
+    /// let options = FilesTransactionOptions {
+    ///     reference_lock_wait: LockWait::For(Duration::from_millis(100)),
+    ///     packed_refs_lock_wait: LockWait::For(Duration::from_secs(1)),
+    /// };
+    /// repo.references()?.transaction_files_with_options(edits, options, &AtomicBool::new(false))?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn transaction_files_with_options(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        self.transaction_files_with_log_identity(edits, options, cancel, LogIdentity::Resolved)
+    }
+
+    /// Applies a files-only transaction whose reflogs identify stored values without resolving
+    /// symbolic references.
+    ///
+    /// Every edit must have `dereference: false` and a direct replacement or deletion. The old
+    /// reflog ID is the stored direct ID, or null for a symbolic or absent value; the new ID is the
+    /// replacement ID, or null for deletion. Symbolic chains are never traversed or locked. Only
+    /// the edited name is rechecked under its reference lock, and the caller's exact expected
+    /// value remains authoritative. Conditional append policies compare stored targets.
+    ///
+    /// Uses the same packed-reference coordination, reflog selection, lock waits, cancellation,
+    /// cleanup and publication outcomes as [`Self::transaction_files_with_options`]. In particular,
+    /// existing-log selection happens under the log lock, and cancellation cannot interrupt
+    /// publication once it starts. No caller-supplied reflog IDs are accepted.
+    ///
+    /// # Errors
+    ///
+    /// Rejects reftable, dereferencing edits and symbolic replacements before acquiring locks.
+    /// All edits are validated before preparation. Preparation errors preserve reference and log
+    /// contents; [`TransactionError::Publish`] reports any partial publication and must not be
+    /// retried without inspecting current state.
+    ///
+    /// ```no_run
+    /// use std::sync::atomic::AtomicBool;
+    /// use girt::refs::FilesTransactionOptions;
+    /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
+    /// repo.references()?.transaction_files_with_stored_log_ids(
+    ///     edits, FilesTransactionOptions::default(), &AtomicBool::new(false),
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn transaction_files_with_stored_log_ids(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        self.transaction_files_with_log_identity(edits, options, cancel, LogIdentity::Stored)
+    }
+
+    fn transaction_files_with_log_identity(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+        identity: LogIdentity,
+    ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        #[cfg(feature = "tracing")]
+        let span = tracing::debug_span!(
+            target: "girt", "refs.transaction", outcome = "incomplete",
+            failure_class = tracing::field::Empty, effects = tracing::field::Empty,
+            edits = edits.len(),
+        );
+        let operation = || {
+            if self.reference_backend != super::Backend::Files {
+                return Err(TransactionError::Prepare {
+                    operation: None,
+                    source: ReferenceError::Unsupported(
+                        "files transaction options require files backend",
+                    ),
+                });
+            }
+            check_cancelled(cancel).map_err(|source| TransactionError::Prepare {
+                operation: None,
+                source,
+            })?;
+            if edits.is_empty() {
+                return Ok(Vec::new());
+            }
+            for (index, edit) in edits.iter().enumerate() {
+                if identity == LogIdentity::Stored
+                    && (edit.dereference || matches!(edit.target, Some(Target::Symbolic(_))))
+                {
+                    return Err(TransactionError::Prepare {
+                        operation: Some(index),
+                        source: ReferenceError::Unsupported(
+                            "stored log identities require non-dereferencing direct edits or deletions",
+                        ),
+                    });
+                }
+                validate_edit(self.object_format, edit).map_err(|source| {
+                    TransactionError::Prepare {
+                        operation: Some(index),
+                        source,
+                    }
+                })?;
+            }
+            let prepared =
+                self.prepare_files_transaction_with_options(edits, options, cancel, identity)?;
+            check_cancelled(cancel).map_err(|source| TransactionError::Prepare {
+                operation: None,
+                source,
+            })?;
+            prepared.publish()
+        };
+        #[cfg(feature = "tracing")]
+        let result = span.in_scope(operation);
+        #[cfg(not(feature = "tracing"))]
+        let result = operation();
+        #[cfg(feature = "tracing")]
+        crate::trace::finish(&span, &result, |error| {
+            crate::trace::transaction(error, &span)
+        });
+        result
+    }
+
     pub(crate) fn prepare_transaction(
         &self,
         edits: &[RefEdit],
     ) -> Result<PreparedBackend, TransactionError> {
-        if self.repository.reference_backend() == super::Backend::Reftable {
+        if self.reference_backend == super::Backend::Reftable {
             super::reftable::backend::prepare(self, edits).map(PreparedBackend::Reftable)
         } else {
             self.prepare_files_transaction(edits)
@@ -192,6 +348,21 @@ impl References<'_> {
     pub(super) fn prepare_files_transaction(
         &self,
         edits: &[RefEdit],
+    ) -> Result<Prepared, TransactionError> {
+        self.prepare_files_transaction_with_options(
+            edits,
+            FilesTransactionOptions::GIT_DEFAULT,
+            &AtomicBool::new(false),
+            LogIdentity::Resolved,
+        )
+    }
+
+    fn prepare_files_transaction_with_options(
+        &self,
+        edits: &[RefEdit],
+        options: FilesTransactionOptions,
+        cancel: &AtomicBool,
+        identity: LogIdentity,
     ) -> Result<Prepared, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -207,17 +378,17 @@ impl References<'_> {
                 operation: None,
                 source,
             };
-            let packed_lock = Lock::acquire(self.repository.common_dir().join("packed-refs"))
-                .map_err(batch_error)?;
+            let packed_lock = Lock::acquire_wait(
+                self.common_dir.join("packed-refs"),
+                options.packed_refs_lock_wait,
+                cancel,
+            )
+            .map_err(batch_error)?;
             let bytes = read_optional(&packed_lock.destination)
                 .map_err(batch_error)?
                 .unwrap_or_default();
-            let packed = packed::parse(
-                self.repository.object_format(),
-                &bytes,
-                &packed_lock.destination,
-            )
-            .map_err(batch_error)?;
+            let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)
+                .map_err(batch_error)?;
             let mut plans = Vec::new();
             let mut names = BTreeSet::new();
             for (index, edit) in edits.iter().enumerate() {
@@ -225,7 +396,9 @@ impl References<'_> {
                     operation: Some(index),
                     source,
                 };
-                let chain = self.discover_chain(edit, &packed).map_err(error)?;
+                let chain = self
+                    .discover_chain(edit, &packed, identity)
+                    .map_err(error)?;
                 let new_chain = if let Some(Target::Symbolic(target)) = &edit.target
                     && edit.reflog.append_fields().is_some()
                 {
@@ -236,7 +409,9 @@ impl References<'_> {
                         expected: Expected::Any,
                         reflog: Reflog::Preserve,
                     };
-                    let new_chain = self.discover_chain(&dependency, &packed).map_err(error)?;
+                    let new_chain = self
+                        .discover_chain(&dependency, &packed, LogIdentity::Resolved)
+                        .map_err(error)?;
                     if new_chain.iter().any(|(name, _)| name == &edit.name) {
                         return Err(error(ReferenceError::Cycle(edit.name.clone())));
                     }
@@ -269,7 +444,12 @@ impl References<'_> {
                     .map_err(batch_error)?;
                 locks.insert(
                     name.clone(),
-                    Lock::acquire(self.path(&name).map_err(batch_error)?).map_err(batch_error)?,
+                    Lock::acquire_wait(
+                        self.path(&name).map_err(batch_error)?,
+                        options.reference_lock_wait,
+                        cancel,
+                    )
+                    .map_err(batch_error)?,
                 );
             }
             let mut operations = Vec::new();
@@ -311,18 +491,18 @@ impl References<'_> {
                 if let Some((committer, message)) = edit.reflog.append_fields()
                     && !skip_log
                 {
-                    // Discovery includes the old chain for a stored direct replacement. All its
-                    // values have now been rechecked under locks; only the edited name is
-                    // published.
+                    // Resolved mode includes the terminal old value; stored mode has only the
+                    // edited name. Every discovered value was rechecked under its lock.
                     let old = log_id(
-                        self.repository.object_format(),
+                        self.object_format,
                         chain.last().unwrap().1.as_ref(),
+                        identity,
                     )
                     .map_err(error)?;
                     let new_target = new_chain
                         .last()
                         .map_or(edit.target.as_ref(), |(_, value)| value.as_ref());
-                    let new = log_id(self.repository.object_format(), new_target).map_err(error)?;
+                    let new = log_id(self.object_format, new_target, identity).map_err(error)?;
                     let record = ReflogEntry {
                         old,
                         new,
@@ -349,7 +529,8 @@ impl References<'_> {
             let mut log_locks = BTreeMap::new();
             for name in log_names {
                 let path = self.reflog_path(&name).map_err(batch_error)?;
-                let lock = Lock::acquire(path).map_err(batch_error)?;
+                let lock =
+                    Lock::acquire_wait(path, LockWait::Immediate, cancel).map_err(batch_error)?;
                 log_locks.insert(name, lock);
             }
             for (operation, edit) in operations.iter_mut().zip(edits) {
@@ -373,11 +554,8 @@ impl References<'_> {
             let mut replacement = bytes;
             for operation in &operations {
                 if operation.packed_removed {
-                    replacement = packed::without_ref(
-                        self.repository.object_format(),
-                        &replacement,
-                        &operation.name,
-                    );
+                    replacement =
+                        packed::without_ref(self.object_format, &replacement, &operation.name);
                 }
             }
             Ok(Prepared {
@@ -404,8 +582,10 @@ impl References<'_> {
         &self,
         edit: &RefEdit,
         packed: &packed::Packed,
+        identity: LogIdentity,
     ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
-        let resolve_old = edit.dereference || edit.reflog.append_fields().is_some();
+        let resolve_old = identity == LogIdentity::Resolved
+            && (edit.dereference || edit.reflog.append_fields().is_some());
         let mut chain = Vec::new();
         let mut name = edit.name.clone();
         loop {
@@ -454,11 +634,19 @@ pub(super) fn validate_edit(
     Ok(())
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LogIdentity {
+    Resolved,
+    Stored,
+}
+
 fn log_id(
     format: crate::ObjectFormat,
     target: Option<&Target>,
+    identity: LogIdentity,
 ) -> Result<ObjectId, ReferenceError> {
     match target {
+        Some(Target::Symbolic(_)) if identity == LogIdentity::Stored => Ok(ObjectId::null(format)),
         None => Ok(ObjectId::null(format)),
         Some(Target::Direct(id)) => Ok(*id),
         Some(Target::Symbolic(_)) => Err(ReferenceError::Unsupported(

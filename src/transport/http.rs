@@ -74,7 +74,7 @@ pub enum HttpError {
     #[error("invalid HTTP configuration: {0}")]
     Configuration(&'static str),
     /// Credential helper lifecycle failed. Its configured values and process output are redacted.
-    #[error("HTTP credential lifecycle failed: {0}")]
+    #[error("HTTP credential lifecycle failed")]
     Credential(#[from] crate::remote::CredentialError),
     /// Status other than 200, including refused redirects, authentication rejection and errors.
     #[error("HTTP status {0}")]
@@ -371,7 +371,7 @@ impl HttpRemote {
         body: Option<RequestBody>,
         limit: usize,
         control: TransportControl<'_>,
-        mut observe: impl FnMut(&[u8]) + Send,
+        mut observe: impl FnMut(&[u8]),
     ) -> HttpResponse {
         let mut output = HttpResponse {
             body: Vec::new(),
@@ -395,7 +395,7 @@ impl HttpRemote {
         service: &str,
         body: Option<RequestBody>,
         control: TransportControl<'_>,
-        mut receive: impl FnMut(&[u8]) -> Result<(), HttpError> + Send,
+        mut receive: impl FnMut(&[u8]) -> Result<(), HttpError>,
     ) -> Result<(), HttpError> {
         check(control)?;
         let rpc = body.is_some();

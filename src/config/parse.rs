@@ -23,18 +23,72 @@ use super::Origin;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(super) entries: Vec<Entry>,
+    pub(super) sections: Vec<SectionName>,
+    pub(super) occurrences: Vec<SectionOccurrence>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct SectionName {
+    pub section: Vec<u8>,
+    pub subsection: Option<Vec<u8>>,
+}
+
+/// One section occurrence in a parsed or resolved configuration snapshot.
+///
+/// Repeated headers and repeated include visits have distinct ordinals, including empty headers.
+/// Environment assignments each form a synthetic occurrence without a physical header. Membership
+/// can be noncontiguous because an include inserts entries before the outer section resumes.
+/// These borrowed views identify snapshot membership, not writable source sections; use
+/// [`super::Document::sections`] to edit a direct file.
+#[derive(Debug, Clone, Copy)]
+pub struct ConfigSection<'a> {
+    ordinal: usize,
+    occurrence: &'a SectionOccurrence,
+}
+
+impl<'a> ConfigSection<'a> {
+    /// Zero-based occurrence position within this snapshot, not a persistent source identity.
+    pub fn ordinal(&self) -> usize {
+        self.ordinal
+    }
+
+    /// Original section-name bytes; matching folds ASCII case.
+    pub fn name(&self) -> &'a [u8] {
+        &self.occurrence.name.section
+    }
+
+    /// Decoded subsection; parsing lowercases deprecated dotted subsections.
+    pub fn subsection(&self) -> Option<&'a [u8]> {
+        self.occurrence.name.subsection.as_deref()
+    }
+
+    /// Increasing member indices into [`Config::entries`], excluding included sections' entries.
+    ///
+    /// Empty headers have no members. The indices remain valid for the borrowed snapshot only.
+    pub fn entry_indices(&self) -> &'a [usize] {
+        &self.occurrence.entries
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SectionOccurrence {
+    pub name: SectionName,
+    // Header position before this entry, including empty headers at EOF. Together with member
+    // indices this preserves interleaving when a resolved snapshot is supplied as runtime input.
+    pub start: usize,
+    pub entries: Vec<usize>,
 }
 
 /// One variable occurrence, retaining spelling, bytes and source location.
 #[derive(Debug, Clone)]
 pub struct Entry {
-    /// Physical line where this variable begins.
+    /// Physical line where this variable begins, or zero for supplied decoded entries.
     pub line: usize,
     /// Source and include ancestry, absent for a purely parsed source.
     pub origin: Option<Origin>,
     /// Original section name bytes; lookup folds ASCII case.
     pub section: Vec<u8>,
-    /// Exact quoted subsection, or lowercase deprecated dotted subsection.
+    /// Decoded subsection; parsing lowercases deprecated dotted subsections.
     pub subsection: Option<Vec<u8>>,
     /// Original variable name bytes; lookup folds ASCII case.
     pub name: Vec<u8>,
@@ -42,11 +96,11 @@ pub struct Entry {
     pub value: Option<Vec<u8>>,
 }
 
-/// Invalid or unsupported syntax in the supplied configuration bytes.
+/// Invalid syntax, decoded names, or construction limits in supplied configuration.
 #[derive(Debug, Error)]
 #[error("configuration line {line}: {reason}")]
 pub struct ConfigError {
-    /// One-based physical line where parsing detected the failure.
+    /// One-based physical line, or input section ordinal for decoded construction.
     pub line: usize,
     /// Explanation of the rejected syntax.
     pub reason: &'static str,
@@ -85,6 +139,8 @@ impl Config {
             value_end: 0,
         };
         let mut entries = Vec::new();
+        let mut sections = Vec::new();
+        let mut occurrences: Vec<SectionOccurrence> = Vec::new();
         let mut layout = Layout::default();
         let mut section = Vec::new();
         let mut subsection = None;
@@ -141,6 +197,16 @@ impl Config {
                     if parser.take() != Some(b']') {
                         return Err(parser.error("expected ]"));
                     }
+                    let name = SectionName {
+                        section: section.clone(),
+                        subsection: subsection.clone(),
+                    };
+                    sections.push(name.clone());
+                    occurrences.push(SectionOccurrence {
+                        name,
+                        start: entries.len(),
+                        entries: Vec::new(),
+                    });
                     if RETAIN_LAYOUT {
                         layout.sections.push(SectionSpan {
                             range: start + offset..parser.pos + offset,
@@ -180,6 +246,11 @@ impl Config {
                             value: value_start + offset..end + offset,
                         });
                     }
+                    occurrences
+                        .last_mut()
+                        .expect("section checked above")
+                        .entries
+                        .push(entries.len());
                     entries.push(Entry {
                         line,
                         origin: None,
@@ -191,7 +262,62 @@ impl Config {
                 }
             }
         }
-        Ok((Self { entries }, layout))
+        Ok((
+            Self {
+                entries,
+                sections,
+                occurrences,
+            },
+            layout,
+        ))
+    }
+
+    /// Whether a section exists, including an empty parsed header.
+    ///
+    /// Section names use ASCII case folding; subsection bytes are exact. Resolved includes retain
+    /// their empty headers. Environment assignments imply their section even though they have no
+    /// physical header. This query does not identify a writable source or physical section.
+    pub fn contains_section(&self, section: &str, subsection: Option<&[u8]>) -> bool {
+        self.sections.iter().any(|header| {
+            header.section.eq_ignore_ascii_case(section.as_bytes())
+                && header.subsection.as_deref() == subsection
+        }) || self.entries.iter().any(|entry| {
+            entry.section.eq_ignore_ascii_case(section.as_bytes())
+                && entry.subsection.as_deref() == subsection
+        })
+    }
+
+    /// Lists every subsection of a section, once, sorted by exact subsection bytes.
+    ///
+    /// Includes empty headers and sections implied by environment assignments. Section names
+    /// ignore ASCII case; subsection bytes retain case, non-UTF-8 bytes and the empty name.
+    /// Headers without a subsection are excluded. This query does not expose source ownership,
+    /// physical section occurrences or precedence order.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[remote \"z\"]\nurl=repo\n[remote \"a\"]\n")?;
+    /// assert_eq!(config.subsection_names("REMOTE"), [b"a".as_slice(), b"z"]);
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn subsection_names(&self, section: &str) -> Vec<&[u8]> {
+        let headers = self
+            .sections
+            .iter()
+            .map(|header| (header.section.as_slice(), header.subsection.as_deref()));
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| (entry.section.as_slice(), entry.subsection.as_deref()));
+        let names: std::collections::BTreeSet<_> = headers
+            .chain(entries)
+            .filter_map(|(name, subsection)| {
+                name.eq_ignore_ascii_case(section.as_bytes())
+                    .then_some(subsection)
+                    .flatten()
+            })
+            .collect();
+        names.into_iter().collect()
     }
 
     /// Returns all occurrences, preserving order and distinguishing implicit from empty values.
@@ -230,8 +356,121 @@ impl Config {
             .map(|entry| entry.value.as_deref())
     }
 
+    /// Returns the last explicit value; an implicit assignment reads as absent.
+    ///
+    /// This is Git's ordinary interpretation of a string-valued variable such as `core.editor`.
+    /// Bytes are returned without path expansion or encoding checks.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nexcludesFile = a\nexcludesFile = b\n")?;
+    /// assert_eq!(
+    ///     config.string("core", None, "excludesfile"),
+    ///     Some(b"b".as_slice())
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn string(&self, section: &str, subsection: Option<&[u8]>, name: &str) -> Option<&[u8]> {
+        self.value(section, subsection, name).flatten()
+    }
+
+    /// Interprets the last occurrence with Git's boolean spelling.
+    ///
+    /// An implicit assignment is true. `true`/`yes`/`on`, `false`/`no`/`off`/empty and integers
+    /// are accepted case-insensitively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidValue`] when the last occurrence is not a boolean.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nbare\nfilemode = off\n")?;
+    /// assert_eq!(config.boolean("core", None, "bare")?, Some(true));
+    /// assert_eq!(config.boolean("core", None, "filemode")?, Some(false));
+    /// assert_eq!(config.boolean("core", None, "missing")?, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn boolean(
+        &self,
+        section: &str,
+        subsection: Option<&[u8]>,
+        name: &str,
+    ) -> Result<Option<bool>, InvalidValue> {
+        match self.value(section, subsection, name) {
+            None => Ok(None),
+            Some(value) => super::values::boolean(value)
+                .map(Some)
+                .ok_or_else(|| InvalidValue::new(section, name, value)),
+        }
+    }
+
+    /// Interprets the last occurrence with Git's integer syntax, including `k`/`m`/`g` suffixes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidValue`] for an implicit assignment or an unreadable integer.
+    pub fn integer(
+        &self,
+        section: &str,
+        subsection: Option<&[u8]>,
+        name: &str,
+    ) -> Result<Option<i64>, InvalidValue> {
+        match self.value(section, subsection, name) {
+            None => Ok(None),
+            Some(value) => value
+                .and_then(super::values::integer)
+                .map(Some)
+                .ok_or_else(|| InvalidValue::new(section, name, value)),
+        }
+    }
+
     pub(crate) fn append(&mut self, other: &Self) {
+        let offset = self.entries.len();
+        self.occurrences
+            .extend(other.occurrences.iter().map(|occurrence| {
+                SectionOccurrence {
+                    name: occurrence.name.clone(),
+                    start: occurrence.start + offset,
+                    entries: occurrence
+                        .entries
+                        .iter()
+                        .map(|index| index + offset)
+                        .collect(),
+                }
+            }));
         self.entries.extend_from_slice(&other.entries);
+        self.sections.extend_from_slice(&other.sections);
+    }
+
+    /// Borrows section occurrences in header encounter order, retaining empty and repeated headers.
+    ///
+    /// Include expansion assigns a fresh identity on every visit and retains outer membership when
+    /// an included file returns. This does not change flat [`Self::value`] or [`Self::values`]
+    /// semantics or apply any policy to implicit values. No I/O is performed.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nx=first\nx\n[core]\nx=last\n[empty]\n")?;
+    /// let sections: Vec<_> = config.section_occurrences().collect();
+    /// assert_eq!(sections[0].entry_indices(), &[0, 1]);
+    /// assert_eq!(sections[1].entry_indices(), &[2]);
+    /// assert!(sections[2].entry_indices().is_empty());
+    /// assert!(
+    ///     config.entries()[sections[0].entry_indices()[1]]
+    ///         .value
+    ///         .is_none()
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn section_occurrences(&self) -> impl ExactSizeIterator<Item = ConfigSection<'_>> {
+        self.occurrences
+            .iter()
+            .enumerate()
+            .map(|(ordinal, occurrence)| ConfigSection {
+                ordinal,
+                occurrence,
+            })
     }
 
     /// Returns occurrences in source or resolved precedence order.
@@ -381,6 +620,97 @@ mod tests {
 
     use super::*;
     #[rstest]
+    #[case::absent(b"", vec![])]
+    #[case::bare(b"[remote]", vec![])]
+    #[case::empty_header(b"[remote \"a\"]", vec![b"a".as_slice()])]
+    #[case::empty_name(b"[remote \"\"]", vec![b"".as_slice()])]
+    #[case::section_case(b"[REMOTE \"a\"]\n[Remote \"a\"]", vec![b"a".as_slice()])]
+    #[case::subsection_case(b"[remote \"a\"]\n[remote \"A\"]", vec![b"A".as_slice(), b"a"])]
+    #[case::non_utf8(b"[remote \"\xff\"]\n[remote \"a\"]", vec![b"a".as_slice(), b"\xff"])]
+    #[case::entries_and_empty(b"[remote \"z\"]\nurl=repo\n[remote \"a\"]\n[remote \"z\"]", vec![b"a".as_slice(), b"z"])]
+    #[case::other_section(b"[url \"a\"]\ninsteadOf=b", vec![])]
+    fn complete_subsection_names(#[case] bytes: &[u8], #[case] expected: Vec<&[u8]>) {
+        assert_eq!(
+            Config::parse(bytes).unwrap().subsection_names("remote"),
+            expected
+        );
+    }
+
+    #[test]
+    fn section_occurrences_preserve_headers_and_membership() {
+        let config = Config::parse(b"\xef\xbb\xbf[Core] x=one\r\nx\r\n[empty]\r\n[remote.UPPER]\r\nurl=repo\r\n[remote \"UPPER\"]\r\n[Core]\r\nx=two\r\n").unwrap();
+        let sections: Vec<_> = config.section_occurrences().collect();
+        assert_eq!(
+            sections.iter().map(|s| s.ordinal()).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            sections
+                .iter()
+                .map(|s| s.entry_indices())
+                .collect::<Vec<_>>(),
+            [&[0, 1][..], &[], &[2], &[], &[3]]
+        );
+        assert_eq!(sections[0].name(), b"Core");
+        assert_eq!(sections[2].subsection(), Some(b"upper".as_slice()));
+        assert_eq!(sections[3].subsection(), Some(b"UPPER".as_slice()));
+        assert_eq!(
+            config.values("core", None, "x").collect::<Vec<_>>(),
+            [Some(b"one".as_slice()), None, Some(b"two".as_slice())]
+        );
+        assert_eq!(
+            config.value("core", None, "x"),
+            Some(Some(b"two".as_slice()))
+        );
+    }
+
+    #[test]
+    fn append_rebases_members_and_retains_empty_headers() {
+        let mut config = Config::parse(b"[core]\nx=one\n[empty]\n").unwrap();
+        config.append(&Config::parse(b"[empty]\n[core]\nx=two\n[tail]\n").unwrap());
+        let members: Vec<_> = config
+            .section_occurrences()
+            .map(|section| section.entry_indices())
+            .collect();
+        assert_eq!(members, [&[0][..], &[], &[], &[1], &[]]);
+        assert_eq!(
+            config.entries()[1].value.as_deref(),
+            Some(b"two".as_slice())
+        );
+    }
+
+    #[test]
+    fn append_preserves_empty_headers_and_entry_order() {
+        let mut config = Config::parse(b"[remote \"z\"]\nurl=first\n").unwrap();
+        config.append(&Config::parse(b"[remote \"a\"]\n[remote \"z\"]\nurl=second\n").unwrap());
+        assert!(config.contains_section("remote", Some(b"a")));
+        assert_eq!(config.subsection_names("remote"), [b"a".as_slice(), b"z"]);
+        assert_eq!(
+            config
+                .values("remote", Some(b"z"), "url")
+                .collect::<Vec<_>>(),
+            [Some(b"first".as_slice()), Some(b"second".as_slice())]
+        );
+    }
+
+    #[test]
+    fn legacy_remote_names_stay_in_first_entry_order() {
+        let config = Config::parse(b"[remote \"empty\"]\n[remote \"z\"]\nurl=repo\n[remote \"a\"]\nurl=repo\n[remote \"z\"]\nfetch=HEAD").unwrap();
+        assert_eq!(
+            crate::remote::Remote::names(&config),
+            [b"z".as_slice(), b"a"]
+        );
+        assert_eq!(
+            crate::remote::RemoteUrls::names(&config),
+            [b"z".as_slice(), b"a"]
+        );
+        assert_eq!(
+            config.subsection_names("remote"),
+            [b"a".as_slice(), b"empty", b"z"]
+        );
+    }
+
+    #[rstest]
     #[case::quote(b"[core]\nx = \" a # ; \" ; comment\n", b" a # ; ")]
     #[case::continuation(b"[core]\nx = ab\\\ncd\n", b"abcd")]
     #[case::escapes(b"[core]\nx = \\n\\t\\b\\\\\\\"\n", b"\n\t\x08\\\"")]
@@ -420,5 +750,27 @@ mod tests {
             vec![None, Some(b"".as_slice()), Some(b"last".as_slice())]
         );
         assert_eq!(config.value("remote", Some(b"origin"), "url"), None);
+    }
+}
+
+/// A configuration value does not have the requested type.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid value for {section}.{name}: {value:?}")]
+pub struct InvalidValue {
+    /// Section name as requested.
+    pub section: String,
+    /// Variable name as requested.
+    pub name: String,
+    /// Lossy rendering of the offending value; `None` for an implicit assignment.
+    pub value: Option<String>,
+}
+
+impl InvalidValue {
+    pub(crate) fn new(section: &str, name: &str, value: Option<&[u8]>) -> Self {
+        Self {
+            section: section.to_owned(),
+            name: name.to_owned(),
+            value: value.map(|value| String::from_utf8_lossy(value).into_owned()),
+        }
     }
 }

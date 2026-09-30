@@ -6,6 +6,80 @@ local and enabled worktree sources; `open_with_config` also accepts inherited in
 consumes the resulting order, including empty URL resets. `RemoteUrls::find` reads only URL keys
 when a caller needs display URLs without parsing refspecs. Try `cargo run --example config`.
 
+## Validating Configured Remotes
+
+`ConfiguredRemote::find` validates a named remote from an existing snapshot without opening files or
+selecting a transport. It checks the selected tag option, all surviving fetch URLs, all surviving
+push URLs, fetch refspecs, push refspecs, and then URL rewrites. Only after validation does it
+return `None` for an inactive remote. Errors identify the key, original occurrence and rewrite stage
+without printing URL contents. For `tagOpt`, only the final value in each physical section
+participates. An implicit final value skips that section, including earlier explicit values there;
+the newest section with an explicit final value wins. Explicit empty values are invalid. Included
+sections retain their own membership and encounter order. The public
+`UnsupportedTagOptionInheritance` variant remains for compatibility but is no longer emitted.
+
+Implicit and empty URL values reset earlier URLs. An implicit fetch refspec instead selects `HEAD`;
+refspecs retain occurrence order and duplicates. Ordinary prefix rewrites match supported serialized
+URLs, including lowercase ASCII network hosts and normalized numeric ports. An invalid supported
+push-only rewrite retains the original URL. Explicit push URLs disable push-only rewrites. The
+caller still decides which mappings to execute and which protocols to authorize.
+
+The current URL subset covers ordinary local byte paths, file URLs, scp-like SSH, SSH URLs and
+HTTP(S) URLs. It preserves file-host case and ordinary dot path segments; numeric ports retain even
+an explicit default port. File URL paths retain literal spaces without encoding or trimming them.
+Unknown protocols, helpers, IPv6, passwords, authority percent escapes, query or fragment handling,
+Unicode normalization, uppercase schemes and Windows drive/UNC syntax require
+`UnsupportedUrlSyntax`. Use a compatibility implementation for the whole remote on that result. Do
+not treat unsupported data as malformed or retry individual values through another parser.
+
+Percent sequences in repository paths retain their exact bytes, including hex letter case. HTTP(S)
+and SSH paths require complete hexadecimal escapes whose decoded bytes form UTF-8; malformed escapes
+return the value-free `PathEscape` error. Decoding only validates these paths: output and rewrite
+matching retain the encoded bytes. File/scp paths keep even malformed percent sequences verbatim,
+and local paths are unchanged. Authority escapes, literal query/fragment syntax and other
+unsupported URL features still require compatibility handling.
+
+The separate `ParsedUrl`, `Remote` and `RemoteUrls` APIs retain their existing presentation,
+strict-mapping and explicit-value contracts. Configured validation does not widen transport
+admission. Broader URL normalization can be added after original executable fixtures establish its
+acceptance and serialization rules; supported validation errors do not need compatibility fallback.
+
+`ConfiguredRemoteRecord::find` provides the validated record before rewrites. It retains every
+surviving supported serialized URL, ordered refspecs and the last tag option. An empty or URL-free
+remote returns a record; only a missing section returns `None`. Push URLs contain only explicit
+values, with no fetch-URL fallback. Use this record when preparing an edit that must preserve
+configured destinations rather than transport rewrites. It does not load fresh sources, acquire
+locks, select a writable file or publish changes.
+
+`normalize_configured_url` validates and serializes one destination using the same bounded URL
+contract, without rewrites or source access. An empty destination is an error here; list resets
+belong to configuration interpretation. The returned bytes may contain private information, while
+errors omit input values.
+
+`rewrite_configured_url` normalizes one URL, applies the longest ordinary `insteadOf` prefix, and
+validates the replacement. The first equal-length prefix wins; empty and implicit prefixes match
+every URL. Rewrites run once and ignore `pushInsteadOf`. Invalid original URLs fail before matching,
+so rewrites cannot repair them. Callers persisting the original destination can retain
+`normalize_configured_url` output and use the rewrite result only for validation.
+
+`Config::contains_section` retains empty headers through parsing and include resolution. Runtime
+assignments also imply section existence. Section names ignore ASCII case; quoted subsection bytes
+remain exact. This query does not expose physical section identity or source ownership, and entry
+ordering and provenance are unchanged. `Config::subsection_names` returns all named subsections,
+including empty headers and runtime assignments, sorted and deduplicated by exact bytes. Bare
+sections are omitted; empty subsection names are included. `Remote::names` and `RemoteUrls::names`
+keep their entries-only, first-entry ordering contract.
+
+`Config::section_occurrences` borrows the ordered section occurrences in a snapshot. Each
+`ConfigSection` exposes its ordinal, decoded name/subsection and member indices into `entries()`.
+Repeated and empty headers survive. Every include visit receives new identities, even for a cached
+file; an outer section resumes with its original identity after an include returns. Members can
+therefore be noncontiguous in the flat entry stream. Environment assignments each form a synthetic
+occurrence, while parsed command inputs retain their headers. Appending configuration adjusts member
+indices and preserves empty headers. These snapshot identities do not authorize source edits; use
+`Document` for direct-file editing. Scalar and multi-value lookup retain their existing flat-entry
+semantics, and interpretation of implicit values remains the consumer's policy.
+
 ## Inputs and Precedence
 
 Files are stably ordered by `ConfigScope`: system, global, local, worktree. Environment pairs follow
@@ -56,6 +130,17 @@ these choices explicit for standalone resolution, including logical and canonica
 Linked worktrees match their private Git directory, while relative includes in common config remain
 relative to that common source.
 
+`Config::resolve_with_include_placement` can select `IncludePlacement::AfterSectionReverse` for
+callers that require a different effective ordering. It emits each physical parent section in full,
+followed by its included child blocks in reverse directive order, recursively. Validation still
+visits directives forward and depth-first, so placement does not change which source error wins.
+Origins, conditional matching and resource accounting remain unchanged. Already-resolved input
+sections have their members gathered together in this mode. The default `Config::resolve` expands
+includes at their directives. `RepositoryLocation::read_metadata_with_config_and_include_placement`
+selects placement for ordinary metadata reading; existing metadata, full-open and command-layout
+methods retain the default. Direct bootstrap validation is unchanged. This option does not select
+sources or reproduce another opener's trust and parsing rules.
+
 ## Bootstrap, Bounds and Refresh
 
 Repository format is determined from the direct common config before effective resolution. Includes,
@@ -67,11 +152,17 @@ observations for included/worktree format and bare settings.
 
 Resolution is synchronous and read-only. Defaults allow ten include edges, 16 MiB of loaded source
 bytes, independently 16 MiB of expanded key/value bytes per pass, 100,000 visited entries per pass,
-and one million pattern/candidate cells per match. Canonical ancestor identities detect include
-cycles; repeated non-ancestor includes are legal and count against expansion budgets. File bytes are
-cached within one call. Budgets reject excessive work with contextual errors, not partial snapshots.
-Direct bootstrap config reads also obey the byte limit. Other repository metadata retains the
-existing trusted-filesystem contract.
+and one million pattern/candidate cells per match. A third independent 16 MiB budget bounds section
+metadata in each pass: 128 logical bytes per occurrence, its section/subsection name lengths, and 8
+bytes per member. These deterministic units are not a measurement of allocator usage. Empty headers
+and repeated include visits consume this budget; variable counts retain their original meaning. All
+three byte budgets use `ResolveLimits::bytes`. Direct `Config::parse` has no resolution budget and
+allocates in proportion to its input; the source-byte budget bounds file parsing during resolution,
+independently of retained expanded metadata. Canonical ancestor identities detect include cycles;
+repeated non-ancestor includes are legal and count against expansion budgets. File bytes are cached
+within one call. Budgets reject excessive work with contextual errors, not partial snapshots. Direct
+bootstrap config reads also obey the byte limit. Other repository metadata retains the existing
+trusted-filesystem contract.
 
 Re-resolve or reopen to refresh. Old snapshots remain unchanged; no automatic watches or global
 cache exist. Concurrent external writers may produce a mixed snapshot across sources, so callers
@@ -106,6 +197,14 @@ comments, line endings, unknown keys and occurrence order survive. Removed synta
 whitespace and comments; an edited header or value uses canonical quoting. Inert comments retain NUL
 bytes. NUL in names, subsections and values, and subsection newlines, are rejected. No include
 expansion or typed URL interpretation happens in this layer.
+
+`Document::sections` exposes borrowed physical header views, including repeated and empty headers.
+Each `DocumentSection` provides `ordinal`, decoded `name`/`subsection`, and an `entry_range` into
+`document.config().entries()`. `remove_sections` removes selected headers and their assignments in
+one atomic batch while preserving surrounding comments and whitespace. Duplicate ordinals are
+accepted, an empty selection preserves exact bytes, and every ordinal is validated before any
+change. Views borrow the document; obtain new ordinals and occurrence ranges after edits. These are
+direct-file positions, not resolved include provenance.
 
 `Repository::edit_config(max_bytes)` locks the common local file independently of the repository's
 cached effective snapshot. `ConfigEdit::open(path, max_bytes)` explicitly selects another OS-native

@@ -5,9 +5,7 @@ use std::path::Path;
 
 use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, Status};
 use crate::config::ConfigInputs;
-use crate::fetch::{
-    Advertisement, FetchError, FetchLimits, KnownHistory, NativeContents, ReceivedFetch,
-};
+use crate::fetch::{Advertisement, FetchError, FetchLimits, NativeContents, ReceivedFetch};
 use crate::refs::{
     Expected, RefEdit, RefName, RefOutcome, ReferenceError, Reflog, Target, TransactionError,
 };
@@ -31,9 +29,11 @@ pub(super) fn send(
             "destination object format",
         )));
     }
-    if prepared.has_options {
+    let advertises_push_options =
+        configured_boolean(&repository, "receive", "advertisepushoptions")?.unwrap_or(false);
+    if prepared.has_options && !advertises_push_options {
         return Err(PushError::NotSent(PushFailure::Unsupported(
-            "native local push options",
+            "the receiving end does not support push options",
         )));
     }
     if identity.is_some_and(|person| person.validate().is_err() || person.seconds < 0) {
@@ -46,12 +46,8 @@ pub(super) fn send(
         configured_boolean(&repository, "receive", "denynonfastforwards")?.unwrap_or(false);
     let log_policy = log_policy(&repository)?;
     let hide = HideRules::parse(&repository)?;
-    for (section, key) in [
-        ("receive", "procreceiverefs"),
-        ("receive", "maxinputsize"),
-        ("receive", "fsckobjects"),
-        ("transfer", "fsckobjects"),
-    ] {
+    // Objects are always validated, which satisfies `receive.fsckObjects`.
+    for (section, key) in [("receive", "procreceiverefs")] {
         if repository.config().value(section, None, key).is_some() {
             return Err(PushError::NotSent(PushFailure::Unsupported(
                 "configured receive policy",
@@ -73,32 +69,12 @@ pub(super) fn send(
     if prepared.commands.is_empty() {
         return Ok(report);
     }
-    if repository
-        .config()
-        .value("core", None, "hookspath")
-        .is_some()
-    {
-        return Err(PushError::NotSent(PushFailure::Unsupported(
-            "configured receive hooks",
-        )));
-    }
-    for hook in [
-        "pre-receive",
-        "update",
-        "post-receive",
-        "proc-receive",
-        "reference-transaction",
-        "push-to-checkout",
-    ] {
-        let path = repository.common_dir().join("hooks").join(hook);
-        match fs::symlink_metadata(path) {
-            Ok(_) => {
-                return Err(PushError::NotSent(PushFailure::Unsupported(
-                    "receive hooks",
-                )));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(PushError::NotSent(error.into())),
+    let hooks = super::hooks::ReceiveHooks::new(&repository, prepared.options.clone());
+    for hook in ["proc-receive", "reference-transaction", "push-to-checkout"] {
+        if hooks.has(hook) {
+            return Err(PushError::NotSent(PushFailure::Unsupported(
+                "proc-receive, reference-transaction or push-to-checkout hook",
+            )));
         }
     }
     let current = refs
@@ -132,27 +108,22 @@ pub(super) fn send(
         }
     }
     if !prepared.receiver_roots.is_empty() {
+        // Like Git, the destination's existing objects are trusted to have complete history, so
+        // the pack may omit anything reachable from these roots.
         let store = repository.objects(Default::default()).map_err(|error| {
             PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
         })?;
-        KnownHistory::new_local(
-            &store,
-            &prepared.receiver_roots,
-            FetchLimits {
-                max_known_objects: prepared.limits.pack.max_objects as usize,
-                max_known_bytes: prepared
-                    .limits
-                    .pack
-                    .max_input_bytes
-                    .try_into()
-                    .unwrap_or(usize::MAX),
-                max_known_edges: prepared.limits.max_edges,
-                known_read: prepared.limits.read,
-                ..FetchLimits::default()
-            },
-            control.cancel,
-        )
-        .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        for &root in &prepared.receiver_roots {
+            let present = store
+                .read(root, prepared.limits.read)
+                .map_err(|error| {
+                    PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
+                })?
+                .is_some();
+            if !present {
+                return Err(PushError::NotSent(PushFailure::KnowledgeChanged(root)));
+            }
+        }
     }
     let limits = FetchLimits {
         max_pack_bytes: prepared
@@ -183,6 +154,7 @@ pub(super) fn send(
                 checksum: prepared.checksum,
                 objects: prepared.object_count() as usize,
                 dependencies: Vec::new(),
+                shallow: Vec::new(),
                 limits,
             },
         );
@@ -198,6 +170,68 @@ pub(super) fn send(
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
     }
     report.unpack = Some(Status::Ok);
+    // Like Git, a reference that already has the requested (non-deletion) value is up to date,
+    // whatever the expected value, and isn't part of the update.
+    let null = crate::ObjectId::null(prepared.format);
+    let mut current_values = Vec::with_capacity(prepared.commands.len());
+    for command in &prepared.commands {
+        let current = refs
+            .read(&command.name)
+            .map_err(|error| PushError::Uncertain {
+                cause: PushFailure::reference(error),
+                report: Box::new(report.clone()),
+            })?;
+        current_values.push(match current {
+            Some(Target::Direct(id)) => Some(id),
+            _ => None,
+        });
+    }
+    let up_to_date: Vec<bool> = prepared
+        .commands
+        .iter()
+        .zip(&current_values)
+        // Deletions are never up to date: deleting an absent reference still checks its
+        // expected value, as with `git push --force-with-lease`.
+        .map(|(command, current)| !command.deletes() && *current == Some(command.new))
+        .collect();
+    let hook_updates = |selected: &dyn Fn(usize) -> bool| {
+        prepared
+            .commands
+            .iter()
+            .enumerate()
+            .filter(|&(index, _)| selected(index))
+            .map(|(index, command)| super::hooks::HookUpdate {
+                old: current_values[index].unwrap_or(null),
+                new: command.new,
+                name: &command.name,
+            })
+            .collect::<Vec<_>>()
+    };
+    let hook_error = |error: std::io::Error, report: &PushReport| PushError::Uncertain {
+        cause: error.into(),
+        report: Box::new(report.clone()),
+    };
+    let (accepted, messages) = hooks
+        .run(
+            "pre-receive",
+            &[],
+            &hook_updates(&|index| !up_to_date[index]),
+        )
+        .map_err(|error| hook_error(error, &report))?;
+    report
+        .progress
+        .extend((!messages.is_empty()).then_some(messages));
+    if !accepted {
+        for (index, reference) in report.refs.iter_mut().enumerate() {
+            if !up_to_date[index] {
+                reference.status = Some(Status::Rejected(b"pre-receive hook declined".to_vec()));
+                reference.rejection_origin = Some(RejectionOrigin::Receiver);
+            } else {
+                reference.status = Some(Status::Ok);
+            }
+        }
+        return Ok(report);
+    }
     for (index, command) in prepared.commands.iter().enumerate() {
         if let Err(error) = control.check() {
             return Err(PushError::Uncertain {
@@ -206,6 +240,32 @@ pub(super) fn send(
             });
         }
         report.refs[index].attempted = true;
+        if up_to_date[index] {
+            report.refs[index].status = Some(Status::Ok);
+            continue;
+        }
+        let old = current_values[index].unwrap_or(null).to_string();
+        let new = command.new.to_string();
+        let (accepted, messages) = hooks
+            .run(
+                "update",
+                &[command.name.as_bytes(), old.as_bytes(), new.as_bytes()],
+                &[],
+            )
+            .map_err(|error| hook_error(error, &report))?;
+        report
+            .progress
+            .extend((!messages.is_empty()).then_some(messages));
+        if !accepted {
+            // As `git-receive-pack` reports it.
+            let mut message = b"error: hook declined to update ".to_vec();
+            message.extend_from_slice(command.name.as_bytes());
+            message.push(b'\n');
+            report.progress.push(message);
+            report.refs[index].status = Some(Status::Rejected(b"hook declined".to_vec()));
+            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+            continue;
+        }
         if hide.matches(&command.name) {
             report.refs[index].status = Some(Status::Rejected(b"hidden reference".to_vec()));
             report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
@@ -310,6 +370,27 @@ pub(super) fn send(
                 });
             }
         }
+    }
+    let updated =
+        |index: usize| !up_to_date[index] && report.refs[index].status == Some(Status::Ok);
+    let post_updates = hook_updates(&updated);
+    if !post_updates.is_empty() {
+        let (_, messages) = hooks
+            .run("post-receive", &[], &post_updates)
+            .map_err(|error| hook_error(error, &report))?;
+        let names: Vec<&[u8]> = post_updates
+            .iter()
+            .map(|update| update.name.as_bytes())
+            .collect();
+        let (_, update_messages) = hooks
+            .run("post-update", &names, &[])
+            .map_err(|error| hook_error(error, &report))?;
+        report
+            .progress
+            .extend((!messages.is_empty()).then_some(messages));
+        report
+            .progress
+            .extend((!update_messages.is_empty()).then_some(update_messages));
     }
     Ok(report)
 }

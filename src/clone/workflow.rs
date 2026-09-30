@@ -435,7 +435,7 @@ pub enum CloneTransferError {
 
 /// Finish failure preserving completed phases and precise nested publication effects.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("clone failed")]
 pub struct CloneError {
     /// Completed phases; residual state is never automatically removed.
     pub report: Box<CloneReport>,
@@ -457,7 +457,7 @@ pub enum CloneFailure {
     #[error(transparent)]
     Plan(#[from] ClonePlanError),
     /// Destination reservation I/O failed.
-    #[error("clone destination: {0}")]
+    #[error("clone destination")]
     Io(#[from] std::io::Error),
     /// Minimal initialization failed; partial metadata may remain.
     #[error(transparent)]
@@ -475,7 +475,7 @@ pub enum CloneFailure {
     #[error(transparent)]
     Verification(#[from] FetchError),
     /// Config lock, precondition, write or replacement failed; clone did not replace the config.
-    #[error("clone configuration: {0}")]
+    #[error("clone configuration")]
     Configuration(#[source] std::io::Error),
     /// Reference store could not be opened.
     #[error(transparent)]

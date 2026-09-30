@@ -131,6 +131,8 @@ pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
         Kind(_) => "wrong_kind",
         Commit { .. } | Tree { .. } | Tag { .. } => "corrupt",
         Existing(_) => "conflict",
+        Source(_) => "missing",
+        FormatMismatch { .. } => "unsupported",
     }
 }
 
@@ -213,6 +215,10 @@ pub(crate) fn index(error: &crate::index::StorageError, span: &tracing::Span) ->
         Cleanup { operation, .. } => {
             span.record("effects", "cleanup_failed");
             index(operation, span)
+        }
+        PublishedCleanup { source, .. } => {
+            span.record("effects", "cleanup_failed");
+            io(source)
         }
         Io { source, .. } => io(source),
         Locked(_) => "conflict",

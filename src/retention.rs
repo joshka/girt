@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
-use crate::{Commit, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index};
+use crate::{
+    Commit, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index,
+};
 
 mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
@@ -194,9 +196,11 @@ impl Repository {
     /// completion. The caller supplies cutoffs in place of Git's `gc.pruneExpire`,
     /// `gc.reflogExpire`, and `gc.reflogExpireUnreachable` configuration. Scans are synchronous
     /// and do not coordinate concurrent writers. The default cutoffs retain all reflog entries
-    /// and all existing loose objects. The executor must rescan under an exclusion boundary
-    /// that covers ref, reflog, index, worktree, loose-object and pack publication before using
-    /// this report for mutation.
+    /// and all existing loose objects. Valid registered private metadata remains a root even when
+    /// its checkout is missing or now points to another registration. Malformed or unrelated
+    /// registration metadata makes the scan incomplete. The executor must rescan under an exclusion
+    /// boundary that covers ref, reflog, index, worktree, loose-object and pack publication
+    /// before using this report for mutation.
     ///
     /// ```no_run
     /// use std::sync::atomic::AtomicBool;
@@ -312,27 +316,22 @@ fn collect_roots(
     {
         return Err("gc.recentObjectsHook is unsupported by retention planning".into());
     }
-    let mut directories = vec![repository.common_dir().to_path_buf()];
+    let mut repositories =
+        vec![Repository::open(repository.common_dir()).map_err(|e| e.to_string())?];
     let mut reflog_bytes = 0u64;
     let mut seen_logs = BTreeSet::new();
     let linked = repository
         .worktrees(policy.max_entries, cancel)
         .map_err(|e| e.to_string())?;
     for entry in linked {
-        if matches!(
-            entry.state,
-            crate::WorktreeState::Invalid(_) | crate::WorktreeState::Inaccessible(_)
-        ) {
-            return Err(format!(
-                "invalid worktree registration: {}",
-                entry.git_dir.display()
-            ));
-        }
-        directories.push(entry.git_dir);
-    }
-    for directory in directories {
         check(cancel)?;
-        let repo = Repository::open(&directory).map_err(|e| e.to_string())?;
+        let retained = repository
+            .open_retained_worktree(&entry.git_dir)
+            .map_err(|e| e.to_string())?;
+        repositories.push(retained);
+    }
+    for repo in repositories {
+        check(cancel)?;
         if repo
             .config()
             .value("extensions", None, "preciousObjects")
@@ -626,6 +625,7 @@ fn walk(
         let object = store
             .read_controlled(id, policy.read, cancel)
             .map_err(|e| e.to_string())?
+            .or_else(|| canonical_empty_tree(id))
             .ok_or_else(|| format!("missing reachable object {id}"))?;
         if expected.get(&id).is_some_and(|kind| *kind != object.kind()) {
             return Err(format!("wrong reachable kind {id}"));
@@ -688,6 +688,16 @@ fn walk(
         reachable.insert(id);
     }
     Ok(reachable)
+}
+
+fn canonical_empty_tree(id: ObjectId) -> Option<Object> {
+    // Git can name this fixed tree from a commit or index without storing the object.
+    let empty = Object {
+        kind: ObjectKind::Tree,
+        format: id.format(),
+        data: Vec::new(),
+    };
+    (id == empty.id()).then_some(empty)
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), String> {

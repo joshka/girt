@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::Path;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -23,6 +24,8 @@ use crate::transport::TransportControl;
 /// Supports SHA-1 and SHA-256 with files or reftable references on native local filesystems.
 /// A missing canonical empty tree is materialized from its verified identity; other missing
 /// reachable objects fail before installation.
+/// The [`super::FetchRequest`] workflow can truncate one selected commit tip at depth one;
+/// standalone local receives retain complete history.
 /// Cancellation and deadlines are checked between synchronous operations; one filesystem read,
 /// graph parse, hash or compression call cannot be interrupted. Concurrent source updates may
 /// produce a mixed advertisement; missing or corrupt selected history fails before publication.
@@ -87,6 +90,47 @@ pub fn receive_local_with_known(
     control: TransportControl<'_>,
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
 ) -> Result<ReceivedFetch, FetchError> {
+    receive_local_with_known_and_progress(source, select, known, limits, control, progress, |_| {})
+}
+
+/// Reads a local source with synchronous typed construction progress.
+///
+/// Uses [`receive_local_with_known`]'s history and storage contract. `observe` reports
+/// [`super::LocalFetchProgress`] after completed work and must return promptly. It cannot fail;
+/// set `control.cancel` to stop at the next cooperative check. The original `progress` callback
+/// retains its cancellation behavior. No destination is touched by this operation.
+///
+/// # Errors
+///
+/// Returns [`receive_local_with_known`]'s failures without a completion notification.
+pub fn receive_local_with_known_and_progress(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(super::LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_local_with_known_depth_and_progress(
+        source, select, known, None, limits, control, progress, observe,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local transfer keeps explicit selection and progress policy"
+)]
+pub(super) fn receive_local_with_known_depth_and_progress(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(super::LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -98,9 +142,11 @@ pub fn receive_local_with_known(
 
     let operation = || {
         control.check()?;
-        let source = crate::Repository::open(source)
-            .map_err(|_| FetchError::Protocol("local repository"))?;
-        super::local_native::receive(&source, select, known, limits, control, progress)
+        let source =
+            crate::Repository::open(source).map_err(|error| FetchError::Source(Box::new(error)))?;
+        super::local_native::receive_depth(
+            &source, select, known, depth, limits, control, progress, observe,
+        )
     };
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);

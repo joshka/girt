@@ -57,6 +57,10 @@ when they block required compatibility. No finite corpus establishes every edge 
   owned by their domain modules.
 - Preserve underlying causes with `#[source]` or `#[from]` where appropriate so callers can inspect
   failures without parsing display text.
+- Either display a cause or return it from `source()`, never both. Callers such as jj render the
+  whole chain by printing each error and then walking `source()`, so interpolating the source into
+  the message shows it twice. Describe only this layer's context, such as `reading commit {id}`, and
+  use `#[error(transparent)]` only for wrappers that add no context.
 - Distinguish missing, corrupt, unsupported, resource-limited, cancelled, and uncertain outcomes
   where callers need different actions. Preserve recoverability, retry preconditions, and partial
   effects in structured results. Never recommend retrying an uncertain mutation without checking

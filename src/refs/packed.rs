@@ -7,7 +7,13 @@ use crate::ObjectId;
 
 // Keep all records for duplicate and namespace checks. The first implementation deliberately
 // validates the complete file, even for one lookup; it has no cached snapshot to invalidate.
-pub(super) type Packed = BTreeMap<RefName, ObjectId>;
+pub(super) type Packed = BTreeMap<RefName, PackedRecord>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PackedRecord {
+    pub target: ObjectId,
+    pub peeled_hint: Option<ObjectId>,
+}
 
 pub(super) fn parse(
     format: crate::ObjectFormat,
@@ -18,7 +24,7 @@ pub(super) fn parse(
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         return Err(malformed(path, "unterminated packed record"));
     }
-    let mut entries = BTreeMap::new();
+    let mut entries = Packed::new();
     if bytes.is_empty() {
         return Ok(entries);
     }
@@ -48,7 +54,12 @@ pub(super) fn parse(
             if !can_peel {
                 return Err(malformed(path, "orphan or repeated peeled record"));
             }
-            parse_id(format, peeled, path)?;
+            let peeled = parse_id(format, peeled, path)?;
+            let name = previous.as_ref().expect("peel follows a reference");
+            entries
+                .get_mut(name)
+                .expect("previous reference exists")
+                .peeled_hint = Some(peeled);
             can_peel = false;
             continue;
         }
@@ -64,7 +75,16 @@ pub(super) fn parse(
         if sorted && previous.as_ref().is_some_and(|last| last >= &name) {
             return Err(malformed(path, "packed sorted order violated"));
         }
-        if entries.insert(name.clone(), id).is_some() {
+        if entries
+            .insert(
+                name.clone(),
+                PackedRecord {
+                    target: id,
+                    peeled_hint: None,
+                },
+            )
+            .is_some()
+        {
             return Err(malformed(path, "duplicate packed reference"));
         }
         previous = Some(name);
@@ -121,7 +141,7 @@ mod tests {
     const ID: &str = "1111111111111111111111111111111111111111";
 
     #[test]
-    fn reads_unsorted_records_and_discards_valid_peeled_metadata() {
+    fn reads_unsorted_records_and_retains_valid_peeled_metadata() {
         let bytes = format!("{ID} refs/tags/z\n^{ID}\n{ID} refs/heads/a\n");
         let entries = parse(
             crate::ObjectFormat::Sha1,
@@ -132,7 +152,10 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(
             entries[&RefName::new(b"refs/tags/z").unwrap()],
-            ID.parse().unwrap()
+            PackedRecord {
+                target: ID.parse().unwrap(),
+                peeled_hint: Some(ID.parse().unwrap())
+            }
         );
     }
 

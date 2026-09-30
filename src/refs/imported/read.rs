@@ -254,7 +254,7 @@ impl References<'_> {
         limits: ReflogLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<ImportedReflog>, ReferenceError> {
-        if self.repository.reference_backend() == Backend::Reftable {
+        if self.reference_backend == Backend::Reftable {
             return crate::refs::reftable::backend::imported_reflog(self, name, limits, cancel);
         }
         let path = self.reflog_path(name)?;
@@ -265,7 +265,7 @@ impl References<'_> {
             Err(error) => return Err(io_error(&path, error)),
         };
         Ok(Some(ImportedReflog::read(
-            self.repository.object_format(),
+            self.object_format,
             file,
             limits,
             cancel,

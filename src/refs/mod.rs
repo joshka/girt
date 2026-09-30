@@ -3,7 +3,8 @@
 //! # Names, reads, and updates
 //!
 //! - [`RefName`] validates a full reference name. [`References`] reads stored [`Target`] values and
-//!   resolves symbolic chains without loading their objects.
+//!   resolves symbolic chains without loading their objects. [`References::read_observation`]
+//!   captures a stored target together with its backend-provided peeled hint.
 //! - [`References::transaction`] checks a batch of [`RefEdit`] values before sequential
 //!   publication. Choose [`Reflog`] policy explicitly and inspect [`RefEditOutcome`] after a
 //!   partial failure; the no-reflog methods deliberately omit history.
@@ -22,6 +23,8 @@
 
 mod enumerate;
 mod imported;
+mod leaf_symlink;
+mod lock_wait;
 mod name;
 mod packed;
 mod reflog;
@@ -34,7 +37,13 @@ pub use imported::{
     ImportedRecord, ImportedReflog, ReflogFields, ReflogInterpretationError, ReflogLimits,
     ReflogReadEnd,
 };
+pub use lock_wait::{FilesTransactionOptions, LockWait};
 pub use name::{InvalidRefName, RefName};
 pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
-pub use store::{Backend, Expected, ReferenceError, References, Resolution, Target};
+pub use store::{
+    Backend, Expected, ReferenceError, ReferenceObservation, References, Resolution, Target,
+};
 pub use transaction::{LogOutcome, RefEdit, RefEditOutcome, RefOutcome, TransactionError};
+
+#[cfg(test)]
+mod observation_tests;

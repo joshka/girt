@@ -120,6 +120,56 @@ impl Repository {
         result
     }
 
+    /// Opens private metadata without requiring a current checkout backlink.
+    ///
+    /// Retained registrations remain roots after the checkout is reused. Validate their own
+    /// location and common directory instead of treating checkout availability as retirement.
+    /// Like retention planning, this observation requires caller exclusion before deletion.
+    pub(crate) fn open_retained_worktree(&self, git_dir: &Path) -> Result<Self, OpenError> {
+        let registrations = self.common_dir.join("worktrees");
+        for directory in [&registrations, git_dir] {
+            let metadata =
+                fs::symlink_metadata(directory).map_err(|error| io_error(directory, error))?;
+            if !metadata.is_dir() || canonical(directory)? != *directory {
+                return Err(super::malformed(
+                    directory,
+                    "registration directory identity changed",
+                ));
+            }
+        }
+        if git_dir.parent() != Some(registrations.as_path()) {
+            return Err(super::malformed(
+                git_dir,
+                "not a registered metadata directory",
+            ));
+        }
+        // Do not follow metadata symlinks or silently accept missing registration files.
+        for name in ["gitdir", "commondir", "HEAD"] {
+            let path = git_dir.join(name);
+            let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
+            if !metadata.is_file() {
+                return Err(super::malformed(
+                    &path,
+                    "registration metadata is not a regular file",
+                ));
+            }
+        }
+        let backlink = git_dir.join("gitdir");
+        let target = metadata_path(&backlink, &read(&backlink)?)?;
+        // Git writes the backlink as one line; anything else is not a registration it made.
+        if target.as_os_str().as_encoded_bytes().contains(&b'\n') {
+            return Err(super::malformed(&backlink, "backlink spans several lines"));
+        }
+        let repository = self.open_worktree(git_dir)?;
+        if repository.git_dir != git_dir {
+            return Err(super::malformed(
+                git_dir,
+                "registration resolves to another directory",
+            ));
+        }
+        Ok(repository)
+    }
+
     /// Opens a checkout and verifies that it shares this repository's common metadata identity.
     ///
     /// # Errors

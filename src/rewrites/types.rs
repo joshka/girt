@@ -132,10 +132,10 @@ pub enum Error {
     #[error("rewrite similarity must be in 1..=100, got {0}")]
     Similarity(u8),
     /// Structural tree comparison failed.
-    #[error("comparing rewrite trees: {0}")]
+    #[error("comparing rewrite trees")]
     Trees(#[from] TreeCompareError),
     /// A candidate blob could not be read or verified.
-    #[error("reading rewrite blob {id}: {source}")]
+    #[error("reading rewrite blob {id}")]
     Read {
         /// Candidate identity.
         id: ObjectId,

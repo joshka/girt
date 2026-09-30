@@ -66,6 +66,7 @@ pub struct FetchRequest {
     namespace_reflogs: Vec<(RefName, Reflog, Reflog)>,
     kind_reflogs: Vec<(RefName, FetchUpdateKind, Reflog)>,
     additional_tag_namespaces: Vec<RefName>,
+    retained_missing_sources: BTreeSet<Vec<u8>>,
     prune: bool,
     pub(super) depth: Option<NonZeroU32>,
     shallow_before: Vec<ObjectId>,
@@ -110,6 +111,7 @@ impl FetchRequest {
             namespace_reflogs: Vec::new(),
             kind_reflogs: Vec::new(),
             additional_tag_namespaces: Vec::new(),
+            retained_missing_sources: BTreeSet::new(),
             prune: false,
             depth: None,
             shallow_before,
@@ -192,8 +194,12 @@ impl FetchRequest {
             .any(|namespace| is_descendant(name, namespace))
     }
 
-    /// Requests a positive commit depth on HTTP/SSH upload-pack and permits a resulting
-    /// shallow-boundary change during coordinated publication.
+    /// Requests a positive commit depth on HTTP/SSH upload-pack or depth one from a native local
+    /// source. Local depth requires one selected commit tip and a nonshallow source. This permits
+    /// a resulting shallow-boundary change during coordinated publication.
+    /// Network validation materializes any reachable known-local dependencies in a nonempty
+    /// received pack. An empty object transfer verifies local dependencies during publication;
+    /// the caller must continue excluding concurrent collection for that existing history.
     pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
         self.depth = Some(depth);
         self
@@ -204,6 +210,20 @@ impl FetchRequest {
     /// `refs/tags/*` destinations and excluded sources are retained.
     pub fn with_prune(mut self) -> Self {
         self.prune = true;
+        self
+    }
+
+    /// Retains destinations for absent exact sources while pruning other stale refs.
+    ///
+    /// The caller supplies only exact positive source names whose cached destinations Git would
+    /// keep after a missing-ref retry. This applies to the advertisement from this transfer, so
+    /// no second discovery or fetch is needed. The source remains selected if it is advertised.
+    pub fn with_retained_missing_sources(
+        mut self,
+        sources: impl IntoIterator<Item = RefName>,
+    ) -> Self {
+        self.retained_missing_sources
+            .extend(sources.into_iter().map(|source| source.as_bytes().to_vec()));
         self
     }
 
@@ -284,7 +304,12 @@ impl FetchRequest {
                     continue;
                 }
                 let sources = self.specs.prune_sources(name);
-                if sources.is_empty() || sources.iter().any(|source| advertised.contains(source)) {
+                if sources.is_empty()
+                    || sources.iter().any(|source| {
+                        advertised.contains(source)
+                            || self.retained_missing_sources.contains(source.as_slice())
+                    })
+                {
                     continue;
                 }
                 let Target::Direct(previous) = target else {
@@ -322,25 +347,52 @@ impl FetchRequest {
         control: TransportControl<'_>,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<FetchReady, FetchWorkflowError> {
+        self.receive_local_with_progress(source, known, limits, control, progress, |_| {})
+    }
+
+    /// Constructs a local fetch while reporting completed source reads and pack entries.
+    ///
+    /// Uses [`Self::receive_local`]'s planning and storage contract and
+    /// [`super::receive_local_with_known_and_progress`]'s callback contract. Completion describes
+    /// construction, not installation or reference publication. Observers must return promptly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::receive_local`]'s failures without a completion notification.
+    pub fn receive_local_with_progress(
+        self,
+        source: impl AsRef<Path>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        mut observe: impl FnMut(super::LocalFetchProgress),
+    ) -> Result<FetchReady, FetchWorkflowError> {
         self.check_known(known)?;
-        if self.depth.is_some() {
-            return Err(FetchError::Unsupported("native local depth").into());
-        }
         let mut plan = None;
-        let received = super::receive_local_with_known(
+        let received = super::local::receive_local_with_known_depth_and_progress(
             source,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
+            self.depth,
             limits,
             control,
             progress,
+            |event| {
+                if event != super::LocalFetchProgress::Complete {
+                    observe(event);
+                }
+            },
         );
         let updates = selected(plan, &received)?;
-        Ok(FetchReady {
+        let ready = FetchReady {
             request: self,
             updates,
             received: received?,
-        })
+        };
+        control.check().map_err(FetchError::from)?;
+        observe(super::LocalFetchProgress::Complete);
+        Ok(ready)
     }
 
     /// Transfers from a caller-owned v0/v1 upload-pack stream using this request's depth policy.
@@ -483,8 +535,8 @@ impl FetchReady {
 
     /// Installs a self-contained pack under retention before publishing shallow metadata or refs.
     ///
-    /// Supports complete transfers and initial depth-limited transfers into a destination whose
-    /// captured shallow roots are empty. Known-local dependencies and empty transfers are refused.
+    /// Supports self-contained complete and depth-limited transfers, including refresh of an
+    /// existing shallow destination. Known-local dependencies and empty transfers are refused.
     /// Holds the conditional shallow lock from installation through the returned phase's
     /// publication, including depth requests whose response has no boundaries. An existing pack or
     /// index is refused because a collector may already have selected it for removal.
@@ -509,12 +561,6 @@ impl FetchReady {
     ) -> Result<RetainedFetchReady, RetainedFetchFinishError> {
         let mut report = self.take_report();
         let prepare = || {
-            if !self.request.shallow_before.is_empty() {
-                return Err(FetchFinishFailure::Installation(FetchError::Unsupported(
-                    "retained workflow requires an initially nonshallow destination",
-                ))
-                .into());
-            }
             let checksum = self
                 .received
                 .retention_checksum(&self.request.repository, cancel)
@@ -784,9 +830,40 @@ impl FetchReady {
             .references()
             .map_err(FetchPlanError::from)
             .map_err(FetchFinishFailure::Safety)?;
+        // Like `git fetch --prune`, prune before updating so a pruned name can become a
+        // namespace for new references (or the reverse).
+        let (prunes, updates): (Vec<_>, Vec<_>) =
+            edits.into_iter().partition(|edit| edit.target.is_none());
         report.references = refs
-            .transaction(&edits)
+            .transaction(&prunes)
             .map_err(FetchFinishFailure::Publication)?;
+        match refs.transaction(&updates) {
+            Ok(outcomes) => report.references.extend(outcomes),
+            Err(crate::refs::TransactionError::Prepare { source, .. })
+                if !report.references.is_empty() =>
+            {
+                return Err(Box::new(FetchFinishFailure::Publication(
+                    crate::refs::TransactionError::Publish {
+                        outcomes: std::mem::take(&mut report.references),
+                        source,
+                    },
+                )));
+            }
+            Err(crate::refs::TransactionError::Publish {
+                mut outcomes,
+                source,
+            }) => {
+                let mut all = std::mem::take(&mut report.references);
+                all.append(&mut outcomes);
+                return Err(Box::new(FetchFinishFailure::Publication(
+                    crate::refs::TransactionError::Publish {
+                        outcomes: all,
+                        source,
+                    },
+                )));
+            }
+            Err(error) => return Err(Box::new(FetchFinishFailure::Publication(error))),
+        }
         Ok(())
     }
 }
@@ -867,7 +944,7 @@ impl RetainedFetchReady {
 
 /// Retained workflow failure with completed effects and ownership of any acquired marker.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("fetch finish failed")]
 pub struct RetainedFetchFinishError {
     /// Completed effects. No successful installation does not exclude partial pack artifacts.
     pub report: Box<FetchReport>,
@@ -970,7 +1047,7 @@ pub enum FetchPlanError {
     #[error(transparent)]
     Worktree(#[from] crate::OpenError),
     /// Worktree enumeration failed.
-    #[error("worktree enumeration: {0}")]
+    #[error("worktree enumeration")]
     Io(#[from] std::io::Error),
     /// HEAD or its symbolic branch chain escapes the protected branch namespace.
     #[error("unsupported HEAD chain at {0:?}")]
@@ -990,7 +1067,7 @@ pub enum FetchWorkflowError {
 
 /// Installation/publication failure retaining completed effects.
 #[derive(Debug, thiserror::Error)]
-#[error("{source}")]
+#[error("fetch finish failed")]
 pub struct FetchFinishError {
     /// Transfer and installation effects before failure; installed objects are never rolled back.
     pub report: Box<FetchReport>,
@@ -1004,26 +1081,26 @@ pub struct FetchFinishError {
 #[derive(Debug, thiserror::Error)]
 pub enum FetchFinishFailure {
     /// Installation failed; refs unchanged, possibly leaving an unindexed pack.
-    #[error("fetch installation: {0}")]
+    #[error("fetch installation")]
     Installation(#[source] FetchError),
     /// Shallow lock, snapshot comparison, or metadata publication failed.
-    #[error("fetch shallow publication: {0}")]
+    #[error("fetch shallow publication")]
     Shallow(#[from] super::FetchShallowError),
     /// Repository could not be reopened with freshly published shallow boundaries.
-    #[error("fetch repository reopen: {0}")]
+    #[error("fetch repository reopen")]
     Reopen(#[from] crate::OpenError),
     /// Cancellation or installed-object verification failed before the reference transaction.
-    #[error("before fetch publication: {0}")]
+    #[error("before fetch publication")]
     BeforePublication(#[source] FetchError),
     /// Worktree/HEAD safety recheck failed after installation; refs unchanged.
-    #[error("fetch publication safety: {0}")]
+    #[error("fetch publication safety")]
     Safety(#[from] FetchPlanError),
     /// Object-kind/ancestry validation or update authorization failed; installed objects remain,
     /// but no refs have changed.
-    #[error("fetch update validation: {0}")]
+    #[error("fetch update validation")]
     Update(#[from] super::FetchUpdateError),
     /// Exact transaction preparation or partial publication failure; objects remain installed.
-    #[error("fetch reference publication: {0}")]
+    #[error("fetch reference publication")]
     Publication(#[from] crate::refs::TransactionError),
 }
 

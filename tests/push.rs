@@ -141,12 +141,22 @@ fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
     );
     let repo = Repository::open(root.path()).unwrap();
     let empty_tree = repo.object_format().hash_object(ObjectKind::Tree, b"");
+    // Git stores no object for the canonical empty tree, but reads it in every repository.
+    let hex = empty_tree.to_string();
+    assert!(
+        !root
+            .path()
+            .join("objects")
+            .join(&hex[..2])
+            .join(&hex[2..])
+            .exists()
+    );
     assert!(
         repo.objects(PackLimits::default())
             .unwrap()
             .read(empty_tree, ReadLimits::default())
             .unwrap()
-            .is_none()
+            .is_some()
     );
     let content =
         format!("tree {empty_tree}\nauthor A <a@b> 0 +0000\ncommitter A <a@b> 0 +0000\n\nempty\n");
@@ -241,13 +251,25 @@ fn stale_expected_value_rejects_only_its_ref() {
         &dest,
         vec![
             command("refs/heads/other", None, old),
-            command("refs/heads/main", None, old),
+            command("refs/heads/main", None, next(&f)),
         ],
     );
     let report = result.unwrap();
     assert_eq!(report.refs[0].status, Some(Status::Ok));
     assert!(matches!(report.refs[1].status, Some(Status::Rejected(_))));
     assert_eq!(tip(&dest, "refs/heads/other"), Some(old));
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
+}
+/// Observed with `git push --force-with-lease=refs/heads/main:`: a ref that already has the pushed
+/// value is reported up to date, even though the lease expected it to be absent.
+#[test]
+fn unchanged_ref_is_up_to_date_despite_stale_expected_value() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    let old = main(&f);
+    push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
+    let report = push(&f.repo, &dest, vec![command("refs/heads/main", None, old)]).unwrap();
+    assert!(report.all_succeeded());
     assert_eq!(tip(&dest, "refs/heads/main"), Some(old));
 }
 #[test]
@@ -391,7 +413,7 @@ fn hook(repo: &Repository, name: &str, script: &str) {
 }
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_update_hook_before_publication() {
+fn native_push_update_hook_rejects_only_its_ref() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(
@@ -407,19 +429,19 @@ fn native_push_refuses_update_hook_before_publication() {
             command("refs/heads/reject", None, main(&f)),
         ],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
-    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    let report = result.unwrap();
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert_eq!(
+        report.refs[1].status,
+        Some(Status::Rejected(b"hook declined".to_vec()))
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
     assert_eq!(tip(&dest, "refs/heads/reject"), None);
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_pre_receive_hook() {
+fn native_push_pre_receive_hook_rejects_every_ref() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(&dest, "pre-receive", "#!/bin/sh\ncat >/dev/null\nexit 1\n");
@@ -428,12 +450,10 @@ fn native_push_refuses_pre_receive_hook() {
         &dest,
         vec![command("refs/heads/main", None, main(&f))],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
+    assert_eq!(
+        result.unwrap().refs[0].status,
+        Some(Status::Rejected(b"pre-receive hook declined".to_vec()))
+    );
     assert_eq!(tip(&dest, "refs/heads/main"), None);
 }
 #[test]
@@ -554,36 +574,25 @@ fn empty_push_to_empty_repository_succeeds_without_pack() {
 
 #[cfg(unix)]
 #[test]
-fn native_push_refuses_racing_update_hook() {
+fn native_push_update_hook_racing_the_ref_fails_its_lease() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let root = main(&f);
     let newer = next(&f);
-    push(
-        &f.repo,
-        &dest,
-        vec![command("refs/heads/main", None, newer)],
-    )
-    .unwrap();
-    // The update hook runs after discovery and changes the ref before receive-pack's conditional
-    // ref transaction. Both IDs already exist in the destination; no quarantine write is needed.
-    hook(
-        &dest,
-        "update",
-        &format!("#!/bin/sh\ngit update-ref \"$1\" {root}\n"),
-    );
+    push(&f.repo, &dest, vec![command("refs/heads/main", None, root)]).unwrap();
+    // The update hook runs after the lease was checked and deletes the ref before the conditional
+    // reference transaction publishes the push.
+    hook(&dest, "update", "#!/bin/sh\ngit update-ref -d \"$1\"\n");
     let result = push(
         &f.repo,
         &dest,
-        vec![command("refs/heads/main", Some(newer), newer)],
+        vec![command("refs/heads/main", Some(root), newer)],
     );
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
+    assert!(!matches!(
+        result.as_ref().map(|report| &report.refs[0].status),
+        Ok(Some(Status::Ok))
     ));
-    assert_eq!(tip(&dest, "refs/heads/main"), Some(newer));
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
 }
 
 #[test]
@@ -621,27 +630,23 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
 #[rstest]
 #[case::pre("pre-receive")]
 #[case::post("post-receive")]
-fn native_push_refuses_stalled_hooks_without_running_them(#[case] hook_name: &str) {
-    use girt::push::send_local_with_control;
-    use girt::transport::TransportControl;
+fn native_push_passes_updates_to_receive_hooks(#[case] hook_name: &str) {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
-    hook(
+    hook(&dest, hook_name, "#!/bin/sh\ncat >hook-input\n");
+    let report = push(
+        &f.repo,
         &dest,
-        hook_name,
-        "#!/bin/sh\nprintf ready >hook-ready\nsleep 5\n",
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert!(report.all_succeeded());
+    let null = ObjectId::null(girt::ObjectFormat::Sha1);
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-input")).unwrap(),
+        format!("{null} {} refs/heads/main\n", main(&f)).into_bytes()
     );
-    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
-    let cancel = AtomicBool::new(false);
-    let result = send_local_with_control(dest.git_dir(), &prepared, TransportControl::new(&cancel));
-    assert!(matches!(
-        result,
-        Err(PushError::NotSent(PushFailure::Unsupported(
-            "receive hooks"
-        )))
-    ));
-    assert!(!dest.git_dir().join("hook-ready").exists());
-    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -842,8 +847,9 @@ fn merge_push_excludes_receiver_second_parent_and_preserves_other_side() {
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
 
+/// A rewritten receiver tip still proves its ancestry, so only the divergent commit is sent.
 #[test]
-fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_possession() {
+fn divergent_receiver_tip_excludes_shared_history() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let left = commit_with_parents(&f, &[main(&f)], b"left\n");
@@ -861,22 +867,151 @@ fn divergent_receiver_tip_outside_selected_graph_falls_back_despite_local_posses
         force: ForcePolicy::Allow,
         ..command("refs/heads/main", Some(right), left)
     };
-    let full = PreparedPush::new(
-        &f.repo.objects(PackLimits::default()).unwrap(),
-        vec![update.clone()],
-        PushLimits::default(),
-        &AtomicBool::new(false),
-    )
-    .unwrap();
     let prepared = prepare(&f.repo, vec![update]);
-    assert_eq!(prepared.object_count(), full.object_count());
-    assert_eq!(prepared.pack_bytes(), full.pack_bytes());
+    assert_eq!(prepared.object_count(), 1);
     assert!(
         send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
             .unwrap()
             .all_succeeded()
     );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(left));
     git(dest.git_dir(), &["fsck", "--strict"], b"");
+}
+
+/// Imports commits described by space-separated `parents@seconds` entries, such as `@100 0@200
+/// 1,0@300`, with Git's fast-import. Parents are comma-separated indexes of earlier entries.
+/// Commit `i` is `refs/heads/c<i>` and adds file `f<i>`, so each has a new tree and blob.
+fn import(spec: &str) -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--quiet",
+            "--object-format=sha1",
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let mut stream = String::new();
+    let entries: Vec<_> = spec.split_whitespace().collect();
+    for (index, entry) in entries.iter().enumerate() {
+        let (parents, seconds) = entry.split_once('@').unwrap();
+        let message = format!("c{index}\n");
+        let content = format!("content {index}\n");
+        stream += &format!(
+            "commit refs/heads/c{index}\nmark :{}\ncommitter C <c@example.com> {seconds} +0000\n\
+             data {}\n{message}",
+            index + 1,
+            message.len()
+        );
+        for (position, parent) in parents.split(',').filter(|p| !p.is_empty()).enumerate() {
+            let parent: usize = parent.parse().unwrap();
+            let verb = ["from", "merge"][usize::from(position > 0)];
+            stream += &format!("{verb} :{}\n", parent + 1);
+        }
+        stream += &format!(
+            "M 100644 inline f{index}\ndata {}\n{content}\n",
+            content.len()
+        );
+    }
+    git(root.path(), &["fast-import", "--quiet"], stream.as_bytes());
+    let names: Vec<_> = (0..entries.len()).map(|i| format!("c{i}")).collect();
+    let mut args = vec!["rev-parse"];
+    args.extend(names.iter().map(String::as_str));
+    let ids = String::from_utf8(git(root.path(), &args, b""))
+        .unwrap()
+        .lines()
+        .map(|line| line.parse().unwrap())
+        .collect();
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo, ids)
+}
+
+/// A receiver holding only `known`'s history, pushed there by Git.
+fn receiver_with(source: &tempfile::TempDir, known: ObjectId) -> (tempfile::TempDir, Repository) {
+    let (root, dest) = destination(true);
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            dest.git_dir().to_str().unwrap(),
+            &format!("{known}:refs/heads/main"),
+        ],
+        b"",
+    );
+    (root, dest)
+}
+
+/// With skewed committer dates, a fast-forward over the receiver's only tip sends exactly the new
+/// commits, and Git accepts the result as complete.
+#[rstest]
+#[case::new_commit_older_than_parent("@100 0@200 1@300 2@50", 2, 3, 1)]
+#[case::known_parent_newer_than_child("@500 0@100 1@600 2@700 3@50 4@800", 3, 5, 2)]
+#[case::merge_with_new_side_older_than_base("@500 0@600 0@10 1,2@700", 1, 3, 2)]
+#[case::new_side_forks_deep_with_old_dates("@100 0@200 1@300 2@400 0@50 3,4@500", 3, 5, 2)]
+#[case::known_second_parent_skewed("@100 0@900 0@200 2,1@300", 1, 3, 2)]
+fn skewed_fast_forward_sends_complete_new_history(
+    #[case] spec: &str,
+    #[case] known: usize,
+    #[case] new: usize,
+    #[case] new_commits: u32,
+) {
+    let (source, repo, ids) = import(spec);
+    let (_root, dest) = receiver_with(&source, ids[known]);
+    let prepared = prepare(
+        &repo,
+        vec![command("refs/heads/main", Some(ids[known]), ids[new])],
+    );
+    assert_eq!(prepared.object_count(), 3 * new_commits);
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(ids[new]));
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+}
+
+/// Annotated tags of new and known commits send only the tags and new history.
+#[test]
+fn tags_over_known_history_send_only_new_objects() {
+    let (source, repo, ids) = import("@500 0@100 1@600 2@50");
+    let (_root, dest) = receiver_with(&source, ids[2]);
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "new\n", "new", "c3"],
+        b"",
+    );
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "old\n", "old", "c1"],
+        b"",
+    );
+    git(
+        source.path(),
+        &["tag", "-a", "-m", "nested\n", "nested", "old"],
+        b"",
+    );
+    let commands = vec![
+        command("refs/heads/main", Some(ids[2]), ids[3]),
+        command("refs/tags/new", None, tip(&repo, "refs/tags/new").unwrap()),
+        command(
+            "refs/tags/nested",
+            None,
+            tip(&repo, "refs/tags/nested").unwrap(),
+        ),
+    ];
+    let prepared = prepare(&repo, commands);
+    assert_eq!(prepared.object_count(), 3 + 3);
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
 }
 
 #[test]

@@ -47,7 +47,7 @@ pub enum SparseError {
     #[error("sparse expansion cancelled")]
     Cancelled,
     /// Tree lookup failed; the storage error retains the underlying cause.
-    #[error("cannot read sparse tree {id}: {source}")]
+    #[error("cannot read sparse tree {id}")]
     Read {
         /// Requested identity.
         id: ObjectId,
@@ -63,7 +63,7 @@ pub enum SparseError {
     #[error("sparse tree {0} has another object kind")]
     Kind(ObjectId),
     /// Tree framing, names or ordering are invalid.
-    #[error("invalid sparse tree {id}: {source}")]
+    #[error("invalid sparse tree {id}")]
     Tree {
         /// Requested identity.
         id: ObjectId,

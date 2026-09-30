@@ -947,3 +947,455 @@ fn overlapping_bitmaps(format: girt::ObjectFormat, original: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(&digest);
     bytes
 }
+
+#[rstest]
+#[case::normal_v2("--no-skip-worktree", girt::index::Version::V2)]
+#[case::normal_v3("--no-skip-worktree", girt::index::Version::V3)]
+#[case::extended_v3("--skip-worktree", girt::index::Version::V3)]
+fn standalone_framing_conversion_preserves_git_tree_and_flags(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+    #[case] skip_option: &str,
+    #[case] target: girt::index::Version,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    fs::create_dir(work.join("directory")).unwrap();
+    fs::write(work.join("directory/nested"), b"nested contents").unwrap();
+    git(work, &["add", "directory/nested"]);
+    git(work, &["update-index", "--assume-unchanged", "file"]);
+    git(work, &["update-index", skip_option, "file"]);
+    git(work, &["update-index", "--index-version=4"]);
+    let tree = git(work, &["write-tree"]);
+    let listing = git(work, &["ls-files", "--stage", "--debug"]);
+    let original = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(original.version(), girt::index::Version::V4);
+    let tree_extension = original
+        .extensions()
+        .iter()
+        .find(|e| e.signature() == *b"TREE")
+        .unwrap()
+        .clone();
+    let entries = original.entries().to_vec();
+
+    // Exercise the complete forward/backward framing round trip without an entry edit.
+    for version in [target, girt::index::Version::V4] {
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        edit.set_version(version).unwrap();
+        edit.commit().unwrap();
+        let index = repo.read_index(Limits::default()).unwrap().unwrap();
+        assert_eq!(index.version(), version);
+        assert_eq!(index.entries(), entries);
+        assert_eq!(
+            index
+                .extensions()
+                .iter()
+                .find(|e| e.signature() == *b"TREE"),
+            Some(&tree_extension)
+        );
+        assert_eq!(git(work, &["ls-files", "--stage", "--debug"]), listing);
+        assert_eq!(git(work, &["write-tree"]), tree);
+    }
+}
+
+#[rstest]
+fn split_framing_conversion_discards_tree_but_preserves_git_entries(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = split_fixture(format);
+    let work = repo.worktree().unwrap();
+    let tree = git(work, &["write-tree"]);
+    // Git's --debug includes transient split-storage flags; -v reports assume-valid semantics.
+    let listing = git(work, &["ls-files", "--stage", "-v"]);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.index().shared_index_id().is_some());
+    assert!(
+        edit.index()
+            .extensions()
+            .iter()
+            .any(|e| e.signature() == *b"TREE")
+    );
+    let entries = edit.index().entries().to_vec();
+    edit.set_version(girt::index::Version::V4).unwrap();
+    assert!(
+        !edit
+            .index()
+            .extensions()
+            .iter()
+            .any(|e| matches!(&e.signature(), b"TREE" | b"link"))
+    );
+    edit.commit().unwrap();
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries(), entries);
+    assert_eq!(git(work, &["ls-files", "--stage", "-v"]), listing);
+    assert_eq!(git(work, &["write-tree"]), tree);
+}
+
+// Original EOIE encoding follows https://git-scm.com/docs/index-format#_end_of_index_entry.
+// Optional malformed payload cases deliberately keep the outer index and checksum valid.
+fn index_with_eoie(
+    format: girt::ObjectFormat,
+    original: &[u8],
+    malformed: Option<&[u8]>,
+) -> Vec<u8> {
+    use sha1::Digest;
+    let checksum = |bytes: &[u8]| match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(bytes).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(bytes).to_vec(),
+    };
+    let index = Index::parse(format, original, Limits::default()).unwrap();
+    assert!(!index.extensions().iter().any(|e| e.signature() == *b"EOIE"));
+    let mut headers = Vec::new();
+    let extension_bytes: usize = index
+        .extensions()
+        .iter()
+        .map(|e| {
+            headers.extend_from_slice(&e.signature());
+            headers.extend_from_slice(&(e.data().len() as u32).to_be_bytes());
+            8 + e.data().len()
+        })
+        .sum();
+    let end = original.len() - format.digest_len();
+    let mut payload = ((end - extension_bytes) as u32).to_be_bytes().to_vec();
+    payload.extend(checksum(&headers));
+    let payload = malformed.unwrap_or(&payload);
+    let mut bytes = original[..end].to_vec();
+    bytes.extend_from_slice(b"EOIE");
+    bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(payload);
+    bytes.extend(checksum(&bytes));
+    bytes
+}
+
+#[rstest]
+#[case::valid(None)]
+#[case::empty(Some(b"".as_slice()))]
+#[case::truncated(Some(b"\xff\0".as_slice()))]
+fn discard_entry_offsets_git_oracle(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+    #[values(false, true)] tree_cache: bool,
+    #[case] malformed: Option<&[u8]>,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    git(work, &["update-index", "--assume-unchanged", "file"]);
+    git(work, &["update-index", "--skip-worktree", "file"]);
+    git(work, &["update-index", "--index-version=4"]);
+    let tree = git(work, &["write-tree"]);
+    let listing = git(work, &["ls-files", "--stage", "--debug"]);
+    if !tree_cache {
+        let mut edit = repo.edit_index(Limits::default()).unwrap();
+        edit.invalidate_tree_cache().unwrap();
+        edit.commit().unwrap();
+    }
+    let index_path = repo.git_dir().join("index");
+    let original = fs::read(&index_path).unwrap();
+    let bytes = index_with_eoie(format, &original, malformed);
+    fs::write(&index_path, &bytes).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let entries = edit.index().entries().to_vec();
+    let semantic_extensions = edit
+        .index()
+        .extensions()
+        .iter()
+        .filter(|e| e.signature() != *b"EOIE")
+        .cloned()
+        .collect::<Vec<_>>();
+    edit.invalidate_entry_offsets().unwrap();
+    assert_eq!(fs::read(&index_path).unwrap(), bytes);
+    assert_eq!(edit.index().version(), girt::index::Version::V4);
+    assert_eq!(edit.index().entries(), entries);
+    assert_eq!(edit.index().extensions(), semantic_extensions);
+    edit.commit().unwrap();
+    assert_eq!(fs::read(index_path).unwrap(), original);
+    assert_eq!(git(work, &["ls-files", "--stage", "--debug"]), listing);
+    assert_eq!(git(work, &["write-tree"]), tree);
+}
+
+#[rstest]
+fn alternate_index_interoperates_with_git_relative_override(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    let default = fs::read(repo.git_dir().join("index")).unwrap();
+    success(
+        command(work, &["add", "file"])
+            .env("GIT_INDEX_FILE", "alternate.index")
+            .output()
+            .unwrap(),
+    );
+    let alternate = work.join("alternate.index");
+    assert!(!repo.git_dir().join("alternate.index").exists());
+    let loaded = repo
+        .read_index_at(&alternate, Limits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.entries()[0].path, b"file");
+    let edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    let attempted = command(work, &["read-tree", "--empty"])
+        .env("GIT_INDEX_FILE", "alternate.index")
+        .output()
+        .unwrap();
+    assert!(!attempted.status.success());
+    edit.abort().unwrap();
+    let mut edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    edit.replace_entries(Vec::new()).unwrap();
+    edit.commit().unwrap();
+    let files = success(
+        command(work, &["ls-files"])
+            .env("GIT_INDEX_FILE", "alternate.index")
+            .output()
+            .unwrap(),
+    );
+    assert!(files.is_empty());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), default);
+}
+
+#[rstest]
+fn alternate_split_index_is_declined_before_missing_dependency_lookup(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    seed(&repo);
+    git(repo.worktree().unwrap(), &["update-index", "--split-index"]);
+    let split = fs::read(repo.git_dir().join("index")).unwrap();
+    let alternate = root.path().join("alternate");
+    fs::write(&alternate, &split).unwrap();
+    assert!(repo.read_index(Limits::default()).is_ok());
+    assert!(
+        matches!(repo.read_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: girt::index::Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert!(
+        matches!(repo.edit_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: girt::index::Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert_eq!(fs::read(&alternate).unwrap(), split);
+    assert!(!root.path().join("alternate.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn git_alternate_leaf_symlink_behavior_is_outside_native_admission(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let work = repo.worktree().unwrap();
+    let default = fs::read(repo.git_dir().join("index")).unwrap();
+    let target = work.join("target.index");
+    fs::write(&target, &default).unwrap();
+    let alias = work.join("alias.index");
+    std::os::unix::fs::symlink("target.index", &alias).unwrap();
+    let files = success(
+        command(work, &["ls-files"])
+            .env("GIT_INDEX_FILE", "alias.index")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(files, b"file\n");
+    assert!(matches!(
+        repo.edit_index_at(&alias, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    success(
+        command(work, &["read-tree", "--empty"])
+            .env("GIT_INDEX_FILE", "alias.index")
+            .output()
+            .unwrap(),
+    );
+    assert!(fs::symlink_metadata(&alias).unwrap().is_symlink());
+    assert_ne!(fs::read(&target).unwrap(), default);
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), default);
+    assert!(
+        repo.read_index_at(&target, Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+}
+
+#[rstest]
+fn discard_resolve_undo_matches_git_without_changing_entries_or_tree(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let root = repo.worktree().unwrap();
+    let id = ObjectId::for_blob(format, b"hello\n");
+    let records = format!(
+        "0 {}\tfile\n100644 {id} 1\tfile\n100644 {id} 2\tfile\n",
+        ObjectId::null(format)
+    );
+    input(root, &["update-index", "--index-info"], records.as_bytes());
+    git(root, &["add", "file"]);
+    let tree = git(root, &["write-tree"]);
+    let entries = git(root, &["ls-files", "--stage", "--debug"]);
+    assert!(!git(root, &["ls-files", "--resolve-undo"]).is_empty());
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.invalidate_entry_offsets().unwrap();
+    let before = edit.index().entries().to_vec();
+    edit.discard_resolve_undo().unwrap();
+    assert_eq!(edit.index().entries(), before);
+    edit.commit().unwrap();
+    assert!(git(root, &["ls-files", "--resolve-undo"]).is_empty());
+    assert_eq!(git(root, &["ls-files", "--stage", "--debug"]), entries);
+    assert_eq!(git(root, &["write-tree"]), tree);
+}
+
+#[rstest]
+#[case::v2_sha1(girt::ObjectFormat::Sha1, "2", "--no-skip-worktree")]
+#[case::v2_sha256(girt::ObjectFormat::Sha256, "2", "--no-skip-worktree")]
+#[case::v3_sha1(girt::ObjectFormat::Sha1, "3", "--skip-worktree")]
+#[case::v3_sha256(girt::ObjectFormat::Sha256, "3", "--skip-worktree")]
+#[case::v4_sha1(girt::ObjectFormat::Sha1, "4", "--skip-worktree")]
+#[case::v4_sha256(girt::ObjectFormat::Sha256, "4", "--skip-worktree")]
+fn make_standalone_preserves_resolved_split_entries_and_shared_storage(
+    #[case] format: girt::ObjectFormat,
+    #[case] source_version: &str,
+    #[case] flag: &str,
+) {
+    let (_root, repo) = split_fixture(format);
+    let work = repo.worktree().unwrap();
+    git(
+        work,
+        &["update-index", &format!("--index-version={source_version}")],
+    );
+    git(work, &["update-index", "--split-index"]);
+    git(work, &["update-index", flag, "c"]);
+    let expected = git(work, &["ls-files", "--stage"]);
+    let before = fs::read(repo.git_dir().join("index")).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let entries = edit.index().entries().to_vec();
+    let version = edit.index().version();
+    assert_eq!(version as u32, source_version.parse::<u32>().unwrap());
+    let shared = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    let shared_before = fs::read(&shared).unwrap();
+    #[cfg(unix)]
+    let shared_inode = {
+        use std::os::unix::fs::MetadataExt as _;
+        fs::metadata(&shared).unwrap().ino()
+    };
+    assert!(matches!(
+        repo.edit_index(Limits::default()),
+        Err(StorageError::Locked(_))
+    ));
+    edit.make_standalone().unwrap();
+    assert_eq!(edit.index().entries(), entries);
+    assert_eq!(edit.index().version(), version);
+    assert!(edit.index().shared_index_id().is_none());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
+    edit.commit().unwrap();
+    let published = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(published.entries(), entries);
+    assert_eq!(published.version(), version);
+    assert_eq!(git(work, &["ls-files", "--stage"]), expected);
+    assert_eq!(fs::read(&shared).unwrap(), shared_before);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        assert_eq!(fs::metadata(&shared).unwrap().ino(), shared_inode);
+    }
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_retains_primary_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    edit.make_standalone().unwrap();
+    fs::write(&primary, b"independent writer").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == primary));
+    assert_eq!(fs::read(primary).unwrap(), b"independent writer");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_retains_shared_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let before = fs::read(&primary).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let shared_path = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    edit.make_standalone().unwrap();
+    fs::write(&shared_path, b"independent writer").unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared_path));
+    assert_eq!(fs::read(shared_path).unwrap(), b"independent writer");
+    assert_eq!(fs::read(primary).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn make_standalone_rejects_deleted_shared_precondition(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = split_fixture(format);
+    let primary = repo.git_dir().join("index");
+    let before = fs::read(&primary).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let shared_path = repo.git_dir().join(format!(
+        "sharedindex.{}",
+        edit.index().shared_index_id().unwrap()
+    ));
+    edit.make_standalone().unwrap();
+    fs::remove_file(&shared_path).unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(path)) if path == shared_path));
+    assert!(!shared_path.exists());
+    assert_eq!(fs::read(primary).unwrap(), before);
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn orphan_creation_missing_selected_split_dependency_precedes_registration(
+    #[case] format: girt::ObjectFormat,
+) {
+    let (root, repo) = split_fixture(format);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    let shared = repo
+        .git_dir()
+        .join(format!("sharedindex.{}", index.shared_index_id().unwrap()));
+    fs::remove_file(shared).unwrap();
+    let selected = repo.git_dir().join("index");
+    let original = fs::read(&selected).unwrap();
+    let metadata = girt::RepositoryLocation::at_git_dir(repo.git_dir())
+        .unwrap()
+        .read_metadata_with_config(&girt::config::ConfigInputs::default())
+        .unwrap();
+    let branch = girt::refs::RefName::new(b"refs/heads/new-orphan").unwrap();
+    let error = metadata
+        .create_orphan_worktree_with_options(
+            root.path().join("linked"),
+            &branch,
+            4,
+            girt::OrphanWorktreeOptions {
+                index_path: Some(selected.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        girt::CreateWorktreeError::IndexStorage {
+            registration: None,
+            source: StorageError::MissingShared(_)
+        }
+    ));
+    assert_eq!(fs::read(selected).unwrap(), original);
+    assert!(!repo.git_dir().join("index.lock").exists());
+    assert!(!repo.common_dir().join("worktrees").exists());
+    assert!(!root.path().join("linked").exists());
+}

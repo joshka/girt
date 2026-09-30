@@ -20,6 +20,11 @@ releases its Arc on success or failure; dropping the download releases it too. O
 retain history. Installation still rechecks local dependencies; retained history does not coordinate
 with GC.
 
+For explicit depth requests, validation includes reachable local dependencies in a nonempty received
+pack so retention protects the resulting shallow history. The combined pack obeys object,
+decoded-input and pack-byte limits. A response containing no objects instead verifies existing local
+dependencies during coordinated shallow publication; the caller still excludes concurrent GC.
+
 Use `fetch::receive_http_with_progress` or `FetchRequest::receive_http_with_progress` for live
 receiver notices. The `FnMut(&[u8]) + Send` callback receives complete channel-2 byte payloads after
 the shallow/ACK prefix is checked, as the bounded HTTP response arrives. Notices are advisory and
@@ -47,11 +52,11 @@ well as running workers. Installation and local history preparation are also syn
 admission, explicit completion handling and installation outside the executor. It submits only one
 worker request; it does not provide a service queue or reusable pool.
 
-`PreparedPush` validates the graph, proves force policy, applies explicit receiver-history exclusion
-and generates the ordinary or delta-compressed pack synchronously. Prepare it before calling
-`push::send_http`; sending consumes it and moves both existing byte buffers into the HTTP upload.
-There is no full-pack copy during the async call. Reprepare after inspecting remote state when an
-attempt has an uncertain outcome.
+`PreparedPush` validates the objects it sends, proves force policy, applies receiver-history
+exclusion and generates the ordinary or delta-compressed pack synchronously. Prepare it before
+calling `push::send_http`; sending consumes it and moves both existing byte buffers into the HTTP
+upload. There is no full-pack copy during the async call. Reprepare after inspecting remote state
+when an attempt has an uncertain outcome.
 
 Use `push::send_http_checked` when the application needs to compare its commands with the actual
 receive-pack advertisement before sending. Its synchronous callback sees validated reference tips

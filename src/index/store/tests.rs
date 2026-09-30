@@ -92,6 +92,85 @@ fn absent_is_distinct_from_published_empty(#[case] format: crate::ObjectFormat) 
     );
     assert!(!repo.git_dir().join("index.lock").exists());
 }
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_commit_creates_missing_index(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    assert!(edit.original_missing());
+    edit.commit_new_with_options(IndexCommitOptions::default())
+        .unwrap();
+    assert!(Index::parse(format, &fs::read(&path).unwrap(), Limits::default()).is_ok());
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_commit_preserves_foreign_index(#[case] format: crate::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    fs::write(&path, b"foreign").unwrap();
+    assert!(matches!(
+        edit.commit_new_with_options(IndexCommitOptions::default()),
+        Err(StorageError::Changed(_))
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"foreign");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_publication_does_not_replace_last_moment_writer(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let error = edit.publish_with_policy(
+        IndexCommitOptions::default(),
+        crate::file_policy::sync_file,
+        |lock, selected| {
+            fs::write(selected, b"last moment writer")?;
+            fs::hard_link(lock, selected)
+        },
+    );
+    assert!(matches!(error, Err(StorageError::Io { .. })));
+    edit.abort().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"last moment writer");
+    assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn conditional_publication_reports_post_install_cleanup_failure(
+    #[case] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let path = repo.git_dir().join("index");
+    let lock = repo.git_dir().join("index.lock");
+    let edit = repo.edit_index(Limits::default()).unwrap();
+    let error = edit.commit_new_with_cleanup(IndexCommitOptions::default(), |_| {
+        Err(io::Error::other("injected cleanup failure"))
+    });
+    assert!(matches!(
+        error,
+        Err(StorageError::PublishedCleanup {
+            path: published,
+            lock: retained,
+            ..
+        }) if published == path && retained == lock
+    ));
+    assert!(Index::parse(format, &fs::read(&path).unwrap(), Limits::default()).is_ok());
+    assert!(lock.exists());
+    fs::remove_file(lock).unwrap();
+}
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
@@ -274,11 +353,11 @@ fn directory_is_not_a_missing_index(#[case] format: crate::ObjectFormat) {
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
-fn publication_preserves_stat_words_and_invalidates_timestamp_trust(
+fn publication_preserves_old_stat_words_and_smudges_racy_entries(
     #[case] format: crate::ObjectFormat,
 ) {
     let (_root, repo) = repository(format);
-    let stat = Stat {
+    let old = Stat {
         mtime: Timestamp {
             seconds: 42,
             nanoseconds: 123,
@@ -286,30 +365,36 @@ fn publication_preserves_stat_words_and_invalidates_timestamp_trust(
         size: 17,
         ..Stat::default()
     };
-    let mut entry = Entry::new(
-        b"a".to_vec(),
-        Mode::Regular,
-        ObjectId::for_blob(repo.object_format(), b"a"),
-    );
-    entry.stat = stat;
+    let future = Stat {
+        mtime: Timestamp {
+            seconds: u32::MAX,
+            nanoseconds: 0,
+        },
+        size: 5,
+        ..Stat::default()
+    };
+    let entry = |path: &[u8], stat| {
+        let mut entry = Entry::new(
+            path.to_vec(),
+            Mode::Regular,
+            ObjectId::for_blob(repo.object_format(), path),
+        );
+        entry.stat = stat;
+        entry
+    };
+    let before = std::time::SystemTime::now() - std::time::Duration::from_secs(2);
     let mut edit = repo.edit_index(Limits::default()).unwrap();
-    edit.replace_entries(vec![entry]).unwrap();
+    edit.replace_entries(vec![entry(b"a", old), entry(b"b", future)])
+        .unwrap();
     edit.commit().unwrap();
-    assert_eq!(
-        repo.read_index(Limits::default())
-            .unwrap()
-            .unwrap()
-            .entries()[0]
-            .stat,
-        stat
-    );
-    assert_eq!(
-        fs::metadata(repo.git_dir().join("index"))
-            .unwrap()
-            .modified()
-            .unwrap(),
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)
-    );
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(index.entries()[0].stat, old);
+    assert_eq!(index.entries()[1].stat, Stat { size: 0, ..future });
+    let modified = fs::metadata(repo.git_dir().join("index"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(modified >= before);
 }
 
 #[cfg(unix)]
@@ -525,4 +610,208 @@ fn specialized_publication_preserves_concurrent_main(
         b"concurrent replacement"
     );
     assert!(!repo.git_dir().join("index.lock").exists());
+}
+
+#[rstest]
+fn alternate_absent_index_publication_preserves_default(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let default = populated(&repo);
+    let alternate = root.path().join("alternate.index");
+    assert!(
+        repo.read_index_at(&alternate, Limits::default())
+            .unwrap()
+            .is_none()
+    );
+    let mut edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    assert!(edit.index().entries().is_empty());
+    assert!(!alternate.exists());
+    assert!(root.path().join("alternate.index.lock").is_file());
+    edit.replace_entries(Vec::new()).unwrap();
+    edit.commit().unwrap();
+    assert!(
+        repo.read_index_at(&alternate, Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), default);
+    assert!(!root.path().join("alternate.index.lock").exists());
+}
+
+#[rstest]
+fn alternate_existing_index_noop_preserves_encoding(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let original = add_extension(&repo, b"TREE", b"cached tree");
+    let alternate = root.path().join("alternate");
+    fs::write(&alternate, &original).unwrap();
+    let index = repo
+        .read_index_at(&alternate, Limits::default())
+        .unwrap()
+        .unwrap();
+    let edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    assert_eq!(edit.index().entries(), index.entries());
+    edit.commit().unwrap();
+    assert_eq!(fs::read(&alternate).unwrap(), original);
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), original);
+}
+
+#[rstest]
+fn alternate_index_contention_and_changed_snapshot_preserve_storage(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let original = populated(&repo);
+    let alternate = root.path().join("alternate");
+    fs::write(&alternate, &original).unwrap();
+    let edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    assert!(matches!(
+        repo.edit_index_at(&alternate, Limits::default()),
+        Err(StorageError::Locked(_))
+    ));
+    let replacement = Index::empty(format).encode(Limits::default()).unwrap();
+    fs::write(&alternate, &replacement).unwrap();
+    assert!(matches!(edit.commit(), Err(StorageError::Changed(_))));
+    assert_eq!(fs::read(&alternate).unwrap(), replacement);
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), original);
+    assert!(!root.path().join("alternate.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn alternate_replaced_lock_is_not_published_or_removed(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let alternate = root.path().join("alternate");
+    let edit = repo.edit_index_at(&alternate, Limits::default()).unwrap();
+    let lock = root.path().join("alternate.lock");
+    fs::rename(&lock, root.path().join("owned-lock")).unwrap();
+    fs::write(&lock, b"replacement").unwrap();
+    assert!(edit.commit().is_err());
+    assert_eq!(fs::read(&lock).unwrap(), b"replacement");
+    assert!(!alternate.exists());
+}
+
+#[rstest]
+fn alternate_index_directory_is_rejected_and_lock_released(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let alternate = root.path().join("alternate");
+    fs::create_dir(&alternate).unwrap();
+    assert!(matches!(
+        repo.read_index_at(&alternate, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    assert!(matches!(
+        repo.edit_index_at(&alternate, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    assert!(!root.path().join("alternate.lock").exists());
+}
+
+#[cfg(unix)]
+#[rstest]
+fn alternate_index_leaf_symlink_is_rejected_and_ancestor_alias_is_preserved(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let original = populated(&repo);
+    let leaf = root.path().join("leaf");
+    std::os::unix::fs::symlink(repo.git_dir().join("index"), &leaf).unwrap();
+    assert!(matches!(
+        repo.read_index_at(&leaf, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    assert!(matches!(
+        repo.edit_index_at(&leaf, Limits::default()),
+        Err(StorageError::NotRegular(_))
+    ));
+    assert_eq!(fs::read(&leaf).unwrap(), original);
+    assert!(!root.path().join("leaf.lock").exists());
+    let ancestor = root.path().join("ancestor");
+    std::os::unix::fs::symlink(repo.git_dir(), &ancestor).unwrap();
+    let path = ancestor.join("other.index");
+    let edit = repo.edit_index_at(&path, Limits::default()).unwrap();
+    assert_eq!(edit.destination, path);
+    edit.commit().unwrap();
+    assert!(repo.git_dir().join("other.index").is_file());
+    assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), original);
+}
+
+#[rstest]
+fn explicit_index_rejects_null_identity_split_without_dependency_reads(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (root, repo) = repository(format);
+    let original = add_extension(&repo, b"link", &vec![0; format.digest_len()]);
+    let alternate = root.path().join("alternate");
+    fs::write(&alternate, &original).unwrap();
+    assert!(repo.read_index(Limits::default()).is_ok());
+    assert!(
+        matches!(repo.read_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert!(
+        matches!(repo.edit_index_at(&alternate, Limits::default()), Err(StorageError::Format { source: Error::MandatoryExtension(signature), .. }) if signature == *b"link")
+    );
+    assert_eq!(fs::read(&alternate).unwrap(), original);
+    assert!(!root.path().join("alternate.lock").exists());
+}
+
+#[test]
+fn alternate_relative_path_uses_current_directory_once() {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    let relative_directory = tempfile::Builder::new()
+        .prefix("alternate-index-test-")
+        .tempdir_in(".")
+        .unwrap();
+    let relative = relative_directory.path().join("index");
+    let edit = repo.edit_index_at(&relative, Limits::default()).unwrap();
+    assert_eq!(edit.destination, std::path::absolute(&relative).unwrap());
+    edit.commit().unwrap();
+    assert!(relative.is_file());
+    assert!(
+        repo.read_index_at(&relative, Limits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert!(repo.read_index(Limits::default()).unwrap().is_none());
+}
+
+#[rstest]
+fn discard_resolve_undo_requires_offsets_first_and_explicit_commit(
+    #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
+) {
+    let (_root, repo) = repository(format);
+    let mut bytes = add_extension(&repo, b"TREE", b"opaque tree");
+    bytes.truncate(bytes.len() - format.digest_len());
+    bytes.extend_from_slice(b"REUC\0\0\0\x03badEOIE\0\0\0\x00IEOT\0\0\0\x00");
+    bytes.extend_from_slice(format.checksum(&bytes).as_bytes());
+    let path = repo.git_dir().join("index");
+    fs::write(&path, &bytes).unwrap();
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let before = edit.index().clone();
+    assert_eq!(
+        edit.discard_resolve_undo(),
+        Err(Error::ExtensionPreventsEdit(*b"EOIE"))
+    );
+    assert_eq!(edit.index(), &before);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    edit.invalidate_entry_offsets().unwrap();
+    edit.discard_resolve_undo().unwrap();
+    assert_eq!(edit.index().entries(), before.entries());
+    assert_eq!(edit.index().extensions().len(), 1);
+    assert_eq!(edit.index().extensions()[0].signature(), *b"TREE");
+    assert_eq!(edit.index().extensions()[0].data(), b"opaque tree");
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    edit.commit().unwrap();
+    let result = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(result.entries(), before.entries());
+    assert_eq!(result.extensions()[0].data(), b"opaque tree");
+    assert_eq!(result.extensions().len(), 1);
 }

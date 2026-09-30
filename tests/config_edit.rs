@@ -357,12 +357,12 @@ fn explicit_unicode_file_path_is_preserved() {
 }
 
 #[rstest]
-#[case::trailing(b"[x]\nk=a # \0 hi\nnext=b\n", b"[x]\nk=\"changed\" # \0 hi\nnext=b\n")]
-#[case::standalone(b"[x]\nk=a\n; \0\nnext=b\n", b"[x]\nk=\"changed\"\n; \0\nnext=b\n")]
-#[case::header(b"[x] # \0\nk=a\nnext=b\n", b"[x] # \0\nk=\"changed\"\nnext=b\n")]
+#[case::trailing(b"[x]\nk=a # \0 hi\nnext=b\n", b"[x]\nk=changed # \0 hi\nnext=b\n")]
+#[case::standalone(b"[x]\nk=a\n; \0\nnext=b\n", b"[x]\nk=changed\n; \0\nnext=b\n")]
+#[case::header(b"[x] # \0\nk=a\nnext=b\n", b"[x] # \0\nk=changed\nnext=b\n")]
 #[case::crlf(
     b"[x]\r\nk=a ; \0\r\nnext=b\r\n",
-    b"[x]\r\nk=\"changed\" ; \0\r\nnext=b\r\n"
+    b"[x]\r\nk=changed ; \0\r\nnext=b\r\n"
 )]
 fn inert_nul_comments_survive_resolution_and_edit(
     #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
@@ -410,4 +410,75 @@ fn inert_nul_comments_survive_resolution_and_edit(
     assert_eq!(git(dir.path(), &["config", "--get", "x.k"]), b"changed\n");
     assert_eq!(git(dir.path(), &["config", "--get", "x.next"]), b"b\n");
     assert_eq!(repo.object_format(), reopened.object_format());
+}
+
+#[test]
+fn grouped_append_matches_git_and_preserves_original_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let before = b"[demo]\nvalue=old\nimplicit\n# retained\n";
+    let mut document = Document::parse(before).unwrap();
+    document
+        .append_section(
+            "demo",
+            None,
+            &[("value", b""), ("value", b" #quoted;\t\"\\\n ")],
+        )
+        .unwrap();
+    assert!(document.as_bytes().starts_with(before));
+    std::fs::write(root.path().join("config"), document.as_bytes()).unwrap();
+    assert_eq!(
+        git(
+            root.path(),
+            &[
+                "config",
+                "--file",
+                "config",
+                "--null",
+                "--get-all",
+                "demo.value"
+            ]
+        ),
+        b"old\0\0 #quoted;\t\"\\\n \0"
+    );
+    assert_eq!(
+        document.config().value("demo", None, "implicit"),
+        Some(None)
+    );
+}
+
+#[test]
+fn physical_section_removal_publishes_only_the_selected_occurrence() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("config");
+    let original = b"# keep\r\n[remote.origin]\r\nurl=first\r\n[remote \"origin\"]\r\nurl=second\r\n[remote]\r\nkey=kept\r\n";
+    std::fs::write(&path, original).unwrap();
+    let mut edit = ConfigEdit::open(&path, 4096).unwrap();
+    let first = edit.document().sections().next().unwrap().ordinal();
+    edit.document_mut().remove_sections(&[first]).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    edit.commit().unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"# keep\r\n[remote \"origin\"]\r\nurl=second\r\n[remote]\r\nkey=kept\r\n"
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &[
+                "config",
+                "--file",
+                "config",
+                "--get-all",
+                "remote.origin.url"
+            ]
+        ),
+        b"second\n"
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &["config", "--file", "config", "--get", "remote.key"]
+        ),
+        b"kept\n"
+    );
 }

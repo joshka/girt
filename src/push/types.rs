@@ -52,16 +52,18 @@ pub struct PushLimits {
     pub max_command_bytes: usize,
     /// Status bytes including framing (default 4 MiB).
     pub max_status_bytes: usize,
-    /// Reachable edge occurrences, including duplicates (default 4 million).
+    /// Edge occurrences from objects selected for sending, including duplicates (default 4
+    /// million). Reading known receiver history has a separate allowance of the same size.
     pub max_edges: usize,
     /// Cumulative commit visits and parent edge occurrences across fast-forward proofs
-    /// (default 4 million), including duplicates.
+    /// (default 4 million), including duplicates. Both the new and old tips' ancestry count.
     pub max_ancestry_steps: usize,
     /// Per-object storage decoding bounds. Payload reads are additionally capped by remaining
     /// aggregate pack input bytes so preparation cannot retain more than that payload budget.
     pub read: ReadLimits,
     /// Selected count/payload and generated artifact bounds. The index is generated into a sink;
-    /// its bound still applies. Full selected count/payload bounds apply before exclusion.
+    /// its bound still applies. Count/payload bounds cover every object read as a candidate for
+    /// sending, including commits later found in receiver history.
     pub pack: PackWriteLimits,
     /// Explicit pack compression policy; ordinary entries by default. Delta bases stay internal
     /// after receiver-history exclusion and need no receive-pack capability negotiation.
@@ -211,11 +213,11 @@ impl PushReport {
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
     /// No update commands were attempted; this operation did not mutate destination refs.
-    #[error("push not sent: {0}")]
+    #[error("push not sent")]
     NotSent(#[source] PushFailure),
     /// Command transmission began. Some or all updates may have happened; do not blindly retry.
     /// Retained acknowledgements are evidence, while missing results require remote inspection.
-    #[error("push outcome uncertain: {cause}")]
+    #[error("push outcome uncertain")]
     Uncertain {
         /// Transport, protocol, cancellation, resource or process failure.
         #[source]
@@ -229,13 +231,13 @@ pub enum PushError {
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
     /// Native local destination could not be opened.
-    #[error("local destination: {0}")]
+    #[error("local destination")]
     Destination(#[source] Box<crate::OpenError>),
     /// Native object installation failed before reference publication.
-    #[error("local object installation: {0}")]
+    #[error("local object installation")]
     Install(#[source] Box<crate::fetch::FetchError>),
     /// Native reference publication failed after mutation may have begun.
-    #[error("local reference publication: {0}")]
+    #[error("local reference publication")]
     Reference(#[source] Box<crate::refs::ReferenceError>),
     /// Explicit reflog identity is invalid for a new record.
     #[error("invalid push reflog identity")]
@@ -245,14 +247,14 @@ pub enum PushFailure {
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Sanitized OpenSSH transport or service failure.
     #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-    #[error("{0}")]
-    Ssh(#[source] crate::transport::ssh::SshError),
+    #[error(transparent)]
+    Ssh(crate::transport::ssh::SshError),
     /// Sanitized smart HTTP exchange failure.
     #[cfg(feature = "http")]
-    #[error("{0}")]
-    Http(#[source] crate::transport::http::HttpError),
+    #[error(transparent)]
+    Http(crate::transport::http::HttpError),
     /// I/O failure; protocol interruption is returned without retrying.
-    #[error("push I/O: {0}")]
+    #[error("push I/O")]
     Io(#[source] std::io::Error),
     /// Malformed or unexpected receive-pack framing or state.
     #[error("invalid receive-pack response: {0}")]
@@ -288,7 +290,7 @@ pub enum PushFailure {
     #[error("wrong reachable object kind for {0}")]
     Kind(ObjectId),
     /// Bounded object storage read failed.
-    #[error("push object {id}: {source}")]
+    #[error("push object {id}")]
     Read {
         /// Reachable object being read.
         id: ObjectId,
@@ -297,10 +299,10 @@ pub enum PushFailure {
         source: crate::ObjectReadError,
     },
     /// Pack construction failed before sending commands.
-    #[error("push pack: {0}")]
+    #[error("push pack")]
     Pack(#[from] crate::PackWriteError),
     /// Reachable commit payload invalid or unsupported.
-    #[error("push commit {id}: {source}")]
+    #[error("push commit {id}")]
     Commit {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -309,7 +311,7 @@ pub enum PushFailure {
         source: crate::CommitError,
     },
     /// Reachable tree payload invalid or unsupported.
-    #[error("push tree {id}: {source}")]
+    #[error("push tree {id}")]
     Tree {
         /// Object whose payload failed validation.
         id: ObjectId,
@@ -318,7 +320,7 @@ pub enum PushFailure {
         source: crate::TreeError,
     },
     /// Reachable tag payload invalid or unsupported.
-    #[error("push tag {id}: {source}")]
+    #[error("push tag {id}")]
     Tag {
         /// Object whose payload failed validation.
         id: ObjectId,

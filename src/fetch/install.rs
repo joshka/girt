@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
 use super::import::Imported;
+use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::{ObjectId, Repository};
@@ -34,6 +35,7 @@ pub(crate) struct NativeContents {
     pub checksum: Option<ObjectId>,
     pub objects: usize,
     pub dependencies: Vec<ObjectId>,
+    pub shallow: Vec<ObjectId>,
     pub limits: FetchLimits,
 }
 
@@ -67,7 +69,7 @@ impl ReceivedFetch {
             checksum: contents.checksum,
             objects: contents.objects,
             dependencies: contents.dependencies,
-            shallow: vec![],
+            shallow: contents.shallow,
             limits: contents.limits,
         }
     }
@@ -81,7 +83,7 @@ impl ReceivedFetch {
     ) -> Result<Self, FetchError> {
         let dependencies = connectivity::validate_with_boundaries(
             &Default::default(),
-            &known.objects,
+            known,
             &wants,
             &known.shallow,
             limits,
@@ -103,29 +105,44 @@ impl ReceivedFetch {
         pack: Vec<u8>,
         known: &KnownHistory,
         shallow: Vec<ObjectId>,
-        limits: FetchLimits,
+        options: super::FetchOptions,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
+        let super::FetchOptions { limits, depth } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
-        let imported = Imported::read_observed(format, &pack, &known.objects, limits, observer)?;
-        let dependencies = connectivity::validate_with_boundaries(
+        let mut imported = Imported::read_observed(format, &pack, known, limits, observer)?;
+        let mut dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
-            &known.objects,
+            known,
             &wants,
             &shallow,
             limits,
             cancel,
         )?;
+        let mut objects = imported.objects.len();
+        if depth.is_some()
+            && !dependencies.is_empty()
+            && !imported.objects.is_empty()
+            && !known.trusted_complete()
+        {
+            objects += dependencies.len();
+            materialize_dependencies(&mut imported, known, &dependencies, limits, cancel)?;
+            dependencies.clear();
+        }
         check_cancelled(cancel)?;
         let received = Self {
             format,
             advertisement,
             wants,
-            pack: imported.complete_pack.unwrap_or(pack),
+            pack: if objects == 0 {
+                Vec::new()
+            } else {
+                imported.complete_pack.unwrap_or(pack)
+            },
             index: imported.index,
-            checksum: Some(imported.checksum),
-            objects: imported.objects.len(),
+            checksum: (objects != 0).then_some(imported.checksum),
+            objects,
             dependencies,
             shallow,
             limits,
@@ -144,7 +161,8 @@ impl ReceivedFetch {
         &self.wants
     }
 
-    /// Number of verified received objects, including any unrequested server extras.
+    /// Number of verified pack objects, including materialized local dependencies and server
+    /// extras.
     pub fn object_count(&self) -> usize {
         self.objects
     }
@@ -228,7 +246,7 @@ impl ReceivedFetch {
     /// is refused: a collector may already have selected that old artifact for deletion before
     /// the marker was created. This operation does not protect shallow metadata, HEAD, worktrees,
     /// or objects outside the received pack. Use [`super::FetchReady::install_retained`] for a
-    /// coordinated initial shallow transfer. The ordinary installation's trusted-path and
+    /// coordinated shallow transfer. The ordinary installation's trusted-path and
     /// durability requirements still apply.
     ///
     /// # Errors
@@ -266,7 +284,10 @@ impl ReceivedFetch {
     ) -> Result<ObjectId, FetchError> {
         check_cancelled(cancel)?;
         if repository.object_format() != self.format {
-            return Err(FetchError::Unsupported("destination object format differs"));
+            return Err(FetchError::FormatMismatch {
+                remote: self.format,
+                local: repository.object_format(),
+            });
         }
         if !self.dependencies.is_empty() {
             return Err(FetchError::Unsupported(
@@ -316,7 +337,10 @@ impl ReceivedFetch {
 
         let operation = || {
             if repository.object_format() != self.format {
-                return Err(FetchError::Unsupported("destination object format differs"));
+                return Err(FetchError::FormatMismatch {
+                    remote: self.format,
+                    local: repository.object_format(),
+                });
             }
             check_cancelled(cancel)?;
             if !allow_shallow && !self.shallow.is_empty() {
@@ -385,6 +409,70 @@ impl ReceivedFetch {
     }
 }
 
+/// Include the verified snapshot's reachable dependencies in the pack retained by publication.
+fn materialize_dependencies(
+    imported: &mut Imported,
+    known: &KnownHistory,
+    dependencies: &[ObjectId],
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<(), FetchError> {
+    let format = imported.checksum.format();
+    // The verified snapshot owns these bytes through validation. Copy each reachable
+    // dependency into the new pack so retention protects its complete shallow closure.
+    let mut inputs: Vec<_> = imported
+        .objects
+        .iter()
+        .map(|(&id, object)| crate::PackObject {
+            id,
+            kind: object.kind(),
+            data: object.data(),
+        })
+        .collect();
+    inputs.extend(dependencies.iter().filter_map(|&id| {
+        let object = known.objects.get(&id)?;
+        Some(crate::PackObject {
+            id,
+            kind: object.kind(),
+            data: object.data(),
+        })
+    }));
+    inputs.sort_unstable_by_key(|object| object.id);
+    let mut complete_pack = Vec::new();
+    let mut index = Vec::new();
+    let written = crate::pack::write_controlled(
+        format,
+        &inputs,
+        &mut complete_pack,
+        &mut index,
+        crate::PackWriteLimits {
+            max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
+            max_object_bytes: limits.max_object_bytes as u64,
+            max_input_bytes: limits.max_decode_bytes as u64,
+            max_pack_bytes: limits.max_pack_bytes as u64,
+            ..Default::default()
+        },
+        crate::PackCompression::Ordinary,
+        &mut || {
+            check_cancelled(cancel).map_err(|_| {
+                crate::PackWriteError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "fetch cancelled",
+                ))
+            })
+        },
+    )
+    .map_err(|error| {
+        check_cancelled(cancel)
+            .err()
+            .unwrap_or_else(|| error.into())
+    })?;
+    imported.index = index;
+    imported.checksum = written.checksum;
+    imported.complete_pack = Some(complete_pack);
+    Ok(())
+}
+
 /// Object publication completed; it says nothing about reference changes or reflogs.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchInstalled {
@@ -432,6 +520,89 @@ fn publish(
 #[cfg(test)]
 mod shallow_tests {
     use super::*;
+
+    fn dependency_transfer(
+        format: crate::ObjectFormat,
+        max_objects: usize,
+    ) -> Result<ReceivedFetch, FetchError> {
+        let object = crate::Object {
+            format,
+            kind: crate::ObjectKind::Blob,
+            data: b"owned local payload".to_vec(),
+        };
+        let id = object.id();
+        let known = KnownHistory {
+            objects: [(id, object)].into(),
+            ..Default::default()
+        };
+        let extra = crate::ObjectId::for_blob(format, b"wire payload");
+        let mut pack = Vec::new();
+        crate::write_pack(
+            format,
+            &[crate::PackObject {
+                id: extra,
+                kind: crate::ObjectKind::Blob,
+                data: b"wire payload",
+            }],
+            &mut pack,
+            &mut Vec::new(),
+            crate::PackWriteLimits::default(),
+        )
+        .unwrap();
+        ReceivedFetch::validate_known(
+            Advertisement {
+                refs: vec![],
+                capabilities: vec![format!("object-format={format}").into_bytes()],
+            },
+            vec![id],
+            pack,
+            &known,
+            vec![],
+            super::super::FetchOptions {
+                depth: std::num::NonZeroU32::new(2),
+                limits: FetchLimits {
+                    max_objects,
+                    ..Default::default()
+                },
+            },
+            &mut ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
+        )
+    }
+
+    #[rstest::rstest]
+    #[case::sha1(crate::ObjectFormat::Sha1)]
+    #[case::sha256(crate::ObjectFormat::Sha256)]
+    fn depth_transfer_retains_local_dependencies_after_snapshot_drops(
+        #[case] format: crate::ObjectFormat,
+    ) {
+        let received = dependency_transfer(format, 2).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let repo =
+            Repository::init(format, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        let (_, retention) = received
+            .install_retained(&repo, crate::PackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let object = objects
+            .read(
+                crate::ObjectId::for_blob(format, b"owned local payload"),
+                crate::ReadLimits::default(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(object.data(), b"owned local payload");
+        retention.release().unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::sha1(crate::ObjectFormat::Sha1)]
+    #[case::sha256(crate::ObjectFormat::Sha256)]
+    fn materialized_depth_pack_obeys_combined_object_limit(#[case] format: crate::ObjectFormat) {
+        assert!(matches!(
+            dependency_transfer(format, 1),
+            Err(FetchError::Index(crate::PackWriteError::Limit(_)))
+        ));
+    }
 
     #[test]
     fn stale_handle_cannot_install_into_new_shallow_metadata() {

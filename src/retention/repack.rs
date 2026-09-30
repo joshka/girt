@@ -44,7 +44,7 @@ pub enum RepackError {
     #[error("required object missing: {0}")]
     Missing(ObjectId),
     /// A required object could not be read.
-    #[error("cannot read required object {id}: {source}")]
+    #[error("cannot read required object {id}")]
     Read {
         /// Object requested by the plan.
         id: ObjectId,
@@ -134,6 +134,7 @@ impl Repository {
             let object = objects
                 .read_controlled(id, policy.read, cancel)
                 .map_err(|source| RepackError::Read { id, source })?
+                .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
             let len = object.data().len() as u64;
             if len > limits.write.max_object_bytes {

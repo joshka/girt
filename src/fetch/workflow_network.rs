@@ -104,7 +104,7 @@ impl FetchRequest {
         known: Option<Arc<KnownHistory>>,
         limits: FetchLimits,
         control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) + Send,
+        progress: impl FnMut(&[u8]),
     ) -> Result<FetchDownload, FetchWorkflowError> {
         self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
@@ -147,15 +147,44 @@ impl FetchRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<FetchDownload, FetchWorkflowError> {
+        self.receive_ssh_with_progress(remote, known, limits, control, |_| {}, |_| {})
+            .await
+    }
+
+    /// Downloads SSH history with separate local diagnostics and live remote notices.
+    ///
+    /// Uses [`super::receive_ssh_with_progress`]'s bounded observers and validation replay
+    /// contract. Pass a no-op notice callback to [`FetchDownload::validate_with_progress`]
+    /// after displaying notices live. Validation, installation and publication remain explicit
+    /// and caller-owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::receive_ssh`]'s mapping, policy and transport errors. Observed output does
+    /// not establish valid objects or published references; a launched failure is never retried.
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub async fn receive_ssh_with_progress(
+        self,
+        remote: &crate::transport::ssh::SshRemote,
+        known: Option<Arc<KnownHistory>>,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        diagnostics: impl FnMut(&[u8]),
+        progress: impl FnMut(&[u8]),
+    ) -> Result<FetchDownload, FetchWorkflowError> {
         self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;
-        let downloaded = super::receive_ssh_with_depth(
+        let downloaded = super::receive_ssh_with_progress(
             remote,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
-            self.depth,
-            limits,
+            super::FetchOptions {
+                limits,
+                depth: self.depth,
+            },
             control,
+            diagnostics,
+            progress,
         )
         .await;
         let updates = selected(plan, &downloaded)?;

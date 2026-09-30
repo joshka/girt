@@ -36,7 +36,7 @@ pub struct Refspec {
 
 /// A rejected occurrence in an ordered refspec list.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
-#[error("refspec at index {index}: {source}")]
+#[error("refspec at index {index}")]
 pub struct RefspecsError {
     /// Zero-based occurrence index.
     pub index: usize,

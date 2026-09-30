@@ -3,14 +3,15 @@ use std::future::Future;
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::process::CommandExt;
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
 use tokio::io::unix::AsyncFd;
 
-use super::{SshError, TransportControl};
+use super::terminal::Lease;
+use super::{ForegroundTerminal, SshError, TransportControl};
 
 pub(crate) struct Session {
     // Declared first so cleanup kills the process before closing registered pipes.
@@ -22,7 +23,8 @@ pub(crate) struct Session {
 }
 struct Process {
     child: Child,
-    reaped: bool,
+    status: Option<ExitStatus>,
+    terminal: Option<Lease>,
 }
 impl Process {
     fn pid(&self) -> Pid {
@@ -31,39 +33,105 @@ impl Process {
     fn kill_group(&self) {
         let _ = kill_process_group(self.pid(), Signal::KILL);
     }
-    async fn wait(&mut self) -> Result<(), SshError> {
-        loop {
-            // Never reap before group cleanup: the leader reserves its PID against reuse.
-            let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
-            match waitid(WaitId::Pid(self.pid()), options) {
-                Ok(Some(_)) => {
-                    self.kill_group();
-                    let status = self.child.wait()?;
-                    self.reaped = true;
-                    return if status.success() {
-                        Ok(())
-                    } else {
-                        Err(SshError::Exit(status.code()))
-                    };
+
+    // Every controlled pipe wait observes job-control state, not only the final exit wait.
+    fn observe(&mut self) -> Result<bool, SshError> {
+        if self.status.is_some() {
+            return Ok(false);
+        }
+        let pid = self.pid();
+        let mut options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+        if self.terminal.is_some() {
+            options |= WaitIdOptions::STOPPED | WaitIdOptions::CONTINUED;
+        }
+        let event = match waitid(WaitId::Pid(pid), options) {
+            Ok(event) => event,
+            Err(rustix::io::Errno::INTR) => None,
+            Err(error) => return Err(std::io::Error::from(error).into()),
+        };
+        if let Some(event) = event {
+            if event.stopped() || event.continued() {
+                // Consume only job-control notifications. An exit racing this call remains
+                // unreaped, reserving the leader PID until group cleanup and tty restoration.
+                let options =
+                    WaitIdOptions::STOPPED | WaitIdOptions::CONTINUED | WaitIdOptions::NOHANG;
+                #[cfg(test)]
+                if event.continued()
+                    && terminal_tests::RAPID_STOP.swap(false, std::sync::atomic::Ordering::Relaxed)
+                {
+                    terminal_tests::replace_continued(pid);
                 }
-                Ok(None) | Err(rustix::io::Errno::INTR) => {}
-                Err(e) => return Err(std::io::Error::from(e).into()),
+                let consumed = match waitid(WaitId::Pid(pid), options) {
+                    Ok(event) => event,
+                    Err(rustix::io::Errno::INTR) => None,
+                    Err(error) => return Err(std::io::Error::from(error).into()),
+                };
+                if let Some(event) = consumed
+                    && let Some(terminal) = &mut self.terminal
+                {
+                    if let Some(signal) = event.stopping_signal() {
+                        terminal.stopped(pid, signal)?;
+                    } else {
+                        terminal.continued(pid)?;
+                    }
+                }
+            } else {
+                self.kill_group();
+                let restored = self.terminal.as_mut().map_or(Ok(()), |terminal| {
+                    terminal.restore(event.exit_status() == Some(0))
+                });
+                let status = self.child.wait()?;
+                self.status = Some(status);
+                // Preserve an unsuccessful child exit as the primary failure. Drop retries any
+                // incomplete restoration before releasing the terminal lease.
+                if status.success() {
+                    restored?;
+                }
+                return Ok(false);
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.terminal
+            .as_mut()
+            .map_or(Ok(false), |terminal| terminal.check(pid))
+    }
+
+    fn exit_result(&self) -> Result<(), SshError> {
+        let status = self.status.expect("observed exit");
+        if status.success() {
+            Ok(())
+        } else {
+            Err(SshError::Exit(status.code()))
         }
     }
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        if !self.reaped {
+        if self.status.is_none() {
             self.kill_group();
             let _ = self.child.kill();
+            if let Some(terminal) = &mut self.terminal {
+                let _ = terminal.restore(false);
+            }
             let _ = self.child.wait();
         }
+        // Release ownership only after group cleanup, terminal restoration, and leader reaping.
+        self.terminal.take();
     }
 }
 impl Session {
+    #[cfg(test)]
     pub(crate) fn spawn(command: &mut Command) -> Result<Self, SshError> {
+        Self::spawn_with_terminal(command, None)
+    }
+
+    pub(crate) fn spawn_with_terminal(
+        command: &mut Command,
+        terminal: Option<&ForegroundTerminal>,
+    ) -> Result<Self, SshError> {
+        let terminal = terminal.map(ForegroundTerminal::acquire).transpose()?;
+        if let Some(terminal) = &terminal {
+            terminal.prepare_command(command)?;
+        }
         let child = command
             .process_group(0)
             .stdin(Stdio::piped())
@@ -72,7 +140,8 @@ impl Session {
             .spawn()?;
         let mut process = Process {
             child,
-            reaped: false,
+            status: None,
+            terminal,
         };
         let input = register(process.child.stdin.take().expect("piped stdin"))?;
         let output = register(process.child.stdout.take().expect("piped stdout"))?;
@@ -86,33 +155,73 @@ impl Session {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn advertise(
         &mut self,
         limit: usize,
         control: TransportControl<'_>,
     ) -> Result<Vec<u8>, SshError> {
+        self.advertise_with_diagnostics(limit, control, &mut |_| {})
+            .await
+    }
+
+    pub(crate) async fn advertise_with_diagnostics(
+        &mut self,
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> Result<Vec<u8>, SshError> {
         let result = controlled(
             advertisement(&mut self.output, limit),
+            &mut self.process,
             &mut self.diagnostics,
             &mut self.diagnostics_open,
             control,
+            diagnostics,
         )
         .await;
         // EOF before an advertisement often means host-key/authentication failure. Observe the
         // process under the same deadline so it is reported as transport failure, not Git refusal.
         if matches!(result, Err(SshError::Protocol("truncated advertisement"))) {
             self.input.take();
-            self.finish(control).await?;
+            self.finish(control, diagnostics).await?;
         }
         result
     }
 
+    #[cfg(test)]
     pub(crate) async fn exchange(
         &mut self,
         request: &[u8],
         pack: &[u8],
         limit: usize,
         control: TransportControl<'_>,
+    ) -> (Vec<u8>, Result<(), SshError>, usize) {
+        self.exchange_with_diagnostics(request, pack, limit, control, &mut |_| {})
+            .await
+    }
+
+    pub(crate) async fn exchange_with_diagnostics(
+        &mut self,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> (Vec<u8>, Result<(), SshError>, usize) {
+        self.exchange_observed(request, pack, limit, control, diagnostics, &mut |_| {})
+            .await
+    }
+
+    // Observes the retained prefix after each bounded read; observers neither own nor copy it.
+    pub(crate) async fn exchange_observed(
+        &mut self,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+        observe: &mut impl FnMut(&[u8]),
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
         let mut written = 0;
@@ -122,31 +231,66 @@ impl Session {
             // no longer consuming input. Retain received status bytes even when writing fails.
             tokio::try_join!(
                 write_request(input, request, pack, &mut written),
-                read_body(&mut self.output, &mut body, limit)
+                read_body(&mut self.output, &mut body, limit, observe)
             )?;
             Ok(())
         };
         let mut result = controlled(
             exchange,
+            &mut self.process,
             &mut self.diagnostics,
             &mut self.diagnostics_open,
             control,
+            diagnostics,
         )
         .await;
         if result.is_ok() {
-            result = self.finish(control).await;
+            result = self.finish(control, diagnostics).await;
         }
         (body, result, written)
     }
 
-    async fn finish(&mut self, control: TransportControl<'_>) -> Result<(), SshError> {
-        controlled(
-            self.process.wait(),
-            &mut self.diagnostics,
-            &mut self.diagnostics_open,
-            control,
-        )
-        .await
+    async fn finish(
+        &mut self,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> Result<(), SshError> {
+        let result = loop {
+            if let Err(error) = self.process.observe() {
+                break Err(error);
+            }
+            if self.process.status.is_some() {
+                break self.process.exit_result();
+            }
+            let tick = async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(())
+            };
+            if let Err(error) = controlled(
+                tick,
+                &mut self.process,
+                &mut self.diagnostics,
+                &mut self.diagnostics_open,
+                control,
+                diagnostics,
+            )
+            .await
+            {
+                break Err(error);
+            }
+        };
+        // Exit observation kills owned descendants before reaping and draining final diagnostics.
+        if self.process.status.is_some() {
+            let drained = drain_diagnostics(
+                &mut self.diagnostics,
+                &mut self.diagnostics_open,
+                control,
+                diagnostics,
+            )
+            .await;
+            return result.and(drained);
+        }
+        result
     }
 }
 
@@ -239,6 +383,7 @@ async fn read_body(
     output: &mut AsyncFd<ChildStdout>,
     body: &mut Vec<u8>,
     limit: usize,
+    observe: &mut impl FnMut(&[u8]),
 ) -> Result<(), SshError> {
     let mut bytes = [0; 8192];
     loop {
@@ -248,6 +393,7 @@ async fn read_body(
         }
         let keep = count.min(limit.saturating_sub(body.len()));
         body.extend_from_slice(&bytes[..keep]);
+        observe(body);
         if keep != count {
             return Err(SshError::Limit);
         }
@@ -258,14 +404,21 @@ async fn read_body(
 }
 async fn controlled<T>(
     future: impl Future<Output = Result<T, SshError>>,
+    process: &mut Process,
     diagnostics: &mut AsyncFd<ChildStderr>,
     diagnostics_open: &mut bool,
     control: TransportControl<'_>,
+    diagnostic_callback: &mut impl FnMut(&[u8]),
 ) -> Result<T, SshError> {
     tokio::pin!(future);
-    let mut discard = [0; 8192];
+    let mut bytes = [0; 8192];
     loop {
         control.check()?;
+        let suspended = if process.terminal.is_some() {
+            process.observe()?
+        } else {
+            false
+        };
         let interval = control.deadline.map_or(Duration::from_millis(20), |end| {
             end.saturating_duration_since(Instant::now())
                 .min(Duration::from_millis(20))
@@ -273,13 +426,38 @@ async fn controlled<T>(
         tokio::select! {
             biased;
             _ = tokio::time::sleep(interval) => {},
-            result = &mut future => return result,
-            result = read(diagnostics, &mut discard), if *diagnostics_open => {
-                if result? == 0 { *diagnostics_open = false; }
+            result = &mut future, if !suspended => return result,
+            result = read(diagnostics, &mut bytes), if *diagnostics_open => {
+                let count = result?;
+                if count == 0 { *diagnostics_open = false; }
+                else { diagnostic_callback(&bytes[..count]); }
                 tokio::task::yield_now().await;
             },
         }
     }
+}
+
+async fn drain_diagnostics(
+    diagnostics: &mut AsyncFd<ChildStderr>,
+    open: &mut bool,
+    control: TransportControl<'_>,
+    callback: &mut impl FnMut(&[u8]),
+) -> Result<(), SshError> {
+    let mut bytes = [0; 8192];
+    while *open {
+        control.check()?;
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep(Duration::from_millis(20)) => {},
+            result = read(diagnostics, &mut bytes) => {
+                let count = result?;
+                if count == 0 { *open = false; }
+                else { callback(&bytes[..count]); }
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -354,7 +532,7 @@ mod tests {
                 deadline: Some(Instant::now() + Duration::from_secs(2)),
             };
             session.advertise(4, control).await.unwrap();
-            session.finish(control).await.unwrap();
+            session.finish(control, &mut |_| {}).await.unwrap();
             let count =
                 tokio::time::timeout(Duration::from_secs(2), read(&mut session.output, &mut [0]))
                     .await
@@ -381,3 +559,7 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_tests.rs"]
+mod terminal_tests;

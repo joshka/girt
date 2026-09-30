@@ -238,6 +238,9 @@
 //! accepted formats, resource limits, and failure effects.
 pub mod checkout;
 pub mod clone;
+mod file_policy;
+pub use file_policy::SharedPermissions;
+
 mod commit;
 pub mod config;
 pub mod content_diff;
@@ -260,6 +263,7 @@ pub mod retention;
 pub mod rewrites;
 pub mod status;
 mod tag;
+pub mod transfer;
 pub mod transport;
 mod tree;
 mod tree_compare;
@@ -279,10 +283,11 @@ pub use pack::{
 };
 pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repository::{
-    ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, OpenError,
-    OperationCleanupError, OperationError, OperationLimits, OperationState, Repository,
-    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeError, WorktreeLinkStyle,
-    WorktreeRetirement, WorktreeState,
+    ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, InitOptions,
+    OpenError, OperationCleanupError, OperationError, OperationLimits, OperationState,
+    OrphanWorktreeOptions, ReflogPolicyError, Repository, RepositoryLocation, RepositoryMetadata,
+    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeDurability, WorktreeError,
+    WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement, WorktreeState,
 };
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};

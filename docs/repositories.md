@@ -10,6 +10,22 @@ Metadata/object operations remain available; checkout/status report an unknown w
 Opening through the checkout or gitfile supplies the relationship without guessing from the current
 directory.
 
+`RepositoryLocation::at_git_dir` resolves an already-selected Git directory or gitfile exactly,
+without descending into `.git` or searching ancestors. It reads only filesystem structure and
+`gitdir:`/`commondir` indirections. Its canonical `git_dir()` and `common_dir()` paths let callers
+apply trust policy before `location.open_with_config(&inputs)` reads configuration and repository
+metadata. Logical aliases remain available to conditional includes. Location does not validate HEAD,
+objects, references or shallow roots, establish trust, or freeze filesystem identity. Opening uses
+the stored selection; it never substitutes a nested repository. Ordinary convenience opening retains
+its checkout-root behavior.
+
+`location.read_metadata_with_config(&inputs)` returns an immutable `RepositoryMetadata` snapshot of
+layout, format and resolved configuration. It shares full opening's HEAD, layout, direct format and
+extension validation, including reftable HEAD reads for conditional includes. It checks object and
+reference directory markers without reading object contents, the index or shallow roots. Full
+opening still validates shallow roots afterward with its existing limit. Metadata loading does not
+establish trust or validate every Git runtime setting, and a later full open reads a fresh snapshot.
+
 Discovery recognizes explicit `.git` entries and bare metadata with `HEAD`, `objects` and `refs`, or
 linked metadata with `HEAD` and `commondir`. A lone ordinary `HEAD` or `objects` entry and partial
 bare metadata allow ancestor search. Recognized malformed candidates still return errors.
@@ -28,6 +44,29 @@ move together. Stale absolute backlinks remain observable. `create_orphan_worktr
 empty linked checkout; `repair_worktree` repairs links to an identified checkout, and
 `prune_worktree` removes a retired registration only after explicit retirement confirmation. These
 operations require caller coordination and can retain partial state after failure.
+
+`create_orphan_worktree_with_options` accepts captured private configuration, a selected index path,
+index limits, shared permissions and index/reference file synchronization. It reuses the guarded
+index writer, copies private configuration bytes verbatim and preserves existing wrappers' default
+policies. The caller supplies effective configuration and transforms private settings before
+calling; creation does not read ambient policy or run hooks. Selected synchronization uses full file
+flush on macOS and `File::sync_all` elsewhere, without directory-entry or power-loss guarantees.
+Non-Unix shared permission modes other than ordinary umask remain unsupported. See
+[orphan policy evidence](evidence/r35-orphan-policy.md) for the observed scope and remaining gates.
+
+For a newly published gitfile, `RepositoryLocation::prepare_worktree_repair` captures the exact
+registration without opening repository storage or configuration. Keep the source gitfile, publish
+it with a no-clobber hard link, then call `WorktreeRepair::repair(destination)`. Repair preserves
+the captured forward and back links' absolute or relative forms independently; it does not enable
+repository extensions. Captured links and canonical anchors are rechecked under the administration
+lock. Unix additionally checks device/inode identity; other platforms check file kind, paths and
+bytes. Caller exclusion of noncooperating administrators remains required. Failures retain recovery
+metadata and report completed link replacements.
+
+Gitfile, backlink and `commondir` path readers remove a terminal run of CR/LF bytes and preserve
+interior CR/LF and literal spaces. Empty paths and NUL bytes are rejected. A path component ending
+in CR/LF must have a following separator to distinguish it from the metadata terminator. Prepared
+repair supports these existing paths; creation retains its separate path restrictions.
 
 Without `extensions.worktreeConfig`, linked layouts ignore shared `core.bare` and `core.worktree`.
 With it, direct common settings followed by direct private settings determine the checkout.

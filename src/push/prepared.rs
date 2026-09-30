@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::graph::Graph;
-use super::{PushCommand, PushFailure as Error, PushLimits};
+use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits, graph};
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects, PackObject};
 
@@ -34,7 +33,7 @@ pub struct PreparedPush {
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
     pub(super) has_options: bool,
-    options: Vec<Vec<u8>>,
+    pub(super) options: Vec<Vec<u8>>,
     pub(super) progress: bool,
 }
 impl PreparedPush {
@@ -43,9 +42,10 @@ impl PreparedPush {
     ///
     /// Follows commit parents/trees, tree entries and typed tag targets; gitlinks name external
     /// submodule commits and are not followed. Branch tips must be commits. No reachable object
-    /// may be missing, except Git's canonical empty tree, even when it is expected to exist
-    /// remotely. An old branch tip outside the new history requires explicit force; it need not
-    /// be present locally when force is allowed.
+    /// may be missing, except Git's canonical empty tree. An old branch tip outside the new
+    /// history requires explicit force; it need not be present locally when force is allowed.
+    /// The fast-forward proof is exact whatever the commit dates; it walks from the new tip in
+    /// committer-date order and usually stops soon after reaching the old tip.
     /// Unchanged IDs are sent as conditional commands and remain subject to server policy.
     ///
     /// Cancellation is checked between graph steps, pack input checks and hashes, pack writes,
@@ -69,26 +69,38 @@ impl PreparedPush {
         Self::new_excluding(objects, commands, &[], limits, cancel)
     }
 
-    /// Prepares a non-thin pack excluding complete histories of explicit receiver roots.
+    /// Prepares a non-thin pack omitting objects the receiver has because it has the roots.
     ///
-    /// Each usable root must belong to the fully validated selected graph. Its complete reachable
-    /// closure (including trees and tags, excluding gitlinks) is omitted. Missing roots and roots
-    /// outside that graph are ignored: arbitrary local possession never proves remote possession.
-    /// This deliberately sends a complete pack for many disconnected/rewritten histories.
-    /// [`super::send`] requires every root used for exclusion to appear in the live advertisement
-    /// as a ref tip or `.have`, independently of command expectations. If a root has disappeared,
-    /// prepare a full transfer or retry using fresh knowledge. Coordinate with server pruning/GC;
-    /// advertisements cannot guarantee object retention against concurrent deletion.
+    /// Like `git rev-list --objects <tips> --not <roots>`, preparation walks commits from the tips
+    /// and the locally present roots together in committer-date order. Commits reachable from a
+    /// root are marked known, and the walk stops once every queued commit is known (plus a small
+    /// allowance for clock skew). The trees of known commits whose children are sent are then
+    /// marked known, and the sent commits' trees are walked, skipping known objects. Preparation
+    /// cost therefore follows the new history and the boundary trees rather than the whole
+    /// repository. Roots may be commits, trees, blobs or tags (peeled); gitlinks stay external.
     ///
-    /// Selection and force proofs use the same full-graph budgets as [`Self::new`]. Exclusion has
-    /// a separate `max_edges` allowance, visits at most the selected object count, and accepts at
-    /// most `max_refs` root occurrences. Preparation can therefore cost more despite a smaller
-    /// wire pack. Pack limits still bound the full selected payload/count before exclusion.
+    /// An object is omitted only when a mark from a root reaches it through parsed edges, so
+    /// omitted objects always lie in a root's closure; dates only order the walk. With skewed
+    /// dates, commits the receiver already has can occasionally be sent. A tagged tree or blob
+    /// is sent when no commit is sent, even if a root's tree contains it, as Git does. The
+    /// receiver's copy of a root's closure is trusted: known objects are not validated and may be
+    /// absent locally. Roots missing locally are ignored.
+    ///
+    /// [`super::send`] requires every root that omitted objects rely on to appear in the live
+    /// advertisement as a ref tip or `.have`, independently of command expectations; roots whose
+    /// closure omitted nothing are not required. If a root has disappeared, prepare a full
+    /// transfer or retry using fresh knowledge. Coordinate with server pruning/GC; advertisements
+    /// cannot guarantee object retention against concurrent deletion.
+    ///
+    /// Sent objects, including their edges, are charged to [`PushLimits::max_edges`] and the pack
+    /// count/payload bounds. Reading known history has a separate `max_edges` allowance, and at
+    /// most `max_refs` root occurrences are accepted.
     ///
     /// # Errors
     ///
     /// Returns [`Self::new`]'s errors or exhausted receiver-root/exclusion bounds. Missing objects
-    /// in the selected history fail even if expected remotely. No commands are transmitted.
+    /// outside every root's closure fail. A known object read locally with the wrong kind or an
+    /// invalid payload also fails. No commands are transmitted.
     pub fn new_excluding(
         objects: &Objects,
         commands: Vec<PushCommand>,
@@ -96,12 +108,12 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
     }
 
     /// Prepares a native local push in the source format.
     ///
-    /// This has the same complete-graph, force, exclusion and work bounds as
+    /// This has the same selection, force, exclusion and work bounds as
     /// [`Self::new_excluding`]. Git's canonical empty tree is materialized when it is named by a
     /// commit but absent from source storage. Other missing objects still fail. The result can be
     /// passed to [`super::send_local`].
@@ -112,7 +124,28 @@ impl PreparedPush {
         limits: PushLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::prepare(objects, commands, receiver_roots, limits, cancel)
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
+    }
+
+    /// Prepares a native push while observing completed source reads and pack entries.
+    ///
+    /// Uses [`Self::new_local`]'s source, force and exclusion contracts. `observe` receives
+    /// [`PreparationProgress`] synchronously and must return promptly. It cannot fail; set
+    /// `cancel` to stop at the next cooperative check. Completion means prepared buffers only,
+    /// before sending or publication. Empty and deletion-only batches have no packing events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::new`]'s preparation failures without a completion notification.
+    pub fn new_local_with_progress(
+        objects: &Objects,
+        commands: Vec<PushCommand>,
+        receiver_roots: &[ObjectId],
+        limits: PushLimits,
+        cancel: &AtomicBool,
+        observe: impl FnMut(PreparationProgress),
+    ) -> Result<Self, Error> {
+        Self::prepare(objects, commands, receiver_roots, limits, cancel, observe)
     }
 
     fn prepare(
@@ -121,6 +154,7 @@ impl PreparedPush {
         receiver_roots: &[ObjectId],
         limits: PushLimits,
         cancel: &AtomicBool,
+        mut observe: impl FnMut(PreparationProgress),
     ) -> Result<Self, Error> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -151,6 +185,8 @@ impl PreparedPush {
                 false,
                 false,
             )?;
+            observe(PreparationProgress::Reading { objects: 0 });
+            check_cancelled(cancel)?;
             if commands.iter().all(PushCommand::deletes) {
                 return Ok(Self {
                     format: objects.object_format(),
@@ -167,9 +203,15 @@ impl PreparedPush {
                     progress: false,
                 });
             }
-            let mut graph = Graph::select(objects, &commands, limits, cancel)?;
-            let receiver_roots = graph.exclude(receiver_roots, limits, cancel)?;
-            let inputs: Vec<_> = graph
+            let selection = graph::select(
+                objects,
+                &commands,
+                receiver_roots,
+                limits,
+                cancel,
+                |objects| observe(PreparationProgress::Reading { objects }),
+            )?;
+            let inputs: Vec<_> = selection
                 .objects
                 .iter()
                 .map(|(&id, object)| PackObject {
@@ -183,11 +225,10 @@ impl PreparedPush {
                 cancel,
             };
             let mut index = Vec::new();
-            let result = crate::pack::write_controlled(
+            let result = crate::pack::write_controlled_observed(
                 objects.object_format(),
                 &inputs,
-                &mut pack,
-                &mut index,
+                (&mut pack, &mut index),
                 limits.pack,
                 limits.compression,
                 &mut || {
@@ -196,6 +237,11 @@ impl PreparedPush {
                     } else {
                         Ok(())
                     }
+                },
+                &mut |done, total| {
+                    observe(PreparationProgress::Packing {
+                        objects: (done, total),
+                    })
                 },
             );
             check_cancelled(cancel)?;
@@ -209,7 +255,7 @@ impl PreparedPush {
                 checksum: Some(written.checksum),
                 limits,
                 objects: written.objects,
-                receiver_roots,
+                receiver_roots: selection.receiver_roots,
                 has_options: false,
                 options: vec![],
                 progress: false,
@@ -219,6 +265,11 @@ impl PreparedPush {
         let result = span.in_scope(operation);
         #[cfg(not(feature = "tracing"))]
         let result = { operation }();
+        let result = result.and_then(|prepared| {
+            check_cancelled(cancel)?;
+            observe(PreparationProgress::Complete);
+            Ok(prepared)
+        });
         #[cfg(feature = "tracing")]
         crate::trace::finish(&span, &result, crate::trace::push_failure);
         #[cfg(feature = "tracing")]
@@ -245,11 +296,12 @@ impl PreparedPush {
         &self.commands
     }
 
-    /// Adds byte-preserving push options to a prepared wire push.
+    /// Adds byte-preserving push options to a prepared push.
     ///
     /// The server must advertise `push-options`; otherwise sending refuses the push before any
     /// command. Options are sent after the command flush, in caller order. Native local transport
-    /// refuses options because it does not execute receive hooks.
+    /// requires the destination's `receive.advertisePushOptions` and passes the options to its
+    /// receive hooks.
     ///
     /// # Errors
     ///
@@ -277,6 +329,51 @@ impl PreparedPush {
     pub fn with_progress(mut self) -> Self {
         self.progress = true;
         self
+    }
+
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(super) fn selected_commands(
+        &self,
+        names: Vec<crate::refs::RefName>,
+    ) -> Result<Vec<PushCommand>, Error> {
+        let mut selected: HashSet<_> = names.iter().collect();
+        if selected.len() != names.len() {
+            return Err(Error::Command("duplicate selected destination"));
+        }
+        let mut commands = Vec::new();
+        for command in &self.commands {
+            if selected.remove(&command.name) {
+                commands.push(command.clone());
+            }
+        }
+        if !selected.is_empty() {
+            return Err(Error::Command("selected destination was not prepared"));
+        }
+        Ok(commands)
+    }
+
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(super) fn selected_request(
+        &self,
+        commands: &[PushCommand],
+        report_v2: bool,
+        sideband: bool,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, Error> {
+        let options = if commands.is_empty() {
+            &[]
+        } else {
+            self.options.as_slice()
+        };
+        encode_commands(
+            self.format,
+            commands,
+            options,
+            self.limits,
+            cancel,
+            report_v2,
+            sideband,
+        )
     }
 
     pub(super) fn request_for(

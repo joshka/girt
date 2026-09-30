@@ -22,7 +22,7 @@ pub struct ShallowRoots {
 #[derive(Debug, thiserror::Error)]
 pub enum ShallowError {
     /// Filesystem failure, including inaccessible metadata.
-    #[error("cannot read shallow metadata {path}: {source}")]
+    #[error("cannot read shallow metadata {path}")]
     Io {
         /// File being read.
         path: PathBuf,

@@ -992,6 +992,15 @@ caller-owned stream read or one inflation/hash. The local adapter now provides
 [owned transport interruption](#owned-transport-interruption), including absolute deadlines and
 process-group cleanup on macOS/Linux. Generic streams must provide their own interruption.
 
+Native local fetch can separately report typed source-reading and pack-construction events through
+`receive_local_with_known_and_progress` or `FetchRequest::receive_local_with_progress`. Source reads
+count unique reachable objects, including verified history omitted from the outgoing pack; their
+total is unknown during traversal. Packing counts only selected outgoing entries. Completing those
+counts does not establish a finished index. The terminal `Complete` event follows construction and
+the final cancellation/deadline check, before installation or reference publication. Observers run
+synchronously, must return promptly, and can request cancellation through `TransportControl`.
+Cancellation from the terminal event cannot undo completed construction.
+
 ### Installation and Reference Policy
 
 The received result owns validated pack/index buffers and makes no filesystem changes. Explicit
@@ -1110,6 +1119,14 @@ The default writer emits ordinary zlib entries. `PushLimits::compression` can en
 internal REF_DELTA entries; both policies produce complete packs without external bases. Its
 companion index is generated into a sink, not sent or installed. Repeated and incremental pushes
 using `new` retransmit full selected histories; `new_excluding` can reduce them as described below.
+`PreparedPush::new_local_with_progress` reports unique source reads and successfully encoded pack
+entries through `PreparationProgress`. Reads include receiver history later excluded from the pack;
+packing totals describe only selected outgoing objects. Its terminal `Complete` event follows buffer
+construction and the final cancellation check. It does not report upload, server receipt, acceptance
+or publication. Observers run synchronously and must return promptly; setting the cancellation flag
+from an intermediate event stops preparation at the next cooperative check. Cancellation from the
+terminal event cannot undo completed preparation.
+
 Preparation releases selected payloads after buffering the pack; the caller can drop its object
 reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent
 edges, individual reads, pack/index output, command bytes, advertisement bytes/entries and status
@@ -1276,17 +1293,23 @@ the combined graph. Installation rechecks at most the retained local dependency 
 budget, with the same per-read bound. Knowledge preparation is outside the transport deadline;
 blocking local I/O, parsing and hashing retain the existing cooperative cancellation contract.
 
-Push adds `PreparedPush::new_excluding` with explicit receiver roots. It first validates the
-complete selected graph and proves force policy, then omits each usable root's entire closure. A
-usable root must itself be in that graph; missing or disconnected roots are ignored, producing a
-conservative full transfer where necessary. A rewritten receiver tip outside the selected graph
-cannot establish shared descendants in this implementation, even if that tip happens to exist
-locally. Tags and shared trees/blobs are supported; gitlinks remain external. Exclusion gets a
-separate `max_edges` allowance and at most `max_refs` root occurrences, and visits at most the
-selected object count.
+Push adds `PreparedPush::new_excluding` with explicit receiver roots. Like
+`git rev-list --objects <tips> --not <roots>`, it walks commits from the tips and the locally
+present roots together in committer-date order, marks the roots' ancestry known, and stops once
+every queued commit is known, after a five-commit allowance for clock skew. Trees of known commits
+adjacent to sent commits are marked known before the sent trees are walked. Omission never depends
+on dates: an object is omitted only when a mark propagated from a root through parsed edges reaches
+it. Skew can only cause redundant sending. A rewritten receiver tip outside the new history still
+proves the shared ancestry. As with `git rev-list --objects`, a tagged tree or blob is sent when no
+commit is sent even if a known commit's tree contains it. Roots missing locally are ignored. Tags
+and shared trees/blobs are supported; gitlinks remain external. Known history is trusted rather than
+validated and may be absent locally. Reading it gets a separate `max_edges` allowance, and at most
+`max_refs` root occurrences are accepted. Fast-forward proofs walk both tips' ancestry in date order
+and answer exactly regardless of dates: a path from the new tip to the old tip never passes through
+a strict ancestor of the old tip, so the proof prunes those and ends when no unpruned path remains.
 
-Every root actually used for exclusion must still appear in the live receive-pack advertisement as a
-tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can explicitly retry
+Every root that omitted objects rely on must still appear in the live receive-pack advertisement as
+a tip or `.have`. Otherwise `KnowledgeChanged` fails before commands; callers can explicitly retry
 with full preparation. Command expectations are independently checked before transmission and again
 by the server when committing refs. Races after advertisement retain server rejection or uncertain
 outcome semantics; complete and partial statuses are unchanged. Server-side concurrent object
@@ -1532,6 +1555,18 @@ directory operations. A later failure retains any completed registration and des
 for inspection, identified in the structured error. There is no automatic rollback or
 crash-durability guarantee. The caller must exclude concurrent branch/worktree administration and
 destination replacement.
+
+`RepositoryMetadata::create_orphan_worktree_with_options` performs the same creation using the
+observed repository layout and returns a `RepositoryLocation`. It never reads shallow history;
+malformed or directory-valued `shallow` files therefore do not block this operation. Existing
+`Repository` creation methods still reopen the result fully and can report a retained registration
+when that opening fails. Relevant reference storage and direct configuration remain validated.
+
+The source default index is ignored. An explicit selected index is locked and validated before
+creating the worktrees root, registration or destination. Invalid files, directories and absent
+split dependencies fail without those effects. An error after lock acquisition explicitly aborts the
+guard; a cleanup failure reports both errors and preserves a replacement lock. Index publication
+still checks primary and shared snapshots. Later creation failures retain completed files.
 
 ## Linked Worktree Administration
 
@@ -2015,11 +2050,43 @@ materializes files. These operations compose through `ColocationEdit::index_mut`
 owns staging, placeholder and materialization policy. See [R38 evidence](evidence/r38.md).
 
 Optional payloads remain opaque. Unchanged indexes round-trip exactly. Changed entries or version
-conversion discard derived `TREE`, `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. `REUC` bytes remain
-because resolve-undo describes prior conflicts independently of current entries. Unknown optional
-extensions block edits. Identical entry replacement retains every extension and original byte.
-Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split and
-sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
+conversion discard `UNTR`, `FSMN`, `IEOT` and `EOIE` caches. Entry edits also discard `TREE`;
+standalone version conversion retains its exact payload because entry semantics are unchanged.
+Converting a split index conservatively discards `TREE` with its `link` representation. `REUC` bytes
+remain because resolve-undo describes prior conflicts independently of current entries. Unknown
+optional extensions block edits. Identical entry replacement retains every extension and original
+byte. Failed edits leave the prior snapshot unchanged. Git-generated cache-tree, resolve-undo, split
+and sparse fixtures test this boundary in both formats; see [R12 evidence](evidence/r12.md).
+
+`IndexEdit::invalidate_entry_offsets` explicitly removes standalone `EOIE` and `IEOT` accelerators
+without changing entries, stat data, flags, framing version or `TREE`/`REUC`/`sdir` payloads. Both
+offset extensions are removed because canonical re-encoding may change entry byte boundaries. Other
+extensions, including split `link`, block this bounded edit. Absent caches preserve the original
+encoding; failures preserve the draft. Optional cache payloads may be malformed and are not
+interpreted, but normal outer framing, entry and checksum validation still precedes editing.
+Publication remains explicit through `commit`.
+
+`IndexEdit::discard_resolve_undo` explicitly removes `REUC` when the caller intends to forget old
+conflict resolutions. It preserves entries, stat words, flags, version and `TREE` bytes, and retains
+the original encoding when `REUC` is absent. Only `TREE` and `REUC` are admitted; remove offset
+accelerators first with `invalidate_entry_offsets`. Other extensions, including split `link`, and
+output-limit failures leave the draft and storage unchanged. Payloads are discarded opaquely; normal
+index framing and checksum validation still applies. Entry replacement and tree-cache invalidation
+retain their existing extension policies. Publication still requires `commit`.
+
+`Repository::read_index_at` and `edit_index_at` accept an explicit standalone index path without
+consulting `GIT_INDEX_FILE`. Relative paths resolve once against the process current directory;
+publication appends `.lock` to the complete filename beside the selected index. No other index path
+is touched. The same lock ownership, byte snapshot checks and explicit commit lifecycle apply. Both
+explicit-path APIs reject every split `link` extension before reading dependencies, including a null
+shared identity. Default index operations retain their existing split support.
+
+Leaf symlinks and non-regular destinations are rejected; symlink ancestors are retained. This is a
+conservative admission policy, not Git's override behavior. Independent disposable Git observations
+show relative overrides based on the working directory and leaf symlinks followed for reads and
+writes, with the target updated and the link retained. Public gix 0.87 observations instead replace
+the leaf link when writing. Callers requiring either leaf-symlink behavior must select another path
+or use their compatibility implementation before beginning a native edit.
 
 `Repository::read_index` returns `None` for absence and `Some` for a valid empty index. The path is
 always the resolved per-worktree `git_dir()/index`, including linked and separate Git directories;
