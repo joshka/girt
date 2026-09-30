@@ -41,7 +41,7 @@
 //! In the [source checkout](https://github.com/joshka/girt), run
 //! `cargo run --example loose_blob` to write and read a blob in disposable storage. See
 //! [`LooseObjects`] for storage assumptions and the
-//! [contributor guide](https://github.com/joshka/girt/blob/joshka/platform-validation/CONTRIBUTING.md)
+//! [contributor guide](https://github.com/joshka/girt/blob/main/CONTRIBUTING.md)
 //! for setup and checks.
 //!
 //! # How the APIs fit together
@@ -60,9 +60,9 @@
 //!    Status and checkout use raw byte and platform rules that differ from Git's default CLI.
 //!
 //! Follow a module link for its API map and the owning methods' contracts. The runnable
-//! [examples](https://github.com/joshka/girt/tree/joshka/platform-validation/examples) show
+//! [examples](https://github.com/joshka/girt/tree/main/examples) show
 //! full workflows; check each one's input and effects before running it. The
-//! [compatibility record](https://github.com/joshka/girt/blob/joshka/platform-validation/docs/compatibility.md)
+//! [compatibility record](https://github.com/joshka/girt/blob/main/docs/compatibility.md)
 //! retains tested scope and historical evidence.
 //!
 //! # Features and platforms

@@ -104,10 +104,9 @@ Keep documentation consistent with what the library actually implements.
 ## Releases
 
 The first `girt` release was published manually. Subsequent releases use
-[`release-plz`](https://release-plz.dev/docs/github/quickstart): a push to
-`joshka/platform-validation` prepares a release pull request, and merging that request permits the
-release job to publish through crates.io trusted publishing. Review the proposed version, changelog,
-CI results and supported scope before merging.
+[`release-plz`](https://release-plz.dev/docs/github/quickstart): a push to `main` prepares a release
+pull request, and merging that request permits the release job to publish through crates.io trusted
+publishing. Review the proposed version, changelog, CI results and supported scope before merging.
 
 The release workflow uses GitHub's default token. GitHub does not start pull-request checks for
 branches created with that token. Close and reopen a release pull request to start its checks, then
