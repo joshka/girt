@@ -1110,7 +1110,10 @@ fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> O
 }
 
 /// Records the advertised values of the pushed references.
-#[cfg(any(feature = "http", feature = "ssh"))]
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 fn record_targets(
     advertisement: &crate::push::PushAdvertisement,
     names: &[RefName],
@@ -1124,7 +1127,10 @@ fn record_targets(
 
 /// Like Git, treats a rejected reference whose remote value already equals the requested value as
 /// up to date.
-#[cfg(any(feature = "http", feature = "ssh"))]
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 fn mark_up_to_date(report: &mut PushReport, advertised: &BTreeMap<RefName, Option<ObjectId>>) {
     for status in &mut report.refs {
         let Some(current) = advertised.get(&status.command.name) else {
@@ -1168,7 +1174,10 @@ fn is_unauthorized_fetch<T>(result: &Result<T, crate::fetch::FetchError>) -> boo
     )
 }
 
-#[cfg(any(feature = "http", feature = "ssh"))]
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 fn runtime() -> Result<tokio::runtime::Runtime, TransferError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
