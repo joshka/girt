@@ -54,6 +54,23 @@ impl Default for PackWriteLimits {
     }
 }
 
+impl PackWriteLimits {
+    /// Returns limits for pack writing the caller trusts as Git trusts the user's own repositories.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        const UNBOUNDED: u64 = u64::MAX / 4;
+        Self {
+            max_objects: u32::MAX,
+            max_object_bytes: UNBOUNDED,
+            max_input_bytes: UNBOUNDED,
+            max_pack_bytes: UNBOUNDED,
+            max_index_bytes: UNBOUNDED,
+        }
+    }
+}
+
 /// Completed artifact lengths and identity; no files have been installed by the library.
 #[derive(Debug, Clone, Copy)]
 pub struct PackWritten {

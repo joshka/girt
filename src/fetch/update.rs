@@ -36,6 +36,21 @@ impl Default for FetchUpdateLimits {
     }
 }
 
+impl FetchUpdateLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            snapshot: PackLimits::trusted(),
+            verification: FetchLimits::trusted(),
+            history: HistoryLimits::trusted(),
+            max_tag_depth: 10_000,
+        }
+    }
+}
+
 /// An installed transfer cannot be safely published under the selected update rules.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchUpdateError {

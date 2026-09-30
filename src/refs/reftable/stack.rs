@@ -30,6 +30,20 @@ impl Default for StackLimits {
     }
 }
 
+impl StackLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            tables: usize::MAX / 4,
+            list_bytes: usize::MAX / 4,
+            records: Limits::trusted(),
+        }
+    }
+}
+
 /// An owned merged generation of a reftable stack.
 ///
 /// Opening pins all listed files before reading their immutable contents. Once decoded, no file

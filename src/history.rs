@@ -29,6 +29,20 @@ impl Default for HistoryLimits {
     }
 }
 
+impl HistoryLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            max_commits: usize::MAX / 4,
+            max_parents: usize::MAX / 4,
+            read: ReadLimits::trusted(),
+        }
+    }
+}
+
 impl Objects {
     /// Collects all commits reachable from explicit roots, including the roots themselves.
     ///

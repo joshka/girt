@@ -225,6 +225,39 @@ impl Default for FetchLimits {
     }
 }
 
+impl FetchLimits {
+    /// Returns limits for a transfer the caller trusts as Git trusts the user's own remotes.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    ///
+    /// The received pack is still held in memory while it is validated, so memory use grows with
+    /// the pack. `max_haves` keeps its default: it bounds negotiation, not what can be fetched.
+    pub const fn trusted() -> Self {
+        const UNBOUNDED: usize = usize::MAX / 4;
+        Self {
+            max_wire_bytes: UNBOUNDED,
+            max_advertisement_bytes: UNBOUNDED,
+            max_refs: UNBOUNDED,
+            max_wants: UNBOUNDED,
+            max_haves: 256,
+            max_shallow_roots: UNBOUNDED,
+            max_known_objects: UNBOUNDED,
+            max_known_bytes: UNBOUNDED,
+            max_known_edges: UNBOUNDED,
+            known_read: crate::ReadLimits::trusted(),
+            max_pack_bytes: UNBOUNDED,
+            max_objects: UNBOUNDED,
+            max_object_bytes: UNBOUNDED,
+            max_delta_bytes: UNBOUNDED,
+            max_decode_bytes: UNBOUNDED,
+            max_delta_depth: 10_000,
+            max_resolution_steps: UNBOUNDED,
+            max_connectivity_edges: UNBOUNDED,
+        }
+    }
+}
+
 /// Transfer, validation, or installation failed. No references have been changed.
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
