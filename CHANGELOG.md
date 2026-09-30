@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/joshka/girt/compare/v0.2.0...v0.3.0) - 2026-09-30
+
+### Other
+
+- Support jj as the sole Git backend ([#15](https://github.com/joshka/girt/pull/15))
+
 ### Added
 
 - `Repository::{fetch, push, remote_head}` run configured-remote transfers over local, HTTP(S) and
