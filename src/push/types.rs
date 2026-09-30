@@ -86,6 +86,30 @@ impl Default for PushLimits {
     }
 }
 
+impl PushLimits {
+    /// Returns limits for a transfer the caller trusts as Git trusts the user's own remotes.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    ///
+    /// The prepared pack is held in memory before sending, so memory use grows with the pack.
+    pub const fn trusted() -> Self {
+        const UNBOUNDED: usize = usize::MAX / 4;
+        Self {
+            max_advertisement_bytes: UNBOUNDED,
+            max_refs: UNBOUNDED,
+            max_commands: UNBOUNDED,
+            max_command_bytes: UNBOUNDED,
+            max_status_bytes: UNBOUNDED,
+            max_edges: UNBOUNDED,
+            max_ancestry_steps: UNBOUNDED,
+            read: ReadLimits::trusted(),
+            pack: PackWriteLimits::trusted(),
+            compression: PackCompression::Ordinary,
+        }
+    }
+}
+
 /// Server acknowledgement, preserving rejection text without assuming UTF-8.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Status {

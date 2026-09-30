@@ -662,7 +662,7 @@ impl Repository {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Fetch, environment)?;
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel);
-        let limits = FetchLimits::default();
+        let limits = FetchLimits::trusted();
         let discovery = match endpoint {
             Endpoint::Local(path) => crate::fetch::discover_local(path, limits, control),
             #[cfg(feature = "http")]
@@ -715,7 +715,7 @@ impl Repository {
     ) -> Result<FetchOutcome, TransferError> {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Fetch, environment)?;
         let objects = self
-            .objects(crate::PackLimits::default())
+            .objects(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
         let refs = self.references().map_err(TransferError::local)?;
         let tips: Vec<ObjectId> = refs
@@ -730,7 +730,7 @@ impl Repository {
             .into_iter()
             .collect();
         let cancel = AtomicBool::new(false);
-        let limits = fetch_limits();
+        let limits = FetchLimits::trusted();
         let known = KnownHistory::from_store(objects, &tips, limits, &cancel)
             .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))?;
         let request = || self.fetch_request(options);
@@ -796,7 +796,7 @@ impl Repository {
         }
         .map_err(|error| TransferError::Fetch(Box::new(error)))?;
         let report = ready
-            .finish(FetchUpdateLimits::default(), &cancel)
+            .finish(FetchUpdateLimits::trusted(), &cancel)
             .map_err(|error| TransferError::FetchFinish(Box::new(error)))?;
         Ok(FetchOutcome {
             updated: report
@@ -883,7 +883,7 @@ impl Repository {
     ) -> Result<PushReport, TransferError> {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Push, environment)?;
         let objects = self
-            .objects(crate::PackLimits::default())
+            .objects(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel);
@@ -894,11 +894,16 @@ impl Repository {
             .filter_map(|command| command.expected)
             .collect();
         let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, TransferError> {
-            let prepared =
-                PreparedPush::new_local(&objects, commands.clone(), roots, push_limits(), &cancel)
-                    .map_err(|error| {
-                        TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
-                    })?;
+            let prepared = PreparedPush::new_local(
+                &objects,
+                commands.clone(),
+                roots,
+                PushLimits::trusted(),
+                &cancel,
+            )
+            .map_err(|error| {
+                TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
+            })?;
             let prepared = if options.push_options.is_empty() {
                 prepared
             } else {
@@ -1183,23 +1188,4 @@ fn runtime() -> Result<tokio::runtime::Runtime, TransferError> {
         .enable_all()
         .build()
         .map_err(TransferError::local)
-}
-
-/// Resource limits sized for ordinary repositories rather than untrusted input.
-fn fetch_limits() -> FetchLimits {
-    FetchLimits {
-        max_known_objects: usize::MAX / 4,
-        max_known_bytes: usize::MAX / 4,
-        max_known_edges: usize::MAX / 4,
-        max_wants: usize::MAX / 4,
-        ..FetchLimits::default()
-    }
-}
-
-fn push_limits() -> PushLimits {
-    PushLimits {
-        max_edges: usize::MAX / 4,
-        max_ancestry_steps: usize::MAX / 4,
-        ..PushLimits::default()
-    }
 }

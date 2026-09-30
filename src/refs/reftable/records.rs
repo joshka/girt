@@ -94,6 +94,24 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    ///
+    /// Block size stays at the format's 24-bit maximum.
+    pub const fn trusted() -> Self {
+        Self {
+            bytes: usize::MAX / 4,
+            block_bytes: 0xff_ffff,
+            records: usize::MAX / 4,
+            string_bytes: usize::MAX / 4,
+            decoded_bytes: usize::MAX / 4,
+        }
+    }
+}
+
 /// Reftable framing, version, or resource failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

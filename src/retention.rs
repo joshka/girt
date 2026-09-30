@@ -134,6 +134,28 @@ impl Default for RetentionPolicy {
     }
 }
 
+impl RetentionPolicy {
+    /// Returns the default policy with limits for a repository the caller trusts.
+    ///
+    /// Git bounds none of these values; see [`ReadLimits::trusted`]. Cutoffs and heads keep their
+    /// defaults, so set them with struct update syntax.
+    pub fn trusted() -> Self {
+        Self {
+            max_entries: usize::MAX / 4,
+            max_edges: usize::MAX / 4,
+            max_bytes: u64::MAX / 4,
+            reflog: ReflogLimits::trusted(),
+            reftable: crate::refs::reftable::StackLimits::trusted(),
+            max_reference_bytes: usize::MAX / 4,
+            max_reflog_bytes: u64::MAX / 4,
+            index: index::Limits::trusted(),
+            packs: PackLimits::trusted(),
+            read: ReadLimits::trusted(),
+            ..Self::default()
+        }
+    }
+}
+
 /// A read-only observation. Only `Complete` establishes a closed reachable set for its inputs.
 /// Even complete reports never authorize deletion: the executor must exclude writers, rediscover
 /// roots/recent objects and compare storage generations before it acts. `reachable` includes every

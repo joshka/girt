@@ -27,6 +27,19 @@ impl Default for RepackLimits {
     }
 }
 
+impl RepackLimits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            write: PackWriteLimits::trusted(),
+            compression: PackCompression::Ordinary,
+        }
+    }
+}
+
 /// A complete indexed pack is visible; existing storage has not been removed.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackPublished {
