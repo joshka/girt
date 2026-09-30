@@ -191,10 +191,12 @@ fn each_reference_gets_a_fresh_budget() {
     let second = hold(&repo, "refs/tags/b.lock");
     let started = Instant::now();
     std::thread::scope(|scope| {
+        // Each lock is released within its own 2 s budget but after the first budget would have
+        // expired. The margins absorb slow file deletion on Windows runners.
         scope.spawn(|| {
-            std::thread::sleep(Duration::from_millis(600));
+            std::thread::sleep(Duration::from_millis(1200));
             fs::remove_file(&first).unwrap();
-            std::thread::sleep(Duration::from_millis(600));
+            std::thread::sleep(Duration::from_millis(1200));
             fs::remove_file(&second).unwrap();
         });
         // Native locks sort by name even though publication follows this reverse input order.
@@ -203,15 +205,15 @@ fn each_reference_gets_a_fresh_budget() {
             .unwrap()
             .transaction_files_with_options(
                 &[edit(format, "refs/tags/b"), edit(format, "refs/tags/a")],
-                options(LockWait::For(Duration::from_secs(1))),
+                options(LockWait::For(Duration::from_secs(2))),
                 &AtomicBool::new(false),
             )
             .unwrap();
         assert_eq!(result[0].name, name("refs/tags/b"));
         assert_eq!(result[1].reference, RefOutcome::Published);
     });
-    assert!(started.elapsed() >= Duration::from_millis(1200));
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(started.elapsed() >= Duration::from_millis(2400));
+    assert!(started.elapsed() < Duration::from_secs(10));
     clean(&repo);
 }
 
