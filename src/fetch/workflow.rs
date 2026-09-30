@@ -784,10 +784,29 @@ impl FetchReady {
             })?;
             // Installation does not repair corrupt loose objects shadowing the pack. Read through
             // the destination's actual lookup precedence before any ref can name this graph.
+            // History reachable from references that existed before the fetch was verified when
+            // those references were published; only new history is walked.
             let mut verify_roots = self.received.wants().to_vec();
             verify_roots.extend(self.request.shallow_before.iter().copied());
-            KnownHistory::new(&objects, &verify_roots, limits.verification, cancel)
-                .map_err(FetchFinishFailure::BeforePublication)?;
+            let published = self
+                .request
+                .snapshot
+                .values()
+                .filter_map(|target| match target {
+                    Target::Direct(id) => Some(*id),
+                    Target::Symbolic(_) => None,
+                })
+                .collect();
+            let shallow: Vec<_> = objects.shallow_roots().iter().collect();
+            KnownHistory::verify_stopping_at(
+                &objects,
+                &verify_roots,
+                &shallow,
+                &published,
+                limits.verification,
+                cancel,
+            )
+            .map_err(FetchFinishFailure::BeforePublication)?;
             let validation = super::update::validate(
                 &mut report.updates,
                 &objects,

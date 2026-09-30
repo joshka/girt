@@ -197,69 +197,59 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        check_cancelled(cancel)?;
-        if roots.len() > limits.max_wants {
-            return Err(Error::Limit("known roots"));
-        }
+        Self::new_stopping_at(store, roots, shallow, &HashSet::new(), limits, cancel)
+    }
+
+    /// Validates history reachable from `roots`, treating `published` objects as verified.
+    ///
+    /// Objects named by existing references were verified when they were published, so the
+    /// walk neither reads nor descends into them, like Git's connectivity check excluding
+    /// everything reachable from existing references (`--not --all`). The result's objects
+    /// therefore cover only history new to the repository.
+    pub(super) fn new_stopping_at(
+        store: &Objects,
+        roots: &[ObjectId],
+        shallow: &[ObjectId],
+        published: &HashSet<ObjectId>,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
         let mut result = Self {
             shallow: shallow.to_vec(),
             ..Self::default()
         };
-        if result.shallow.len() > limits.max_shallow_roots {
-            return Err(Error::Limit("shallow roots"));
-        }
-        let shallow_set: HashSet<_> = shallow.iter().copied().collect();
-        let mut pending = VecDeque::new();
-        let mut expected = HashMap::new();
-        for &id in roots {
-            enqueue(id, None, &mut expected, &mut pending, limits)?;
-        }
-        let mut bytes = limits.max_known_bytes;
-        let mut edges = limits.max_known_edges;
-        while let Some(id) = pending.pop_front() {
-            check_cancelled(cancel)?;
-            let mut read = limits.known_read;
-            read.max_object_bytes = read.max_object_bytes.min(bytes);
-            let object = store
-                .read(id, read)
-                .map_err(|source| Error::LocalRead { id, source })?
-                .ok_or(Error::Missing(id))?;
-            if shallow_set.contains(&id) && object.kind() != ObjectKind::Commit {
-                return Err(Error::Kind(id));
-            }
-            if expected[&id].is_some_and(|kind| kind != object.kind()) {
-                return Err(Error::Kind(id));
-            }
-            bytes = bytes
-                .checked_sub(object.data().len())
-                .ok_or(Error::Limit("known bytes"))?;
-            let shallow_commit = object.kind() == ObjectKind::Commit && shallow_set.contains(&id);
-            let edge = |target, kind| {
-                if shallow_commit && kind == ObjectKind::Commit {
-                    return Ok(());
+        walk(
+            store,
+            roots,
+            shallow,
+            published,
+            limits,
+            cancel,
+            |id, object| {
+                if object.kind() == ObjectKind::Commit && result.haves.len() < limits.max_haves {
+                    result.haves.push(id);
                 }
-                check_cancelled(cancel)?;
-                edges = edges.checked_sub(1).ok_or(Error::Limit("known edges"))?;
-                if result
-                    .objects
-                    .get(&target)
-                    .is_some_and(|o| o.kind() != kind)
-                {
-                    return Err(Error::Kind(target));
-                }
-                enqueue(target, Some(kind), &mut expected, &mut pending, limits)
-            };
-            crate::edges::visit(id, &object, edge)?;
-            if object.kind() == ObjectKind::Commit && result.haves.len() < limits.max_haves {
-                result.haves.push(id);
-            }
-            if expected[&id].is_some_and(|kind| kind != object.kind()) {
-                return Err(Error::Kind(id));
-            }
-            result.objects.insert(id, object);
-        }
+                result.objects.insert(id, object);
+            },
+        )?;
         result.shallow.retain(|id| result.objects.contains_key(id));
         Ok(result)
+    }
+
+    /// Checks that history reachable from `roots` is complete, without retaining payloads.
+    ///
+    /// Applies [`Self::new_stopping_at`]'s graph, resource and cancellation contract, and returns
+    /// the verified object IDs. Memory is proportional to the number of objects, not their size.
+    pub(super) fn verify_stopping_at(
+        store: &Objects,
+        roots: &[ObjectId],
+        shallow: &[ObjectId],
+        published: &HashSet<ObjectId>,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<HashSet<ObjectId>, Error> {
+        let kinds = walk(store, roots, shallow, published, limits, cancel, |_, _| {})?;
+        Ok(kinds.into_keys().collect())
     }
 
     /// Number of distinct verified local objects retained for connectivity checks.
@@ -271,6 +261,71 @@ impl KnownHistory {
     pub fn haves(&self) -> &[ObjectId] {
         &self.haves
     }
+}
+
+/// Walks history reachable from `roots`, handing each verified object to `visit`.
+///
+/// Stops at `published` objects without reading them, and at the parents of `shallow` commits.
+/// Returns the kind of every visited object.
+fn walk(
+    store: &Objects,
+    roots: &[ObjectId],
+    shallow: &[ObjectId],
+    published: &HashSet<ObjectId>,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+    mut visit: impl FnMut(ObjectId, Object),
+) -> Result<HashMap<ObjectId, ObjectKind>, Error> {
+    check_cancelled(cancel)?;
+    if roots.len() > limits.max_wants {
+        return Err(Error::Limit("known roots"));
+    }
+    if shallow.len() > limits.max_shallow_roots {
+        return Err(Error::Limit("shallow roots"));
+    }
+    let shallow_set: HashSet<_> = shallow.iter().copied().collect();
+    let mut kinds = HashMap::new();
+    let mut pending = VecDeque::new();
+    let mut expected = HashMap::new();
+    for &id in roots.iter().filter(|id| !published.contains(id)) {
+        enqueue(id, None, &mut expected, &mut pending, limits)?;
+    }
+    let mut bytes = limits.max_known_bytes;
+    let mut edges = limits.max_known_edges;
+    while let Some(id) = pending.pop_front() {
+        check_cancelled(cancel)?;
+        let mut read = limits.known_read;
+        read.max_object_bytes = read.max_object_bytes.min(bytes);
+        let object = store
+            .read(id, read)
+            .map_err(|source| Error::LocalRead { id, source })?
+            .ok_or(Error::Missing(id))?;
+        if shallow_set.contains(&id) && object.kind() != ObjectKind::Commit {
+            return Err(Error::Kind(id));
+        }
+        if expected[&id].is_some_and(|kind| kind != object.kind()) {
+            return Err(Error::Kind(id));
+        }
+        bytes = bytes
+            .checked_sub(object.data().len())
+            .ok_or(Error::Limit("known bytes"))?;
+        let shallow_commit = object.kind() == ObjectKind::Commit && shallow_set.contains(&id);
+        let edge = |target, kind| {
+            if (shallow_commit && kind == ObjectKind::Commit) || published.contains(&target) {
+                return Ok(());
+            }
+            check_cancelled(cancel)?;
+            edges = edges.checked_sub(1).ok_or(Error::Limit("known edges"))?;
+            if kinds.get(&target).is_some_and(|&known| known != kind) {
+                return Err(Error::Kind(target));
+            }
+            enqueue(target, Some(kind), &mut expected, &mut pending, limits)
+        };
+        crate::edges::visit(id, &object, edge)?;
+        kinds.insert(id, object.kind());
+        visit(id, object);
+    }
+    Ok(kinds)
 }
 
 fn enqueue(
