@@ -197,6 +197,9 @@ impl FetchRequest {
     /// Requests a positive commit depth on HTTP/SSH upload-pack or depth one from a native local
     /// source. Local depth requires one selected commit tip and a nonshallow source. This permits
     /// a resulting shallow-boundary change during coordinated publication.
+    /// Network validation materializes any reachable known-local dependencies in a nonempty
+    /// received pack. An empty object transfer verifies local dependencies during publication;
+    /// the caller must continue excluding concurrent collection for that existing history.
     pub fn with_depth(mut self, depth: NonZeroU32) -> Self {
         self.depth = Some(depth);
         self

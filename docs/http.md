@@ -20,6 +20,11 @@ releases its Arc on success or failure; dropping the download releases it too. O
 retain history. Installation still rechecks local dependencies; retained history does not coordinate
 with GC.
 
+For explicit depth requests, validation includes reachable local dependencies in a nonempty received
+pack so retention protects the resulting shallow history. The combined pack obeys object,
+decoded-input and pack-byte limits. A response containing no objects instead verifies existing local
+dependencies during coordinated shallow publication; the caller still excludes concurrent GC.
+
 Use `fetch::receive_http_with_progress` or `FetchRequest::receive_http_with_progress` for live
 receiver notices. The `FnMut(&[u8]) + Send` callback receives complete channel-2 byte payloads after
 the shallow/ACK prefix is checked, as the bounded HTTP response arrives. Notices are advisory and

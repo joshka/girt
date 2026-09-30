@@ -29,6 +29,8 @@ impl KnownHistory {
     /// producing a pack that depends on local objects when the caller can retain only the new
     /// pack against concurrent collection. The caller must still keep verified local objects
     /// available until a known-only result publishes its references.
+    /// Explicit depth requests retain the snapshot even for unknown tips: validation includes
+    /// reachable local dependencies in the resulting pack before retained installation.
     pub fn only_when_all_wants_known(mut self) -> Self {
         self.only_when_all_wants_known = true;
         self

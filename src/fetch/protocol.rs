@@ -153,7 +153,7 @@ pub fn receive_with_known_depth(
         check_cancelled(cancel)?;
         let wants = select(&advertisement);
         let empty = known.shallow_only();
-        let known = if known.applies_to(&wants) {
+        let known = if depth.is_some() || known.applies_to(&wants) {
             known
         } else {
             &empty
@@ -195,7 +195,7 @@ pub(super) struct Negotiation {
     multi_ack: bool,
     pub(super) needs_pack: bool,
     shallow: Vec<ObjectId>,
-    requested_depth: bool,
+    depth: Option<NonZeroU32>,
 }
 
 pub(super) fn validate_known(
@@ -274,7 +274,7 @@ pub(super) fn request(
             multi_ack: false,
             needs_pack: false,
             shallow: known.shallow.clone(),
-            requested_depth: depth.is_some(),
+            depth,
         });
     }
     if !advertisement.has(b"side-band-64k") {
@@ -327,7 +327,7 @@ pub(super) fn request(
         multi_ack,
         needs_pack: true,
         shallow: known.shallow.clone(),
-        requested_depth: depth.is_some(),
+        depth,
     })
 }
 
@@ -386,7 +386,10 @@ pub(super) fn response_observed(
         pack,
         known,
         shallow,
-        limits,
+        FetchOptions {
+            limits,
+            depth: negotiation.depth,
+        },
         observer,
     )
 }
@@ -409,7 +412,7 @@ fn read_shallow(
     limits: FetchLimits,
 ) -> Result<Vec<ObjectId>, Error> {
     let mut roots: HashSet<_> = negotiation.shallow.iter().copied().collect();
-    if !negotiation.requested_depth {
+    if negotiation.depth.is_none() {
         let mut roots: Vec<_> = roots.into_iter().collect();
         roots.sort_unstable();
         return Ok(roots);
@@ -652,7 +655,7 @@ mod tests {
                 multi_ack: false,
                 needs_pack: true,
                 shallow: vec![],
-                requested_depth: true,
+                depth: NonZeroU32::new(1),
             },
             limits,
         )

@@ -192,6 +192,11 @@ Validation consumes the download and releases its history ownership on success o
 the download also releases it. Other Arc owners may retain history independently. Installation still
 rechecks dependencies and requires caller coordination with GC.
 
+For explicit depth requests, validation includes reachable local dependencies in a nonempty received
+pack so retention protects the resulting shallow history. The combined pack obeys object,
+decoded-input and pack-byte limits. A response containing no objects instead verifies existing local
+dependencies during coordinated shallow publication; the caller still excludes concurrent GC.
+
 Validation is a separate synchronous step; it decodes/indexes packs, checks identities and proves
 connectivity before explicit installation. Prepare history and push packs outside the executor or on
 a caller-owned bounded worker. Bound waiting downloads and aggregate retained bytes as well as

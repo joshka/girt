@@ -435,7 +435,10 @@ mod tests {
             forward_ref_pack(format),
             &super::super::KnownHistory::default(),
             vec![],
-            FetchLimits::default(),
+            super::super::FetchOptions {
+                limits: FetchLimits::default(),
+                depth: None,
+            },
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         )
         .unwrap();
@@ -472,7 +475,10 @@ mod tests {
             forward_ref_pack(format),
             &super::super::KnownHistory::default(),
             vec![],
-            FetchLimits::default(),
+            super::super::FetchOptions {
+                limits: FetchLimits::default(),
+                depth: None,
+            },
             &mut ValidationObserver::new(&cancel, &mut |state| {
                 snapshots.push(state);
                 if state.deltas == Some((stop_at, 1)) {

@@ -140,9 +140,10 @@ pub async fn receive_http_with_depth_and_progress(
         let advertisement = protocol::advertise(&mut wire, limits)?;
         wire.end()?;
         let wants = select(&advertisement);
-        if known
-            .as_ref()
-            .is_some_and(|history| !history.applies_to(&wants))
+        if depth.is_none()
+            && known
+                .as_ref()
+                .is_some_and(|history| !history.applies_to(&wants))
         {
             known = known
                 .as_ref()
