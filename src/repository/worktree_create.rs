@@ -130,8 +130,12 @@ pub enum CreateWorktreeError {
 struct SelectedIndexAlias {
     path: PathBuf,
     target: PathBuf,
+    // Only Unix preserves a selected index symlink; other platforms refuse it during capture.
+    #[cfg(unix)]
     spelling: PathBuf,
+    #[cfg(unix)]
     link_metadata: fs::Metadata,
+    #[cfg(unix)]
     target_metadata: Option<fs::Metadata>,
 }
 
@@ -150,11 +154,15 @@ impl SelectedIndexAlias {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(io_error(&path, None, error)),
         };
+        // The rest of capture is Unix-only, so on other platforms this block is the result.
         #[cfg(not(unix))]
-        return Err(CreateWorktreeError::IndexStorage {
-            registration: None,
-            source: crate::index::StorageError::NotRegular(path),
-        });
+        {
+            let _ = link_metadata;
+            Err(CreateWorktreeError::IndexStorage {
+                registration: None,
+                source: crate::index::StorageError::NotRegular(path),
+            })
+        }
         #[cfg(unix)]
         {
             let spelling = fs::read_link(&path).map_err(|source| io_error(&path, None, source))?;

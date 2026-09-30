@@ -788,6 +788,8 @@ impl IndexEdit {
         self.index.discard_tree_cache();
     }
 
+    // Used by worktree checkout, which is available only on Linux and macOS.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn publish(&mut self) -> Result<(), StorageError> {
         self.publish_with_options(IndexCommitOptions::default())
     }
