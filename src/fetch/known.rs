@@ -50,16 +50,9 @@ impl KnownObjects for KnownHistory {
         if let Some(object) = self.objects.get(&id) {
             return Some(Cow::Borrowed(object));
         }
-        let limits = crate::ReadLimits {
-            max_object_bytes: usize::MAX / 4,
-            max_delta_bytes: usize::MAX / 4,
-            max_decode_bytes: usize::MAX / 4,
-            max_input_bytes: usize::MAX / 4,
-            max_delta_depth: 10_000,
-        };
         self.store
             .as_ref()?
-            .read(id, limits)
+            .read(id, crate::ReadLimits::trusted())
             .ok()
             .flatten()
             .map(Cow::Owned)

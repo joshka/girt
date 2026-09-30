@@ -59,7 +59,10 @@ pub enum ConfiguredRemoteError {
     #[error("unsupported remote tagOpt inheritance across configuration sections")]
     UnsupportedTagOptionInheritance,
     /// A URL in the supported syntax is malformed.
-    #[error("remote {key}, occurrence {occurrence}, rewritten={rewritten}")]
+    #[error(
+        "invalid remote {key} (value {occurrence}{})",
+        if *rewritten { ", after an insteadOf rewrite" } else { "" }
+    )]
     Url {
         /// `url` or `pushurl`.
         key: &'static str,
@@ -72,7 +75,7 @@ pub enum ConfiguredRemoteError {
         source: ConfiguredUrlError,
     },
     /// A configured refspec is malformed.
-    #[error("remote {key}, occurrence {occurrence}")]
+    #[error("invalid remote {key} refspec (value {occurrence})")]
     Refspec {
         /// `fetch` or `push`.
         key: &'static str,
@@ -83,7 +86,10 @@ pub enum ConfiguredRemoteError {
         source: ConfiguredRefspecError,
     },
     /// The whole remote needs a compatibility implementation for URL syntax or normalization.
-    #[error("unsupported remote {key} syntax at occurrence {occurrence}, rewritten={rewritten}")]
+    #[error(
+        "unsupported remote {key} syntax (value {occurrence}{})",
+        if *rewritten { ", after an insteadOf rewrite" } else { "" }
+    )]
     UnsupportedUrlSyntax {
         /// `url` or `pushurl` of the original value.
         key: &'static str,

@@ -285,3 +285,32 @@ fn observation_inventory_preserves_limits_order_and_cancellation(
         }]
     );
 }
+
+/// Namespace listing keeps packed hints and excludes siblings that share a name prefix.
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn namespace_observations_keep_hints_within_namespace(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, root.path().join("repo"), InitKind::Bare).unwrap();
+    let refs = repo.references().unwrap();
+    let (target, peeled) = identities(format);
+    fs::write(
+        repo.git_dir().join("packed-refs"),
+        format!("{target} refs/tags/example\n^{peeled}\n{target} refs/tagsuffix/other\n"),
+    )
+    .unwrap();
+    let observations = refs
+        .list_namespace_observations(&RefName::new("refs/tags").unwrap())
+        .unwrap();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(
+        observations[0].name,
+        RefName::new("refs/tags/example").unwrap()
+    );
+    assert_eq!(observations[0].peeled_hint, Some(peeled));
+    assert!(matches!(
+        refs.list_namespace_observations(&RefName::new("HEAD").unwrap()),
+        Err(ReferenceError::Unsupported(_))
+    ));
+}

@@ -62,6 +62,23 @@ impl Default for Limits {
     }
 }
 
+impl Limits {
+    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    ///
+    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
+    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    pub const fn trusted() -> Self {
+        Self {
+            bytes: usize::MAX / 4,
+            sources: usize::MAX / 4,
+            patterns: usize::MAX / 4,
+            line_bytes: usize::MAX / 4,
+            path_bytes: usize::MAX / 4,
+            work: usize::MAX / 4,
+        }
+    }
+}
+
 /// An invalid path or exhausted budget; errors never imply an ignore decision.
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
 pub enum Error {

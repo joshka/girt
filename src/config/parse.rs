@@ -766,7 +766,7 @@ pub struct InvalidValue {
 }
 
 impl InvalidValue {
-    fn new(section: &str, name: &str, value: Option<&[u8]>) -> Self {
+    pub(crate) fn new(section: &str, name: &str, value: Option<&[u8]>) -> Self {
         Self {
             section: section.to_owned(),
             name: name.to_owned(),

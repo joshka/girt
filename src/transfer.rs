@@ -29,7 +29,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "http")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use crate::fetch::{
@@ -98,6 +100,7 @@ impl Environment {
             .map(|value| value.as_encoded_bytes().to_vec())
     }
 
+    #[cfg(feature = "http")]
     fn string(&self, name: &str) -> Option<String> {
         self.get(name).and_then(OsStr::to_str).map(str::to_owned)
     }
@@ -365,6 +368,7 @@ impl Http {
     }
 }
 
+#[cfg(feature = "http")]
 struct UrlParts {
     scheme: String,
     authority: String,
@@ -372,6 +376,7 @@ struct UrlParts {
 }
 
 /// Splits `scheme://[user@]host[:port]/path` without percent decoding.
+#[cfg(feature = "http")]
 fn url_parts(bytes: &[u8]) -> Option<UrlParts> {
     let text = std::str::from_utf8(bytes).ok()?;
     let (scheme, rest) = text.split_once("://")?;
@@ -386,6 +391,7 @@ fn url_parts(bytes: &[u8]) -> Option<UrlParts> {
     })
 }
 
+#[cfg(feature = "http")]
 fn redacted_url(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     match url_parts(bytes) {
@@ -395,11 +401,19 @@ fn redacted_url(bytes: &[u8]) -> String {
 }
 
 /// Quotes `value` for a POSIX shell.
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Finds `program` in the environment's `PATH`.
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
 fn find_program(environment: &Environment, program: &str) -> Option<PathBuf> {
     let path = environment.get("PATH")?;
     std::env::split_paths(path)

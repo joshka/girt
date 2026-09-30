@@ -64,6 +64,28 @@ impl InitOptions {
             .map_err(|_| InitError::InvalidBranch(name.to_owned()))?;
         Ok(self)
     }
+
+    /// Applies the user's initialization defaults from `config`, as `git init` does.
+    ///
+    /// Reads `init.defaultBranch`; without it the branch stays `master`. Resolve `config` from
+    /// the user's configuration, not a repository's: a new repository has none yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InitError::InvalidBranch`] when `init.defaultBranch` is empty, not UTF-8, or not
+    /// a valid branch name. Git refuses to initialize in the same cases.
+    pub fn defaults_from(self, config: &crate::Config) -> Result<Self, InitError> {
+        let Some(name) = config.value("init", None, "defaultbranch") else {
+            return Ok(self);
+        };
+        let name = name.unwrap_or_default();
+        let invalid = || InitError::InvalidBranch(String::from_utf8_lossy(name).into_owned());
+        let name = std::str::from_utf8(name).map_err(|_| invalid())?;
+        if name.is_empty() {
+            return Err(invalid());
+        }
+        self.initial_branch(name)
+    }
 }
 
 /// Initialization refusal, filesystem failure, or final metadata validation failure.
@@ -472,6 +494,24 @@ mod tests {
             b"ref: refs/heads/main\n"
         );
         assert!(!repo.git_dir().join("refs/heads/main").exists());
+    }
+
+    /// `init.defaultBranch` selects the unborn branch; `git init` refuses the invalid cases.
+    #[rstest]
+    #[case::absent(b"".as_slice(), Some("ref: refs/heads/master\n"))]
+    #[case::configured(b"[init]\n\tdefaultBranch = trunk\n".as_slice(), Some("ref: refs/heads/trunk\n"))]
+    #[case::invalid(b"[init]\n\tdefaultBranch = bad..name\n".as_slice(), None)]
+    #[case::empty(b"[init]\n\tdefaultBranch =\n".as_slice(), None)]
+    #[case::implicit(b"[init]\n\tdefaultBranch\n".as_slice(), None)]
+    fn default_branch_follows_configuration(#[case] config: &[u8], #[case] head: Option<&str>) {
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::Config::parse(config).unwrap();
+        let options = InitOptions::new(InitKind::Bare).defaults_from(&config);
+        let head_bytes = options.ok().map(|options| {
+            let repo = Repository::init_with_options(root.path().join("repo"), &options).unwrap();
+            fs::read(repo.git_dir().join("HEAD")).unwrap()
+        });
+        assert_eq!(head_bytes, head.map(|head| head.as_bytes().to_vec()));
     }
 
     #[test]

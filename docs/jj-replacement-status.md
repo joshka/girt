@@ -135,6 +135,24 @@ State values: not started, code written (compiles or nearly), tests pass, done (
   25,005 objects in about 1.0 s; at 20,000 commits it still read 232 objects. Fast-forward proofs
   stay exact under skewed dates.
 
+## API ergonomics plan (deliverable 12)
+
+Gaps where jj's adapter carries boilerplate or re-derives Git semantics that belong in girt:
+
+- [x] Errors repeat their source in `Display`, so chains print causes twice. Fixed in 109 messages.
+- [x] Push preparation reads the full reachable history. It now walks only new history.
+- [x] Limits: jj defines near-unbounded `ReadLimits` and `PackLimits` for a user's own repository.
+      girt needs defaults, or a named constructor, suited to trusted local repositories, so ordinary
+      calls don't spell out limits.
+- [x] References: listing under a prefix needs `usize::MAX` bounds and a throwaway cancellation
+  flag. Add a plain prefix listing, and resolving a reference to its commit.
+- [x] Reflog policy: `core.logAllRefUpdates` (which refs get reflogs, and whether bare repos log) is
+      Git semantics jj re-derives. girt should decide it from the repository's config.
+- [x] Config inputs: kept explicit. `ConfigInputs` deliberately reads no process-global state, and
+  the system file depends on how Git was installed, which girt can't know.
+- [x] Init: `InitOptions::defaults_from` applies `init.defaultBranch`.
+- [x] Peeling: `PeelLimits::trusted()` covers limits; the cancellation flag stays explicit.
+
 ## Known limitations and follow-ups
 
 - GC follows `git gc --prune=<cutoff>`'s safety model: a `gc.pid` lock plus a grace period. It does

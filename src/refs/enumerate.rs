@@ -180,6 +180,24 @@ impl References<'_> {
         self.enumerate(Some(namespace))
     }
 
+    /// Lists a namespace like [`Self::list_namespace`], keeping packed peeled hints.
+    ///
+    /// A hint is the peeled target recorded in packed-refs for an annotated tag, so callers can
+    /// avoid reading the tag object. Hints are unverified; loose references have none.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Self::list_namespace`].
+    pub fn list_namespace_observations(
+        &self,
+        namespace: &RefName,
+    ) -> Result<Vec<ReferenceObservation>, ReferenceError> {
+        if namespace.as_bytes() == b"HEAD" {
+            return Err(ReferenceError::Unsupported("enumerating pseudorefs"));
+        }
+        self.enumerate_observations(Some(namespace), None)
+    }
+
     fn enumerate(&self, namespace: Option<&RefName>) -> Result<Vec<Reference>, ReferenceError> {
         self.enumerate_with_budget(namespace, None)
     }

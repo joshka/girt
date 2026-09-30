@@ -285,8 +285,8 @@ pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
 pub use repository::{
     ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, InitOptions,
     OpenError, OperationCleanupError, OperationError, OperationLimits, OperationState,
-    OrphanWorktreeOptions, Repository, RepositoryLocation, RepositoryMetadata, ShallowError,
-    ShallowRoots, Worktree, WorktreeAdminError, WorktreeDurability, WorktreeError,
+    OrphanWorktreeOptions, ReflogPolicyError, Repository, RepositoryLocation, RepositoryMetadata,
+    ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeDurability, WorktreeError,
     WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement, WorktreeState,
 };
 pub use tag::{ObjectKind, Tag, TagError, TagFields};
