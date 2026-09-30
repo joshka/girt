@@ -203,8 +203,8 @@ fn runtime_sources_keep_reverse_placement_provenance_and_forward_error_order() {
     fs::write(root.path().join("b"), "[marker]\nvalue=b\n").unwrap();
     let body = format!(
         "[include]\npath={}\npath={}\n",
-        root.path().join("a").display(),
-        root.path().join("b").display()
+        config_path(&root.path().join("a")),
+        config_path(&root.path().join("b"))
     );
     let input = ConfigInputs {
         command: Some(Config::parse(body.as_bytes()).unwrap()),
@@ -252,4 +252,9 @@ fn runtime_root_url_view_is_bounded_before_cloning(
             .source,
         ResolveFailure::Limit(_)
     ));
+}
+
+/// Renders a path as a config value; backslashes (Windows separators) must be escaped.
+fn config_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "\\\\")
 }

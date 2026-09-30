@@ -1029,7 +1029,7 @@ mod tests {
         std::fs::write(&child, b"[core]\nx=child\n[empty]\n").unwrap();
         let source = format!(
             "[include]\npath={}\nmarker=outer\n[tail]\n",
-            child.display()
+            config_path(&child)
         );
         let first = Config::resolve(&ConfigInputs {
             command: Some(Config::parse(source.as_bytes()).unwrap()),
@@ -1393,5 +1393,10 @@ mod tests {
             Config::resolve(&input).unwrap_err().source,
             ResolveFailure::Input("missing path expansion context")
         ));
+    }
+
+    /// Renders a path as a config value; backslashes (Windows separators) must be escaped.
+    fn config_path(path: &std::path::Path) -> String {
+        path.display().to_string().replace('\\', "\\\\")
     }
 }
