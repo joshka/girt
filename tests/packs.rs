@@ -101,17 +101,24 @@ fn combines_loose_and_packed_reads_and_reports_absence(#[case] format: girt::Obj
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
-fn corrupt_loose_copy_shadows_valid_pack(#[case] format: girt::ObjectFormat) {
+/// Observed with `git cat-file -p`: a corrupt loose copy of a packed object doesn't hide the
+/// valid packed copy.
+fn corrupt_loose_copy_does_not_hide_valid_pack(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let expected = objects
+        .read(fixture.ordinary, ReadLimits::default())
+        .unwrap();
     let hex = fixture.ordinary.to_string();
     let directory = fixture.repo.object_dir().join(&hex[..2]);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(&hex[2..]), b"broken zlib").unwrap();
-    assert!(matches!(
-        objects.read(fixture.ordinary, ReadLimits::default()),
-        Err(ObjectReadError::Loose(_))
-    ));
+    assert_eq!(
+        objects
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap(),
+        expected
+    );
 }
 
 #[rstest]

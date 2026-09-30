@@ -415,14 +415,8 @@ impl Objects {
             let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
             for store in &self.stores {
                 check_cancelled(cancelled)?;
-                match store.loose.read_raw(id, loose_limit) {
-                    Ok(object) => {
-                        check_cancelled(cancelled)?;
-                        return Ok(Some(object));
-                    }
-                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.into()),
-                }
+                // Like Git, look in packs first: most objects are packed, and an object ID
+                // determines its content wherever it is stored.
                 for pack in &store.packs {
                     check_cancelled(cancelled)?;
                     if let Some(position) = pack.find(id)? {
@@ -430,6 +424,14 @@ impl Objects {
                         check_cancelled(cancelled)?;
                         return Ok(Some(object));
                     }
+                }
+                match store.loose.read_raw(id, loose_limit) {
+                    Ok(object) => {
+                        check_cancelled(cancelled)?;
+                        return Ok(Some(object));
+                    }
+                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
                 }
             }
             check_cancelled(cancelled)?;
