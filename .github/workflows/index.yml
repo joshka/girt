@@ -1,4 +1,4 @@
-name: Index validation
+name: Index
 
 on:
   push:
@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   index:
+    name: Index (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:

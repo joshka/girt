@@ -1,4 +1,4 @@
-name: Dependency and workflow security
+name: Security
 
 on:
   push:
@@ -20,6 +20,7 @@ permissions:
 
 jobs:
   cargo-deny:
+    name: Dependencies (cargo-deny)
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,6 +31,7 @@ jobs:
           rust-version: "1.97.1"
 
   zizmor:
+    name: Workflows (zizmor)
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

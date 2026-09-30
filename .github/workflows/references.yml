@@ -1,4 +1,4 @@
-name: Reference validation
+name: References
 
 on:
   push:
@@ -24,6 +24,7 @@ permissions:
 
 jobs:
   references:
+    name: References (${{ matrix.os }})
     if: ${{ !inputs.reftable_only && !inputs.reflog_only }}
     strategy:
       fail-fast: false
@@ -69,6 +70,7 @@ jobs:
         run: cargo +stable clippy --locked --no-default-features --lib --test references_portable --test worktree_create --test worktree_admin --example reference_transaction -- -D warnings
 
   reftable:
+    name: Reftable (${{ matrix.os }})
     if: ${{ inputs.reftable_only }}
     strategy:
       fail-fast: false
@@ -103,6 +105,7 @@ jobs:
           path: reftable-resources.json
 
   imported-reflogs:
+    name: Imported reflogs (${{ matrix.os }})
     if: ${{ inputs.reflog_only }}
     strategy:
       fail-fast: false
