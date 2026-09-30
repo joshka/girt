@@ -214,7 +214,34 @@ impl Document {
         name: &str,
         value: &[u8],
     ) -> Result<(), ConfigError> {
-        self.append_section(section, subsection, &[(name, value)])
+        validate_variable_name(name)?;
+        let Some(last) = self.layout.sections.iter().rposition(|s| {
+            s.section.eq_ignore_ascii_case(section.as_bytes()) && s.subsection.as_deref() == subsection
+        }) else {
+            return self.append_section(section, subsection, &[(name, value)]);
+        };
+        let entries = self.section_at(last).entry_range();
+        let anchor = match entries.last() {
+            Some(entry) => self.layout.entries[entry].range.end,
+            None => self.layout.sections[last].range.end,
+        };
+        let insert_at = self.bytes[anchor..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(self.bytes.len(), |i| anchor + i + 1);
+        let mut addition = Vec::new();
+        if insert_at == self.bytes.len() && !self.bytes.ends_with(b"\n") {
+            addition.push(b'\n');
+        }
+        addition.push(b'\t');
+        addition.extend_from_slice(name.as_bytes());
+        addition.extend_from_slice(b" = ");
+        addition.extend(quote(value, false)?);
+        addition.push(b'\n');
+        let mut bytes = self.bytes.clone();
+        bytes.splice(insert_at..insert_at, addition);
+        *self = Self::parse(&bytes)?;
+        Ok(())
     }
 
     /// Appends one section with ordered explicit assignments at EOF.
@@ -236,13 +263,7 @@ impl Document {
         let mut addition = header(section.as_bytes(), subsection)?;
         addition.push(b'\n');
         for &(name, value) in entries {
-            if !name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-                || !name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            {
-                return Err(invalid("invalid variable name"));
-            }
+            validate_variable_name(name)?;
             addition.push(b'\t');
             addition.extend_from_slice(name.as_bytes());
             addition.extend_from_slice(b" = ");
@@ -250,8 +271,12 @@ impl Document {
             addition.push(b'\n');
         }
         let mut bytes = self.bytes.clone();
-        // A blank separator also terminates a trailing backslash-newline continuation.
-        if !bytes.is_empty() {
+        // Git starts a new header on its own line. A trailing backslash-newline continuation
+        // additionally needs a blank line to terminate it.
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            bytes.push(b'\n');
+        }
+        if bytes.ends_with(b"\\\n") || bytes.ends_with(b"\\\r\n") {
             bytes.push(b'\n');
         }
         bytes.extend(addition);
@@ -312,10 +337,34 @@ impl Document {
         self.remove_sections(&ordinals)
     }
 
-    fn apply(&mut self, mut edits: Vec<(Range<usize>, Vec<u8>)>) -> Result<(), ConfigError> {
+    fn apply(&mut self, edits: Vec<(Range<usize>, Vec<u8>)>) -> Result<(), ConfigError> {
+        // A removal that leaves only whitespace on its line removes the whole line, as
+        // `git config --unset` does; otherwise surrounding bytes are preserved.
+        let mut edits: Vec<_> = edits
+            .into_iter()
+            .map(|(range, replacement)| {
+                if replacement.is_empty() {
+                    (whole_blank_line(&self.bytes, range), replacement)
+                } else {
+                    (range, replacement)
+                }
+            })
+            .collect();
         edits.sort_by_key(|(range, _)| range.start);
+        let mut merged: Vec<(Range<usize>, Vec<u8>)> = Vec::with_capacity(edits.len());
+        for (range, replacement) in edits {
+            if let Some((last, last_replacement)) = merged.last_mut()
+                && range.start < last.end
+                && replacement.is_empty()
+                && last_replacement.is_empty()
+            {
+                last.end = last.end.max(range.end);
+                continue;
+            }
+            merged.push((range, replacement));
+        }
         let mut bytes = self.bytes.clone();
-        for (range, replacement) in edits.into_iter().rev() {
+        for (range, replacement) in merged.into_iter().rev() {
             bytes.splice(range, replacement);
         }
         *self = Self::parse(&bytes)?;
@@ -340,8 +389,46 @@ fn header(section: &[u8], subsection: Option<&[u8]>) -> Result<Vec<u8>, ConfigEr
     bytes.push(b']');
     Ok(bytes)
 }
+fn validate_variable_name(name: &str) -> Result<(), ConfigError> {
+    if !name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(invalid("invalid variable name"));
+    }
+    Ok(())
+}
+
+/// Extends a removed span to its whole physical line when nothing but whitespace would remain.
+fn whole_blank_line(bytes: &[u8], range: Range<usize>) -> Range<usize> {
+    let line_start = bytes[..range.start]
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1);
+    let line_end = bytes[range.end..]
+        .iter()
+        .position(|b| *b == b'\n')
+        .map_or(bytes.len(), |i| range.end + i + 1);
+    let is_blank = |part: &[u8]| part.iter().all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'));
+    if is_blank(&bytes[line_start..range.start]) && is_blank(&bytes[range.end..line_end]) {
+        line_start..line_end
+    } else {
+        range
+    }
+}
+
+/// Encodes a value the way Git writes it: bare unless quoting is needed to preserve leading or
+/// trailing whitespace or comment characters. Subsections are always quoted.
 fn quote(value: &[u8], subsection: bool) -> Result<Vec<u8>, ConfigError> {
-    let mut bytes = vec![b'"'];
+    let needs_quotes = subsection
+        || value.first().is_some_and(|b| matches!(b, b' ' | b'\t'))
+        || value.last().is_some_and(|b| matches!(b, b' ' | b'\t'))
+        || value.iter().any(|b| matches!(b, b';' | b'#'));
+    let mut bytes = Vec::with_capacity(value.len() + 2);
+    if needs_quotes {
+        bytes.push(b'"');
+    }
     for &byte in value {
         match byte {
             0 => return Err(invalid("NUL in value")),
@@ -356,7 +443,9 @@ fn quote(value: &[u8], subsection: bool) -> Result<Vec<u8>, ConfigError> {
             byte => bytes.push(byte),
         }
     }
-    bytes.push(b'"');
+    if needs_quotes {
+        bytes.push(b'"');
+    }
     Ok(bytes)
 }
 fn invalid(reason: &'static str) -> ConfigError {
@@ -448,12 +537,12 @@ mod tests {
     #[rstest]
     #[case::comments(
         b"# before\r\n[CoRe] x = old  ; keep\r\n# after\r\n",
-        b"# before\r\n[CoRe] x = \"new\"  ; keep\r\n# after\r\n"
+        b"# before\r\n[CoRe] x = new  ; keep\r\n# after\r\n"
     )]
-    #[case::implicit(b"[core]\nx # keep\n", b"[core]\nx = \"new\" # keep\n")]
-    #[case::empty(b"[core]\nx=  # keep", b"[core]\nx=  \"new\"# keep")]
-    #[case::continued(b"[core]\nx=ab\\\n cd\n", b"[core]\nx=\"new\"\n")]
-    #[case::bom(b"\xef\xbb\xbf[core]\nx=old", b"\xef\xbb\xbf[core]\nx=\"new\"")]
+    #[case::implicit(b"[core]\nx # keep\n", b"[core]\nx = new # keep\n")]
+    #[case::empty(b"[core]\nx=  # keep", b"[core]\nx=  new# keep")]
+    #[case::continued(b"[core]\nx=ab\\\n cd\n", b"[core]\nx=new\n")]
+    #[case::bom(b"\xef\xbb\xbf[core]\nx=old", b"\xef\xbb\xbf[core]\nx=new")]
     fn replaces_only_value(#[case] input: &[u8], #[case] expected: &[u8]) {
         let mut document = Document::parse(input).unwrap();
         document.set_value(0, b"new").unwrap();
@@ -479,7 +568,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             document.as_bytes(),
-            b";top\n  ;first\n[other]\n  x = yes\n\n #second\n"
+            b";top\n  ;first\n[other]\n  x = yes\n #second\n"
         );
     }
 
@@ -533,7 +622,7 @@ mod tests {
                 .value("remote", Some(b"origin"), "implicit"),
             Some(None)
         );
-        assert_eq!(&document.as_bytes()[before.len()..], b"\n[remote \"origin\"]\n\turl = \"\"\n\turl = \"new\"\n\tfetch = \"+refs/heads/*:refs/remotes/origin/*\"\n");
+        assert_eq!(&document.as_bytes()[before.len()..], b"[remote \"origin\"]\n\turl = \n\turl = new\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n");
     }
 
     #[rstest]

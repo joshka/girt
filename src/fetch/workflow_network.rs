@@ -104,7 +104,7 @@ impl FetchRequest {
         known: Option<Arc<KnownHistory>>,
         limits: FetchLimits,
         control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) + Send,
+        progress: impl FnMut(&[u8]),
     ) -> Result<FetchDownload, FetchWorkflowError> {
         self.check_known(known.as_deref().unwrap_or(&KnownHistory::default()))?;
         let mut plan = None;

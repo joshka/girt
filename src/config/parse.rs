@@ -356,6 +356,72 @@ impl Config {
             .map(|entry| entry.value.as_deref())
     }
 
+    /// Returns the last explicit value; an implicit assignment reads as absent.
+    ///
+    /// This is Git's ordinary interpretation of a string-valued variable such as `core.editor`.
+    /// Bytes are returned without path expansion or encoding checks.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nexcludesFile = a\nexcludesFile = b\n")?;
+    /// assert_eq!(config.string("core", None, "excludesfile"), Some(b"b".as_slice()));
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
+    pub fn string(&self, section: &str, subsection: Option<&[u8]>, name: &str) -> Option<&[u8]> {
+        self.value(section, subsection, name).flatten()
+    }
+
+    /// Interprets the last occurrence with Git's boolean spelling.
+    ///
+    /// An implicit assignment is true. `true`/`yes`/`on`, `false`/`no`/`off`/empty and integers
+    /// are accepted case-insensitively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidValue`] when the last occurrence is not a boolean.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::parse(b"[core]\nbare\nfilemode = off\n")?;
+    /// assert_eq!(config.boolean("core", None, "bare")?, Some(true));
+    /// assert_eq!(config.boolean("core", None, "filemode")?, Some(false));
+    /// assert_eq!(config.boolean("core", None, "missing")?, None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn boolean(
+        &self,
+        section: &str,
+        subsection: Option<&[u8]>,
+        name: &str,
+    ) -> Result<Option<bool>, InvalidValue> {
+        match self.value(section, subsection, name) {
+            None => Ok(None),
+            Some(value) => super::values::boolean(value)
+                .map(Some)
+                .ok_or_else(|| InvalidValue::new(section, name, value)),
+        }
+    }
+
+    /// Interprets the last occurrence with Git's integer syntax, including `k`/`m`/`g` suffixes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidValue`] for an implicit assignment or an unreadable integer.
+    pub fn integer(
+        &self,
+        section: &str,
+        subsection: Option<&[u8]>,
+        name: &str,
+    ) -> Result<Option<i64>, InvalidValue> {
+        match self.value(section, subsection, name) {
+            None => Ok(None),
+            Some(value) => value
+                .and_then(super::values::integer)
+                .map(Some)
+                .ok_or_else(|| InvalidValue::new(section, name, value)),
+        }
+    }
+
     pub(crate) fn append(&mut self, other: &Self) {
         let offset = self.entries.len();
         self.occurrences
@@ -681,5 +747,27 @@ mod tests {
             vec![None, Some(b"".as_slice()), Some(b"last".as_slice())]
         );
         assert_eq!(config.value("remote", Some(b"origin"), "url"), None);
+    }
+}
+
+/// A configuration value does not have the requested type.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid value for {section}.{name}: {value:?}")]
+pub struct InvalidValue {
+    /// Section name as requested.
+    pub section: String,
+    /// Variable name as requested.
+    pub name: String,
+    /// Lossy rendering of the offending value; `None` for an implicit assignment.
+    pub value: Option<String>,
+}
+
+impl InvalidValue {
+    fn new(section: &str, name: &str, value: Option<&[u8]>) -> Self {
+        Self {
+            section: section.to_owned(),
+            name: name.to_owned(),
+            value: value.map(|value| String::from_utf8_lossy(value).into_owned()),
+        }
     }
 }

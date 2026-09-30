@@ -29,7 +29,7 @@ mod resolution;
 mod sources;
 mod values;
 mod wildmatch;
-pub use parse::{Config, ConfigError, ConfigSection, Entry};
+pub use parse::{Config, ConfigError, ConfigSection, Entry, InvalidValue};
 pub use resolution::{ResolveError, ResolveFailure};
 pub use sources::{
     ConfigFile, ConfigInputs, ConfigScope, IncludeContext, Origin, ResolveLimits, SourceLocation,

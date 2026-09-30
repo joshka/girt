@@ -469,20 +469,20 @@ fn create_orphan_worktree(
             })
         })
         .transpose()?;
-    if let (Some(missing), Some(edit)) = (selected_missing, index_edit.as_ref()) {
-        if missing != edit.original_missing() {
-            let path = selected_index.expect("selected index path").clone();
-            let error = CreateWorktreeError::IndexStorage {
-                registration: None,
-                source: crate::index::StorageError::Changed(path),
-            };
-            return finish_creation(Err(error), index_edit);
-        }
+    if let (Some(missing), Some(edit)) = (selected_missing, index_edit.as_ref())
+        && missing != edit.original_missing()
+    {
+        let path = selected_index.expect("selected index path").clone();
+        let error = CreateWorktreeError::IndexStorage {
+            registration: None,
+            source: crate::index::StorageError::Changed(path),
+        };
+        return finish_creation(Err(error), index_edit);
     }
-    if let Some(alias) = &selected_alias {
-        if let Err(error) = alias.check(None) {
-            return finish_creation(Err(error), index_edit);
-        }
+    if let Some(alias) = &selected_alias
+        && let Err(error) = alias.check(None)
+    {
+        return finish_creation(Err(error), index_edit);
     }
     let version = match index_edit.as_ref().map(|edit| edit.index().version()) {
         Some(crate::index::Version::V4) => crate::index::Version::V4,

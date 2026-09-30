@@ -103,7 +103,7 @@ pub async fn send_http_checked_with_progress(
     mut prepared: PreparedPush,
     control: TransportControl<'_>,
     should_send: impl FnOnce(&PushAdvertisement) -> bool,
-    mut progress: impl FnMut(&[u8]) + Send,
+    mut progress: impl FnMut(&[u8]),
 ) -> Result<HttpPushOutcome, PushError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(

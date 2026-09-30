@@ -600,7 +600,7 @@ impl RepositoryMetadata {
 /// assert_eq!(bytes, b"hello\n");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Repository {
     git_dir: PathBuf,
     common_dir: PathBuf,

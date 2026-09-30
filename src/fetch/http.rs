@@ -85,7 +85,7 @@ pub async fn receive_http_with_progress(
     known: Option<Arc<KnownHistory>>,
     limits: FetchLimits,
     control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) + Send,
+    progress: impl FnMut(&[u8]),
 ) -> Result<DownloadedFetch, FetchError> {
     receive_http_with_depth_and_progress(remote, select, known, None, limits, control, progress)
         .await
@@ -107,7 +107,7 @@ pub async fn receive_http_with_depth_and_progress(
     depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
-    mut progress: impl FnMut(&[u8]) + Send,
+    mut progress: impl FnMut(&[u8]),
 ) -> Result<DownloadedFetch, FetchError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(

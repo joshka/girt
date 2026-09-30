@@ -371,7 +371,7 @@ impl HttpRemote {
         body: Option<RequestBody>,
         limit: usize,
         control: TransportControl<'_>,
-        mut observe: impl FnMut(&[u8]) + Send,
+        mut observe: impl FnMut(&[u8]),
     ) -> HttpResponse {
         let mut output = HttpResponse {
             body: Vec::new(),
@@ -395,7 +395,7 @@ impl HttpRemote {
         service: &str,
         body: Option<RequestBody>,
         control: TransportControl<'_>,
-        mut receive: impl FnMut(&[u8]) -> Result<(), HttpError> + Send,
+        mut receive: impl FnMut(&[u8]) -> Result<(), HttpError>,
     ) -> Result<(), HttpError> {
         check(control)?;
         let rpc = body.is_some();

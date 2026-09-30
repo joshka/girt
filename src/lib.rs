@@ -263,6 +263,7 @@ pub mod retention;
 pub mod rewrites;
 pub mod status;
 mod tag;
+pub mod transfer;
 pub mod transport;
 mod tree;
 mod tree_compare;
