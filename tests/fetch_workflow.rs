@@ -1297,8 +1297,10 @@ fn tag_peeling_budget_failure_prevents_publication() {
     );
 }
 
+/// Like Git's lookup, which falls back from a corrupt loose object to its packed copy, a corrupt
+/// loose file doesn't hide the valid object the fetch installed.
 #[test]
-fn corrupt_loose_shadow_cannot_receive_a_published_ref() {
+fn corrupt_loose_shadow_does_not_block_publication() {
     let source = Source::new();
     let (_root, repository) = destination();
     let ready = receive(
@@ -1311,7 +1313,6 @@ fn corrupt_loose_shadow_cannot_receive_a_published_ref() {
         &source,
         &KnownHistory::default(),
     );
-    // A corrupt descendant matters even when the selected commit itself reads correctly.
     let hex = source.blob.to_string();
     fs::create_dir_all(repository.object_dir().join(&hex[..2])).unwrap();
     fs::write(
@@ -1319,15 +1320,18 @@ fn corrupt_loose_shadow_cannot_receive_a_published_ref() {
         b"corrupt loose shadow",
     )
     .unwrap();
-    let error = ready
+    ready
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
-        .unwrap_err();
-    assert!(error.report.installed.is_some());
-    assert!(matches!(
-        *error.source,
-        FetchFinishFailure::BeforePublication(girt::fetch::FetchError::LocalRead { .. })
-    ));
-    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+        .unwrap();
+    assert!(stored(&repository, "refs/remotes/origin/main").is_some());
+    assert!(
+        repository
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(source.blob, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]
