@@ -3,8 +3,9 @@
 Status of replacing gix, gix-ignore and the Git subprocess in jj with girt. Updated as work lands.
 The contract is fixed; implementation details go under the deliverable that owns them.
 
-- jj workspace: `/Users/joshka/local/jj/work/girt-swap`, based on jj `main` at `35dbc362`.
-- girt workspace: `/Users/joshka/local/girt/work/girt-swap`, on top of `qlplnmyl`.
+- jj branch: [`joshka/girt-backend`](https://github.com/joshka/jj/tree/joshka/girt-backend) on the
+  `joshka/jj` fork, one commit on jj `main` at `35dbc362`, depending on girt 0.3.0 from crates.io.
+- girt: released as 0.3.0 from `main`.
 - Baseline progress measure: gix, `git_subprocess` or Git executable uses remaining in jj production
   code (411 references at the start).
 
@@ -47,8 +48,8 @@ Explicitly excluded; recorded as limitations, not counted as parity:
 | 9   | CLI call sites: URLs, remote list, colocation, excludes        | tests pass      |
 | 10  | Tests: jj suites green, gix only in tests                      | done            |
 | 11  | End-to-end interop script, both object formats                 | done            |
-| 12  | girt API ergonomics pass, driven by jj call sites              | not started     |
-| 13  | Reproducible dependency (girt release) and final audit         | not started     |
+| 12  | girt API ergonomics pass, driven by jj call sites              | done            |
+| 13  | Reproducible dependency (girt release) and final audit         | done            |
 
 State values: not started, code written (compiles or nearly), tests pass, done (verified).
 
@@ -134,6 +135,10 @@ State values: not started, code written (compiles or nearly), tests pass, done (
   one commit over the old tip read 232 objects in about 4 ms (release build, macOS arm64) instead of
   25,005 objects in about 1.0 s; at 20,000 commits it still read 232 objects. Fast-forward proofs
   stay exact under skewed dates.
+- 2026-09-30: girt 0.3.0 published. jj depends on it from crates.io and passes the full workspace
+  suite (3386/3386), Clippy, and the end-to-end script (196/196). The jj change is published as a
+  single experimental commit on the `joshka/jj` fork, not proposed upstream. girt's history was
+  rebuilt so `main` keeps the individual commits behind 0.3.0.
 
 ## API ergonomics plan (deliverable 12)
 
