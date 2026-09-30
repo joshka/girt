@@ -3,7 +3,7 @@ name: Release-plz
 on:
   push:
     branches:
-      - joshka/platform-validation
+      - main
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/joshka/platform-validation'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: joshka/platform-validation
+          ref: main
       - run: rustup toolchain install stable --profile minimal
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
@@ -31,7 +31,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-pr:
-    if: github.ref == 'refs/heads/joshka/platform-validation'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -44,7 +44,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: joshka/platform-validation
+          ref: main
       - run: rustup toolchain install stable --profile minimal
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
