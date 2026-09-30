@@ -139,6 +139,23 @@ State values: not started, code written (compiles or nearly), tests pass, done (
   suite (3386/3386), Clippy, and the end-to-end script (196/196). The jj change is published as a
   single experimental commit on the `joshka/jj` fork, not proposed upstream. girt's history was
   rebuilt so `main` keeps the individual commits behind 0.3.0.
+- 2026-09-30: Large-repository check on `github.com/jj-vcs/jj` (130k objects, 1,500 branches). It
+  found problems no small fixture showed, so the benchmark is now part of acceptance. Release builds
+  on macOS arm64:
+
+  | Step        | girt 0.3.0                     | this change      | stock jj (Git)  |
+  | ----------- | ------------------------------ | ---------------- | --------------- |
+  | clone       | fails: decode limit            | 20.0 s / 4.7 GB  | 13.8 s / 110 MB |
+  | no-op fetch | 25.8 s / 4.7 GB                | 2.1 s / 98 MB    | 0.67 s / 28 MB  |
+  | `util gc`   | 566 s / 5.1 GB; pack to 1 GiB  | 75 s / 365 MB    | 2.3 s / 262 MB  |
+
+  - Fixes:
+    - trusted transfer limits;
+    - fetch publication stops at objects existing references name;
+    - packs are read before loose objects;
+    - a delta base cache, with only the requested object's identity checked.
+  - jj's `util gc` now only expires reflogs and prunes loose objects. girt's repack rewrote every
+    object without deltas.
 
 ## API ergonomics plan (deliverable 12)
 
@@ -183,6 +200,13 @@ Gaps where jj's adapter carries boilerplate or re-derives Git semantics that bel
 - Native local push runs receive hooks without a quarantine: objects are installed before
   `pre-receive` runs, so a declined push leaves unreferenced objects (removed by a later GC). Hooks
   are not interrupted by the transfer's cancellation or deadline.
+- The fetch importer keeps every decoded object of a received pack in memory until connectivity is
+  checked, about 4.7 GB for `jj-vcs/jj`. Git streams the pack to disk and indexes it with a small
+  cache. Fix: a streaming importer.
+- girt's repack decodes every object and writes them without deltas, so jj doesn't repack. Fix: a
+  repack that reuses existing packed entries and deltas.
+- Retention walks the whole object graph once per phase (reflog expiry, then pruning), which keeps
+  `util gc` at 75 s against Git's 2.3 s. Packed reads use `pread` rather than memory maps.
 - Local fetch/push progress (receiving objects, resolving deltas) is not reported yet; remote
   counting/compressing progress and sideband messages are.
 
