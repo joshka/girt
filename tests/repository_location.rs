@@ -1,5 +1,4 @@
 //! Independently authored filesystem fixtures for exact metadata selection.
-use std::collections::BTreeMap;
 use std::fs;
 
 use girt::config::ConfigInputs;
@@ -181,7 +180,7 @@ fn logical_alias_includes_and_explicit_environment_are_retained(
         scope: girt::config::ConfigScope::Global,
         optional: false,
     });
-    let before: BTreeMap<_, _> = std::env::vars_os().collect();
+    let before: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
     let location = RepositoryLocation::at_git_dir(&alias).unwrap();
     let metadata = location.read_metadata_with_config(&inputs).unwrap();
     let opened = location.open_with_config(&inputs).unwrap();
