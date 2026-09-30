@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/joshka/girt/compare/v0.3.0...v0.3.1) - 2026-09-30
+
+### Other
+
+- Record the large-repository benchmark
+- Drop an import unused on Windows
+- Cache delta bases and check only requested objects
+- Look up packed objects before loose ones
+- Verify only new history when publishing a fetch
+- Use trusted limits for configured-remote transfers
+- Name CI workflows and jobs for what they check
+- Record jj on published girt
+- Gate platform-specific code for Windows builds
+- Release from main
+
 ## [0.3.0](https://github.com/joshka/girt/compare/v0.2.0...v0.3.0) - 2026-09-30
 
 ### Other
