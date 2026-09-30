@@ -783,7 +783,7 @@ impl Lock {
             options.share_mode(3); // FILE_SHARE_READ | FILE_SHARE_WRITE, excluding DELETE.
         }
         let file = options.open(&path).map_err(|source| {
-            if source.kind() == io::ErrorKind::AlreadyExists {
+            if is_held(&source) {
                 ReferenceError::Locked(path.clone())
             } else {
                 io_error(&path, source)
@@ -872,6 +872,15 @@ pub(super) fn malformed(path: &Path, reason: &'static str) -> ReferenceError {
         path: path.into(),
         reason,
     }
+}
+
+/// Whether creating a lock file failed because another writer holds or is releasing it.
+///
+/// Windows reports a lock file that is still being deleted as access denied rather than as
+/// existing, so a writer that just released its lock can't be told apart from a held one.
+fn is_held(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::AlreadyExists
+        || (cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied)
 }
 
 #[cfg(test)]
