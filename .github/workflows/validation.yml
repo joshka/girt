@@ -1,4 +1,4 @@
-name: Platform validation
+name: CI
 
 on:
   push:
@@ -35,6 +35,7 @@ permissions:
 
 jobs:
   msrv:
+    name: MSRV (1.97.1)
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -46,6 +47,7 @@ jobs:
       - run: cargo +1.97.1 test --locked --no-default-features --lib
 
   unix:
+    name: Test (${{ matrix.os }})
     if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     strategy:
       fail-fast: false
@@ -112,6 +114,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
+    name: Test (windows-2022)
     if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
@@ -166,6 +169,7 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps
 
   windows-http:
+    name: HTTPS (windows-2022)
     if: ${{ inputs.http_only }}
     runs-on: windows-2022
     timeout-minutes: 20
@@ -187,6 +191,7 @@ jobs:
         run: cargo +stable clippy --locked --no-default-features --features http --test http --test http_portable -- -D warnings
 
   alternates:
+    name: Alternates (${{ matrix.os }})
     if: ${{ inputs.alternates_only }}
     strategy:
       fail-fast: false
@@ -214,6 +219,7 @@ jobs:
         run: python tests/fixtures/alternates/observe.py
 
   storage:
+    name: Storage (${{ matrix.os }})
     if: ${{ inputs.storage_only }}
     strategy:
       fail-fast: false
@@ -253,6 +259,7 @@ jobs:
             storage-measurements.json
 
   ignore:
+    name: Ignore (${{ matrix.os }})
     if: ${{ inputs.ignore_only }}
     strategy:
       fail-fast: false
@@ -296,6 +303,7 @@ jobs:
             target/criterion
 
   retention:
+    name: Retention (${{ matrix.os }})
     if: ${{ inputs.retention_only }}
     strategy:
       fail-fast: false

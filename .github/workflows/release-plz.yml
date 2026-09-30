@@ -1,4 +1,4 @@
-name: Release-plz
+name: Release
 
 on:
   push:
@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   release:
+    name: Publish
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
@@ -31,6 +32,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release-pr:
+    name: Release PR
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
