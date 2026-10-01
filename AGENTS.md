@@ -16,8 +16,11 @@
   establishes compatibility or acceptance.
 - Design cohesive Git APIs from first principles; consumer call sites establish requirements, not
   method names or architecture to copy. See [Rust Conventions](docs/rust-conventions.md).
-- Track full jj coverage in the [roadmap](docs/jj-roadmap.md); use its acceptance contracts and
-  completion process when implementing queued capabilities.
+- Track jj integration work as
+  [GitHub issues labelled `jj`](https://github.com/joshka/girt/issues?q=is%3Aissue+label%3Ajj), one
+  self-contained brief per issue. [jj on girt status](docs/jj-replacement-status.md) records the
+  contract, the large-repository benchmark and the workflow for working on an issue. The
+  [roadmap](docs/jj-roadmap.md) keeps the earlier coverage plan and its acceptance contracts.
 
 ## Maintaining These Guidelines
 
