@@ -144,22 +144,36 @@ impl Repository {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
-        self.publish_required(&plan.required, policy, limits, cancel)
+        self.publish_required(&plan.required, &plan.protected_packs, policy, limits, cancel)
+            .map(|(published, _)| published)
     }
 
     /// Publishes a pack holding `required`, which a complete scan of this repository produced.
+    ///
+    /// Objects whose first primary copy sits in one of `protected` packs are decoded from that
+    /// copy to prove it readable and left out of the new pack, as `git repack -a` leaves out
+    /// objects in `.keep` packs. Their identities are returned so retirement can verify the
+    /// protected copy again before unlinking anything.
     pub(super) fn publish_required(
         &self,
         required: &std::collections::BTreeSet<ObjectId>,
+        protected: &std::collections::BTreeSet<std::path::PathBuf>,
         policy: &RetentionPolicy,
         limits: RepackLimits,
         cancel: &AtomicBool,
-    ) -> Result<RepackPublished, RepackError> {
+    ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
         check(cancel)?;
         let objects =
             self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
+        let protected_names: std::collections::BTreeSet<_> = protected
+            .iter()
+            .filter_map(|path| path.file_name().map(std::ffi::OsStr::to_owned))
+            .collect();
+        let pack_paths = objects.primary_packs_with_paths();
+        let mut held = std::collections::BTreeSet::new();
         let count =
             u32::try_from(required.len()).map_err(|_| PackWriteError::Limit("object count"))?;
+        let _ = count;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
@@ -174,6 +188,20 @@ impl Repository {
                     .find(id)
                     .map_err(|source| RepackError::Read { id, source })?;
                 if let Some(position) = found {
+                    let is_protected = pack_paths
+                        .get(pack)
+                        .and_then(|(path, _)| path.file_name())
+                        .is_some_and(|name| protected_names.contains(name));
+                    if is_protected {
+                        let object = source
+                            .read(position, policy.read, cancel)
+                            .map_err(|source| RepackError::Read { id, source })?;
+                        if object.id() != id {
+                            return Err(RepackError::Missing(id));
+                        }
+                        held.insert(id);
+                        continue 'required;
+                    }
                     packed.push(Packed { id, pack, position });
                     continue 'required;
                 }
@@ -237,7 +265,7 @@ impl Repository {
         index.as_file().sync_all()?;
         let basename = directory.join(format!("pack-{}", written.checksum));
         publish_pair(pack, index, &basename, cancel, || {})?;
-        Ok(RepackPublished { written })
+        Ok((RepackPublished { written }, held))
     }
 }
 

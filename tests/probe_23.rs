@@ -458,3 +458,56 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
         assert_eq!(read.map(|o| o.map(|o| o.data().to_vec())), Ok(Some(content.clone())), "object {id} from the published pack with default limits");
     }
 }
+
+/// Claim P (both judges): objects already held by a protected pack (recent or `.keep`) are copied
+/// into every replacement, so repeated maintenance inside the recent window stores them again
+/// each time. Three `retire_old_packs` runs with a new loose root each; the original pack stays
+/// protected throughout. Asserted: the commit is stored in exactly one pack after every run and
+/// total pack bytes stay within a small constant of the original pack.
+#[test]
+fn protected_pack_objects_are_not_duplicated_across_maintenance_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = bare(dir.path());
+    let blob = git(&root, &["hash-object", "-w", "--stdin"], &blob_lines("bulk", 2000));
+    let tree = git(&root, &["mktree"], format!("100644 blob {blob}\tfile\n").as_bytes());
+    let commit = git(&root, &["commit-tree", &tree], b"root\n");
+    git(&root, &["update-ref", "refs/heads/main", &commit], b"");
+    git(&root, &["repack", "-a", "-d"], b"");
+    let original = pack_bytes(&root);
+    let mut policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() - Duration::from_secs(3600),
+        ..RetentionPolicy::trusted()
+    };
+    let repo = Repository::open(&root).unwrap();
+    let mut copies = Vec::new();
+    let mut bytes = Vec::new();
+    for run in 0..3 {
+        let loose: ObjectId = git(&root, &["hash-object", "-w", "--stdin"], format!("root {run}\n").as_bytes())
+            .parse()
+            .unwrap();
+        policy.heads.push(loose);
+        let report = repo
+            .retire_old_packs(&mut FixtureIsolation, &policy, RepackLimits::trusted(), &AtomicBool::new(false))
+            .unwrap();
+        assert!(report.published.is_some(), "run {run}: {report:?}");
+        let holding = pack_files(&root)
+            .iter()
+            .filter(|pack| {
+                git(&root, &["verify-pack", "-v", pack.with_extension("idx").to_str().unwrap()], b"")
+                    .lines()
+                    .any(|line| line.starts_with(&commit))
+            })
+            .count();
+        copies.push(holding);
+        bytes.push(pack_bytes(&root));
+    }
+    assert_eq!(
+        copies,
+        [1, 1, 1],
+        "copies of the commit per run; total pack bytes per run {bytes:?} against original {original}"
+    );
+    assert!(
+        bytes.iter().all(|&total| total <= original + 8 * 1024),
+        "total pack bytes per run {bytes:?} against original {original}"
+    );
+}

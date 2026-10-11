@@ -174,8 +174,14 @@ impl Repository {
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
         // The isolated first scan is still current; the post-publication scan rechecks it.
-        let published = current
-            .publish_required(&first.required, &keep_all_logs, limits, cancel)
+        let (published, held) = current
+            .publish_required(
+                &first.required,
+                &first.protected_packs,
+                &keep_all_logs,
+                limits,
+                cancel,
+            )
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -215,7 +221,41 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-        for id in &first.required {
+        // Objects left out because a protected pack holds them must still decode from one of the
+        // protected packs that survive this retirement.
+        let mut unverified = held.clone();
+        for protected in &second.protected_packs {
+            if unverified.is_empty() {
+                break;
+            }
+            let index = protected.with_extension("idx");
+            if !before.contains_key(&index) {
+                continue;
+            }
+            let protected_pack =
+                FilePack::open(self.object_format(), &index, &mut pack_budget, cancel)
+                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            let ids: Vec<ObjectId> = unverified.iter().copied().collect();
+            for id in ids {
+                check(cancel, &report)?;
+                let Some(position) = protected_pack
+                    .find(id)
+                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
+                else {
+                    continue;
+                };
+                let object = protected_pack
+                    .read(position, policy.read, cancel)
+                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+                if object.id() == id {
+                    unverified.remove(&id);
+                }
+            }
+        }
+        if let Some(id) = unverified.into_iter().next() {
+            return Err(failed(RetireCause::ReplacementMissing(id), report));
+        }
+        for id in first.required.difference(&held) {
             check(cancel, &report)?;
             let position = pack
                 .find(*id)
