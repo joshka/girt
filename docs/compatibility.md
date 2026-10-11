@@ -980,17 +980,19 @@ syntax/connectivity validation, not full `git fsck`, signature verification, or 
 detection. Unreachable extras get pack/identity validation but not structured-payload validation.
 
 Object count, individual payload/program sizes, cumulative inflation/reconstruction bytes, delta
-depth, resolution visits, and reachable edge occurrences are bounded. Resolution retains decoded
-objects until connectivity succeeds and then releases them. It visits unresolved entries in passes;
-the work limit bounds pathological forward chains rather than promising linear resolution time.
-Index/table memory grows with object count; graph metadata grows with objects/edges. Parsing can
-copy structured payloads. These are input/work bounds, not an allocator or process-memory quota.
+depth, dependency-queue visits, and reachable edge occurrences are bounded. Received packs stay in
+temporary files; a 96 MiB cache retains decoded delta bases. A dependency queue resolves forward
+chains without rescanning every entry, and connectivity reads through the indexed pack. Decoding
+after cache eviction is charged to the same cumulative budget. Index/table memory grows with object
+count; graph metadata grows with objects/edges. Parsing can copy structured payloads. These are
+input/work bounds, not an allocator or process-memory quota.
 
 Cancellation is checked between I/O calls, packets, objects, and graph steps, and a progress
 callback can cancel. Interrupted I/O is returned without retrying. A flag cannot interrupt a blocked
-caller-owned stream read or one inflation/hash. The local adapter now provides
-[owned transport interruption](#owned-transport-interruption), including absolute deadlines and
-process-group cleanup on macOS/Linux. Generic streams must provide their own interruption.
+caller-owned stream read or an object hash/parse; pack inflation checks between chunks. The local
+adapter now provides [owned transport interruption](#owned-transport-interruption), including
+absolute deadlines and process-group cleanup on macOS/Linux. Generic streams must provide their own
+interruption.
 
 Native local fetch can separately report typed source-reading and pack-construction events through
 `receive_local_with_known_and_progress` or `FetchRequest::receive_local_with_progress`. Source reads
@@ -1003,14 +1005,15 @@ Cancellation from the terminal event cannot undo completed construction.
 
 ### Installation and Reference Policy
 
-The received result owns validated pack/index buffers and makes no filesystem changes. Explicit
-`install` writes and syncs private temporary files in the destination pack directory, then publishes
-the pack first and index last without replacing either path. Identical existing files are reused;
-different bytes fail. Readers discover indexes, so an unindexed pack is invisible and an index must
-have its complete pack. Existing readers retain open pack/index handles; new readers see the old
-object set or the new pair. Concurrent deletion or repacking by other tools can still require an
-opening retry. Paths must be trusted, and callers must coordinate pruning/GC until references
-protect the objects.
+The received result owns a validated temporary pack file and index bytes; native local transfers may
+retain pack bytes in memory. Drop removes temporary files without changing repository files.
+Explicit `install` writes and syncs private temporary files in the destination pack directory, then
+publishes the pack first and index last without replacing either path. Identical existing files are
+reused; different bytes fail. Readers discover indexes, so an unindexed pack is invisible and an
+index must have its complete pack. Existing readers retain open pack/index handles; new readers see
+the old object set or the new pair. Concurrent deletion or repacking by other tools can still
+require an opening retry. Paths must be trusted, and callers must coordinate pruning/GC until
+references protect the objects.
 
 Failure never removes or overwrites preexisting objects. Failure between publications may leave a
 complete unindexed pack; retrying the same received result can finish it. Ordinary failures clean

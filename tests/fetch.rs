@@ -808,9 +808,9 @@ fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
         git(repo.git_dir(), &["cat-file", "blob", &tip.to_string()], b""),
         64u64.to_be_bytes()
     );
-    // Sixty-five passes visit all sixty-five entries, including already resolved entries.
+    // The dependency queue visits each entry once and each delta edge once.
     let limits = FetchLimits {
-        max_resolution_steps: 65 * 65,
+        max_resolution_steps: 65 + 64,
         ..FetchLimits::default()
     };
     let receive = |limits| {
@@ -826,7 +826,7 @@ fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
     assert_eq!(receive(limits).unwrap().object_count(), 65);
     assert!(matches!(
         receive(FetchLimits {
-            max_resolution_steps: 65 * 65 - 1,
+            max_resolution_steps: 65 + 64 - 1,
             ..limits
         }),
         Err(FetchError::Limit("delta resolution steps"))

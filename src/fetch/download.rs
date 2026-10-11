@@ -10,20 +10,21 @@ use crate::packet::Wire;
 
 /// A bounded network response awaiting synchronous pack and connectivity validation.
 ///
-/// Owns downloaded protocol bytes and, when supplied, an [`Arc`] retaining the exact verified
-/// history used for negotiation. History cannot be substituted during validation. It is
-/// `Send + Sync + 'static` and can move into a caller-managed blocking worker after the initiating
-/// scope ends. No history allocation is retained for a `None` input. Validation consumes this
-/// result and releases its history ownership on success or failure; dropping it does the same
-/// while discarding the bytes. Other Arc owners can keep history alive independently.
+/// Owns a temporary file of downloaded protocol bytes and, when supplied, an [`Arc`] retaining the
+/// exact verified history used for negotiation. History cannot be substituted during validation. It
+/// is `Send + Sync + 'static` and can move into a caller-managed blocking worker after the
+/// initiating scope ends. No history allocation is retained for a `None` input. Validation consumes
+/// this result and releases its history ownership on success or failure; dropping it does the same
+/// while removing the temporary file. Other Arc owners can keep history alive independently.
 ///
-/// Downloading has no local filesystem side effects. A successful download is not evidence of a
-/// valid pack. With `tracing`, this value also retains the initiating span and subscriber until
-/// validation or drop. Validation restores them on the worker, then restores its previous context;
-/// the retained network span's lifetime includes queue/validation time. Subscriber state must not
-/// assume release on the initiating thread. Callers bound queued downloads, retained bytes and
-/// active workers, and observe worker completion even after requesting cancellation; dropping a
-/// worker handle does not stop its work.
+/// Downloading writes bounded chunks to a temporary file in the system temporary directory, without
+/// changing repository files. Ordinary errors and drop remove it; crashes can leave temporary
+/// files. A successful download is not evidence of a valid pack. With `tracing`, this value also
+/// retains the initiating span and subscriber until validation or drop. Validation restores them on
+/// the worker, then restores its previous context; the retained network span's lifetime includes
+/// queue/validation time. Subscriber state must not assume release on the initiating thread.
+/// Callers bound queued downloads, temporary disk use and active workers, and observe worker
+/// completion even after requesting cancellation; dropping a worker handle does not stop its work.
 pub struct DownloadedFetch {
     #[cfg(feature = "tracing")]
     pub(super) trace: crate::trace::DownloadContext,
@@ -32,7 +33,7 @@ pub struct DownloadedFetch {
     pub(super) known: Option<Arc<KnownHistory>>,
     pub(super) limits: FetchLimits,
     pub(super) remaining: usize,
-    pub(super) body: Vec<u8>,
+    pub(super) body: super::bytes::Bytes,
 }
 
 impl std::fmt::Debug for DownloadedFetch {
@@ -48,8 +49,9 @@ impl DownloadedFetch {
     ///
     /// Run on a caller-managed bounded CPU worker for large inputs. This work may process up to
     /// `max_decode_bytes`, `max_resolution_steps` and `max_connectivity_edges`; bounded input does
-    /// not imply a short execution time. Cancellation is cooperative between packets/objects/graph
-    /// steps, not during a single hash, inflate or parse. The network deadline has ended. Progress
+    /// not imply a short execution time. Cancellation is checked between packets, objects and graph
+    /// steps, and during streamed pack reads/inflation. It cannot interrupt a blocked filesystem
+    /// call or a single object hash/parse. The network deadline has ended. Progress
     /// callbacks run here, after network completion, replaying any notices already observed through
     /// a live HTTP or SSH callback. Pass a no-op callback to avoid duplicate display. Installation
     /// is a separate synchronous call.
@@ -127,7 +129,7 @@ impl DownloadedFetch {
                 observer.complete();
                 return Ok(received);
             }
-            let mut reader = self.body.as_slice();
+            let mut reader = self.body.reader()?;
             let mut wire = Wire {
                 reader: &mut reader,
                 remaining: self.remaining,
@@ -224,7 +226,7 @@ mod tests {
             known,
             limits,
             remaining: limits.max_wire_bytes,
-            body,
+            body: body.into(),
         }
     }
 

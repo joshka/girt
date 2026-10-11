@@ -95,6 +95,7 @@ pub use workflow::{
     FetchUpdate, FetchUpdateKind, FetchWorkflowError, RetainedFetchFinishError, RetainedFetchReady,
 };
 
+mod bytes;
 mod connectivity;
 mod discovery;
 #[cfg(feature = "http")]
@@ -122,8 +123,8 @@ mod protocol;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) use install::NativeContents;
 pub use install::{FetchInstalled, ReceivedFetch};
+pub(crate) use install::{NativeContents, PackInput};
 pub use known::KnownHistory;
 pub use local::{
     receive_local, receive_local_with_control, receive_local_with_known,
@@ -148,15 +149,18 @@ pub struct FetchOptions {
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
 ///
-/// Retained buffers are O(`max_wire_bytes` + `max_decode_bytes` + `max_objects` +
-/// `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads bounded by
-/// `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs at most 44
-/// bytes per object plus 1072 bytes. Thin-pack completion can retain a second pack bounded by
-/// `max_pack_bytes`. Graph parsing can temporarily copy a structured payload and
-/// its fields. These input/work bounds exclude allocator overhead, stream-owned buffers, fixed zlib
-/// scratch space, and server memory; they are not a hard process heap or wall-clock limit. Zero
-/// bounds allow only the corresponding empty operation. Counters include duplicate input
-/// occurrences where applicable.
+/// Wire transfers spool the response and pack to temporary files, each bounded by `max_wire_bytes`
+/// and `max_pack_bytes` respectively. Decoded delta bases use a 96 MiB cache; live reconstruction
+/// buffers are bounded by `max_decode_bytes` and per-object limits. Protocol prefixes and
+/// advertisements are bounded by `max_shallow_roots` and `max_advertisement_bytes`. Entry/graph
+/// metadata is
+/// O(`max_objects` + `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads
+/// bounded by `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs
+/// at most 44 bytes per object plus 1072 bytes. Native local pack construction still buffers
+/// output. Graph parsing can temporarily copy a structured payload and its fields. These input/work
+/// bounds exclude allocator overhead, stream-owned buffers, fixed zlib scratch space, and server
+/// memory; they are not a hard process heap or wall-clock limit. Zero bounds allow only the
+/// corresponding empty operation. Counters include duplicate input occurrences where applicable.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchLimits {
     /// Total received pkt-line bytes, framing included (default 512 MiB).
@@ -190,11 +194,13 @@ pub struct FetchLimits {
     pub max_object_bytes: usize,
     /// Bytes in each inflated delta program (default 64 MiB).
     pub max_delta_bytes: usize,
-    /// Aggregate inflated programs, ordinary payloads, and delta results (default 512 MiB).
+    /// Aggregate inflated programs, ordinary payloads, delta results and appended external bases
+    /// (default 512 MiB). Includes repeated decoding after cache eviction and connectivity reads.
     pub max_decode_bytes: usize,
     /// Delta edges from any object to an ordinary base (default 64).
     pub max_delta_depth: usize,
-    /// Entry visits during iterative base resolution (default 10 million).
+    /// Entry/edge visits and external-base probes during queued base resolution (default 10
+    /// million).
     pub max_resolution_steps: usize,
     /// Reachable edge occurrences, including duplicates (default 4 million).
     pub max_connectivity_edges: usize,
@@ -231,8 +237,9 @@ impl FetchLimits {
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
     /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
     ///
-    /// The received pack is still held in memory while it is validated, so memory use grows with
-    /// the pack. `max_haves` keeps its default: it bounds negotiation, not what can be fetched.
+    /// Wire pack payloads stay on disk, with a bounded delta-base cache. Metadata and individual
+    /// object reconstruction still grow with the input. `max_haves` keeps its default: it bounds
+    /// negotiation, not what can be fetched.
     pub const fn trusted() -> Self {
         const UNBOUNDED: usize = usize::MAX / 4;
         Self {

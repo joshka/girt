@@ -1,26 +1,27 @@
-//! Imports received pack bytes for fetch validation, retaining decoded objects until
-//! connectivity is checked. Storage-format primitives remain in the pack module.
-
-use std::collections::HashMap;
-#[cfg(test)]
+//! Index received packs on disk, retaining metadata and a bounded decoded delta-base cache.
+use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
+use flate2::{Decompress, FlushDecompress, Status};
+
+use super::bytes::Bytes;
 use super::known::KnownObjects;
 use super::progress::ValidationObserver;
 use super::{FetchError, FetchLimits, check_cancelled};
+use crate::object::Hasher;
 use crate::pack::delta::{apply, byte, charge, size};
-use crate::pack::index::{verify_hash, word};
-use crate::pack::reader::inflate_prefix;
+use crate::pack::index::word;
+use crate::pack::reader::{BaseCache, Source, decode_budgeted};
 use crate::pack::write::{Entry, encode_index};
 use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error};
 
-/// Fully decoded objects are retained until connectivity has been checked. All inflation and
-/// reconstruction is charged to one budget, so both live payload memory and delta work are bounded.
 pub(crate) struct Imported {
-    pub objects: HashMap<ObjectId, Object>,
+    pub objects: IndexedObjects,
     pub index: Vec<u8>,
     pub checksum: ObjectId,
-    pub complete_pack: Option<Vec<u8>>,
 }
 
 impl Imported {
@@ -51,6 +52,7 @@ impl Imported {
         )
     }
 
+    #[cfg(test)]
     pub fn read_observed(
         format: crate::ObjectFormat,
         data: &[u8],
@@ -58,50 +60,91 @@ impl Imported {
         limits: FetchLimits,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
+        let mut pack = Bytes::temporary()?;
+        pack.append(data)?;
+        Self::read_owned(format, pack, known, limits, observer)
+    }
+
+    pub fn read_owned(
+        format: crate::ObjectFormat,
+        pack: Bytes,
+        known: &(impl KnownObjects + ?Sized),
+        limits: FetchLimits,
+        observer: &mut ValidationObserver<'_>,
+    ) -> Result<Self, FetchError> {
         let cancel = observer.cancel;
         #[cfg(feature = "tracing")]
-        let span = tracing::debug_span!(
-            target: "girt",
-            "fetch.import",
-            object_format = %format,
-            outcome = "incomplete",
-            failure_class = tracing::field::Empty,
-            effects = tracing::field::Empty,
-            pack_bytes = data.len(),
-            decoded_bytes = tracing::field::Empty,
-            objects = tracing::field::Empty,
-        );
-
+        let span = tracing::debug_span!(target: "girt", "fetch.import", object_format = %format,
+            outcome = "incomplete", failure_class = tracing::field::Empty,
+            effects = tracing::field::Empty, pack_bytes = pack.len(),
+            decoded_bytes = tracing::field::Empty, objects = tracing::field::Empty);
         let operation = || {
             check_cancelled(cancel)?;
-            if data.len() > limits.max_pack_bytes {
+            if pack.len() > limits.max_pack_bytes {
                 return Err(FetchError::Limit("pack bytes"));
             }
-            if data.len() < 12 + format.digest_len() || &data[..4] != b"PACK" {
+            let Bytes::File(temporary, len) = pack else {
+                unreachable!("received packs are spooled before indexing")
+            };
+            if len < 12 + format.digest_len() {
                 return Err(Error::Corrupt("pack header").into());
             }
-            let version = word(data, 4)?;
+            let path = temporary.path().to_owned();
+            let mut reader = BufReader::with_capacity(64 * 1024, temporary.reopen()?);
+            let mut header = [0; 12];
+            reader.read_exact(&mut header)?;
+            if &header[..4] != b"PACK" {
+                return Err(Error::Corrupt("pack header").into());
+            }
+            let version = word(&header, 4)?;
             if version != 2 {
                 return Err(Error::PackVersion(version).into());
             }
-            let count = word(data, 8)? as usize;
+            let count = word(&header, 8)? as usize;
             if count > limits.max_objects {
                 return Err(FetchError::Limit("pack objects"));
             }
-            verify_hash(format, data, "received pack checksum")?;
-            let end = data.len() - format.digest_len();
-            let checksum = ObjectId::from_bytes(format, &data[end..]).unwrap();
-            let mut input = &data[12..end];
-            let mut entries = Vec::new();
+            // Verify the complete wire artifact before trusting any entry. Reads remain bounded.
+            reader.seek(SeekFrom::Start(0))?;
+            let end = len - format.digest_len();
+            let mut hash = Hasher::new(format);
+            let mut left = end;
+            let mut buffer = [0; 64 * 1024];
+            while left != 0 {
+                check_cancelled(cancel)?;
+                let n = left.min(buffer.len());
+                reader.read_exact(&mut buffer[..n])?;
+                hash.update(&buffer[..n]);
+                left -= n;
+            }
+            let mut trailer = vec![0; format.digest_len()];
+            reader.read_exact(&mut trailer)?;
+            let checksum = hash.finalize();
+            if checksum.as_bytes() != trailer {
+                return Err(Error::Corrupt("received pack checksum").into());
+            }
+            reader.seek(SeekFrom::Start(12))?;
+            if count > (end - 12) / 3 {
+                return Err(Error::Corrupt("pack object count").into());
+            }
+            let mut objects = IndexedObjects {
+                pack: Bytes::File(temporary, len),
+                file: Mutex::new(reader.get_ref().try_clone()?),
+                format,
+                entries: Vec::with_capacity(count),
+                identities: HashMap::new(),
+                cache: BaseCache::new(),
+                count,
+                limits,
+                remaining: Mutex::new(0),
+            };
             let mut remaining = limits.max_decode_bytes;
+            let mut offset = 12;
             observer.decoding(count);
             for _ in 0..count {
                 check_cancelled(cancel)?;
-                let offset = end - input.len();
-                let header = byte(&mut input)?;
-                let kind = (header >> 4) & 7;
-                let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
-                let base = base(format, &mut input, kind, offset)?;
+                let mut crc = crc32fast::Hasher::new();
+                let (base, length, prefix) = read_header(format, &mut reader, offset, &mut crc)?;
                 let maximum = if matches!(base, Base::Kind(_)) {
                     limits.max_object_bytes
                 } else {
@@ -111,89 +154,65 @@ impl Imported {
                     return Err(FetchError::Limit("inflated entry bytes"));
                 }
                 charge(&mut remaining, length)?;
-                let (payload, consumed) = inflate_prefix(input, length)?;
-                input = &input[consumed..];
-                let entry_end = end - input.len();
-                entries.push(ReceivedEntry {
+                let (payload, consumed) =
+                    inflate_stream(&mut reader, length, &mut crc, cancel, &path)
+                        .map_err(fetch_read_error)?;
+                let entry_end = offset + prefix + consumed;
+                if entry_end > end {
+                    return Err(Error::Corrupt("trailing pack entries").into());
+                }
+                let position = objects.entries.len();
+                let resolved = if let Base::Kind(kind) = base {
+                    let object = Object {
+                        format,
+                        kind,
+                        data: payload,
+                    };
+                    let id = object.id();
+                    if objects.identities.insert(id, position).is_some() {
+                        return Err(Error::Corrupt("duplicate received identity").into());
+                    }
+                    objects.cache.insert_owned(position, object, true);
+                    Some((id, 0, kind))
+                } else {
+                    None
+                };
+                objects.entries.push(ReceivedEntry {
                     base,
-                    payload,
                     offset,
-                    crc: crc32fast::hash(&data[offset..entry_end]),
-                    resolved: None,
+                    start: offset + prefix,
+                    end: entry_end,
+                    length,
+                    crc: crc.finalize(),
+                    resolved,
                 });
+                offset = entry_end;
                 observer.decoded();
             }
-            if !input.is_empty() {
+            if offset != end {
                 return Err(Error::Corrupt("trailing pack entries").into());
             }
-            let deltas = entries
+            let deltas = objects
+                .entries
                 .iter()
-                .filter(|entry| !matches!(entry.base, Base::Kind(_)))
+                .filter(|e| e.resolved.is_none())
                 .count();
             observer.resolving(deltas);
-            let (objects, external) = resolve(
-                format,
-                &mut entries,
-                known,
-                limits,
-                &mut remaining,
-                observer,
-            )?;
+            let external = objects.resolve(known, &mut remaining, observer)?;
+            let checksum = if external {
+                objects.finish_thin(cancel)?
+            } else {
+                checksum
+            };
+            let index = objects.index(checksum)?;
+            objects.remaining = Mutex::new(remaining);
             #[cfg(feature = "tracing")]
             span.record("decoded_bytes", limits.max_decode_bytes - remaining)
-                .record("objects", objects.len());
-            if external {
-                check_cancelled(cancel)?;
-                let inputs: Vec<_> = entries
-                    .iter()
-                    .map(|entry| {
-                        let id = entry.resolved.unwrap().0;
-                        let object = &objects[&id];
-                        crate::PackObject {
-                            id,
-                            kind: object.kind(),
-                            data: object.data(),
-                        }
-                    })
-                    .collect();
-                let mut pack = Vec::new();
-                let mut index = Vec::new();
-                let written = crate::write_pack(
-                    format,
-                    &inputs,
-                    &mut pack,
-                    &mut index,
-                    crate::PackWriteLimits {
-                        max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
-                        max_object_bytes: limits.max_object_bytes as u64,
-                        max_input_bytes: limits.max_decode_bytes as u64,
-                        max_pack_bytes: limits.max_pack_bytes as u64,
-                        ..Default::default()
-                    },
-                )?;
-                check_cancelled(cancel)?;
-                return Ok(Self {
-                    objects,
-                    index,
-                    checksum: written.checksum,
-                    complete_pack: Some(pack),
-                });
-            }
-            let mut index_entries: Vec<_> = entries
-                .iter()
-                .map(|entry| Entry {
-                    id: entry.resolved.unwrap().0,
-                    offset: entry.offset as u64,
-                    crc: entry.crc,
-                })
-                .collect();
-            index_entries.sort_unstable_by_key(|entry| entry.id);
-            let index = encode_index(&index_entries, checksum)?;
+                .record("objects", count);
             Ok(Self {
                 objects,
                 index,
                 checksum,
-                complete_pack: None,
             })
         };
         #[cfg(feature = "tracing")]
@@ -202,24 +221,513 @@ impl Imported {
         let result = { operation }();
         #[cfg(feature = "tracing")]
         crate::trace::finish(&span, &result, crate::trace::fetch);
-
         result
     }
 }
 
 struct ReceivedEntry {
     base: Base,
-    payload: Vec<u8>,
     offset: usize,
+    start: usize,
+    end: usize,
+    length: usize,
     crc: u32,
-    // Identity and number of delta edges, once reconstructed.
-    resolved: Option<(ObjectId, usize)>,
+    resolved: Option<(ObjectId, usize, ObjectKind)>,
 }
 
+#[derive(Clone, Copy)]
 enum Base {
     Kind(ObjectKind),
     Offset(usize),
     Id(ObjectId),
+}
+
+/// Identity and offset tables stay resident; payloads are decoded on demand from the owned file.
+pub(crate) struct IndexedObjects {
+    pub pack: Bytes,
+    file: Mutex<File>,
+    format: crate::ObjectFormat,
+    entries: Vec<ReceivedEntry>,
+    identities: HashMap<ObjectId, usize>,
+    cache: BaseCache,
+    count: usize,
+    limits: FetchLimits,
+    remaining: Mutex<usize>,
+}
+
+impl IndexedObjects {
+    pub(crate) fn len(&self) -> usize {
+        self.count
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    pub(crate) fn contains_key(&self, id: &ObjectId) -> bool {
+        self.identities.get(id).is_some_and(|&p| p < self.count)
+    }
+    pub(crate) fn get(
+        &self,
+        id: &ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Object>, FetchError> {
+        self.identities
+            .get(id)
+            .filter(|&&p| p < self.count)
+            .map(|&p| self.read(p, cancel))
+            .transpose()
+    }
+    pub(crate) fn kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        self.identities
+            .get(&id)
+            .filter(|&&p| p < self.count)
+            .map(|&p| self.entries[p].resolved.unwrap().2)
+    }
+    fn read(&self, position: usize, cancel: &AtomicBool) -> Result<Object, FetchError> {
+        let mut remaining = self.remaining.lock().unwrap_or_else(|e| e.into_inner());
+        self.read_budgeted(position, cancel, &mut remaining)
+    }
+
+    fn read_budgeted(
+        &self,
+        position: usize,
+        cancel: &AtomicBool,
+        remaining: &mut usize,
+    ) -> Result<Object, FetchError> {
+        let decoded = decode_budgeted(
+            self,
+            position,
+            crate::ReadLimits {
+                max_object_bytes: self.limits.max_object_bytes,
+                max_delta_bytes: self.limits.max_delta_bytes,
+                max_delta_depth: self.limits.max_delta_depth,
+                max_decode_bytes: self.limits.max_decode_bytes,
+                max_input_bytes: self.limits.max_pack_bytes,
+            },
+            cancel,
+            remaining,
+        );
+        decoded.map_err(fetch_read_error)
+    }
+
+    fn resolve(
+        &mut self,
+        known: &(impl KnownObjects + ?Sized),
+        remaining: &mut usize,
+        observer: &mut ValidationObserver<'_>,
+    ) -> Result<bool, FetchError> {
+        let offsets: HashMap<_, _> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(p, e)| (e.offset, p))
+            .collect();
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); self.count];
+        let mut waiting: HashMap<ObjectId, Vec<usize>> = HashMap::new();
+        let mut ready = VecDeque::new();
+        for (p, entry) in self.entries.iter().enumerate() {
+            match entry.base {
+                Base::Kind(_) => ready.push_back(p),
+                Base::Offset(offset) => children[*offsets
+                    .get(&offset)
+                    .ok_or(Error::Corrupt("delta base offset"))?]
+                .push(p),
+                Base::Id(id) => waiting.entry(id).or_default().push(p),
+            }
+        }
+        let mut work = self.limits.max_resolution_steps;
+        let mut resolved = self.identities.len();
+        let mut external = false;
+        loop {
+            while let Some(parent) = ready.pop_back() {
+                check_cancelled(observer.cancel)?;
+                work = work
+                    .checked_sub(1)
+                    .ok_or(FetchError::Limit("delta resolution steps"))?;
+                let (id, depth, kind) = self.entries[parent].resolved.unwrap();
+                let mut dependents = std::mem::take(&mut children[parent]);
+                dependents.extend(waiting.remove(&id).unwrap_or_default());
+                if dependents.is_empty() {
+                    continue;
+                }
+                let base = self.read_budgeted(parent, observer.cancel, remaining)?;
+                for child in dependents {
+                    check_cancelled(observer.cancel)?;
+                    work = work
+                        .checked_sub(1)
+                        .ok_or(FetchError::Limit("delta resolution steps"))?;
+                    if depth >= self.limits.max_delta_depth {
+                        return Err(FetchError::Limit("delta depth"));
+                    }
+                    let entry = &self.entries[child];
+                    charge(remaining, entry.length)?;
+                    let program = self
+                        .inflate(entry.start, entry.end, entry.length, observer.cancel)
+                        .map_err(fetch_read_error)?;
+                    let data = apply(
+                        base.data(),
+                        &program,
+                        self.limits.max_object_bytes,
+                        remaining,
+                    )?;
+                    let object = Object {
+                        format: self.format,
+                        kind,
+                        data,
+                    };
+                    let id = object.id();
+                    if self.identities.insert(id, child).is_some() {
+                        return Err(Error::Corrupt("duplicate received identity").into());
+                    }
+                    self.entries[child].resolved = Some((id, depth + 1, kind));
+                    self.cache.insert_owned(child, object, true);
+                    resolved += 1;
+                    observer.resolved_delta();
+                    ready.push_back(child);
+                }
+            }
+            if resolved == self.count {
+                break;
+            }
+            // Only consult local history after every currently available in-pack base is resolved.
+            // Append ordinary bases to preserve the server's deltas in a self-contained pack.
+            let mut external_base = None;
+            for &id in waiting.keys() {
+                check_cancelled(observer.cancel)?;
+                work = work
+                    .checked_sub(1)
+                    .ok_or(FetchError::Limit("delta resolution steps"))?;
+                if let Some(object) = known.get(id) {
+                    external_base = Some((id, object));
+                    break;
+                }
+            }
+            let Some((id, object)) = external_base else {
+                return Err(waiting
+                    .keys()
+                    .next()
+                    .copied()
+                    .map_or(Error::DeltaCycle, Error::MissingBase)
+                    .into());
+            };
+            if object.id() != id {
+                return Err(Error::Corrupt("external delta base identity").into());
+            }
+            charge(remaining, object.data().len())?;
+            let position = self.append_object(&object, observer.cancel)?;
+            children.push(Vec::new());
+            ready.push_back(position);
+            external = true;
+        }
+        Ok(external)
+    }
+
+    pub(crate) fn append_dependency(
+        &mut self,
+        object: &Object,
+        cancel: &AtomicBool,
+    ) -> Result<(), FetchError> {
+        if self.identities.contains_key(&object.id()) {
+            return Ok(());
+        }
+        {
+            let mut remaining = self.remaining.lock().unwrap_or_else(|e| e.into_inner());
+            charge(&mut remaining, object.data().len())?;
+        }
+        self.append_object(object, cancel)?;
+        Ok(())
+    }
+
+    pub(crate) fn append_object(
+        &mut self,
+        object: &Object,
+        cancel: &AtomicBool,
+    ) -> Result<usize, FetchError> {
+        check_cancelled(cancel)?;
+        let id = object.id();
+        if let Some(&position) = self.identities.get(&id) {
+            return Ok(position);
+        }
+        if self.entries.len() >= self.limits.max_objects {
+            return Err(crate::PackWriteError::Limit("objects").into());
+        }
+        if object.data().len() > self.limits.max_object_bytes {
+            return Err(crate::PackWriteError::Limit("object bytes").into());
+        }
+        let Bytes::File(file, len) = &mut self.pack else {
+            unreachable!()
+        };
+        let offset = self.entries.last().map_or(12, |e| e.end);
+        file.as_file_mut().seek(SeekFrom::Start(offset as u64))?;
+        let mut header = Vec::new();
+        let mut size = object.data().len();
+        let mut first = (match object.kind() {
+            ObjectKind::Commit => 1,
+            ObjectKind::Tree => 2,
+            ObjectKind::Blob => 3,
+            ObjectKind::Tag => 4,
+        } << 4)
+            | (size & 15) as u8;
+        size >>= 4;
+        if size != 0 {
+            first |= 128;
+        }
+        header.push(first);
+        while size != 0 {
+            let mut b = (size & 127) as u8;
+            size >>= 7;
+            if size != 0 {
+                b |= 128;
+            }
+            header.push(b);
+        }
+        // Only this ordinary base is recompressed. Check its complete encoded size before
+        // extending the file, so a refused thin-pack completion cannot exceed its disk budget.
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(object.data())?;
+        let compressed = encoder.finish()?;
+        let end = offset + header.len() + compressed.len();
+        if end + self.format.digest_len() > self.limits.max_pack_bytes {
+            return Err(crate::PackWriteError::Limit("pack bytes").into());
+        }
+        file.write_all(&header)?;
+        file.write_all(&compressed)?;
+        *len = end + self.format.digest_len();
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(&header);
+        crc.update(&compressed);
+        let position = self.entries.len();
+        self.entries.push(ReceivedEntry {
+            base: Base::Kind(object.kind()),
+            offset,
+            start: offset + header.len(),
+            end,
+            length: object.data().len(),
+            crc: crc.finalize(),
+            resolved: Some((id, 0, object.kind())),
+        });
+        self.identities.insert(id, position);
+        self.cache.insert(position, object, true);
+        Ok(position)
+    }
+
+    pub(crate) fn finish_thin(&mut self, cancel: &AtomicBool) -> Result<ObjectId, FetchError> {
+        let Bytes::File(file, len) = &mut self.pack else {
+            unreachable!()
+        };
+        file.as_file_mut().seek(SeekFrom::Start(8))?;
+        file.write_all(
+            &u32::try_from(self.entries.len())
+                .map_err(|_| FetchError::Limit("pack objects"))?
+                .to_be_bytes(),
+        )?;
+        let end = *len - self.format.digest_len();
+        file.as_file_mut().seek(SeekFrom::Start(0))?;
+        let mut hash = Hasher::new(self.format);
+        let mut left = end;
+        let mut buffer = [0; 64 * 1024];
+        while left != 0 {
+            check_cancelled(cancel)?;
+            let n = left.min(buffer.len());
+            file.read_exact(&mut buffer[..n])?;
+            hash.update(&buffer[..n]);
+            left -= n;
+        }
+        let checksum = hash.finalize();
+        file.write_all(checksum.as_bytes())?;
+        file.as_file_mut().set_len(*len as u64)?;
+        Ok(checksum)
+    }
+
+    pub(crate) fn index(&self, checksum: ObjectId) -> Result<Vec<u8>, FetchError> {
+        let mut entries: Vec<_> = self
+            .entries
+            .iter()
+            .map(|e| Entry {
+                id: e.resolved.unwrap().0,
+                offset: e.offset as u64,
+                crc: e.crc,
+            })
+            .collect();
+        entries.sort_unstable_by_key(|e| e.id);
+        Ok(encode_index(&entries, checksum)?)
+    }
+}
+
+impl Source for IndexedObjects {
+    fn format(&self) -> crate::ObjectFormat {
+        self.format
+    }
+    fn entry(&self, position: usize) -> Result<crate::pack::index::Entry, Error> {
+        let entry = &self.entries[position];
+        Ok(crate::pack::index::Entry {
+            id: entry.resolved.unwrap().0,
+            offset: entry.offset,
+            end: entry.end,
+            crc: Some(entry.crc),
+        })
+    }
+    fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
+        Ok(self.identities.get(&id).copied())
+    }
+    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
+        self.entries
+            .binary_search_by_key(&offset, |e| e.offset)
+            .map_err(|_| Error::Corrupt("delta base offset"))
+    }
+    fn prefix(&self, entry: &crate::pack::index::Entry) -> Result<Vec<u8>, Error> {
+        self.bytes(entry.offset, entry.end.min(entry.offset + 64))
+    }
+    fn inflate(
+        &self,
+        start: usize,
+        end: usize,
+        expected: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, Error> {
+        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
+        file.seek(SeekFrom::Start(start as u64))
+            .map_err(|source| self.io(source))?;
+        let mut reader =
+            BufReader::with_capacity(64 * 1024, (&mut *file).take((end - start) as u64));
+        let (data, consumed) = inflate_stream(
+            &mut reader,
+            expected,
+            &mut crc32fast::Hasher::new(),
+            cancel,
+            self.pack.path().expect("indexed packs are file backed"),
+        )?;
+        if consumed != end - start {
+            return Err(Error::Corrupt("packed entry length or trailing data"));
+        }
+        Ok(data)
+    }
+    fn base_cache(&self) -> Option<&BaseCache> {
+        Some(&self.cache)
+    }
+}
+impl IndexedObjects {
+    fn io(&self, source: std::io::Error) -> Error {
+        Error::Path {
+            path: self
+                .pack
+                .path()
+                .expect("indexed packs are file backed")
+                .to_owned(),
+            source,
+        }
+    }
+
+    fn bytes(&self, start: usize, end: usize) -> Result<Vec<u8>, Error> {
+        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
+        file.seek(SeekFrom::Start(start as u64))
+            .map_err(|source| self.io(source))?;
+        let mut bytes = vec![0; end - start];
+        file.read_exact(&mut bytes)
+            .map_err(|source| self.io(source))?;
+        Ok(bytes)
+    }
+}
+
+fn fetch_read_error(error: Error) -> FetchError {
+    match error {
+        Error::Cancelled => FetchError::Cancelled,
+        other => FetchError::Pack(other),
+    }
+}
+
+fn read_header(
+    format: crate::ObjectFormat,
+    reader: &mut impl Read,
+    offset: usize,
+    crc: &mut crc32fast::Hasher,
+) -> Result<(Base, usize, usize), FetchError> {
+    let mut prefix = Vec::new();
+    let mut next = || -> Result<u8, FetchError> {
+        let mut b = [0];
+        reader
+            .read_exact(&mut b)
+            .map_err(|_| Error::Corrupt("truncated pack entry"))?;
+        prefix.push(b[0]);
+        crc.update(&b);
+        Ok(b[0])
+    };
+    let header = next()?;
+    let kind = (header >> 4) & 7;
+    let mut length_bytes = vec![header];
+    let mut last = header;
+    while last & 128 != 0 {
+        last = next()?;
+        length_bytes.push(last);
+        if length_bytes.len() > 10 {
+            return Err(Error::Corrupt("size overflow").into());
+        }
+    }
+    let mut input = &length_bytes[1..];
+    let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
+    match kind {
+        6 => {
+            let mut b = next()?;
+            let mut count = 1;
+            while b & 128 != 0 {
+                b = next()?;
+                count += 1;
+                if count > 10 {
+                    return Err(Error::Corrupt("delta offset overflow").into());
+                }
+            }
+        }
+        7 => {
+            for _ in 0..format.digest_len() {
+                next()?;
+            }
+        }
+        _ => {}
+    }
+    let mut input = &prefix[length_bytes.len()..];
+    let base = base(format, &mut input, kind, offset)?;
+    Ok((base, length, prefix.len()))
+}
+
+fn inflate_stream(
+    reader: &mut impl BufRead,
+    expected: usize,
+    crc: &mut crc32fast::Hasher,
+    cancel: &AtomicBool,
+    path: &std::path::Path,
+) -> Result<(Vec<u8>, usize), Error> {
+    let mut inflater = Decompress::new(true);
+    let mut output = [0; 64 * 1024];
+    let mut data = Vec::new();
+    loop {
+        crate::pack::reader::check_cancelled(cancel)?;
+        let input = reader.fill_buf().map_err(|source| Error::Path {
+            path: path.to_owned(),
+            source,
+        })?;
+        let before_in = inflater.total_in();
+        let before_out = inflater.total_out();
+        let status = inflater
+            .decompress(input, &mut output, FlushDecompress::None)
+            .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
+        let consumed = (inflater.total_in() - before_in) as usize;
+        let produced = (inflater.total_out() - before_out) as usize;
+        crc.update(&input[..consumed]);
+        reader.consume(consumed);
+        if produced > expected.saturating_sub(data.len()) {
+            return Err(Error::Corrupt("inflated entry exceeds declared size"));
+        }
+        data.extend_from_slice(&output[..produced]);
+        if status == Status::StreamEnd {
+            if data.len() != expected {
+                return Err(Error::Corrupt("packed entry length or trailing data"));
+            }
+            return Ok((data, inflater.total_in() as usize));
+        }
+        if produced == 0 && consumed == 0 {
+            return Err(Error::Corrupt("truncated packed zlib stream"));
+        }
+    }
 }
 
 fn base(
@@ -265,124 +773,6 @@ fn base(
     })
 }
 
-fn resolve(
-    format: crate::ObjectFormat,
-    entries: &mut [ReceivedEntry],
-    known: &(impl KnownObjects + ?Sized),
-    limits: FetchLimits,
-    remaining: &mut usize,
-    observer: &mut ValidationObserver<'_>,
-) -> Result<(HashMap<ObjectId, Object>, bool), FetchError> {
-    let cancel = observer.cancel;
-    let offsets: HashMap<_, _> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, e)| (e.offset, i))
-        .collect();
-    let mut identities = HashMap::new();
-    let mut objects: HashMap<ObjectId, Object> = HashMap::new();
-    // Local objects used as delta bases for a thin pack.
-    let mut external_bases: HashMap<ObjectId, Object> = HashMap::new();
-    let mut work = limits.max_resolution_steps;
-    let mut external = false;
-    while objects.len() < entries.len() {
-        let before = objects.len();
-        for i in 0..entries.len() {
-            check_cancelled(cancel)?;
-            work = work
-                .checked_sub(1)
-                .ok_or(FetchError::Limit("delta resolution steps"))?;
-            if entries[i].resolved.is_some() {
-                continue;
-            }
-            let base = match entries[i].base {
-                Base::Kind(_) => None,
-                Base::Offset(offset) => {
-                    let position = offsets
-                        .get(&offset)
-                        .ok_or(Error::Corrupt("delta base offset"))?;
-                    let Some(base) = entries[*position].resolved else {
-                        continue;
-                    };
-                    Some(base)
-                }
-                Base::Id(id) => {
-                    if let Some(depth) = identities.get(&id).copied() {
-                        Some((id, depth))
-                    } else {
-                        if let std::collections::hash_map::Entry::Vacant(entry) =
-                            external_bases.entry(id)
-                        {
-                            let Some(base) = known.get(id) else {
-                                continue;
-                            };
-                            if base.id() != id {
-                                return Err(Error::Corrupt("external delta base identity").into());
-                            }
-                            entry.insert(base.into_owned());
-                        }
-                        external = true;
-                        Some((id, 0))
-                    }
-                }
-            };
-            let (object, depth) = if let Some((id, depth)) = base {
-                if depth >= limits.max_delta_depth {
-                    return Err(FetchError::Limit("delta depth"));
-                }
-                let base = objects
-                    .get(&id)
-                    .or_else(|| external_bases.get(&id))
-                    .unwrap();
-                let data = apply(
-                    &base.data,
-                    &entries[i].payload,
-                    limits.max_object_bytes,
-                    remaining,
-                )?;
-                (
-                    Object {
-                        format,
-                        kind: base.kind,
-                        data,
-                    },
-                    depth + 1,
-                )
-            } else {
-                let Base::Kind(kind) = entries[i].base else {
-                    unreachable!()
-                };
-                (
-                    Object {
-                        format,
-                        kind,
-                        data: std::mem::take(&mut entries[i].payload),
-                    },
-                    0,
-                )
-            };
-            let id = object.id();
-            if objects.insert(id, object).is_some() {
-                return Err(Error::Corrupt("duplicate received identity").into());
-            }
-            identities.insert(id, depth);
-            entries[i].resolved = Some((id, depth));
-            entries[i].payload.clear();
-            if depth != 0 {
-                observer.resolved_delta();
-            }
-        }
-        if before == objects.len() {
-            let missing = entries.iter().find_map(|entry| match entry.base {
-                Base::Id(id) if entry.resolved.is_none() && !objects.contains_key(&id) => Some(id),
-                _ => None,
-            });
-            return Err(missing.map_or(Error::DeltaCycle, Error::MissingBase).into());
-        }
-    }
-    Ok((objects, external))
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -393,6 +783,80 @@ mod tests {
 
     use super::*;
     use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn evicted_delta_bases_are_read_from_the_temporary_pack(#[case] format: ObjectFormat) {
+        let mut imported = read(format, &forward_ref_pack(format), FetchLimits::default()).unwrap();
+        imported.objects.cache = BaseCache::new();
+        let id = ObjectId::for_blob(format, b"two");
+        let object = imported
+            .objects
+            .get(&id, &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        assert_eq!(object.data(), b"two");
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn decoding_after_eviction_uses_the_remaining_fetch_budget(#[case] format: ObjectFormat) {
+        let mut imported = read(
+            format,
+            &forward_ref_pack(format),
+            FetchLimits {
+                max_decode_bytes: 18,
+                ..FetchLimits::default()
+            },
+        )
+        .unwrap();
+        imported.objects.cache = BaseCache::new();
+        let id = ObjectId::for_blob(format, b"two");
+        assert!(matches!(
+            imported.objects.get(&id, &AtomicBool::new(false)),
+            Err(FetchError::Pack(Error::Limit("cumulative decode bytes")))
+        ));
+    }
+
+    #[test]
+    fn refused_external_base_does_not_extend_the_temporary_file() {
+        let format = ObjectFormat::Sha1;
+        let bytes = pack(format, &[entry(3, b"", b"one")]);
+        let mut imported = read(format, &bytes, FetchLimits::default()).unwrap();
+        imported.objects.limits.max_pack_bytes = bytes.len();
+        let base = Object {
+            format,
+            kind: ObjectKind::Blob,
+            data: b"external".to_vec(),
+        };
+        assert!(matches!(
+            imported
+                .objects
+                .append_dependency(&base, &AtomicBool::new(false)),
+            Err(FetchError::Index(crate::PackWriteError::Limit(
+                "pack bytes"
+            )))
+        ));
+        assert_eq!(
+            std::fs::metadata(imported.objects.pack.path().unwrap())
+                .unwrap()
+                .len(),
+            bytes.len() as u64
+        );
+    }
+
+    #[test]
+    fn indexed_reads_report_fetch_cancellation() {
+        let format = ObjectFormat::Sha1;
+        let imported = read(format, &forward_ref_pack(format), FetchLimits::default()).unwrap();
+        let id = ObjectId::for_blob(format, b"two");
+        assert!(matches!(
+            imported.objects.get(&id, &AtomicBool::new(true)),
+            Err(FetchError::Cancelled)
+        ));
+    }
 
     fn entry(kind: u8, base: &[u8], data: &[u8]) -> Vec<u8> {
         assert!(data.len() < 16);
@@ -615,7 +1079,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            imported.objects[&ObjectId::for_blob(format, b"two")].data(),
+            imported
+                .objects
+                .get(&ObjectId::for_blob(format, b"two"), &AtomicBool::new(false))
+                .unwrap()
+                .unwrap()
+                .data(),
             b"two"
         );
     }
@@ -643,7 +1112,7 @@ mod tests {
         let limits = FetchLimits {
             max_delta_depth: 1,
             max_delta_bytes: 6,
-            max_decode_bytes: 12,
+            max_decode_bytes: 18,
             max_object_bytes: 3,
             max_resolution_steps: 4,
             ..FetchLimits::default()
@@ -688,7 +1157,7 @@ mod tests {
             &AtomicBool::new(false),
         )
         .unwrap();
-        let complete = imported.complete_pack.unwrap();
+        let complete = imported.objects.pack.to_vec();
         let reader = crate::pack::Pack::open(format, &imported.index, complete).unwrap();
         let id = ObjectId::for_blob(format, b"two");
         assert_eq!(
@@ -963,8 +1432,16 @@ mod git_format_tests {
             &AtomicBool::new(false),
         )
         .unwrap();
-        assert_eq!(imported.objects[&new].data(), changed);
-        let full = imported.complete_pack.unwrap();
+        assert_eq!(
+            imported
+                .objects
+                .get(&new, &AtomicBool::new(false))
+                .unwrap()
+                .unwrap()
+                .data(),
+            changed
+        );
+        let full = imported.objects.pack.to_vec();
         assert!(full.len() > pack.len());
         assert!(crate::pack::Pack::open(format, &imported.index, full).is_ok());
         let mut failed_snapshots = Vec::new();
@@ -984,8 +1461,8 @@ mod git_format_tests {
         ));
         assert!(failed_snapshots.iter().all(|state| !state.complete));
         let resolved = failed_snapshots.last().unwrap().deltas.unwrap();
-        assert!(resolved.0 > 0);
-        assert_eq!(resolved.0, resolved.1);
+        // Disk-space/pack-size refusal can precede delta reconstruction.
+        assert!(resolved.0 <= resolved.1);
     }
 
     /// Original CLI observations; no upstream implementation or test source is used.
@@ -1074,11 +1551,15 @@ mod git_format_tests {
         )
         .unwrap();
         assert_eq!(imported.objects.len(), records.len());
-        assert!(
-            records
-                .iter()
-                .all(|(id, bytes)| imported.objects[id].data() == bytes)
-        );
+        assert!(records.iter().all(|(id, bytes)| {
+            imported
+                .objects
+                .get(id, &AtomicBool::new(false))
+                .unwrap()
+                .unwrap()
+                .data()
+                == bytes
+        }));
         let base = repo
             .object_dir()
             .join("pack")

@@ -12,8 +12,9 @@ use crate::transport::TransportControl;
 /// An owned network download paired with its advertisement-derived fetch plan.
 ///
 /// Move this `Send + Sync + 'static` value to a caller-controlled bounded worker and call
-/// [`Self::validate`] before installation/publication. No filesystem or object-validation work runs
-/// inside the network future. Dropping this value releases bytes/history without storage effects.
+/// [`Self::validate`] before installation/publication. The network future spools response bytes to
+/// a temporary file; object validation runs on the worker. Dropping this value removes the
+/// temporary file and releases history without changing repository files.
 #[derive(Debug)]
 pub struct FetchDownload {
     request: FetchRequest,

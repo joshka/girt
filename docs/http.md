@@ -20,6 +20,12 @@ releases its Arc on success or failure; dropping the download releases it too. O
 retain history. Installation still rechecks local dependencies; retained history does not coordinate
 with GC.
 
+Responses are spooled to owned files in the system temporary directory. Validation streams pack
+entries, retaining entry metadata and a 96 MiB delta-base cache, then checks connectivity through
+the indexed pack. Thin packs retain their deltas and append verified external bases. Temporary files
+are removed on ordinary errors or drop; crashes can leave them behind. Bound temporary disk use when
+queuing downloads. Repository files change only during explicit installation.
+
 For explicit depth requests, validation includes reachable local dependencies in a nonempty received
 pack so retention protects the resulting shallow history. The combined pack obeys object,
 decoded-input and pack-byte limits. A response containing no objects instead verifies existing local
@@ -28,11 +34,11 @@ dependencies during coordinated shallow publication; the caller still excludes c
 Use `fetch::receive_http_with_progress` or `FetchRequest::receive_http_with_progress` for live
 receiver notices. The `FnMut(&[u8]) + Send` callback receives complete channel-2 byte payloads after
 the shallow/ACK prefix is checked, as the bounded HTTP response arrives. Notices are advisory and
-may precede a later failure; downloading and notification make no storage changes. Final `validate`
-still checks the protocol, pack and connectivity and replays notices through its own callback. Pass
-a no-op validation callback when live notices have already been displayed. Neither callback supplies
-download byte counts or local object-resolution counts. Cancellation remains controlled by
-`TransportControl`, and callbacks should return promptly.
+may precede a later failure; downloading spools bytes to a temporary file without changing
+repository files. Final `validate` still checks the protocol, pack and connectivity and replays
+notices through its own callback. Pass a no-op validation callback when live notices have already
+been displayed. Neither callback supplies download byte counts or local object-resolution counts.
+Cancellation remains controlled by `TransportControl`, and callbacks should return promptly.
 
 Use `DownloadedFetch::validate_with_progress` or `FetchDownload::validate_with_progress` to observe
 local validation work on that worker. The additional callback receives typed `ValidationProgress`
@@ -46,11 +52,11 @@ cancellation flag and sideband callback retain control.
 
 Move the downloaded result into a caller-managed bounded blocking worker for large operations.
 Validation can outlive the initiating scope, remote, control and caller's Arc. Even a bounded 512
-MiB decode budget can take substantial time. Bound waiting downloads and aggregate retained bytes as
-well as running workers. Installation and local history preparation are also synchronous. The
-[runnable example](../examples/http_local.rs) shows full and known-only downloads, bounded worker
-admission, explicit completion handling and installation outside the executor. It submits only one
-worker request; it does not provide a service queue or reusable pool.
+MiB decode budget can take substantial time. Bound waiting downloads and temporary disk use and
+retained history bytes as well as running workers. Installation and local history preparation are
+also synchronous. The [runnable example](../examples/http_local.rs) shows full and known-only
+downloads, bounded worker admission, explicit completion handling and installation outside the
+executor. It submits only one worker request; it does not provide a service queue or reusable pool.
 
 `PreparedPush` validates the objects it sends, proves force policy, applies receiver-history
 exclusion and generates the ordinary or delta-compressed pack synchronously. Prepare it before
@@ -159,12 +165,12 @@ explicitly unsupported; existing SHA-1 and non-thin-pack constraints apply.
 
 Fetch advertisement and aggregate wire budgets include the smart service prelude. A fetch request
 uses at most 96 bytes per want plus 2048 bytes of have/framing overhead. The bounded response is
-retained until validation finishes, adding at most `max_wire_bytes` to ordinary fetch memory
-budgets. Push owns the already bounded command/pack buffers; status retention uses
-`max_status_bytes`. Request/response memory is proportional to configured bounds, not a fixed heap
-cap. Response headers are capped at 64 fields and 16 KiB of names/values after parsing. Hyper's
-independent parser buffer is currently bounded at approximately 400 KiB before that stricter byte
-check. TLS/socket buffers, allocator overhead and server memory are separate.
+retained on disk until validation finishes, adding at most `max_wire_bytes` of temporary disk use.
+Push owns the already bounded command/pack buffers; status retention uses `max_status_bytes`.
+Request/response memory is proportional to configured bounds, not a fixed heap cap. Response headers
+are capped at 64 fields and 16 KiB of names/values after parsing. Hyper's independent parser buffer
+is currently bounded at approximately 400 KiB before that stricter byte check. TLS/socket buffers,
+allocator overhead and server memory are separate.
 
 `TransportControl` polls cancellation at 20 ms intervals during DNS, connect, TLS, upload and
 response waits, subject to runtime/OS scheduling. Its absolute deadline spans discovery and RPC and
