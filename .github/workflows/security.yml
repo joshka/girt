@@ -1,18 +1,8 @@
 name: Security
 
+# CI calls this workflow for pushes and pull requests that touch its paths.
 on:
-  push:
-    paths:
-      - .github/**
-      - Cargo.toml
-      - Cargo.lock
-      - deny.toml
-  pull_request:
-    paths:
-      - .github/**
-      - Cargo.toml
-      - Cargo.lock
-      - deny.toml
+  workflow_call:
   workflow_dispatch:
 
 permissions:

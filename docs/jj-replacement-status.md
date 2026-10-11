@@ -102,7 +102,7 @@ with the `jj` label, each a self-contained brief with acceptance criteria.
   - `scripts/jj-e2e/e2e.sh <jj>` (196 checks);
   - `scripts/jj-e2e/no-git.sh <jj>` (zero Git invocations);
   - `scripts/jj-e2e/bench-large.sh` against stock jj for performance work.
-- **Shipping:** open girt PRs against `main` and merge them with rebase, keeping meaningful commits.
+- **Shipping:** open girt PRs against `main` and squash-merge them once the `required` check passes.
   release-plz opens a release PR, and merging it publishes. Then bump jj's `girt` version, rerun jj
   acceptance, and force-push `joshka/girt-backend`. Push jj only to the `joshka/jj` fork, never
   upstream.
