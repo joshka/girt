@@ -1,6 +1,6 @@
 [package]
 name = "girt"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 authors = ["Josh McKinney"]
 description = "An incremental, idiomatic Rust implementation of Git"
