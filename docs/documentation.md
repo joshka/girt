@@ -45,47 +45,19 @@ related prerequisites, effects and recovery advice close to the relevant operati
 Prefer useful information per sentence over minimum word count. Remove duplicated setup, stale
 scaffold claims, unsupported promises and conversational residue. Preserve explanations that prevent
 mistakes. Use consistent Git terminology, specific examples and a calm, direct voice. Avoid applying
-style rules mechanically when they obscure a technical contract. Google's
-[style highlights](https://developers.google.com/style/highlights) and Microsoft's
-[voice guidance](https://learn.microsoft.com/en-us/style-guide/top-10-tips-style-voice) inform
-editorial judgment; local conventions resolve conflicts.
+style rules mechanically when they obscure a technical contract.
 
-## Whole-Project Documentation Review
+## Evidence and Pull Requests
 
-Inventory README, guides, contributor material, examples, public Rustdoc, diagnostics and release
-text. For each surface, record its reader, task, canonical owner and current accuracy. Consolidate,
-move or remove material when that reduces navigation and duplication; do not expand every topic into
-a page. Keep historical evidence clearly dated and separate from current instructions.
+Put the evidence for a change in its pull request description or commit messages: exact revisions,
+Git versions, fixture provenance, benchmark results and anything that could not be checked. Tracked
+docs keep only what a current reader needs, such as contracts, limitations and the benchmark table;
+remove spent process notes, command transcripts and test counts from them. Retained evidence under
+`docs/evidence/` is historical and stays dated.
 
-Review using concrete journeys: install and read an object; mutate refs and recover from failure;
-configure a transport; understand supported formats and limitations; contribute and run checks. Test
-both ordered reading and entry through an API search result. Record broken steps, misleading
-headings, unnecessary navigation, missing prerequisites and terminology drift. Fix high-impact
-findings, then reread the changed journeys and inspect the rendered pages. A second editorial pass
-should challenge the first draft's organization and assumptions, not merely polish its sentences.
-
-Use [Vale](https://docs.vale.sh/) for selected high-signal rules and a project vocabulary. Review
-Google/Microsoft style packages for conflicting rules and false positives before enabling them.
-Scope checks to prose, preserving code and protocol literals; document justified exceptions. Passing
-Vale does not establish accuracy, a coherent voice or usable information architecture. Completion
-requires runnable examples, working links, verified claims and the reader journeys above, with
-remaining findings explicitly assigned. Stop when remaining edits only exchange equivalent wording;
-documentation volume and lint counts are not quality targets.
-
-## Evidence and Handoffs
-
-Keep an artifact when it supports a claim, review, reproduction, or unresolved task. Ask what a
-reader or the next worker would do with it tomorrow. Retain exact revisions, fixture provenance,
-failure records, and logs when they answer that question. Remove spent process notes, command
-transcripts, and test-count inventories from tracked docs. Preserve useful history in private local
-storage outside tracked paths when needed, then repair links so published pages stand alone. Keep a
-compact index only when readers still need to locate retained evidence; do not leave placeholder
-pages.
-
-A handoff should state the delivered behavior, material decisions and limits, the next action, and a
-concise validation reference. Put detailed evidence at the linked source so a reader can inspect it
-without making the handoff a work diary. User guides should explain the current operation and its
-recovery obligations; keep roadmap history in roadmap or evidence pages.
+Pull request descriptions and replies to the maintainer should be plain and short. Lead with the
+result and any blocker, then the behavior changed, the evidence, and the limits. Link detail rather
+than repeating it, and do not narrate the work.
 
 ## Validation
 
@@ -94,5 +66,7 @@ recovery obligations; keep roadmap history in roadmap or evidence pages.
 - For changed Markdown, follow `.config/rumdl.toml` for 100-column prose. Run `just fmt-md-check`
   (rumdl); use `just fmt-md` to fix formatting.
 - For Rust library contracts and examples, also apply [Rustdoc Standard](rustdoc.md).
+- Vale checks spelling and selected terminology; passing it does not establish accuracy or a usable
+  structure.
 - Report unavailable checks honestly. Recheck after fixes; stop once relevant checks pass and known
   correctness issues are resolved.

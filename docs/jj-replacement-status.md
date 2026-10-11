@@ -81,27 +81,14 @@ A repeat with the final release build took 19.57 s and peaked at 404 MiB. That c
 
 ## Open work
 
-Tracked as GitHub issues with the `jj` label, each a self-contained brief with acceptance criteria.
-Rough priority order:
-
-| Issue                                           | Title                                                       |
-| ----------------------------------------------- | ----------------------------------------------------------- |
-| [#22](https://github.com/joshka/girt/issues/22) | Stream received packs instead of holding them in memory     |
-| [#23](https://github.com/joshka/girt/issues/23) | Repack by reusing existing deltas, then let jj repack again |
-| [#24](https://github.com/joshka/girt/issues/24) | Make retention fast enough for jj util gc                   |
-| [#25](https://github.com/joshka/girt/issues/25) | Push packs with deltas                                      |
-| [#26](https://github.com/joshka/girt/issues/26) | Split the jj-on-girt commit into reviewable steps           |
-| [#27](https://github.com/joshka/girt/issues/27) | Stop the SSH test fixture leaking sshd                      |
-| [#28](https://github.com/joshka/girt/issues/28) | Make SSH/HTTP deadline tests robust under load              |
-| [#29](https://github.com/joshka/girt/issues/29) | Implement built-in credential helpers natively              |
-| [#30](https://github.com/joshka/girt/issues/30) | Close smaller jj-on-girt gaps                               |
-| [#31](https://github.com/joshka/girt/issues/31) | Housekeeping after the jj replacement                       |
+Tracked as [GitHub issues](https://github.com/joshka/girt/issues?q=is%3Aissue+is%3Aopen+label%3Ajj)
+with the `jj` label, each a self-contained brief with acceptance criteria.
 
 ## Working on an item
 
-- **One item per session**, in its own jj workspace: `jj workspace add work/<name> -r main` in the
-  girt repo. In the jj repo, work from the `joshka/girt-backend` change. Keep build output out of
-  repository roots (see `.git/info/exclude`).
+- **One issue per session**, in its own jj workspace. If the coordinator hasn't created one, run
+  `jj workspace add work/<name> -r main` in the girt repo. In the jj repo, work from the
+  `joshka/girt-backend` change. Keep build output out of repository roots (see `.git/info/exclude`).
 - **Toolchain:** girt needs Rust 1.97.1 or newer. If a mise shim pins an older Rust, put
   `~/.cargo/bin` first on `PATH` and unset `RUSTUP_TOOLCHAIN`.
 - **girt checks:** `just check`, or `cargo nextest run --all-features` plus `just clippy` and
