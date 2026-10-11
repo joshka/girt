@@ -1,20 +1,28 @@
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{self, Read};
-use std::path::Path;
+use std::io::{self, BufWriter, Read};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
-use super::RetentionPolicy;
-use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_controlled};
-use crate::{ObjectId, ObjectReadError, PackCompression, Repository};
+use super::{RetentionPlan, RetentionPolicy};
+use crate::pack::reader::StoredBase;
+use crate::pack::{
+    FilePack, PackObject, PackWriteError, PackWriteLimits, PackWritten, ReuseError, StoredCopy,
+    write_reusing,
+};
+use crate::{DeltaOptions, ObjectId, ObjectReadError, Objects, PackCompression, Repository};
 
-/// Bounds one additive repack. Payloads remain in memory until the pack is written.
+/// Bounds one additive repack. Only objects without a reusable stored entry are held in memory.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count, decoded input bytes, and both output artifacts.
+    /// Bounds the entry count, decoded fresh payload bytes, and both output artifacts.
     pub write: PackWriteLimits,
-    /// Selects ordinary or bounded delta compression.
+    /// Compression for fresh objects: loose objects and stored deltas that cannot be copied.
+    ///
+    /// The default searches for bounded deltas among fresh objects. Copied entries keep their
+    /// stored compression either way.
     pub compression: PackCompression,
 }
 
@@ -22,7 +30,7 @@ impl Default for RepackLimits {
     fn default() -> Self {
         Self {
             write: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -35,7 +43,7 @@ impl RepackLimits {
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -45,6 +53,8 @@ impl RepackLimits {
 pub struct RepackPublished {
     /// Identity, count and artifact sizes of the newly published or reused pair.
     pub written: PackWritten,
+    /// Entries copied verbatim from existing packs, including reused deltas.
+    pub reused: u32,
 }
 
 /// Failure before complete pair publication. An unindexed pack may remain after interruption.
@@ -86,12 +96,28 @@ impl Repository {
     /// Publishes a pack of objects required by a fresh complete retention scan.
     ///
     /// This additive operation rescans roots and recent objects instead of trusting an older
-    /// [`super::RetentionPlan`]. It reads required objects through pinned packs, writes two bounded
-    /// temporary files in the primary pack directory, synchronizes each file, then publishes the
-    /// pack before its index. The index is the visibility marker. An existing checksum-named file
-    /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
+    /// [`super::RetentionPlan`]. Objects already in a pack the plan protects (`.keep` or modified
+    /// at or after the recent cutoff) are left there and omitted, as `git repack -a` omits kept
+    /// packs. Every other required object comes from the first indexed pack holding it, copied
+    /// verbatim: whole entries keep their compressed bytes, and a delta keeps its compressed
+    /// program when its base is also written. An OFS_DELTA gets its base's new offset; a REF_DELTA
+    /// keeps naming its base, so repacking an unchanged girt pack reproduces it. Only
+    /// fresh objects are decoded and compressed again under [`RepackLimits::compression`]: loose
+    /// objects, and stored deltas whose base is not written, that would close a cycle across
+    /// packs, or whose chain would exceed [`crate::ReadLimits::max_delta_depth`]. Fresh objects
+    /// precede copied entries; copied entries keep their source pack order, except that a base is
+    /// moved ahead of its first dependent.
+    ///
+    /// The writer writes two bounded temporary files in the primary pack directory, synchronizes
+    /// each file, then publishes the pack before its index. The index is the visibility marker. An
+    /// existing checksum-named file is reused only when every byte matches, which happens when
+    /// copying reproduces an existing pack. Old packs, loose objects, reflogs and alternates
     /// remain untouched, including protected packs. Readers with pinned generations keep their
     /// handles; new readers discover the indexed pair and existing readers can refresh explicitly.
+    ///
+    /// Copied entries are checked by their source packs' checksums and CRCs when the snapshot
+    /// opens, but they are not decoded here. [`Repository::retire_old_packs`] decodes every
+    /// retained object from the replacement before deleting anything.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -132,17 +158,48 @@ impl Repository {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
+        self.repack_planned(&plan, policy, limits, cancel)
+    }
+
+    /// Publishes a pack of `plan`'s required objects; the caller vouches that the plan is current.
+    pub(super) fn repack_planned(
+        &self,
+        plan: &RetentionPlan,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
         let objects =
             self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
-        let count = u32::try_from(plan.required.len())
+        let fresh_depth = match limits.compression {
+            PackCompression::Ordinary => 0,
+            PackCompression::Delta(options) => options.max_depth,
+        }
+        .min(policy.read.max_delta_depth);
+        let compression = match limits.compression {
+            PackCompression::Delta(options) => PackCompression::Delta(DeltaOptions {
+                max_depth: fresh_depth,
+                ..options
+            }),
+            ordinary => ordinary,
+        };
+        let selection = Selection::new(
+            &objects,
+            &plan.required,
+            &plan.protected_packs,
+            fresh_depth,
+            policy.read.max_delta_depth,
+            cancel,
+        )?;
+        let count = u32::try_from(selection.fresh.len() + selection.stored.len())
             .map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let mut decoded = Vec::with_capacity(plan.required.len());
+        let mut decoded = Vec::with_capacity(selection.fresh.len());
         let mut bytes = 0u64;
-        for id in plan.required {
+        for &id in &selection.fresh {
             check(cancel)?;
             let object = objects
                 .read_controlled(id, policy.read, cancel)
@@ -161,7 +218,7 @@ impl Repository {
             }
             decoded.push((id, object));
         }
-        let input: Vec<_> = decoded
+        let fresh: Vec<_> = decoded
             .iter()
             .map(|(id, object)| PackObject {
                 id: *id,
@@ -173,13 +230,16 @@ impl Repository {
         fs::create_dir_all(&directory)?;
         let mut pack = NamedTempFile::new_in(&directory)?;
         let mut index = NamedTempFile::new_in(&directory)?;
-        let write_result = write_controlled(
+        let write_result = write_reusing(
             self.object_format(),
-            &input,
-            &mut pack,
-            &mut index,
+            &fresh,
+            &selection.stored,
+            (
+                &mut BufWriter::with_capacity(256 * 1024, pack.as_file_mut()),
+                &mut BufWriter::new(index.as_file_mut()),
+            ),
             limits.write,
-            limits.compression,
+            compression,
             &mut || {
                 if cancel.load(Ordering::Relaxed) {
                     Err(PackWriteError::Io(io::ErrorKind::Interrupted.into()))
@@ -190,13 +250,200 @@ impl Repository {
         );
         let written = match write_result {
             Err(_) if cancel.load(Ordering::Relaxed) => return Err(RepackError::Cancelled),
-            result => result?,
+            Err(ReuseError::Read(id, source)) => return Err(RepackError::Read { id, source }),
+            Err(ReuseError::Write(error)) => return Err(error.into()),
+            Ok(written) => written,
         };
         pack.as_file().sync_all()?;
         index.as_file().sync_all()?;
         let basename = directory.join(format!("pack-{}", written.checksum));
         publish_pair(pack, index, &basename, cancel, || {})?;
-        Ok(RepackPublished { written })
+        Ok(RepackPublished {
+            written,
+            reused: selection.stored.len() as u32,
+        })
+    }
+}
+
+/// Which retained objects to copy from stored entries and which to decode and encode afresh.
+struct Selection<'a> {
+    /// Objects without a reusable stored entry, in identity order.
+    fresh: Vec<ObjectId>,
+    /// Stored entries in output order; every delta follows its base or has a fresh base.
+    stored: Vec<StoredCopy<'a>>,
+}
+
+/// A candidate stored entry and the identity of its delta base, if any.
+struct Candidate<'a> {
+    pack: &'a FilePack,
+    position: usize,
+    base: Option<ObjectId>,
+}
+
+impl<'a> Selection<'a> {
+    /// Chooses representations for `required` objects that are not already in a protected pack.
+    ///
+    /// The first pack holding an object supplies its stored entry. A stored delta is reused only
+    /// when its base is also written, the combined chain stays within `max_depth`, and it forms no
+    /// cycle across packs; otherwise the object is decoded and counted fresh. Fresh chains are
+    /// assumed to reach `fresh_depth`. Stored entries keep source pack order, with any base that
+    /// appears later moved ahead of its first dependent.
+    fn new(
+        objects: &'a Objects,
+        required: &BTreeSet<ObjectId>,
+        protected: &BTreeSet<PathBuf>,
+        fresh_depth: usize,
+        max_depth: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Self, RepackError> {
+        let protected: HashSet<_> = protected
+            .iter()
+            .filter_map(|path| path.file_name())
+            .collect();
+        let (protected, packs): (Vec<_>, Vec<_>) = objects.packs().partition(|(primary, pack)| {
+            *primary
+                && pack
+                    .pack_path()
+                    .file_name()
+                    .is_some_and(|name| protected.contains(name))
+        });
+        let mut kept = HashSet::new();
+        for (_, pack) in protected {
+            check(cancel)?;
+            for &position in pack.positions_by_offset() {
+                let id = pack.id(position);
+                if required.contains(&id) {
+                    kept.insert(id);
+                }
+            }
+        }
+        let mut candidates = HashMap::new();
+        let mut order = Vec::new();
+        for (_, pack) in packs {
+            check(cancel)?;
+            for &position in pack.positions_by_offset() {
+                let id = pack.id(position);
+                if !required.contains(&id) || kept.contains(&id) || candidates.contains_key(&id) {
+                    continue;
+                }
+                let read = |source| RepackError::Read { id, source };
+                let base = match pack.header(position).map_err(read)?.base {
+                    None => None,
+                    Some(StoredBase::Id(base)) => Some(base),
+                    Some(StoredBase::Offset(offset)) => {
+                        Some(pack.id(pack.position_at(offset).map_err(read)?))
+                    }
+                };
+                candidates.insert(
+                    id,
+                    Candidate {
+                        pack,
+                        position,
+                        base,
+                    },
+                );
+                order.push(id);
+            }
+        }
+        let mut fresh: BTreeSet<_> = required
+            .iter()
+            .filter(|id| !kept.contains(id) && !candidates.contains_key(id))
+            .copied()
+            .collect();
+        // A base held only by a protected pack or an unretained object is not written.
+        let unwritten: Vec<_> = candidates
+            .iter()
+            .filter(|(_, candidate)| {
+                candidate
+                    .base
+                    .is_some_and(|base| !candidates.contains_key(&base) && !fresh.contains(&base))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in unwritten {
+            candidates.remove(&id);
+            fresh.insert(id);
+        }
+        Self::bound_chains(&order, &mut candidates, &mut fresh, fresh_depth, max_depth);
+        let mut stored = Vec::with_capacity(candidates.len());
+        let mut emitted = HashSet::with_capacity(candidates.len());
+        let mut chain = Vec::new();
+        for id in order {
+            check(cancel)?;
+            let mut next = Some(id);
+            while let Some(id) =
+                next.filter(|id| candidates.contains_key(id) && !emitted.contains(id))
+            {
+                chain.push(id);
+                next = candidates[&id].base;
+            }
+            while let Some(id) = chain.pop() {
+                let candidate = &candidates[&id];
+                stored.push(StoredCopy {
+                    pack: candidate.pack,
+                    position: candidate.position,
+                    base: candidate.base,
+                });
+                emitted.insert(id);
+            }
+        }
+        Ok(Self {
+            fresh: fresh.into_iter().collect(),
+            stored,
+        })
+    }
+
+    /// Decodes stored deltas that close a cross-pack cycle or exceed the depth bound.
+    fn bound_chains(
+        order: &[ObjectId],
+        candidates: &mut HashMap<ObjectId, Candidate<'_>>,
+        fresh: &mut BTreeSet<ObjectId>,
+        fresh_depth: usize,
+        max_depth: usize,
+    ) {
+        let mut depths: HashMap<ObjectId, usize> = HashMap::with_capacity(candidates.len());
+        let mut path = Vec::new();
+        let mut on_path = HashSet::new();
+        for &start in order {
+            if depths.contains_key(&start) || !candidates.contains_key(&start) {
+                continue;
+            }
+            path.push(start);
+            on_path.insert(start);
+            loop {
+                let top = *path.last().expect("path holds the start");
+                let Some(base) = candidates.get(&top).and_then(|candidate| candidate.base) else {
+                    break;
+                };
+                if depths.contains_key(&base) || !candidates.contains_key(&base) {
+                    break;
+                }
+                if on_path.contains(&base) {
+                    candidates.remove(&top);
+                    fresh.insert(top);
+                    break;
+                }
+                path.push(base);
+                on_path.insert(base);
+            }
+            while let Some(id) = path.pop() {
+                on_path.remove(&id);
+                let base = candidates.get(&id).map(|candidate| candidate.base);
+                let depth = match base {
+                    None => fresh_depth,
+                    Some(None) => 0,
+                    Some(Some(base)) => depths.get(&base).copied().unwrap_or(fresh_depth) + 1,
+                };
+                let depth = if depth > max_depth && base.is_some() {
+                    candidates.remove(&id);
+                    fresh.insert(id);
+                    fresh_depth
+                } else {
+                    depth
+                };
+                depths.insert(id, depth);
+            }
+        }
     }
 }
 
@@ -254,7 +501,261 @@ fn publish(temporary: NamedTempFile, path: &Path, cancel: &AtomicBool) -> Result
 mod tests {
     use std::io::Write;
 
+    use flate2::Compression;
+    use flate2::write::ZlibEncoder;
+
     use super::*;
+    use crate::pack::write::{Entry, encode_index};
+    use crate::{ObjectFormat, ObjectKind, PackLimits};
+
+    const FORMAT: ObjectFormat = ObjectFormat::Sha1;
+
+    fn blob_id(data: &[u8]) -> ObjectId {
+        FORMAT.hash_object(ObjectKind::Blob, data)
+    }
+
+    fn header(code: u8, mut size: usize) -> Vec<u8> {
+        let mut bytes = vec![(code << 4) | (size & 15) as u8];
+        size >>= 4;
+        while size != 0 {
+            *bytes.last_mut().unwrap() |= 128;
+            bytes.push((size & 127) as u8);
+            size >>= 7;
+        }
+        bytes
+    }
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    /// A whole blob entry.
+    fn whole(data: &[u8]) -> (ObjectId, Vec<u8>) {
+        let mut bytes = header(3, data.len());
+        bytes.extend(zlib(data));
+        (blob_id(data), bytes)
+    }
+
+    /// A delta program producing `base` followed by `suffix`.
+    fn append_program(base: &[u8], suffix: &[u8]) -> Vec<u8> {
+        assert!(base.len() + suffix.len() < 128);
+        let mut program = vec![base.len() as u8, (base.len() + suffix.len()) as u8];
+        program.extend([0x90, base.len() as u8, suffix.len() as u8]);
+        program.extend(suffix);
+        program
+    }
+
+    fn ref_delta(base: ObjectId, program: &[u8]) -> Vec<u8> {
+        let mut bytes = header(7, program.len());
+        bytes.extend(base.as_bytes());
+        bytes.extend(zlib(program));
+        bytes
+    }
+
+    /// A REF_DELTA entry producing `base` followed by `suffix`.
+    fn appended(base: &[u8], suffix: &[u8]) -> (ObjectId, Vec<u8>) {
+        let entry = ref_delta(blob_id(base), &append_program(base, suffix));
+        (blob_id(&[base, suffix].concat()), entry)
+    }
+
+    /// Writes a pack and index from raw entries without validating their contents.
+    fn crafted(repository: &Repository, name: &str, entries: &[(ObjectId, Vec<u8>)]) -> PathBuf {
+        let directory = repository.object_dir().join("pack");
+        fs::create_dir_all(&directory).unwrap();
+        let mut pack = b"PACK\0\0\0\x02".to_vec();
+        pack.extend((entries.len() as u32).to_be_bytes());
+        let mut index = Vec::new();
+        for (id, bytes) in entries {
+            index.push(Entry {
+                id: *id,
+                offset: pack.len() as u64,
+                crc: crc32fast::hash(bytes),
+            });
+            pack.extend(bytes);
+        }
+        let checksum = FORMAT.checksum(&pack);
+        pack.extend(checksum.as_bytes());
+        index.sort_by_key(|entry| entry.id);
+        let path = directory.join(name).with_extension("idx");
+        fs::write(path.with_extension("pack"), pack).unwrap();
+        fs::write(&path, encode_index(&index, checksum).unwrap()).unwrap();
+        path
+    }
+
+    fn bare() -> (tempfile::TempDir, Repository) {
+        let root = tempfile::tempdir().unwrap();
+        let repository =
+            Repository::init(FORMAT, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        (root, repository)
+    }
+
+    /// Retains `heads` and treats every pack as old enough to replace.
+    fn retaining(heads: &[ObjectId]) -> RetentionPolicy {
+        RetentionPolicy {
+            heads: heads.to_vec(),
+            recent_cutoff: std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+            ..RetentionPolicy::default()
+        }
+    }
+
+    fn published_pack(repository: &Repository, published: &RepackPublished) -> FilePack {
+        let path = repository
+            .object_dir()
+            .join(format!("pack/pack-{}.idx", published.written.checksum));
+        FilePack::open(
+            FORMAT,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    // Packs fixed after a thin fetch can name a base stored after its delta.
+    #[test]
+    fn forward_delta_base_moves_ahead() {
+        let (_root, repository) = bare();
+        let base = b"base payload shared by both blobs";
+        let (target, delta) = appended(base, b" and more");
+        let whole = whole(base);
+        crafted(
+            &repository,
+            "pack-forward",
+            &[(target, delta), whole.clone()],
+        );
+        let published = repository
+            .repack_retained(
+                &retaining(&[target, whole.0]),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(published.reused, 2);
+        let pack = published_pack(&repository, &published);
+        let target_position = pack.find(target).unwrap().unwrap();
+        let base_position = pack.find(whole.0).unwrap().unwrap();
+        let header = pack.header(target_position).unwrap();
+        assert_eq!(header.base, Some(StoredBase::Id(whole.0)));
+        assert!(pack.entry_range(base_position).0 < pack.entry_range(target_position).0);
+        let read = pack
+            .read(
+                target_position,
+                crate::ReadLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(read.data(), b"base payload shared by both blobs and more");
+    }
+
+    #[test]
+    fn delta_with_unretained_base_is_decoded() {
+        let (_root, repository) = bare();
+        let base = b"base payload that is not retained";
+        let (target, delta) = appended(base, b" but this is");
+        crafted(
+            &repository,
+            "pack-unretained",
+            &[whole(base), (target, delta)],
+        );
+        let published = repository
+            .repack_retained(
+                &retaining(&[target]),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(published.reused, 0);
+        assert_eq!(published.written.objects, 1);
+        let pack = published_pack(&repository, &published);
+        assert!(pack.find(blob_id(base)).unwrap().is_none());
+        let position = pack.find(target).unwrap().unwrap();
+        assert_eq!(pack.header(position).unwrap().base, None);
+    }
+
+    // Each pack's chain is within the bound; reusing both would exceed it.
+    #[test]
+    fn delta_chain_spanning_packs_is_cut_at_the_depth_bound() {
+        let (_root, repository) = bare();
+        let d = b"chain root payload".to_vec();
+        let c = [&d[..], b"c"].concat();
+        let b = [&c[..], b"b"].concat();
+        let (c_id, c_delta) = appended(&d, b"c");
+        let (b_id, b_delta) = appended(&c, b"b");
+        let (a_id, a_delta) = appended(&b, b"a");
+        crafted(
+            &repository,
+            "pack-0",
+            &[whole(&d), (c_id, c_delta), (b_id, b_delta)],
+        );
+        crafted(&repository, "pack-1", &[whole(&b), (a_id, a_delta)]);
+        let objects = repository.objects(PackLimits::default()).unwrap();
+        let required = BTreeSet::from([a_id, b_id, c_id, blob_id(&d)]);
+        let selection = Selection::new(
+            &objects,
+            &required,
+            &BTreeSet::new(),
+            0,
+            2,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(selection.fresh, [a_id]);
+        let stored: Vec<_> = selection
+            .stored
+            .iter()
+            .map(|copy| copy.pack.id(copy.position))
+            .collect();
+        assert_eq!(stored, [blob_id(&d), c_id, b_id]);
+    }
+
+    // Valid packs cannot contain this; reusing it would emit a pack with no readable order.
+    #[test]
+    fn malformed_delta_cycle_is_decoded_instead_of_copied() {
+        let (_root, repository) = bare();
+        let (a, b) = (blob_id(b"first"), blob_id(b"second"));
+        let a_delta = ref_delta(b, &append_program(b"second", b"!"));
+        let b_delta = ref_delta(a, &append_program(b"first", b"?"));
+        crafted(&repository, "pack-cycle", &[(a, a_delta), (b, b_delta)]);
+        let objects = repository.objects(PackLimits::default()).unwrap();
+        let required = BTreeSet::from([a, b]);
+        let selection = Selection::new(
+            &objects,
+            &required,
+            &BTreeSet::new(),
+            0,
+            64,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(selection.fresh.len(), 1);
+        assert_eq!(selection.stored.len(), 1);
+        assert_eq!(selection.stored[0].base, Some(selection.fresh[0]));
+    }
+
+    #[test]
+    fn similar_loose_objects_are_delta_compressed() {
+        let (_root, repository) = bare();
+        let base: Vec<u8> = (0..=255).cycle().take(4096).collect();
+        let mut edited = base.clone();
+        edited[1000] ^= 255;
+        let loose = repository.loose_objects();
+        let heads = [
+            loose.write_blob(&base).unwrap(),
+            loose.write_blob(&edited).unwrap(),
+        ];
+        let published = repository
+            .repack_retained(
+                &retaining(&heads),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(published.reused, 0);
+        assert_eq!(published.written.objects, 2);
+        assert_eq!(published.written.deltas.entries, 1);
+    }
 
     #[test]
     fn cancellation_between_publications_leaves_only_an_unindexed_pack() {

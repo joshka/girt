@@ -86,14 +86,16 @@ impl Repository {
     /// The caller's [`MaintenanceIsolation`] guard must exclude external Git and girt writers,
     /// old readers pinned to packs, and repositories depending on this store as an alternate for
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
-    /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
-    /// synchronizes the pack and object directories, verifies each retained ID through that pair,
-    /// and compares
-    /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
-    /// packs and packs with unsupported sidecars remain untouched. Optional `.rev` and `.bitmap`
-    /// sidecars are retired with their pair. Alternate stores are never
-    /// mutated. A replacement identical to an old pair is retained. On non-Unix platforms the
-    /// operation refuses before publication because directory durability is not established.
+    /// remains a root. It makes a complete scan and publishes a bounded replacement pair from it
+    /// as [`Repository::repack_retained`] does, reusing stored entries and deltas. It then
+    /// synchronizes the pack and object directories and repeats the scan, which must match. Every
+    /// retained ID must be in a `.keep` or recent pack that stays, or decode with its identity
+    /// from the replacement. Old pack generations are compared before deleting an old index
+    /// followed by its pack. `.keep`, recent packs and packs with unsupported sidecars remain
+    /// untouched. Optional `.rev` and `.bitmap` sidecars are retired with their pair. Alternate
+    /// stores are never mutated. A replacement identical to an old pair is retained. On non-Unix
+    /// platforms the operation refuses before publication because directory durability is not
+    /// established.
     ///
     /// An old pair is removed only after its retained objects are present in a verified durable
     /// replacement. Failure after publication can leave the new pair and a prefix of old paths
@@ -173,8 +175,9 @@ impl Repository {
         let directory = current.object_dir().join("pack");
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
+        // The post-publication scan below must match this one, so the repack can reuse it.
         let published = current
-            .repack_retained(&keep_all_logs, limits, cancel)
+            .repack_planned(&first, &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -214,19 +217,51 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+        let mut kept = Vec::new();
+        for protected in &first.protected_packs {
+            let index = protected.with_extension("idx");
+            if before.contains_key(&index) && before.contains_key(protected) {
+                let pack = FilePack::open(self.object_format(), &index, &mut pack_budget, cancel)
+                    .map_err(|error| {
+                    failed(RetireCause::Read(Box::new(error)), report.clone())
+                })?;
+                kept.push(pack);
+            }
+        }
+        let mut positions = Vec::with_capacity(first.required.len());
         for id in &first.required {
             check(cancel, &report)?;
-            let position = pack
-                .find(*id)
-                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
-                .ok_or_else(|| failed(RetireCause::ReplacementMissing(*id), report.clone()))?;
-            let object = pack
-                .read(position, policy.read, cancel)
-                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-            if object.id() != *id {
+            let read = |error| failed(RetireCause::Read(Box::new(error)), report.clone());
+            if let Some(position) = pack.find(*id).map_err(read)? {
+                positions.push(position);
+                continue;
+            }
+            let mut held = false;
+            for pack in &kept {
+                held = pack.find(*id).map_err(read)?.is_some();
+                if held {
+                    break;
+                }
+            }
+            if !held {
                 return Err(failed(RetireCause::ReplacementMissing(*id), report));
             }
         }
+        // Offset order lets the delta base cache serve each chain as it is read.
+        positions.sort_unstable_by_key(|&position| pack.entry_range(position).0);
+        for position in positions {
+            check(cancel, &report)?;
+            let object = pack
+                .read(position, policy.read, cancel)
+                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            if object.id() != pack.id(position) {
+                return Err(failed(
+                    RetireCause::ReplacementMissing(pack.id(position)),
+                    report,
+                ));
+            }
+        }
+        drop(kept);
         drop(pack);
         let after = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
@@ -454,9 +489,15 @@ mod tests {
             &["update-ref", "refs/heads/main", &commit],
             b"",
         );
+        // An unreachable object keeps the old pack distinct from its replacement.
         git(
             root.path(),
-            &["repack", "-ad", "--no-write-bitmap-index"],
+            &["hash-object", "-w", "--stdin"],
+            b"unreachable",
+        );
+        git(
+            root.path(),
+            &["repack", "-adk", "--no-write-bitmap-index"],
             b"",
         );
         let repository = Repository::open(root.path()).unwrap();

@@ -573,9 +573,15 @@ fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
 #[case::sha256("sha256")]
 fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
+    // An unreachable object keeps the old pack distinct from its replacement.
     git(
         root.path(),
-        &["repack", "-ad", "--no-write-bitmap-index"],
+        &["hash-object", "-w", "--stdin"],
+        b"unreachable",
+    );
+    git(
+        root.path(),
+        &["repack", "-adk", "--no-write-bitmap-index"],
         b"",
     );
     let directory = root.path().join("objects/pack");
@@ -614,6 +620,115 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
     );
 }
 
+/// Builds a history in which Git stores most blob versions as deltas. The pack also keeps an
+/// unreachable blob, so the replacement differs from Git's pack.
+#[cfg(unix)]
+fn delta_history(format: &str) -> (tempfile::TempDir, Repository) {
+    let (root, _, _, _) = fixture_format(format);
+    let mut parent: Option<String> = None;
+    let mut text: String = (0..200)
+        .map(|line| format!("line {line} of a file\n"))
+        .collect();
+    for version in 0..12 {
+        text.push_str(&format!("appended in version {version}\n"));
+        let blob = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            text.as_bytes(),
+        );
+        let tree = git(
+            root.path(),
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        let mut args = vec!["commit-tree", &tree];
+        if let Some(parent) = &parent {
+            args.extend(["-p", parent]);
+        }
+        let commit = git(root.path(), &args, format!("v{version}\n").as_bytes());
+        git(
+            root.path(),
+            &["update-ref", "refs/heads/main", &commit],
+            b"",
+        );
+        parent = Some(commit);
+    }
+    git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"unreachable",
+    );
+    git(
+        root.path(),
+        &["repack", "-adk", "--no-write-bitmap-index"],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo)
+}
+
+fn pack_paths(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir(root.join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn pack_retirement_reuses_git_deltas(#[case] format: &str) {
+    let (root, repo) = delta_history(format);
+    let [old_pack] = &pack_paths(root.path(), "pack")[..] else {
+        panic!("expected one Git pack");
+    };
+    let old_bytes = fs::metadata(old_pack).unwrap().len();
+    let old_deltas = git(
+        root.path(),
+        &["verify-pack", "-v", old_pack.to_str().unwrap()],
+        b"",
+    )
+    .lines()
+    .filter(|line| line.starts_with("chain length"))
+    .count();
+    assert!(old_deltas > 0, "Git stored no deltas");
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let published = report.published.unwrap();
+    // Every retained object is copied from Git's pack; none is encoded again.
+    assert_eq!(published.written.objects, published.reused);
+    assert!(!old_pack.exists());
+    let [new_index] = &pack_paths(root.path(), "idx")[..] else {
+        panic!("expected one replacement pack");
+    };
+    let verified = git(
+        root.path(),
+        &["verify-pack", "-v", new_index.to_str().unwrap()],
+        b"",
+    );
+    let new_deltas = verified
+        .lines()
+        .filter(|line| line.starts_with("chain length"))
+        .count();
+    assert_eq!(new_deltas, old_deltas);
+    assert!(published.written.pack_bytes <= old_bytes + old_bytes / 10);
+    git(root.path(), &["fsck", "--strict", "--no-dangling"], b"");
+}
+
 #[cfg(unix)]
 #[test]
 fn kept_pack_is_not_retired() {
@@ -647,6 +762,9 @@ fn kept_pack_is_not_retired() {
         .unwrap();
     assert!(report.removed.is_empty());
     assert!(old_pack.exists());
+    // Objects already in the kept pack are not copied into the replacement.
+    assert_eq!(report.published.unwrap().written.objects, 0);
+    git(root.path(), &["fsck", "--strict"], b"");
 }
 
 #[cfg(unix)]
@@ -668,10 +786,14 @@ fn failed_replacement_keeps_old_pack() {
         .unwrap();
     let mut limits = RepackLimits::default();
     limits.write.max_objects = 0;
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
     let error = repo
         .retire_old_packs(
             &mut FixtureIsolation,
-            &RetentionPolicy::default(),
+            &policy,
             limits,
             &AtomicBool::new(false),
         )

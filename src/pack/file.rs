@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use super::index::{Entry, Index, word};
-use super::reader::{Source, check_cancelled, decode};
+use super::reader::{EntryHeader, Source, check_cancelled, decode, read_header};
 use crate::object::Hasher;
 use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
 
@@ -165,7 +165,7 @@ impl FilePack {
         let mut high = self.ranges.len();
         while low < high {
             let middle = low + (high - low) / 2;
-            match self.identity(middle)?.cmp(&id) {
+            match self.identity(middle).cmp(&id) {
                 std::cmp::Ordering::Less => low = middle + 1,
                 std::cmp::Ordering::Greater => high = middle,
                 std::cmp::Ordering::Equal => return Ok(Some(middle)),
@@ -174,14 +174,14 @@ impl FilePack {
         Ok(None)
     }
 
-    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+    fn identity(&self, position: usize) -> ObjectId {
         let width = self.format.digest_len();
         let start = if self.legacy {
             1028 + position * (width + 4)
         } else {
             1032 + position * width
         };
-        Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
+        ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap()
     }
 
     pub(crate) fn read(
@@ -191,6 +191,41 @@ impl FilePack {
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
+    }
+
+    /// Path of the pinned pack file.
+    pub(crate) fn pack_path(&self) -> &Path {
+        &self.pack.path
+    }
+
+    /// Identity of the entry at an index position.
+    pub(crate) fn id(&self, position: usize) -> ObjectId {
+        self.identity(position)
+    }
+
+    /// Index positions in pack offset order, which is also delta-base-first for OFS_DELTA.
+    pub(crate) fn positions_by_offset(&self) -> &[usize] {
+        &self.offsets
+    }
+
+    /// Byte range of the entry at an index position, from its header to the next entry.
+    pub(crate) fn entry_range(&self, position: usize) -> (usize, usize) {
+        self.ranges[position]
+    }
+
+    /// Parses the entry header at an index position without inflating its data.
+    pub(crate) fn header(&self, position: usize) -> Result<EntryHeader, Error> {
+        read_header(self, &self.entry(position)?)
+    }
+
+    /// Index position of the OFS_DELTA base starting at `offset`.
+    pub(crate) fn position_at(&self, offset: usize) -> Result<usize, Error> {
+        self.at_offset(offset)
+    }
+
+    /// Fills `output` with stored pack bytes starting at `offset`.
+    pub(crate) fn read_stored(&self, offset: usize, output: &mut [u8]) -> Result<(), Error> {
+        self.pack.read_at(offset, output)
     }
 }
 
@@ -234,7 +269,7 @@ impl Source for FilePack {
     fn entry(&self, position: usize) -> Result<Entry, Error> {
         let (offset, end) = self.ranges[position];
         Ok(Entry {
-            id: self.identity(position)?,
+            id: self.identity(position),
             offset,
             end,
             crc: None,

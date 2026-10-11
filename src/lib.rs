@@ -214,8 +214,8 @@
 //! Incomplete reports retain recovered candidates and cannot justify deletion. A later maintenance
 //! executor must exclude writers and rescan before acting; this library operation changes no files.
 //! [`Repository::repack_retained`] performs a fresh scan and publishes a bounded pack/index pair
-//! without removing existing storage. It cannot authorize pruning while external writers or pinned
-//! readers may still depend on old data.
+//! that copies existing pack entries and deltas, without removing existing storage. It cannot
+//! authorize pruning while external writers or pinned readers may still depend on old data.
 //!
 //! # Optional operation tracing
 //!

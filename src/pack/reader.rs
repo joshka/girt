@@ -224,7 +224,6 @@ pub(crate) fn decode_budgeted(
     remaining: &mut usize,
 ) -> Result<Object, Error> {
     let format = source.format();
-    let width = format.digest_len();
     let mut input_remaining = limits.max_input_bytes;
     let mut pending = Vec::new();
     let mut seen = HashSet::new();
@@ -253,42 +252,12 @@ pub(crate) fn decode_budgeted(
         input_remaining = input_remaining
             .checked_sub(entry.end - entry.offset)
             .ok_or(Error::Limit("compressed entry bytes"))?;
-        let prefix = source.prefix(&entry)?;
-        let mut input = prefix.as_slice();
-        let header = byte(&mut input)?;
-        let kind = (header >> 4) & 7;
-        let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
-        let base = match kind {
-            1..=4 => None,
-            6 => {
-                let mut next = byte(&mut input)?;
-                let mut distance = (next & 127) as usize;
-                while next & 128 != 0 {
-                    next = byte(&mut input)?;
-                    distance = distance
-                        .checked_add(1)
-                        .and_then(|n| n.checked_mul(128))
-                        .and_then(|n| n.checked_add((next & 127) as usize))
-                        .ok_or(Error::Corrupt("delta offset overflow"))?;
-                }
-                if distance == 0 {
-                    return Err(Error::Corrupt("zero delta distance"));
-                }
-                let offset = entry
-                    .offset
-                    .checked_sub(distance)
-                    .ok_or(Error::Corrupt("delta offset before pack"))?;
-                Some(source.at_offset(offset)?)
-            }
-            7 => {
-                let raw = input
-                    .get(..width)
-                    .ok_or(Error::Corrupt("truncated base identity"))?;
-                let id = ObjectId::from_bytes(format, raw).unwrap();
-                input = &input[width..];
-                Some(source.find(id)?.ok_or(Error::MissingBase(id))?)
-            }
-            other => return Err(Error::ObjectType(other)),
+        let header = read_header(source, &entry)?;
+        let length = header.length;
+        let base = match header.base {
+            None => None,
+            Some(StoredBase::Offset(offset)) => Some(source.at_offset(offset)?),
+            Some(StoredBase::Id(id)) => Some(source.find(id)?.ok_or(Error::MissingBase(id))?),
         };
         let limit = if base.is_some() {
             limits.max_delta_bytes
@@ -306,19 +275,14 @@ pub(crate) fn decode_budgeted(
             return Err(Error::Limit("delta depth"));
         }
         charge(remaining, length)?;
-        let start = entry.offset + prefix.len() - input.len();
-        let data = source.inflate(start, entry.end, length, cancelled)?;
+        let data = source.inflate(header.data_start, entry.end, length, cancelled)?;
         if let Some(base) = base {
             pending.push((position, data));
             position = base;
         } else {
-            let kind = match kind {
-                1 => ObjectKind::Commit,
-                2 => ObjectKind::Tree,
-                3 => ObjectKind::Blob,
-                4 => ObjectKind::Tag,
-                _ => unreachable!("non-delta kinds validated above"),
-            };
+            let kind = header
+                .kind()
+                .expect("non-delta kinds validated by read_header");
             let object = Object { kind, data, format };
             // Only the requested object's identity is checked: a corrupt base changes every
             // object reconstructed from it, so the final check still catches it.
@@ -344,6 +308,92 @@ pub(crate) fn decode_budgeted(
         }
     }
     Ok(object)
+}
+
+/// Where a stored delta entry finds its base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoredBase {
+    /// OFS_DELTA: the entry starting at this pack offset.
+    Offset(usize),
+    /// REF_DELTA: the object with this identity.
+    Id(ObjectId),
+}
+
+/// A pack entry's header: its type code, declared length, delta base and zlib data start.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EntryHeader {
+    /// Pack type code: 1-4 for whole objects, 6 or 7 for deltas.
+    pub code: u8,
+    /// Inflated length of the object or delta program.
+    pub length: usize,
+    /// Delta base for type codes 6 and 7.
+    pub base: Option<StoredBase>,
+    /// Pack offset of the entry's zlib stream.
+    pub data_start: usize,
+}
+
+impl EntryHeader {
+    /// Whole-object kind for type codes 1-4.
+    pub(crate) fn kind(&self) -> Option<ObjectKind> {
+        match self.code {
+            1 => Some(ObjectKind::Commit),
+            2 => Some(ObjectKind::Tree),
+            3 => Some(ObjectKind::Blob),
+            4 => Some(ObjectKind::Tag),
+            _ => None,
+        }
+    }
+}
+
+/// Parses an entry header without inflating its data. Rejects reserved types and bad offsets.
+pub(crate) fn read_header(
+    source: &impl Source,
+    entry: &super::index::Entry,
+) -> Result<EntryHeader, Error> {
+    let format = source.format();
+    let prefix = source.prefix(entry)?;
+    let mut input = prefix.as_slice();
+    let header = byte(&mut input)?;
+    let code = (header >> 4) & 7;
+    let length = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
+    let base = match code {
+        1..=4 => None,
+        6 => {
+            let mut next = byte(&mut input)?;
+            let mut distance = (next & 127) as usize;
+            while next & 128 != 0 {
+                next = byte(&mut input)?;
+                distance = distance
+                    .checked_add(1)
+                    .and_then(|n| n.checked_mul(128))
+                    .and_then(|n| n.checked_add((next & 127) as usize))
+                    .ok_or(Error::Corrupt("delta offset overflow"))?;
+            }
+            if distance == 0 {
+                return Err(Error::Corrupt("zero delta distance"));
+            }
+            let offset = entry
+                .offset
+                .checked_sub(distance)
+                .ok_or(Error::Corrupt("delta offset before pack"))?;
+            Some(StoredBase::Offset(offset))
+        }
+        7 => {
+            let raw = input
+                .get(..format.digest_len())
+                .ok_or(Error::Corrupt("truncated base identity"))?;
+            let id = ObjectId::from_bytes(format, raw).unwrap();
+            input = &input[format.digest_len()..];
+            Some(StoredBase::Id(id))
+        }
+        other => return Err(Error::ObjectType(other)),
+    };
+    Ok(EntryHeader {
+        code,
+        length,
+        base,
+        data_start: entry.offset + prefix.len() - input.len(),
+    })
 }
 
 fn verify_identity(object: &Object, expected: ObjectId) -> Result<(), Error> {

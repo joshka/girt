@@ -279,36 +279,17 @@ pub(crate) fn write_controlled_observed(
     let mut entries = Vec::with_capacity(objects.len());
     let mut depths = Vec::with_capacity(objects.len());
     let mut deltas = DeltaStats::default();
-    for (position, object) in objects.iter().enumerate() {
+    for position in 0..objects.len() {
         check()?;
-        let selected = match compression {
-            PackCompression::Ordinary => None,
-            PackCompression::Delta(options) => {
-                select_entry(&objects, position, &depths, options, &mut deltas, check)?
-            }
-        };
-        let offset = pack.bytes;
-        pack.crc = crc32fast::Hasher::new();
-        if let Some(selected) = selected {
-            pack.put(&selected.bytes)?;
-            depths.push(selected.depth);
-            if selected.depth != 0 {
-                deltas.entries += 1;
-                deltas.max_depth = deltas.max_depth.max(selected.depth);
-            }
-        } else {
-            pack.put(&entry_header(object.kind, object.data.len() as u64))?;
-            // Finish explicitly so buffered-write failures are reported on the success path.
-            let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
-            encoder.write_all(object.data).map_err(output_error)?;
-            encoder.finish().map_err(output_error)?;
-            depths.push(0);
-        }
-        entries.push(Entry {
-            id: object.id,
-            offset,
-            crc: pack.crc.clone().finalize(),
-        });
+        entries.push(put_object(
+            &mut pack,
+            &objects,
+            position,
+            &mut depths,
+            compression,
+            &mut deltas,
+            check,
+        )?);
         observe(position as u64 + 1, u64::from(count));
         check()?;
     }
@@ -323,6 +304,49 @@ pub(crate) fn write_controlled_observed(
         pack_bytes,
         index_bytes: index.bytes,
         deltas,
+    })
+}
+
+/// Appends `objects[position]`, trying deltas against earlier objects under `compression`.
+///
+/// `depths` holds the chain depth of every earlier object and gains this object's depth.
+pub(super) fn put_object(
+    pack: &mut Output<'_, impl Write>,
+    objects: &[PackObject<'_>],
+    position: usize,
+    depths: &mut Vec<usize>,
+    compression: PackCompression,
+    deltas: &mut DeltaStats,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<Entry, PackWriteError> {
+    let object = objects[position];
+    let selected = match compression {
+        PackCompression::Ordinary => None,
+        PackCompression::Delta(options) => {
+            select_entry(objects, position, depths, options, deltas, check)?
+        }
+    };
+    let offset = pack.bytes;
+    pack.crc = crc32fast::Hasher::new();
+    if let Some(selected) = selected {
+        pack.put(&selected.bytes)?;
+        depths.push(selected.depth);
+        if selected.depth != 0 {
+            deltas.entries += 1;
+            deltas.max_depth = deltas.max_depth.max(selected.depth);
+        }
+    } else {
+        pack.put(&entry_header(object.kind, object.data.len() as u64))?;
+        // Finish explicitly so buffered-write failures are reported on the success path.
+        let mut encoder = ZlibEncoder::new(&mut *pack, Compression::new(6));
+        encoder.write_all(object.data).map_err(output_error)?;
+        encoder.finish().map_err(output_error)?;
+        depths.push(0);
+    }
+    Ok(Entry {
+        id: object.id,
+        offset,
+        crc: pack.crc.clone().finalize(),
     })
 }
 
@@ -407,7 +431,7 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
     Ok(encoder.finish()?)
 }
 
-fn validate<'a>(
+pub(super) fn validate<'a>(
     format: crate::ObjectFormat,
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
@@ -457,7 +481,7 @@ fn validate<'a>(
     Ok(sorted)
 }
 
-fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
+pub(super) fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     let code = match kind {
         ObjectKind::Commit => 1,
         ObjectKind::Tree => 2,
@@ -467,7 +491,7 @@ fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     entry_header_code(code, size)
 }
 
-fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
+pub(super) fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);
@@ -497,7 +521,7 @@ pub(crate) fn encode_index(
     Ok(bytes)
 }
 
-fn write_index(
+pub(super) fn write_index(
     entries: &[Entry],
     checksum: ObjectId,
     out: &mut Output<'_, impl Write>,
@@ -545,7 +569,7 @@ fn write_index(
 #[error("output limit: {0}")]
 struct OutputLimit(&'static str);
 
-fn output_error(error: io::Error) -> PackWriteError {
+pub(super) fn output_error(error: io::Error) -> PackWriteError {
     if let Some(limit) = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<OutputLimit>())
@@ -556,17 +580,22 @@ fn output_error(error: io::Error) -> PackWriteError {
     }
 }
 
-struct Output<'a, W> {
+pub(super) struct Output<'a, W> {
     sink: &'a mut W,
-    bytes: u64,
+    pub(super) bytes: u64,
     limit: u64,
     label: &'static str,
     hash: Hasher,
-    crc: crc32fast::Hasher,
+    pub(super) crc: crc32fast::Hasher,
 }
 
 impl<'a, W: Write> Output<'a, W> {
-    fn new(format: crate::ObjectFormat, sink: &'a mut W, limit: u64, label: &'static str) -> Self {
+    pub(super) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        limit: u64,
+        label: &'static str,
+    ) -> Self {
         Self {
             sink,
             bytes: 0,
@@ -576,10 +605,10 @@ impl<'a, W: Write> Output<'a, W> {
             crc: crc32fast::Hasher::new(),
         }
     }
-    fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
+    pub(super) fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
         self.write_all(bytes).map_err(output_error)
     }
-    fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
+    pub(super) fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
         let checksum = self.hash.clone().finalize();
         self.put(checksum.as_bytes())?;
         self.flush()?;

@@ -255,6 +255,16 @@ impl Objects {
         self.format
     }
 
+    /// Indexed packs in search order, each with whether it belongs to the primary store.
+    pub(crate) fn packs(&self) -> impl Iterator<Item = (bool, &FilePack)> {
+        self.stores.iter().enumerate().flat_map(|(store, entry)| {
+            entry
+                .packs
+                .iter()
+                .map(move |pack| (store == 0, pack.as_ref()))
+        })
+    }
+
     pub(crate) fn open(
         format: ObjectFormat,
         directory: &Path,
