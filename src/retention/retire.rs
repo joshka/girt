@@ -87,8 +87,8 @@ impl Repository {
     /// old readers pinned to packs, and repositories depending on this store as an alternate for
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
     /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
-    /// synchronizes the pack and object directories, verifies each retained ID through that pair,
-    /// and compares
+    /// synchronizes the pack and object directories, verifies each required ID through the
+    /// replacement or a surviving protected pack, and compares
     /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
     /// packs and packs with unsupported sidecars remain untouched. Optional `.rev` and `.bitmap`
     /// sidecars are retired with their pair. Alternate stores are never
@@ -96,10 +96,12 @@ impl Repository {
     /// operation refuses before publication because directory durability is not established.
     ///
     /// An old pair is removed only after its retained objects are present in a verified durable
-    /// replacement. Failure after publication can leave the new pair and a prefix of old paths
-    /// removed. An index-only removal leaves an unindexed old pack; readers ignore it. Cancellation
-    /// is checked before each pair, not between its two unlinks. A failed unlink or directory
-    /// synchronization names its uncertain path. Retry only after a fresh scan.
+    /// replacement or surviving protected pack. Unreachable objects older than `recent_cutoff`
+    /// may be reclaimed; newer objects retain a verified readable copy. Failure after publication
+    /// can leave the new pair and a prefix of old paths removed. An index-only removal leaves
+    /// an unindexed old pack; readers ignore it. Cancellation is checked before each pair, not
+    /// between its two unlinks. A failed unlink or directory synchronization names its
+    /// uncertain path. Retry only after a fresh scan.
     ///
     /// # Errors
     ///
@@ -175,12 +177,7 @@ impl Repository {
             .map_err(|cause| failed(cause, report.clone()))?;
         // The isolated first scan is still current; the post-publication scan rechecks it.
         let (published, held) = current
-            .publish_required(
-                &first,
-                &keep_all_logs,
-                limits,
-                cancel,
-            )
+            .publish_required(&first, &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -638,42 +635,60 @@ mod tests {
         assert_eq!(git(root.path(), &["cat-file", "-t", &tip], b""), "commit");
     }
 
-// Fault model: unsynchronized directory changes may persist in either order. Replay the
-// index unlink as lost only if no directory sync separated it from the pack unlink.
-// This tests the algorithm under that model, not power-loss behavior of a particular filesystem.
-#[test]
-fn unsynced_index_reappearance_does_not_break_cold_open() {
-    use std::cell::Cell;
-    let (root, repository, mut policy, old_index) = fixture();
-    let extra = git(root.path(), &["hash-object", "-w", "--stdin"], b"fault model extra");
-    policy.heads.push(extra.parse().unwrap());
-    let saved_index = fs::read(&old_index).unwrap();
-    let pending_index_unlink = Cell::new(false);
-    let replayed = Cell::new(false);
-    let result = repository.retire_old_packs_at(
-        &policy, RepackLimits::default(), &AtomicBool::new(false), || {},
-        |path| {
-            fs::remove_file(path)?;
-            if path == old_index { pending_index_unlink.set(true); }
-            if path == old_index.with_extension("pack") && pending_index_unlink.get() {
-                fs::write(&old_index, &saved_index)?;
-                replayed.set(true);
-                return Err(io::Error::other("simulated crash persistence cut"));
-            }
-            Ok(())
-        },
-        |directory| {
-            File::open(directory)?.sync_all()?;
-            pending_index_unlink.set(false);
-            Ok(())
-        },
-    );
-    eprintln!("persistence replay={}, retirement={result:?}", replayed.get());
-    assert!(!old_index.with_extension("pack").exists(), "fixture must retire the original pack");
-    let fresh = Repository::open(root.path()).unwrap();
-    assert!(fresh.objects(crate::PackLimits::default()).is_ok(),
-        "cold open failed after unsynced index unlink was lost but pack unlink persisted");
-}
+    // Fault model: unsynchronized directory changes may persist in either order. Replay the
+    // index unlink as lost only if no directory sync separated it from the pack unlink.
+    // This tests the algorithm under that model, not power-loss behavior of a particular
+    // filesystem.
+    #[test]
+    fn unsynced_index_reappearance_does_not_break_cold_open() {
+        use std::cell::Cell;
+        let (root, repository, mut policy, old_index) = fixture();
+        let extra = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"fault model extra",
+        );
+        policy.heads.push(extra.parse().unwrap());
+        let saved_index = fs::read(&old_index).unwrap();
+        let pending_index_unlink = Cell::new(false);
+        let replayed = Cell::new(false);
+        let result = repository.retire_old_packs_at(
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+            || {},
+            |path| {
+                fs::remove_file(path)?;
+                if path == old_index {
+                    pending_index_unlink.set(true);
+                }
+                if path == old_index.with_extension("pack") && pending_index_unlink.get() {
+                    fs::write(&old_index, &saved_index)?;
+                    replayed.set(true);
+                    return Err(io::Error::other("simulated crash persistence cut"));
+                }
+                Ok(())
+            },
+            |directory| {
+                File::open(directory)?.sync_all()?;
+                pending_index_unlink.set(false);
+                Ok(())
+            },
+        );
+        eprintln!(
+            "persistence replay={}, retirement={result:?}",
+            replayed.get()
+        );
+        assert!(
+            !old_index.with_extension("pack").exists(),
+            "fixture must retire the original pack"
+        );
+        let fresh = Repository::open(root.path()).unwrap();
+        assert!(
+            fresh.objects(crate::PackLimits::default()).is_ok(),
+            "cold open failed after unsynced index unlink was lost but pack unlink persisted"
+        );
+    }
 
     #[test]
     fn publication_disk_full_sync_failure_retains_old_pair_and_reports_visible_new_pair() {

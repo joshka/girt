@@ -1720,3 +1720,116 @@ fn retained_registration_unreadable_metadata_blocks_scan() {
     let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     assert!(!plan.is_complete());
 }
+
+/// Commits `count` revisions of one growing text file on `main`, so Git can find deltas.
+fn grow_history(root: &Path, count: usize, parent: Option<String>) -> String {
+    let mut parent = parent;
+    let mut text = String::new();
+    for revision in 0..count {
+        for line in 0..40 {
+            text.push_str(&format!(
+                "revision {revision} line {line} of a slowly growing file\n"
+            ));
+        }
+        let blob = git(root, &["hash-object", "-w", "--stdin"], text.as_bytes());
+        let tree = git(
+            root,
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        let mut args = vec!["commit-tree", tree.as_str()];
+        if let Some(parent) = &parent {
+            args.extend(["-p", parent]);
+        }
+        parent = Some(git(
+            root,
+            &args,
+            format!("revision {revision}\n").as_bytes(),
+        ));
+    }
+    let tip = parent.unwrap();
+    git(root, &["update-ref", "refs/heads/main", &tip], b"");
+    tip
+}
+
+fn pack_paths(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir(root.join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
+    let (root, _, _, _) = fixture_format(format);
+    git(
+        root.path(),
+        &["reflog", "expire", "--expire=all", "--all"],
+        b"",
+    );
+    fs::remove_file(root.path().join("logs/refs/heads/deleted")).unwrap();
+    grow_history(root.path(), 30, None);
+    git(
+        root.path(),
+        &["repack", "-adf", "--no-write-bitmap-index"],
+        b"",
+    );
+    git(root.path(), &["prune", "--expire=now"], b"");
+    let [git_pack] = pack_paths(root.path(), "pack").try_into().unwrap();
+    let original_bytes = fs::read(&git_pack).unwrap();
+    let original_index = git_pack.with_extension("idx");
+    let original_deltas = git(
+        root.path(),
+        &["verify-pack", "-v", original_index.to_str().unwrap()],
+        b"",
+    )
+    .lines()
+    .filter(|line| line.split_whitespace().count() == 7)
+    .count();
+    let repo = Repository::open(root.path()).unwrap();
+    let published = repo
+        .repack_retained(
+            &RetentionPolicy {
+                recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+                ..RetentionPolicy::default()
+            },
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    // Every retained object is copied in Git's order with Git's deltas, reproducing its pack.
+    assert!(published.written.deltas.entries > 0);
+    assert_eq!(
+        git_pack.file_stem().unwrap().to_str().unwrap(),
+        format!("pack-{}", published.written.checksum)
+    );
+    assert_eq!(pack_paths(root.path(), "pack").len(), 1);
+    let output = root.path().join(format!(
+        "objects/pack/pack-{}.pack",
+        published.written.checksum
+    ));
+    assert_eq!(fs::read(&output).unwrap(), original_bytes);
+    let verbose = git(
+        root.path(),
+        &[
+            "verify-pack",
+            "-v",
+            output.with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        verbose
+            .lines()
+            .filter(|line| line.split_whitespace().count() == 7)
+            .count(),
+        original_deltas
+    );
+    assert_eq!(published.written.deltas.entries as usize, original_deltas);
+    git(root.path(), &["fsck", "--strict"], b"");
+}

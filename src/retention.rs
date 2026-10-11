@@ -283,7 +283,14 @@ impl Repository {
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        match walk(self, &store, policy, cancel, &plan.roots, &mut plan.object_sizes) {
+        match walk(
+            self,
+            &store,
+            policy,
+            cancel,
+            &plan.roots,
+            &mut plan.object_sizes,
+        ) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
@@ -294,7 +301,14 @@ impl Repository {
         let live = if plan.strong_roots == plan.roots {
             plan.reachable.clone()
         } else {
-            match walk(self, &store, policy, cancel, &plan.strong_roots, &mut plan.object_sizes) {
+            match walk(
+                self,
+                &store,
+                policy,
+                cancel,
+                &plan.strong_roots,
+                &mut plan.object_sizes,
+            ) {
                 Ok(reachable) => reachable,
                 Err(reason) => {
                     plan.fail(reason);
@@ -328,7 +342,14 @@ impl Repository {
         } else if required_roots == plan.strong_roots {
             plan.required = live;
         } else {
-            match walk(self, &store, policy, cancel, &required_roots, &mut plan.object_sizes) {
+            match walk(
+                self,
+                &store,
+                policy,
+                cancel,
+                &required_roots,
+                &mut plan.object_sizes,
+            ) {
                 Ok(required) => plan.required = required,
                 Err(reason) => plan.fail(reason),
             }

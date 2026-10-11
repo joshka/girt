@@ -17,7 +17,8 @@ use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository
 /// remain decoded in memory until the pack is written.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count, logical payload bytes (including copied objects), and output artifacts.
+    /// Bounds object count, logical payload bytes (including copied objects), and output
+    /// artifacts.
     pub write: PackWriteLimits,
     /// Selects delta search among objects not already packed (default: bounded deltas).
     pub compression: PackCompression,
@@ -94,15 +95,18 @@ impl Repository {
     /// [`super::RetentionPlan`]. A required object already in a pinned pack has its entry copied
     /// without inflating it, in source pack order; a delta keeps its compressed instructions when
     /// its base entry from the same pack is also copied, and is otherwise rebuilt as a whole
-    /// object. Source packs were checksum-validated when opened. Other required objects are read
+    /// object. The scan fully decodes required objects. Stored entries come only from primary
+    /// packs; alternate objects use the ordinary reader. Objects held by protected packs are
+    /// decoded from that copy and omitted from the replacement. Other required objects are read
     /// and identity-checked, then appended with deltas against each other under
     /// [`RepackLimits::compression`]. A repository whose only pack holds exactly the required
-    /// objects can therefore reproduce that pack byte for byte. It writes two bounded temporary
-    /// files in the primary pack directory, synchronizes each file, then publishes the
-    /// pack before its index. The index is the visibility marker. An existing checksum-named file
-    /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
-    /// remain untouched, including protected packs. Readers with pinned generations keep their
-    /// handles; new readers discover the indexed pair and existing readers can refresh explicitly.
+    /// objects can therefore reproduce that pack byte for byte when the pack is unprotected. It
+    /// writes two bounded temporary files in the primary pack directory, synchronizes each
+    /// file, then publishes the pack before its index. The index is the visibility marker. An
+    /// existing checksum-named file is reused only when every byte matches. Old packs, loose
+    /// objects, reflogs and alternates remain untouched, including protected packs. Readers
+    /// with pinned generations keep their handles; new readers discover the indexed pair and
+    /// existing readers can refresh explicitly.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -120,7 +124,8 @@ impl Repository {
     /// success. Temporary files are cleaned up on ordinary failure but can survive process death.
     /// On Unix, the pack directory is synchronized before index publication. Additive
     /// publication does not promise durability of the index name; retirement synchronizes both
-    /// names before removing old storage. Publication assumes a trusted local filesystem with no in-place artifact edits.
+    /// names before removing old storage. Publication assumes a trusted local filesystem with no
+    /// in-place artifact edits.
     pub fn repack_retained(
         &self,
         policy: &RetentionPolicy,
@@ -148,11 +153,11 @@ impl Repository {
             .map(|(published, _)| published)
     }
 
-    /// Publishes a pack holding `required`, which a complete scan of this repository produced.
+    /// Publishes the objects required by a complete scan of this repository.
     ///
-    /// Objects whose first primary copy sits in one of `protected` packs are decoded from that
-    /// copy to prove it readable and left out of the new pack, as `git repack -a` leaves out
-    /// objects in `.keep` packs. Their identities are returned so retirement can verify the
+    /// Objects whose first primary copy sits in one of the plan's protected packs are decoded from
+    /// that copy to prove it readable and left out of the new pack, as `git repack -a` leaves
+    /// out objects in `.keep` packs. Their identities are returned so retirement can verify the
     /// protected copy again before unlinking anything.
     pub(super) fn publish_required(
         &self,
@@ -269,7 +274,9 @@ fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<()
     if len > limits.max_object_bytes {
         return Err(PackWriteError::Limit("object bytes"));
     }
-    *bytes = bytes.checked_add(len).ok_or(PackWriteError::Limit("input bytes"))?;
+    *bytes = bytes
+        .checked_add(len)
+        .ok_or(PackWriteError::Limit("input bytes"))?;
     if *bytes > limits.max_input_bytes {
         return Err(PackWriteError::Limit("input bytes"));
     }
@@ -338,7 +345,12 @@ mod tests {
     #[test]
     fn output_depth_limit_refuses_publication_for_loose_delta_search() {
         let root = tempfile::tempdir().unwrap();
-        let repository = Repository::init(crate::ObjectFormat::Sha1, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        let repository = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
         let data: Vec<u8> = (0..4096u32)
             .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
             .collect();

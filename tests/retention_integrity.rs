@@ -1,9 +1,5 @@
-//! Probes for the #23 base debate: falsifiable checks run unchanged against each candidate PR.
-//!
-//! Each test asserts the concrete harm a claim predicts. A test that fails on a PR confirms the
-//! claim for that PR; a test that passes refutes it. Fixtures are generated with the Git executable
-//! and, where a claim needs a checksum-consistent wrong identity, by rewriting one identity in a
-//! Git-written index and recomputing the index checksum.
+//! Integrity regression tests for delta reuse, source precedence, and protected packs.
+//! Original fixtures use Git-generated packs and checksum-consistent mislabelled index entries.
 #![cfg(unix)]
 use std::fs;
 use std::io::Write;
@@ -57,7 +53,13 @@ fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
 fn bare(root: &Path) -> PathBuf {
     git(
         root,
-        &["init", "--bare", "--template=", "--initial-branch=main", "."],
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            "--initial-branch=main",
+            ".",
+        ],
         b"",
     );
     root.to_path_buf()
@@ -90,10 +92,7 @@ fn hex(id: ObjectId) -> Vec<u8> {
 
 /// Writes the objects `ids` of `scratch` into `target/objects/pack/<name>.{pack,idx}`.
 fn pack_into(scratch: &Path, ids: &[ObjectId], target: &Path, name: &str) -> PathBuf {
-    let listing = ids
-        .iter()
-        .map(|id| format!("{id}\n"))
-        .collect::<String>();
+    let listing = ids.iter().map(|id| format!("{id}\n")).collect::<String>();
     let output = git_raw(
         scratch,
         &["pack-objects", "--delta-base-offset", "--stdout"],
@@ -107,7 +106,12 @@ fn pack_into(scratch: &Path, ids: &[ObjectId], target: &Path, name: &str) -> Pat
     let idx = directory.join(format!("{name}.idx"));
     git(
         target,
-        &["index-pack", "-o", idx.to_str().unwrap(), pack.to_str().unwrap()],
+        &[
+            "index-pack",
+            "-o",
+            idx.to_str().unwrap(),
+            pack.to_str().unwrap(),
+        ],
         b"",
     );
     pack
@@ -118,7 +122,8 @@ fn pack_into(scratch: &Path, ids: &[ObjectId], target: &Path, name: &str) -> Pat
 /// `to` must share `from`'s first byte and sort position so fanout and ordering stay valid.
 fn mislabel_identity(idx: &Path, from: ObjectId, to: ObjectId) {
     let mut permissions = fs::metadata(idx).unwrap().permissions();
-    permissions.set_readonly(false);
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(permissions.mode() | 0o200);
     fs::set_permissions(idx, permissions).unwrap();
     let mut bytes = fs::read(idx).unwrap();
     assert_eq!(&bytes[..8], b"\xfftOc\x00\x00\x00\x02");
@@ -169,7 +174,9 @@ fn isolated_copy(pack: &Path) -> (tempfile::TempDir, Repository) {
 }
 
 fn read_from(repo: &Repository, id: ObjectId) -> Result<Option<Vec<u8>>, String> {
-    let objects = repo.objects(PackLimits::trusted()).map_err(|e| e.to_string())?;
+    let objects = repo
+        .objects(PackLimits::trusted())
+        .map_err(|e| e.to_string())?;
     objects
         .read(id, ReadLimits::trusted())
         .map(|object| object.map(|object| object.data().to_vec()))
@@ -185,14 +192,8 @@ fn verify_pack(repo: &Path, idx: &Path) -> Result<(), String> {
     }
 }
 
-/// Integrity regression test: B (Astra, against #49): a copied delta is retargeted onto a base selected from another
-/// pack without checking that base's identity, so a checksum-consistent wrong identity in the
-/// source pack produces a published object that no cold reader can reconstruct.
-///
-/// Fixture: pack `a` holds the genuine blob X. Pack `b` holds X' (same length, different bytes)
-/// whose index entry is mislabelled to claim X's identity, plus Y stored as a delta against X'. Both
-/// packs validate (pack checksum, CRCs, index checksum). The harm asserted: after an additive
-/// repack succeeds, Y must still be readable from the new pack alone with its original content.
+/// Integrity regression test: A mislabelled base must not change the readable content of a copied
+/// delta.
 #[test]
 fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
     let format = ObjectFormat::Sha1;
@@ -223,9 +224,19 @@ fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
     let root = bare(repo_dir.path());
     pack_into(&scratch, &[x], &root, "pack-a");
     let pack_b = pack_into(&scratch, &[fake, y], &root, "pack-b");
-    let listing = git(&root, &["verify-pack", "-v", pack_b.with_extension("idx").to_str().unwrap()], b"");
+    let listing = git(
+        &root,
+        &[
+            "verify-pack",
+            "-v",
+            pack_b.with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
     assert!(
-        listing.lines().any(|line| line.starts_with(&y.to_string()) && line.ends_with(&fake.to_string())),
+        listing
+            .lines()
+            .any(|line| line.starts_with(&y.to_string()) && line.ends_with(&fake.to_string())),
         "fixture: Y must be a delta against X' in pack b:\n{listing}"
     );
     mislabel_identity(&pack_b.with_extension("idx"), fake, x);
@@ -233,19 +244,17 @@ fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
     let repo = Repository::open(&root).unwrap();
     let policy = policy(vec![x, y]);
     let cancel = AtomicBool::new(false);
-    match repo.repack_retained(&policy, RepackLimits::trusted(), &cancel) {
-        Err(error) => {
-            eprintln!("repack refused before publication: {error}");
-            return;
-        }
-        Ok(_) => {}
-    }
+    repo.repack_retained(&policy, RepackLimits::trusted(), &cancel)
+        .unwrap();
     let pack = new_pack(&root, &["pack-a", "pack-b"]);
     let live_read = read_from(&Repository::open(&root).unwrap(), y);
     let (_dir, published) = isolated_copy(&pack);
     let published_read = read_from(&published, y);
     assert_eq!(
-        (published_read.as_ref().map(|r| r.as_deref()), live_read.as_ref().map(|r| r.as_deref())),
+        (
+            published_read.as_ref().map(|r| r.as_deref()),
+            live_read.as_ref().map(|r| r.as_deref())
+        ),
         (Ok(Some(&y_content[..])), Ok(Some(&y_content[..]))),
         "Y must keep its content (published pack alone, live repository): {published_read:?} / {live_read:?}"
     );
@@ -253,13 +262,8 @@ fn copied_delta_keeps_its_content_when_a_source_base_identity_is_mislabelled() {
     verify_pack(&root, &pack.with_extension("idx")).expect("git verify-pack on the published pack");
 }
 
-/// Integrity regression test: S (Astra, against #47 and others that flatten stores): a store-flattening copy step can
-/// take an alternate's packed representation ahead of the primary store's loose copy, so a
-/// checksum-consistent wrong identity in the alternate is copied into the primary pack.
-///
-/// Fixture: the primary holds the genuine loose X. The alternate holds a pack whose only entry has
-/// different bytes under a mislabelled X identity. Readers return the primary copy. The harm asserted:
-/// after an additive repack succeeds, X must be readable from the new pack alone with its content.
+/// Integrity regression test: A primary loose copy takes precedence over a mislabelled alternate
+/// entry.
 #[test]
 fn repack_prefers_the_primary_copy_over_a_mislabelled_alternate_entry() {
     let format = ObjectFormat::Sha1;
@@ -292,36 +296,33 @@ fn repack_prefers_the_primary_copy_over_a_mislabelled_alternate_entry() {
     .unwrap();
 
     let repo = Repository::open(&primary).unwrap();
-    assert_eq!(read_from(&repo, x), Ok(Some(x_content.clone())), "readers see the primary copy");
+    assert_eq!(
+        read_from(&repo, x),
+        Ok(Some(x_content.clone())),
+        "readers see the primary copy"
+    );
     let cancel = AtomicBool::new(false);
-    match repo.repack_retained(&policy(vec![x]), RepackLimits::trusted(), &cancel) {
-        Err(error) => {
-            eprintln!("repack refused before publication: {error}");
-            return;
-        }
-        Ok(_) => {}
-    }
+    repo.repack_retained(&policy(vec![x]), RepackLimits::trusted(), &cancel)
+        .unwrap();
     let pack = new_pack(&primary, &[]);
     let live = Repository::open(&primary).unwrap();
     let live_read = read_from(&live, x);
     let (_dir, published) = isolated_copy(&pack);
     let published_read = read_from(&published, x);
     assert_eq!(
-        (published_read.as_ref().map(|r| r.as_deref()), live_read.as_ref().map(|r| r.as_deref())),
+        (
+            published_read.as_ref().map(|r| r.as_deref()),
+            live_read.as_ref().map(|r| r.as_deref())
+        ),
         (Ok(Some(&x_content[..])), Ok(Some(&x_content[..]))),
         "X must keep the primary store's content (published pack alone, live repository): {published_read:?} / {live_read:?}"
     );
-    verify_pack(&primary, &pack.with_extension("idx")).expect("git verify-pack on the published pack");
+    verify_pack(&primary, &pack.with_extension("idx"))
+        .expect("git verify-pack on the published pack");
 }
 
-/// Integrity regression test: L/P (both judges, about #49's all-entry coverage rule): retiring only packs whose every
-/// indexed object is in the replacement means a pack holding one unreachable object is never
-/// retired, so the repository keeps two full copies of every reachable object after maintenance.
-///
-/// Fixture: one Git pack holding a reachable commit and an unreachable blob, plus one loose root
-/// so the replacement differs. Measured: pack files and total pack bytes after `retire_old_packs`.
-/// The assertion encodes Git's behaviour (`git gc` leaves one pack). A failure quantifies the
-/// cost of the stricter rule rather than proving a defect.
+/// Integrity regression test: Retirement reclaims old unreachable objects, matching Git's garbage
+/// collection policy.
 #[test]
 fn retirement_leaves_one_pack_when_the_old_pack_holds_an_unreachable_object() {
     let dir = tempfile::tempdir().unwrap();
@@ -329,7 +330,11 @@ fn retirement_leaves_one_pack_when_the_old_pack_holds_an_unreachable_object() {
     let tree = git(&root, &["mktree"], b"");
     let commit = git(&root, &["commit-tree", &tree], b"reachable\n");
     git(&root, &["update-ref", "refs/heads/main", &commit], b"");
-    let unreachable = git(&root, &["hash-object", "-w", "--stdin"], &blob_lines("gone", 16));
+    let unreachable = git(
+        &root,
+        &["hash-object", "-w", "--stdin"],
+        &blob_lines("gone", 16),
+    );
     git(&root, &["update-ref", "refs/heads/tmp", &commit], b"");
     git(&root, &["tag", "keep-u", &unreachable], b"");
     git(&root, &["repack", "-a", "-d"], b"");
@@ -343,7 +348,12 @@ fn retirement_leaves_one_pack_when_the_old_pack_holds_an_unreachable_object() {
     let repo = Repository::open(&root).unwrap();
     let cancel = AtomicBool::new(false);
     let report = repo
-        .retire_old_packs(&mut FixtureIsolation, &policy(vec![loose]), RepackLimits::trusted(), &cancel)
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy(vec![loose]),
+            RepackLimits::trusted(),
+            &cancel,
+        )
         .unwrap();
     assert!(report.published.is_some(), "{report:?}");
     let packs = pack_files(&root);
@@ -370,13 +380,8 @@ fn pack_bytes(root: &Path) -> u64 {
         .sum()
 }
 
-/// Integrity regression test: D (both judges): a copied delta chain joined across packs can exceed the reader's depth
-/// limit, and the pack is published before anything checks it. A cold reader with the default
-/// limits must be able to read every object from the published pack alone.
-///
-/// Fixture: Git writes two packs with chains of depth 40 each; the second pack's chain bottoms out
-/// on a delta whose base is the top of the first pack's chain, so the first-found copies join into
-/// a chain of about 80 against a default `max_delta_depth` of 64.
+/// Integrity regression test: Overlapping source chains must remain readable under the default
+/// depth limit.
 #[test]
 fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
     let dir = tempfile::tempdir().unwrap();
@@ -394,7 +399,11 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
             })
             .collect();
         contents.push(text.clone().into_bytes());
-        ids.push(git(&root, &["hash-object", "-w", "--stdin"], text.as_bytes()).parse().unwrap());
+        ids.push(
+            git(&root, &["hash-object", "-w", "--stdin"], text.as_bytes())
+                .parse()
+                .unwrap(),
+        );
     }
     // Object i is 2*i bytes larger than object i-1, so Git roots each chain at the largest object.
     // Pack one (searched first) holds objects 100..=200: object 100 is its deepest leaf. Pack two
@@ -407,29 +416,54 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
         let listing = list.iter().map(|id| format!("{id}\n")).collect::<String>();
         let output = git_raw(
             &root,
-            &["pack-objects", "--delta-base-offset", "--depth=100", "--window=50", "--stdout"],
+            &[
+                "pack-objects",
+                "--delta-base-offset",
+                "--depth=100",
+                "--window=50",
+                "--stdout",
+            ],
             listing.as_bytes(),
         );
         assert!(output.status.success());
         let pack = packs.join(format!("{name}.pack"));
         fs::write(&pack, &output.stdout).unwrap();
-        git(&root, &["index-pack", "-o", pack.with_extension("idx").to_str().unwrap(), pack.to_str().unwrap()], b"");
+        git(
+            &root,
+            &[
+                "index-pack",
+                "-o",
+                pack.with_extension("idx").to_str().unwrap(),
+                pack.to_str().unwrap(),
+            ],
+            b"",
+        );
         pack
     };
     let pack_one = write(&first, "pack-one");
     let pack_two = write(&second, "pack-two");
     for id in &ids {
-        let path = root.join("objects").join(&id.to_string()[..2]).join(&id.to_string()[2..]);
+        let path = root
+            .join("objects")
+            .join(&id.to_string()[..2])
+            .join(&id.to_string()[2..]);
         fs::remove_file(path).unwrap();
     }
     let depth = |idx: &Path| -> usize {
         git(&root, &["verify-pack", "-v", idx.to_str().unwrap()], b"")
             .lines()
-            .filter_map(|line| line.split_whitespace().nth(5).and_then(|d| d.parse::<usize>().ok()))
+            .filter_map(|line| {
+                line.split_whitespace()
+                    .nth(5)
+                    .and_then(|d| d.parse::<usize>().ok())
+            })
             .max()
             .unwrap_or(0)
     };
-    let (d1, d2) = (depth(&pack_one.with_extension("idx")), depth(&pack_two.with_extension("idx")));
+    let (d1, d2) = (
+        depth(&pack_one.with_extension("idx")),
+        depth(&pack_two.with_extension("idx")),
+    );
     eprintln!("source chain depths: pack one {d1}, pack two {d2}");
 
     let repo = Repository::open(&root).unwrap();
@@ -440,13 +474,8 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
         read: ReadLimits::default(),
         ..policy(ids.clone())
     };
-    match repo.repack_retained(&policy, RepackLimits::trusted(), &cancel) {
-        Err(error) => {
-            eprintln!("repack refused before publication: {error}");
-            return;
-        }
-        Ok(_) => {}
-    }
+    repo.repack_retained(&policy, RepackLimits::trusted(), &cancel)
+        .unwrap();
     let pack = new_pack(&root, &["pack-one", "pack-two"]);
     let published_depth = depth(&pack.with_extension("idx"));
     eprintln!("published pack max chain depth per git: {published_depth}");
@@ -454,22 +483,32 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
     for (id, content) in ids.iter().zip(&contents) {
         // A fresh store per read, so no warmed base cache can mask the chain depth.
         let objects = published.objects(PackLimits::trusted()).unwrap();
-        let read = objects.read(*id, ReadLimits::default()).map_err(|e| e.to_string());
-        assert_eq!(read.map(|o| o.map(|o| o.data().to_vec())), Ok(Some(content.clone())), "object {id} from the published pack with default limits");
+        let read = objects
+            .read(*id, ReadLimits::default())
+            .map_err(|e| e.to_string());
+        assert_eq!(
+            read.map(|o| o.map(|o| o.data().to_vec())),
+            Ok(Some(content.clone())),
+            "object {id} from the published pack with default limits"
+        );
     }
 }
 
-/// Integrity regression test: P (both judges): objects already held by a protected pack (recent or `.keep`) are copied
-/// into every replacement, so repeated maintenance inside the recent window stores them again
-/// each time. Three `retire_old_packs` runs with a new loose root each; the original pack stays
-/// protected throughout. Asserted: the commit is stored in exactly one pack after every run and
-/// total pack bytes stay within a small constant of the original pack.
+/// Integrity regression test: Changing roots must not multiply the copies held by a protected pack.
 #[test]
 fn protected_pack_objects_are_not_duplicated_across_maintenance_runs() {
     let dir = tempfile::tempdir().unwrap();
     let root = bare(dir.path());
-    let blob = git(&root, &["hash-object", "-w", "--stdin"], &blob_lines("bulk", 2000));
-    let tree = git(&root, &["mktree"], format!("100644 blob {blob}\tfile\n").as_bytes());
+    let blob = git(
+        &root,
+        &["hash-object", "-w", "--stdin"],
+        &blob_lines("bulk", 2000),
+    );
+    let tree = git(
+        &root,
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
     let commit = git(&root, &["commit-tree", &tree], b"root\n");
     git(&root, &["update-ref", "refs/heads/main", &commit], b"");
     git(&root, &["repack", "-a", "-d"], b"");
@@ -482,20 +521,37 @@ fn protected_pack_objects_are_not_duplicated_across_maintenance_runs() {
     let mut copies = Vec::new();
     let mut bytes = Vec::new();
     for run in 0..3 {
-        let loose: ObjectId = git(&root, &["hash-object", "-w", "--stdin"], format!("root {run}\n").as_bytes())
-            .parse()
-            .unwrap();
+        let loose: ObjectId = git(
+            &root,
+            &["hash-object", "-w", "--stdin"],
+            format!("root {run}\n").as_bytes(),
+        )
+        .parse()
+        .unwrap();
         policy.heads.push(loose);
         let report = repo
-            .retire_old_packs(&mut FixtureIsolation, &policy, RepackLimits::trusted(), &AtomicBool::new(false))
+            .retire_old_packs(
+                &mut FixtureIsolation,
+                &policy,
+                RepackLimits::trusted(),
+                &AtomicBool::new(false),
+            )
             .unwrap();
         assert!(report.published.is_some(), "run {run}: {report:?}");
         let holding = pack_files(&root)
             .iter()
             .filter(|pack| {
-                git(&root, &["verify-pack", "-v", pack.with_extension("idx").to_str().unwrap()], b"")
-                    .lines()
-                    .any(|line| line.starts_with(&commit))
+                git(
+                    &root,
+                    &[
+                        "verify-pack",
+                        "-v",
+                        pack.with_extension("idx").to_str().unwrap(),
+                    ],
+                    b"",
+                )
+                .lines()
+                .any(|line| line.starts_with(&commit))
             })
             .count();
         copies.push(holding);

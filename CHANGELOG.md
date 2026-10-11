@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Repack reuses existing packed entries and deltas. `RepackLimits::default()` now enables bounded
+  delta compression for newly packed objects instead of writing only whole objects. Copied entries
+  count against logical input and object byte limits. Required and recent unreachable objects keep
+  a verified readable copy; old unreachable objects may be reclaimed.
+
 ## [0.3.2](https://github.com/joshka/girt/compare/v0.3.1...v0.3.2) - 2026-10-11
 
 ### Other

@@ -1,5 +1,5 @@
-//! Original regression probes for the #23 base debate. Git generates object identities and
-//! indexes, and verifies every valid input pack. Deliberate index mutations model corruption.
+//! Integrity regression tests for readable survivors and resource limits.
+//! Git verifies original input packs; index mutations model damaged entries and mislabelled bases.
 #![cfg(unix)]
 use std::fs;
 use std::io::Write;
@@ -274,22 +274,24 @@ fn primary_loose_precedence_survives_alternate_copy() {
 }
 // Git permits old unreachable objects to be reclaimed; recent packs keep their readable copy.
 #[rstest::rstest]
-#[case::old(false)]
-#[case::recent(true)]
-fn retirement_applies_recent_cutoff_to_unreachable_objects(#[case] recent: bool) {
+#[case::old(false, 253_402_300_799)]
+#[case::recent(true, 0)]
+fn retirement_applies_recent_cutoff_to_unreachable_objects(
+    #[case] recent: bool,
+    #[case] cutoff: u64,
+) {
     let dir = bare();
     let root = dir.path();
     chain(root, "a", &[b"abc0", b"abc1"]);
     let omitted = id(root, b"abc1");
     let fresh = loose(root, b"fresh root");
     let mut p = policy(vec![id(root, b"abc0"), fresh]);
-    if recent {
-        p.recent_cutoff = UNIX_EPOCH;
-    }
+    p.recent_cutoff = UNIX_EPOCH + Duration::from_secs(cutoff);
     assert_eq!(read(root, omitted, p.read), Ok(b"abc1".to_vec()));
-    Repository::open(root).unwrap().retire_old_packs(
-        &mut Exclusive, &p, limits(), &AtomicBool::new(false),
-    ).unwrap();
+    Repository::open(root)
+        .unwrap()
+        .retire_old_packs(&mut Exclusive, &p, limits(), &AtomicBool::new(false))
+        .unwrap();
     assert_eq!(has_readable_pack_copy(root, omitted, b"abc1"), recent);
 }
 
@@ -433,22 +435,28 @@ fn damaged_protected_entry_does_not_justify_removing_readable_copy() {
     );
 }
 
-#[test]
-fn reused_entries_obey_logical_input_budget() {
+#[rstest::rstest]
+#[case::input_bytes(8, 4, "input bytes")]
+#[case::object_bytes(9, 3, "object bytes")]
+fn reused_entries_obey_logical_byte_budgets(
+    #[case] input: u64,
+    #[case] object: u64,
+    #[case] reason: &str,
+) {
     let dir = bare();
     let root = dir.path();
     chain(root, "a", &[b"abc0", b"abc1"]);
     let fresh = loose(root, b"Z");
     let p = policy(vec![id(root, b"abc0"), id(root, b"abc1"), fresh]);
     let mut bound = limits();
-    bound.write.max_input_bytes = 8;
+    bound.write.max_input_bytes = input;
+    bound.write.max_object_bytes = object;
     let result =
         Repository::open(root)
             .unwrap()
             .repack_retained(&p, bound, &AtomicBool::new(false));
-    eprintln!("nine logical bytes with budget eight: {result:?}");
     assert!(
-        result.is_err(),
-        "copied entries plus loose input exceed logical payload budget"
+        matches!(result, Err(girt::retention::RepackError::Write(girt::PackWriteError::Limit(actual))) if actual == reason)
     );
+    assert_eq!(packs(root).len(), 1);
 }

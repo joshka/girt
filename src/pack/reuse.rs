@@ -422,4 +422,36 @@ mod tests {
         assert_eq!(offset_distance(16511), [0xff, 0x7f]);
         assert_eq!(offset_distance(16512), [0x80, 0x80, 0]);
     }
+    #[rstest::rstest]
+    #[case::one(1)]
+    #[case::largest_single_byte(127)]
+    #[case::two_bytes(128)]
+    #[case::three_bytes(16512)]
+    #[case::largest(u64::MAX)]
+    fn offset_encoding_round_trips(#[case] distance: u64) {
+        let bytes = offset_distance(distance);
+        let mut input = bytes.as_slice();
+        let mut next = super::super::delta::byte(&mut input).unwrap();
+        let mut actual = u64::from(next & 127);
+        while next & 128 != 0 {
+            next = super::super::delta::byte(&mut input).unwrap();
+            actual = (actual + 1) * 128 + u64::from(next & 127);
+        }
+        assert_eq!(actual, distance);
+        assert!(input.is_empty());
+    }
+    #[test]
+    fn truncation_of_pinned_source_is_rejected_during_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let selected = packed(&source, &ids);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.path().join("source.pack"))
+            .unwrap()
+            .set_len(16)
+            .unwrap();
+        assert!(rewrite(&[&source], &selected, &[]).is_err());
+    }
 }
