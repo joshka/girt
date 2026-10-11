@@ -194,6 +194,23 @@ impl FilePack {
     }
 }
 
+impl FilePack {
+    /// Streams the validated raw bytes `start..end` of the pinned pack into `output`.
+    pub(crate) fn copy_raw(
+        &self,
+        start: usize,
+        end: usize,
+        output: &mut impl io::Write,
+    ) -> io::Result<()> {
+        let input = Range {
+            artifact: &self.pack,
+            position: start,
+            end: end.min(self.pack.len),
+        };
+        io::copy(&mut BufReader::with_capacity(64 * 1024, input), output).map(|_| ())
+    }
+}
+
 fn validate_pack(pack: &Artifact, index: &Index, cancelled: &AtomicBool) -> Result<(), Error> {
     let format = index.pack_hash.format();
     let end = pack.len - format.digest_len();

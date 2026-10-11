@@ -173,8 +173,9 @@ impl Repository {
         let directory = current.object_dir().join("pack");
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
+        // The isolated first scan is still current; the post-publication scan rechecks it.
         let published = current
-            .repack_retained(&keep_all_logs, limits, cancel)
+            .publish_required(&first.required, &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -459,6 +460,13 @@ mod tests {
             &["repack", "-ad", "--no-write-bitmap-index"],
             b"",
         );
+        // A loose descendant makes the replacement differ from the old pack.
+        let child = git(
+            root.path(),
+            &["commit-tree", &tree, "-p", &commit],
+            b"two\n",
+        );
+        git(root.path(), &["update-ref", "refs/heads/main", &child], b"");
         let repository = Repository::open(root.path()).unwrap();
         let directory = repository.object_dir().join("pack");
         let old_index = fs::read_dir(directory)

@@ -457,6 +457,16 @@ impl Objects {
     }
 }
 
+impl Objects {
+    /// Returns every indexed pack in lookup order, primary store first.
+    pub(crate) fn packs(&self) -> Vec<&FilePack> {
+        self.stores
+            .iter()
+            .flat_map(|store| store.packs.iter().map(AsRef::as_ref))
+            .collect()
+    }
+}
+
 impl Store {
     fn open(
         format: ObjectFormat,
