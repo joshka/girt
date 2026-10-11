@@ -245,6 +245,14 @@ impl Objects {
     pub fn store_directories(&self) -> impl Iterator<Item = &Path> {
         self.stores.iter().map(|store| store.directory.as_path())
     }
+    /// Returns every indexed pack of every store in search order.
+    pub(crate) fn packs(&self) -> Vec<&FilePack> {
+        self.stores
+            .iter()
+            .flat_map(|store| store.packs.iter().map(|pack| pack.as_ref()))
+            .collect()
+    }
+
     /// Fixed history boundaries inherited from the repository handle, unaffected by later refresh.
     pub fn shallow_roots(&self) -> &crate::ShallowRoots {
         &self.shallow

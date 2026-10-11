@@ -578,13 +578,35 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         &["repack", "-ad", "--no-write-bitmap-index"],
         b"",
     );
+    // Copying packed entries verbatim reproduces a lone Git pack exactly, so a second pack is
+    // needed for the replacement to differ from every old pair.
+    let tree = git(
+        root.path(),
+        &["rev-parse", &format!("{first}^{{tree}}")],
+        b"",
+    );
+    let third = git(
+        root.path(),
+        &["commit-tree", &tree, "-p", &first.to_string()],
+        b"three\n",
+    );
+    git(root.path(), &["update-ref", "refs/heads/main", &third], b"");
+    git(
+        root.path(),
+        &["repack", "-d", "--no-write-bitmap-index"],
+        b"",
+    );
     let directory = root.path().join("objects/pack");
-    let old_index = fs::read_dir(&directory)
+    let mut indices: Vec<_> = fs::read_dir(&directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
-        .unwrap();
+        .filter(|path| path.extension().is_some_and(|extension| extension == "idx"))
+        .collect();
+    indices.sort();
+    assert_eq!(indices.len(), 2);
+    let old_index = indices[0].clone();
     let canonical_index = old_index.canonicalize().unwrap();
+    let last_pack = indices[1].canonicalize().unwrap().with_extension("pack");
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
@@ -599,10 +621,7 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .unwrap();
     assert!(report.published.is_some());
     assert_eq!(report.removed.first(), Some(&canonical_index));
-    assert_eq!(
-        report.removed.last(),
-        Some(&canonical_index.with_extension("pack"))
-    );
+    assert_eq!(report.removed.last(), Some(&last_pack));
     assert!(!old_index.exists());
     assert_eq!(
         git(root.path(), &["cat-file", "-t", &first.to_string()], b""),

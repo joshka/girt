@@ -86,7 +86,9 @@ impl Repository {
     /// The caller's [`MaintenanceIsolation`] guard must exclude external Git and girt writers,
     /// old readers pinned to packs, and repositories depending on this store as an alternate for
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
-    /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
+    /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair that
+    /// copies existing pack entries, deltas included, and delta-compresses only the rest (see
+    /// [`Self::repack_retained`]),
     /// synchronizes the pack and object directories, verifies each retained ID through that pair,
     /// and compares
     /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
@@ -173,8 +175,9 @@ impl Repository {
         let directory = current.object_dir().join("pack");
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
+        // `first` is this attempt's scan; the second scan below detects any later change.
         let published = current
-            .repack_retained(&keep_all_logs, limits, cancel)
+            .repack_required(first.required.clone(), &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -459,12 +462,31 @@ mod tests {
             &["repack", "-ad", "--no-write-bitmap-index"],
             b"",
         );
+        // Copying packed entries verbatim reproduces a lone pack exactly, so a second pack is
+        // needed for the replacement to differ from every old pair.
+        let second = git(
+            root.path(),
+            &["commit-tree", &tree, "-p", &commit],
+            b"two\n",
+        );
+        git(
+            root.path(),
+            &["update-ref", "refs/heads/main", &second],
+            b"",
+        );
+        git(
+            root.path(),
+            &["repack", "-d", "--no-write-bitmap-index"],
+            b"",
+        );
         let repository = Repository::open(root.path()).unwrap();
         let directory = repository.object_dir().join("pack");
         let old_index = fs::read_dir(directory)
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
+            // Retirement removes old pairs in path order.
+            .min()
             .unwrap();
         let policy = RetentionPolicy {
             recent_cutoff: SystemTime::now() + Duration::from_secs(60),

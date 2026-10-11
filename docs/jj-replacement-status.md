@@ -51,10 +51,30 @@ Release builds on macOS arm64. The girt column is jj on girt 0.3.1:
 | no-op fetch | 2.1 s / 98 MB    | 0.67 s / 28 MB        |
 | `util gc`   | 75 s / 365 MB    | 2.3 s / 262 MB        |
 
-The girt `util gc` row is reflog expiry and loose-object pruning only; it doesn't repack
-([#23](https://github.com/joshka/girt/issues/23)). Small fixtures hid every one of these costs, so
-include this benchmark in the acceptance check of any change touching fetch, object reading, packing
-or retention.
+The girt `util gc` row is reflog expiry and loose-object pruning only; jj's branch hasn't yet
+switched back to `run_maintenance`. Small fixtures hid every one of these costs, so include this
+benchmark in the acceptance check of any change touching fetch, object reading, packing or
+retention.
+
+### Repack benchmark
+
+[#23](https://github.com/joshka/girt/issues/23): repack copies existing pack entries verbatim,
+deltas included, and delta-compresses only objects that aren't in a pack. On 2026-10-10 (macOS
+arm64, release build, a bare clone of `jj-vcs/jj` with one 199.7 MiB pack of 131,162 objects, under
+the shared timing lock), `Repository::retire_old_packs` and `git repack -a -d` gave:
+
+| Step                                         | Time   | Peak RSS | Pack size |
+| -------------------------------------------- | ------ | -------- | --------- |
+| `repack_retained` (additive)                 | 21 s   | 405 MiB  | 196.2 MiB |
+| of which retention scan                      | 19 s   |          |           |
+| `retire_old_packs` (scan, write, verify)     | 53 s   | 430 MiB  | 196.2 MiB |
+| `git repack -a -d`                           | 1.5 s  | 285 MiB  | 196.2 MiB |
+
+The pack is within 1% of the original and `git fsck --strict` and `git verify-pack` pass. Writing
+the pack takes about 2 s; the rest is the retention scan, which reads every reachable blob and runs
+twice in `retire_old_packs`, and the read-back that checks the replacement before anything is
+removed (13 s). A faster scan is the remaining work toward "seconds": reachability needs only trees,
+commits and blob existence.
 
 ### Streaming receive benchmark
 

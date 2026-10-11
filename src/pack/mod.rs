@@ -27,7 +27,7 @@ pub use write::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack,
     write_pack_with_compression,
 };
-pub(crate) use write::{write_controlled, write_controlled_observed};
+pub(crate) use write::{Reuse, write_controlled_observed, write_reusing_observed};
 
 #[cfg(test)]
 mod tests;

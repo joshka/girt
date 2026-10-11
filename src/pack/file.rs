@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
+use super::delta::{byte, size};
 use super::index::{Entry, Index, word};
 use super::reader::{Source, check_cancelled, decode};
 use crate::object::Hasher;
@@ -192,6 +193,95 @@ impl FilePack {
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
     }
+
+    /// Returns the entry's pack type code, declared payload size and delta base without inflating.
+    ///
+    /// An OFS_DELTA base is translated to the identity of the entry it names.
+    pub(crate) fn describe(&self, position: usize) -> Result<Described, Error> {
+        let entry = self.entry(position)?;
+        let prefix = self.prefix(&entry)?;
+        let (parts, _) = split_entry(self, &entry, &prefix)?;
+        Ok(parts)
+    }
+
+    /// Returns the byte offset of the entry within the pack.
+    pub(crate) fn entry_offset(&self, position: usize) -> Result<usize, Error> {
+        Ok(self.entry(position)?.offset)
+    }
+
+    /// Returns the entry's zlib stream exactly as stored, after its header and delta base.
+    pub(crate) fn compressed(&self, position: usize) -> Result<Vec<u8>, Error> {
+        let entry = self.entry(position)?;
+        let prefix = self.prefix(&entry)?;
+        let (_, start) = split_entry(self, &entry, &prefix)?;
+        self.pack.bytes(start, entry.end)
+    }
+}
+
+/// An entry's header fields, as stored.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Described {
+    /// Pack type: 1..=4 for whole objects, 0 for a delta (see `base`).
+    pub code: u8,
+    /// Declared inflated size: the object payload, or the delta program.
+    pub size: u64,
+    /// Identity of the delta base, if this entry is a delta.
+    pub base: Option<ObjectId>,
+    /// Whether the base was named by pack offset (OFS_DELTA) rather than by identity.
+    pub by_offset: bool,
+}
+
+/// Parses an entry header from its prefix; returns the fields and the offset of the zlib stream.
+fn split_entry(pack: &FilePack, entry: &Entry, prefix: &[u8]) -> Result<(Described, usize), Error> {
+    let mut input = prefix;
+    let header = byte(&mut input)?;
+    let kind = (header >> 4) & 7;
+    let size = size(&mut input, (header & 15) as usize, 4, header & 128 != 0)?;
+    let by_offset = kind == 6;
+    let base = match kind {
+        1..=4 => None,
+        6 => {
+            let mut next = byte(&mut input)?;
+            let mut distance = (next & 127) as usize;
+            while next & 128 != 0 {
+                next = byte(&mut input)?;
+                distance = distance
+                    .checked_add(1)
+                    .and_then(|n| n.checked_mul(128))
+                    .and_then(|n| n.checked_add((next & 127) as usize))
+                    .ok_or(Error::Corrupt("delta offset overflow"))?;
+            }
+            if distance == 0 {
+                return Err(Error::Corrupt("zero delta distance"));
+            }
+            let offset = entry
+                .offset
+                .checked_sub(distance)
+                .ok_or(Error::Corrupt("delta offset before pack"))?;
+            let base = pack.at_offset(offset)?;
+            Some(pack.entry(base)?.id)
+        }
+        7 => {
+            let width = pack.format.digest_len();
+            let raw = input
+                .get(..width)
+                .ok_or(Error::Corrupt("truncated base identity"))?;
+            input = &input[width..];
+            Some(ObjectId::from_bytes(pack.format, raw).unwrap())
+        }
+        other => return Err(Error::ObjectType(other)),
+    };
+    let start = entry.offset + prefix.len() - input.len();
+    let code = if base.is_some() { 0 } else { kind };
+    Ok((
+        Described {
+            code,
+            size: size as u64,
+            base,
+            by_offset,
+        },
+        start,
+    ))
 }
 
 fn validate_pack(pack: &Artifact, index: &Index, cancelled: &AtomicBool) -> Result<(), Error> {
