@@ -287,11 +287,16 @@ impl Repository {
                 return plan;
             }
         }
-        let live = match walk(self, &store, policy, cancel, &plan.strong_roots) {
-            Ok(reachable) => reachable,
-            Err(reason) => {
-                plan.fail(reason);
-                return plan;
+        // Probe: reuse an identical closure instead of walking the graph again.
+        let live = if plan.strong_roots == plan.roots {
+            plan.reachable.clone()
+        } else {
+            match walk(self, &store, policy, cancel, &plan.strong_roots) {
+                Ok(reachable) => reachable,
+                Err(reason) => {
+                    plan.fail(reason);
+                    return plan;
+                }
             }
         };
         let mut required_roots = plan.strong_roots.clone();
@@ -315,9 +320,15 @@ impl Repository {
                 );
             }
         }
-        match walk(self, &store, policy, cancel, &required_roots) {
-            Ok(required) => plan.required = required,
-            Err(reason) => plan.fail(reason),
+        if required_roots == plan.roots {
+            plan.required = plan.reachable.clone();
+        } else if required_roots == plan.strong_roots {
+            plan.required = live;
+        } else {
+            match walk(self, &store, policy, cancel, &required_roots) {
+                Ok(required) => plan.required = required,
+                Err(reason) => plan.fail(reason),
+            }
         }
         plan
     }
