@@ -83,3 +83,11 @@ undrained
 vendored
 untracked
 unstaged
+libcurl
+proxying
+CAs
+TTYs
+argv
+backpressure
+stdin
+nondeletion
