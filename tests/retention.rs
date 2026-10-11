@@ -578,6 +578,19 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         &["repack", "-ad", "--no-write-bitmap-index"],
         b"",
     );
+    // A loose descendant makes the replacement differ from the old pack.
+    let tree = git(root.path(), &["mktree"], b"");
+    let parent = second.to_string();
+    let child = git(
+        root.path(),
+        &["commit-tree", &tree, "-p", &parent],
+        b"loose\n",
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/loose", &child],
+        b"",
+    );
     let directory = root.path().join("objects/pack");
     let old_index = fs::read_dir(&directory)
         .unwrap()
@@ -612,6 +625,98 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
         "commit"
     );
+}
+
+fn pack_files(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    fs::read_dir(root.join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == extension))
+        .collect()
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn retirement_reuses_git_deltas_and_compresses_loose_objects(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let base: String = (0..2000).map(|n| format!("line {n}\n")).collect();
+    let mut parent = git(root.path(), &["rev-parse", "main"], b"");
+    let commit_version = |version: usize, parent: &str| {
+        let blob = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            format!("{base}version {version}\n").as_bytes(),
+        );
+        let tree = git(
+            root.path(),
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        git(
+            root.path(),
+            &["commit-tree", &tree, "-p", parent],
+            format!("v{version}\n").as_bytes(),
+        )
+    };
+    for version in 0..8 {
+        parent = commit_version(version, &parent);
+    }
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &parent],
+        b"",
+    );
+    git(
+        root.path(),
+        &["repack", "-adf", "--no-write-bitmap-index"],
+        b"",
+    );
+    let old_pack = pack_files(root.path(), "pack").pop().unwrap();
+    let old_size = fs::metadata(&old_pack).unwrap().len();
+    for version in 8..12 {
+        parent = commit_version(version, &parent);
+    }
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &parent],
+        b"",
+    );
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let written = report.published.unwrap().written;
+    // Seven reused Git blob deltas plus three new ones among the four loose versions.
+    assert!(written.deltas.entries >= 10, "{:?}", written.deltas);
+    assert!(!old_pack.exists());
+    let packs = pack_files(root.path(), "pack");
+    assert_eq!(packs.len(), 1);
+    // Loose objects delta only against each other, so at most one more whole blob is added.
+    assert!(
+        written.pack_bytes < old_size * 2,
+        "{written:?} vs {old_size}"
+    );
+    let verify = git(
+        root.path(),
+        &[
+            "verify-pack",
+            "-v",
+            packs[0].with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
+    assert!(verify.contains("chain length = "), "{verify}");
+    git(root.path(), &["fsck", "--full", "--strict"], b"");
 }
 
 #[cfg(unix)]
@@ -787,7 +892,8 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     let again = repo
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
-    assert_eq!(again.written.checksum, result.written.checksum);
+    // Entries are now copied from whichever pack holds them first, so bytes may differ.
+    assert_eq!(again.written.objects, result.written.objects);
 }
 
 #[rstest::rstest]

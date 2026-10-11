@@ -1,20 +1,26 @@
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
 use super::RetentionPolicy;
-use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_controlled};
-use crate::{ObjectId, ObjectReadError, PackCompression, Repository};
+use crate::pack::{
+    PackObject, PackWriteError, PackWriteLimits, PackWritten, Packed, ReuseError, write_reusing,
+};
+use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository};
 
-/// Bounds one additive repack. Payloads remain in memory until the pack is written.
+/// Bounds one additive repack.
+///
+/// Entries copied from existing packs stream from their files. Objects that are not packed yet
+/// remain decoded in memory until the pack is written.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count, decoded input bytes, and both output artifacts.
+    /// Bounds object count and both output artifacts. Object and input byte bounds apply to
+    /// decoded objects that are not copied from an existing pack.
     pub write: PackWriteLimits,
-    /// Selects ordinary or bounded delta compression.
+    /// Selects delta search among objects not already packed (default: bounded deltas).
     pub compression: PackCompression,
 }
 
@@ -22,7 +28,7 @@ impl Default for RepackLimits {
     fn default() -> Self {
         Self {
             write: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -35,7 +41,7 @@ impl RepackLimits {
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -86,8 +92,14 @@ impl Repository {
     /// Publishes a pack of objects required by a fresh complete retention scan.
     ///
     /// This additive operation rescans roots and recent objects instead of trusting an older
-    /// [`super::RetentionPlan`]. It reads required objects through pinned packs, writes two bounded
-    /// temporary files in the primary pack directory, synchronizes each file, then publishes the
+    /// [`super::RetentionPlan`]. A required object already in a pinned pack has its entry copied
+    /// without inflating it, in source pack order; a delta keeps its compressed instructions when
+    /// its base entry from the same pack is also copied, and is otherwise rebuilt as a whole
+    /// object. Source packs were checksum-validated when opened. Other required objects are read
+    /// and identity-checked, then appended with deltas against each other under
+    /// [`RepackLimits::compression`]. A repository whose only pack holds exactly the required
+    /// objects can therefore reproduce that pack byte for byte. It writes two bounded temporary
+    /// files in the primary pack directory, synchronizes each file, then publishes the
     /// pack before its index. The index is the visibility marker. An existing checksum-named file
     /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
     /// remain untouched, including protected packs. Readers with pinned generations keep their
@@ -132,18 +144,40 @@ impl Repository {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
+        self.publish_required(&plan.required, policy, limits, cancel)
+    }
+
+    /// Publishes a pack holding `required`, which a complete scan of this repository produced.
+    pub(super) fn publish_required(
+        &self,
+        required: &std::collections::BTreeSet<ObjectId>,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
         let objects =
             self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
-        let count = u32::try_from(plan.required.len())
-            .map_err(|_| PackWriteError::Limit("object count"))?;
+        let count =
+            u32::try_from(required.len()).map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let mut decoded = Vec::with_capacity(plan.required.len());
+        let packs = objects.packs();
+        let mut packed = Vec::new();
+        let mut decoded = Vec::new();
         let mut bytes = 0u64;
-        for id in plan.required {
+        'required: for &id in required {
             check(cancel)?;
+            for (pack, source) in packs.iter().enumerate() {
+                let found = source
+                    .find(id)
+                    .map_err(|source| RepackError::Read { id, source })?;
+                if let Some(position) = found {
+                    packed.push(Packed { id, pack, position });
+                    continue 'required;
+                }
+            }
             let object = objects
                 .read_controlled(id, policy.read, cancel)
                 .map_err(|source| RepackError::Read { id, source })?
@@ -161,7 +195,7 @@ impl Repository {
             }
             decoded.push((id, object));
         }
-        let input: Vec<_> = decoded
+        let fresh: Vec<_> = decoded
             .iter()
             .map(|(id, object)| PackObject {
                 id: *id,
@@ -173,13 +207,18 @@ impl Repository {
         fs::create_dir_all(&directory)?;
         let mut pack = NamedTempFile::new_in(&directory)?;
         let mut index = NamedTempFile::new_in(&directory)?;
-        let write_result = write_controlled(
+        let write_result = write_reusing(
             self.object_format(),
-            &input,
-            &mut pack,
-            &mut index,
+            &packs,
+            &packed,
+            &fresh,
+            (
+                &mut BufWriter::new(pack.as_file_mut()),
+                &mut BufWriter::new(index.as_file_mut()),
+            ),
             limits.write,
             limits.compression,
+            (policy.read, cancel),
             &mut || {
                 if cancel.load(Ordering::Relaxed) {
                     Err(PackWriteError::Io(io::ErrorKind::Interrupted.into()))
@@ -190,7 +229,9 @@ impl Repository {
         );
         let written = match write_result {
             Err(_) if cancel.load(Ordering::Relaxed) => return Err(RepackError::Cancelled),
-            result => result?,
+            Err(ReuseError::Read { id, source }) => return Err(RepackError::Read { id, source }),
+            Err(ReuseError::Write(error)) => return Err(error.into()),
+            Ok(written) => written,
         };
         pack.as_file().sync_all()?;
         index.as_file().sync_all()?;

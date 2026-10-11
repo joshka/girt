@@ -56,6 +56,12 @@ pub struct DeltaOptions {
 
 impl Default for DeltaOptions {
     fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl DeltaOptions {
+    pub(crate) const DEFAULT: Self = {
         Self {
             window: 16,
             max_candidates: 4,
@@ -64,7 +70,7 @@ impl Default for DeltaOptions {
             max_depth: 4,
             min_savings: 16,
         }
-    }
+    };
 }
 
 /// Search accounting for a completed pack; excludes ordinary hashing and zlib work.
