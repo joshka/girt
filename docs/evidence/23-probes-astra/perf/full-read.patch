@@ -1,0 +1,24 @@
+diff --git a/src/retention.rs b/src/retention.rs
+index ef2c8a65f6..8666804c9c 100644
+--- a/src/retention.rs
++++ b/src/retention.rs
+@@ -645,19 +645,6 @@ fn walk(
+         if reachable.len() >= policy.max_entries {
+             return Err("reachable object limit".into());
+         }
+-        // Blobs have no outgoing edges: locating one and confirming its kind is enough.
+-        if expected.get(&id) == Some(&ObjectKind::Blob) {
+-            let kind = store
+-                .kind_controlled(id, policy.read, cancel)
+-                .map_err(|e| e.to_string())?
+-                .ok_or_else(|| format!("missing reachable object {id}"))?;
+-            if kind != ObjectKind::Blob {
+-                return Err(format!("wrong reachable kind {id}"));
+-            }
+-            kinds.insert(id, kind);
+-            reachable.insert(id);
+-            continue;
+-        }
+         let object = store
+             .read_controlled(id, policy.read, cancel)
+             .map_err(|e| e.to_string())?

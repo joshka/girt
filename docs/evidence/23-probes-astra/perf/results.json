@@ -1,0 +1,50 @@
+[
+  {
+    "variant": "stock52",
+    "run": 1,
+    "time": "        6.09 real         4.39 user         1.41 sys\n           239124480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               15802  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  42  voluntary context switches\n                1163  involuntary context switches\n         48040421932  instructions retired\n         19516133001  cycles elapsed\n           182534720  peak memory footprint\n",
+    "packs": [
+      {
+        "bytes": 205698770,
+        "sha256": "b5ef7650360894282d14630b6b6c7704880d79ef85606cb23532260ed3d72cff"
+      }
+    ],
+    "git_checks": "passed"
+  },
+  {
+    "variant": "stock52",
+    "run": 2,
+    "time": "        5.87 real         4.40 user         1.36 sys\n           239321088  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               15816  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  27  voluntary context switches\n                1454  involuntary context switches\n         47971231358  instructions retired\n         19333529706  cycles elapsed\n           182878808  peak memory footprint\n",
+    "packs": [
+      {
+        "bytes": 205698770,
+        "sha256": "b5ef7650360894282d14630b6b6c7704880d79ef85606cb23532260ed3d72cff"
+      }
+    ],
+    "git_checks": "passed"
+  },
+  {
+    "variant": "full52",
+    "run": 1,
+    "time": "       21.24 real        18.76 user         2.09 sys\n           499761152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               31856  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  29  voluntary context switches\n                2397  involuntary context switches\n        151222020255  instructions retired\n         69970753466  cycles elapsed\n           330646104  peak memory footprint\n",
+    "packs": [
+      {
+        "bytes": 205698770,
+        "sha256": "b5ef7650360894282d14630b6b6c7704880d79ef85606cb23532260ed3d72cff"
+      }
+    ],
+    "git_checks": "passed"
+  },
+  {
+    "variant": "full52",
+    "run": 2,
+    "time": "       20.68 real        18.52 user         2.00 sys\n           494469120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               31179  page reclaims\n                   0  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  28  voluntary context switches\n                3596  involuntary context switches\n        151077531206  instructions retired\n         69226868277  cycles elapsed\n           355238536  peak memory footprint\n",
+    "packs": [
+      {
+        "bytes": 205698770,
+        "sha256": "b5ef7650360894282d14630b6b6c7704880d79ef85606cb23532260ed3d72cff"
+      }
+    ],
+    "git_checks": "passed"
+  }
+]
