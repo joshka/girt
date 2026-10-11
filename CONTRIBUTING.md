@@ -67,9 +67,11 @@ making support claims. Local cross-compilation does not replace executing the te
 target OS.
 
 CI runs on pull requests and on pushes to `main`. It calls the index, references and security
-workflows when a change touches their paths. Its `required` job is the single merge gate: it fails
-when any other CI job fails or is cancelled, and treats skipped jobs as passing. Add new CI jobs to
-its `needs` list.
+workflows when a change touches their paths. Changes that touch only Markdown, licenses,
+`.vale.ini`, `.config/rumdl.toml` or `.config/vale/` run just the `Docs` job (`just docs-check`);
+the MSRV and platform test jobs report as skipped. Any other path, including non-Markdown files
+under `docs/`, runs them. Its `required` job is the single merge gate: it fails when any other CI
+job fails or is cancelled, and treats skipped jobs as passing. Add new CI jobs to its `needs` list.
 
 ## Implementation and Tests
 
