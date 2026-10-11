@@ -60,10 +60,20 @@ A fixture that outlives a call, such as a loopback server, must stop when its te
 includes a test killed by a signal or a runner timeout, when no `Drop` runs. Pass the test's process
 ID to the fixture and check direct-parent identity on POSIX; a zombie owner still has a PID. Ignore
 further termination signals once cleanup has started, so a second signal cannot abandon it halfway.
-Freeze and rescan descendants before killing them, including separate sessions, and retain the
-leader PID until cleanup finishes. `fixture_process::Process` also kills the fixture's process group
-even after the leader exits on its own. The cleanup regressions exercise late forks and owner exit
-with delayed reaping on Linux and macOS; Windows retains its normal process teardown.
+SSH supervisors and listeners retain the test's session, with a separate process group. Independent
+lifetime guards reserve their group identities and stay runnable during tree discovery. They watch
+the original test lifetime, plus stdin EOF or the supervisor-held FIFO for forced commands, so
+subreaper adoption of a stopped parent does not hide owner death. Git children stay in the forced
+command's guarded group. Normal cleanup kills protected children before explicitly shutting down and
+reaping its guard; it never kills its own group before returning Git's exit status.
+
+Freeze and rescan the protected tree before terminating and continuing its supervisor. Bound both
+discovery and its subprocesses, stop new children immediately, and retain the leader PID until
+cleanup finishes. Never freeze an independent lifetime guard. Incomplete discovery reports an error
+and leaves that guard armed for group cleanup rather than declaring success. Regression tests cover
+supervisor death, stopped parents beneath a Linux subreaper, launch-registration signals, and
+blocked discovery. Windows retains normal process teardown; abrupt-owner containment needs a
+separate Job Object change.
 
 ## Performance Evidence
 

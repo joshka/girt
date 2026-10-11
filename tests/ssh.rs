@@ -1409,12 +1409,11 @@ fn clone_malformed_transfer_leaves_destination_absent() {
 
 #[test]
 fn python_cleanup_regressions() {
-    let status = std::process::Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ssh/test_cleanup.py"
-        ))
-        .status()
-        .unwrap();
-    assert!(status.success());
+    let mut command = std::process::Command::new("python3");
+    command.arg(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/ssh/test_cleanup.py"
+    ));
+    let mut process = ssh_git::fixture_process::Process::spawn(&mut command, true);
+    process.complete(std::time::Duration::from_secs(60));
 }

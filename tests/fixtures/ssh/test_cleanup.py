@@ -46,7 +46,7 @@ if os.fork()==0:
 else: time.sleep(60)
 """
             child = subprocess.Popen(["python3", "-c", program, directory])
-            original = subprocess.check_output
+            original = fixture.scan
             first = True
 
             def snapshot(*args, **kwargs):
@@ -60,7 +60,7 @@ else: time.sleep(60)
 
             try:
                 wait_for(lambda: (root / "ready").exists())
-                with patch.object(fixture.subprocess, "check_output", snapshot):
+                with patch.object(fixture, "scan", snapshot):
                     fixture.stop_sshd(child)
                 pid = int((root / "pid").read_text())
                 wait_for(lambda: dead(pid))
@@ -72,6 +72,10 @@ else: time.sleep(60)
                         os.kill(int((root / "pid").read_text()), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
+    def test_owner_scan_timeout_is_retried(self):
+        with patch.object(fixture, "scan", side_effect=subprocess.TimeoutExpired("ps", .25)):
+            self.assertTrue(fixture.alive(os.getpid()))
 
     def test_listener_zombie_is_not_alive(self):
         owner = os.fork()
@@ -102,6 +106,7 @@ else: time.sleep(60)
             else:
                 command = [str(fixtures / protocol / "server.py"), directory]
             # This runner intentionally retains both the zombie owner and the stdin writer.
+            expected_parent = os.getpid()
             owner = os.fork()
             if owner == 0:
                 with (root / "output").open("w") as output:
@@ -110,7 +115,8 @@ else: time.sleep(60)
                                              stdin=read_fd, stdout=output, stderr=output)
                     (root / "pid.tmp").write_text(str(child.pid))
                     (root / "pid.tmp").rename(root / "pid")
-                    time.sleep(60)
+                    while os.getppid() == expected_parent:
+                        time.sleep(.05)
                 os._exit(0)
             try:
                 wait_for(lambda: (root / "pid").exists())
@@ -137,7 +143,12 @@ else: time.sleep(60)
 if __name__ == "__main__":
     read_fd, write_fd = os.pipe()
     try:
-        unittest.main()
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(Cleanup)
+        suite.addTests(unittest.defaultTestLoader.discover(str(Path(__file__).parent), "test_lifetime.py"))
+        result = unittest.TextTestRunner().run(suite)
+        if not result.wasSuccessful():
+            sys.exit(1)
+        print("cleanup regressions passed", flush=True)
     finally:
         os.close(read_fd)
         os.close(write_fd)
