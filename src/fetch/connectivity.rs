@@ -4,7 +4,54 @@ use std::sync::atomic::AtomicBool;
 
 use super::known::KnownObjects;
 use super::{FetchError, FetchLimits, check_cancelled};
-use crate::{Object, ObjectId};
+use crate::{Object, ObjectId, ObjectKind};
+
+pub(super) trait ReceivedObjects {
+    #[cfg(feature = "tracing")]
+    fn len(&self) -> usize;
+    fn contains_key(&self, id: &ObjectId) -> bool;
+    fn get(
+        &self,
+        id: &ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Cow<'_, Object>>, FetchError>;
+    fn kind(&self, id: ObjectId, cancel: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
+        Ok(self.get(&id, cancel)?.map(|o| o.kind()))
+    }
+}
+
+impl ReceivedObjects for HashMap<ObjectId, Object> {
+    #[cfg(feature = "tracing")]
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn contains_key(&self, id: &ObjectId) -> bool {
+        self.contains_key(id)
+    }
+    fn get(&self, id: &ObjectId, _: &AtomicBool) -> Result<Option<Cow<'_, Object>>, FetchError> {
+        Ok(self.get(id).map(Cow::Borrowed))
+    }
+}
+
+impl ReceivedObjects for super::import::IndexedObjects {
+    #[cfg(feature = "tracing")]
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn contains_key(&self, id: &ObjectId) -> bool {
+        self.contains_key(id)
+    }
+    fn get(
+        &self,
+        id: &ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Cow<'_, Object>>, FetchError> {
+        Ok(self.get(id, cancel)?.map(Cow::Owned))
+    }
+    fn kind(&self, id: ObjectId, _: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
+        Ok(self.kind(id))
+    }
+}
 
 /// Follow typed edges from every selected tip. Gitlinks refer to independent submodule stores.
 #[cfg(test)]
@@ -29,7 +76,7 @@ pub(super) fn validate_with_known(
 }
 
 pub(super) fn validate_with_boundaries(
-    objects: &HashMap<ObjectId, Object>,
+    objects: &impl ReceivedObjects,
     known: &(impl KnownObjects + ?Sized),
     wants: &[ObjectId],
     shallow: &[ObjectId],
@@ -50,15 +97,17 @@ pub(super) fn validate_with_boundaries(
     );
 
     let operation = || {
-        let lookup = |id: ObjectId| -> Option<Cow<'_, Object>> {
-            objects
-                .get(&id)
-                .map(Cow::Borrowed)
-                .or_else(|| known.get(id))
+        let lookup = |id: ObjectId| -> Result<Option<Cow<'_, Object>>, FetchError> {
+            Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
+        };
+        let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
+            Ok(objects
+                .kind(id, cancel)?
+                .or_else(|| known.get(id).map(|o| o.kind())))
         };
         let shallow: HashSet<_> = shallow.iter().copied().collect();
         for &id in &shallow {
-            let object = lookup(id).ok_or(FetchError::Missing(id))?;
+            let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
             if object.kind() != crate::ObjectKind::Commit {
                 return Err(FetchError::Kind(id));
             }
@@ -77,7 +126,6 @@ pub(super) fn validate_with_boundaries(
         let mut remaining = limits.max_connectivity_edges;
         while let Some(id) = pending.pop_front() {
             check_cancelled(cancel)?;
-            let object = lookup(id).ok_or(FetchError::Missing(id))?;
             if !objects.contains_key(&id) {
                 dependencies.push(id);
                 if known.trusted_complete() {
@@ -85,10 +133,15 @@ pub(super) fn validate_with_boundaries(
                     continue;
                 }
             }
+            // Blob identity and kind were validated while indexing; blobs have no outgoing edges.
+            if kind(id)? == Some(ObjectKind::Blob) {
+                continue;
+            }
+            let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
             let shallow_commit =
                 shallow.contains(&id) && object.kind() == crate::ObjectKind::Commit;
-            let edge = |id, kind| {
-                if shallow_commit && kind == crate::ObjectKind::Commit {
+            let edge = |id, expected| {
+                if shallow_commit && expected == crate::ObjectKind::Commit {
                     return Ok(());
                 }
                 check_cancelled(cancel)?;
@@ -96,8 +149,8 @@ pub(super) fn validate_with_boundaries(
                     .checked_sub(1)
                     .ok_or(FetchError::Limit("connectivity edges"))?;
                 if !seen.contains(&id) {
-                    let object = lookup(id).ok_or(FetchError::Missing(id))?;
-                    if object.kind() != kind {
+                    let actual = kind(id)?.ok_or(FetchError::Missing(id))?;
+                    if actual != expected {
                         return Err(FetchError::Kind(id));
                     }
                     seen.insert(id);

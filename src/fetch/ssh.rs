@@ -18,8 +18,9 @@ use crate::transport::ssh::SshRemote;
 /// advertisement, negotiation and response; empty/known-only fetches send a flush and await exit.
 ///
 /// Returns unvalidated bytes: call [`DownloadedFetch::validate`] synchronously on a caller-owned
-/// CPU worker, then install explicitly. No hidden workers or filesystem redesign are involved.
-/// Network retention adds at most `max_wire_bytes` to ordinary fetch budgets. Selection and
+/// CPU worker, then install explicitly. The response is spooled to an owned temporary file;
+/// ordinary errors and drop remove it. Network retention adds at most `max_wire_bytes` of disk use
+/// to ordinary fetch budgets. Selection and
 /// bounded advertisement/request parsing run synchronously; callbacks must return promptly.
 ///
 /// Takes shared ownership of `known` for negotiation and later validation; clone the Arc first
@@ -153,7 +154,7 @@ pub async fn receive_ssh_with_progress(
             control.cancel,
         )?;
         control.check()?;
-        let mut live = LiveProgress::new(depth.is_some());
+        let mut live = LiveProgress::new(depth.is_some(), limits.max_shallow_roots);
         let mut validate_prefix = |bytes: &[u8]| {
             let mut reader = bytes;
             let mut wire = Wire {
@@ -164,22 +165,34 @@ pub async fn receive_ssh_with_progress(
             protocol::read_response_prefix(&mut wire, &negotiation, limits).is_ok()
                 && wire.end().is_ok()
         };
-        let (body, result, _) = session
-            .exchange_observed(
+        let mut body = super::bytes::Bytes::temporary()?;
+        let mut io_error = None;
+        let (result, _) = session
+            .exchange_streaming(
                 &request,
                 &[],
                 remaining,
                 control,
                 &mut diagnostics,
                 &mut |bytes| {
-                    if negotiation.needs_pack {
-                        live.observe(bytes, &mut validate_prefix, &mut progress);
+                    if let Err(error) = body.append(bytes) {
+                        io_error = Some(error);
+                        return Err(crate::transport::ssh::SshError::Io(
+                            std::io::ErrorKind::Other,
+                        ));
                     }
+                    if negotiation.needs_pack {
+                        live.feed(bytes, &mut validate_prefix, &mut progress);
+                    }
+                    Ok(())
                 },
             )
             .await;
+        if let Some(error) = io_error {
+            return Err(error);
+        }
         result?;
-        if !negotiation.needs_pack && !body.is_empty() {
+        if !negotiation.needs_pack && body.len() != 0 {
             return Err(FetchError::Protocol("trailing response bytes"));
         }
         Ok(DownloadedFetch {

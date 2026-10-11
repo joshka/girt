@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[cfg(test)]
 use flate2::{Decompress, FlushDecompress, Status};
 
 use super::delta::{apply, byte, charge, size};
@@ -59,7 +60,7 @@ impl Pack {
     }
 }
 
-pub(super) trait Source {
+pub(crate) trait Source {
     fn format(&self) -> crate::ObjectFormat;
     fn entry(&self, position: usize) -> Result<super::index::Entry, Error>;
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error>;
@@ -123,7 +124,14 @@ impl BaseCache {
         inner.entries.get(&position).cloned()
     }
 
-    fn insert(&self, position: usize, object: &Object, verified: bool) {
+    pub(crate) fn insert(&self, position: usize, object: &Object, verified: bool) {
+        if object.data.len() <= Self::LIMIT / 8 {
+            self.insert_owned(position, object.clone(), verified);
+        }
+    }
+
+    /// Indexing can transfer a decoded payload into the cache instead of copying it.
+    pub(crate) fn insert_owned(&self, position: usize, object: Object, verified: bool) {
         let size = object.data.len();
         // One large object shouldn't evict every shared base.
         if size > Self::LIMIT / 8 {
@@ -148,7 +156,7 @@ impl BaseCache {
             position,
             Cached {
                 kind: object.kind,
-                data: Arc::new(object.data.clone()),
+                data: Arc::new(object.data),
                 verified,
             },
         );
@@ -198,15 +206,25 @@ pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), Error> {
     }
 }
 
-pub(super) fn decode(
+pub(crate) fn decode(
+    source: &impl Source,
+    position: usize,
+    limits: ReadLimits,
+    cancelled: &AtomicBool,
+) -> Result<Object, Error> {
+    let mut remaining = limits.max_decode_bytes;
+    decode_budgeted(source, position, limits, cancelled, &mut remaining)
+}
+
+pub(crate) fn decode_budgeted(
     source: &impl Source,
     mut position: usize,
     limits: ReadLimits,
     cancelled: &AtomicBool,
+    remaining: &mut usize,
 ) -> Result<Object, Error> {
     let format = source.format();
     let width = format.digest_len();
-    let mut remaining = limits.max_decode_bytes;
     let mut input_remaining = limits.max_input_bytes;
     let mut pending = Vec::new();
     let mut seen = HashSet::new();
@@ -287,7 +305,7 @@ pub(super) fn decode(
         if base.is_some() && pending.len() >= limits.max_delta_depth {
             return Err(Error::Limit("delta depth"));
         }
-        charge(&mut remaining, length)?;
+        charge(remaining, length)?;
         let start = entry.offset + prefix.len() - input.len();
         let data = source.inflate(start, entry.end, length, cancelled)?;
         if let Some(base) = base {
@@ -316,12 +334,7 @@ pub(super) fn decode(
     };
     while let Some((position, program)) = pending.pop() {
         check_cancelled(cancelled)?;
-        object.data = apply(
-            &object.data,
-            &program,
-            limits.max_object_bytes,
-            &mut remaining,
-        )?;
+        object.data = apply(&object.data, &program, limits.max_object_bytes, remaining)?;
         let verified = position == requested;
         if verified {
             verify_identity(&object, source.entry(position)?.id)?;
@@ -349,6 +362,7 @@ fn inflate(input: &[u8], expected: usize) -> Result<Vec<u8>, Error> {
     Ok(data)
 }
 
+#[cfg(test)]
 pub(crate) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u8>, usize), Error> {
     let mut inflater = Decompress::new(true);
     let mut output = [0; 8192];

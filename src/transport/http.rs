@@ -390,7 +390,7 @@ impl HttpRemote {
         output
     }
 
-    async fn transfer(
+    pub(crate) async fn transfer(
         &self,
         service: &str,
         body: Option<RequestBody>,

@@ -192,6 +192,12 @@ Validation consumes the download and releases its history ownership on success o
 the download also releases it. Other Arc owners may retain history independently. Installation still
 rechecks dependencies and requires caller coordination with GC.
 
+Responses are spooled to owned files in the system temporary directory. Validation streams pack
+entries, retaining entry metadata and a 96 MiB delta-base cache, then checks connectivity through
+the indexed pack. Thin packs retain their deltas and append verified external bases. Temporary files
+are removed on ordinary errors or drop; crashes can leave them behind. Bound temporary disk use when
+queuing downloads. Repository files change only during explicit installation.
+
 For explicit depth requests, validation includes reachable local dependencies in a nonempty received
 pack so retention protects the resulting shallow history. The combined pack obeys object,
 decoded-input and pack-byte limits. A response containing no objects instead verifies existing local
@@ -199,15 +205,15 @@ dependencies during coordinated shallow publication; the caller still excludes c
 
 Validation is a separate synchronous step; it decodes/indexes packs, checks identities and proves
 connectivity before explicit installation. Prepare history and push packs outside the executor or on
-a caller-owned bounded worker. Bound waiting downloads and aggregate retained bytes as well as
-active workers. The [runnable example](../examples/ssh_local.rs) submits one worker request, holds
-its permit through validation, observes completion explicitly and installs outside the executor.
-Dropping a started worker's handle does not stop it; retain completion ownership after requesting
-cancellation. `send_ssh` borrows `PreparedPush` without copying its buffers. Network futures are
-`Send` when selection callbacks are `Send`; borrowed inputs must live through the operation.
-Advertisement parsing, request encoding and status parsing are synchronous work bounded by the
-configured counts/bytes. Callbacks must return promptly. There is no executor latency promise for
-arbitrarily large limits or callbacks.
+a caller-owned bounded worker. Bound waiting downloads and temporary disk use and retained history
+bytes as well as active workers. The [runnable example](../examples/ssh_local.rs) submits one worker
+request, holds its permit through validation, observes completion explicitly and installs outside
+the executor. Dropping a started worker's handle does not stop it; retain completion ownership after
+requesting cancellation. `send_ssh` borrows `PreparedPush` without copying its buffers. Network
+futures are `Send` when selection callbacks are `Send`; borrowed inputs must live through the
+operation. Advertisement parsing, request encoding and status parsing are synchronous work bounded
+by the configured counts/bytes. Callbacks must return promptly. There is no executor latency promise
+for arbitrarily large limits or callbacks.
 
 Retained fetch protocol bytes are capped by `max_wire_bytes`, including the advertisement. Push
 advertisements and responses use `max_advertisement_bytes` and `max_status_bytes`. Existing pack,

@@ -17,12 +17,13 @@ use crate::transport::http::{HttpRemote, RequestBody};
 /// dependencies.
 ///
 /// Requires a Tokio runtime. [`HttpRemote`] owns HTTP, authentication, TLS and interruption policy.
-/// The response is buffered up to the remaining `max_wire_bytes` before synchronous protocol/pack
-/// validation. Selection and request encoding are synchronous preflight work bounded by ref/want
-/// counts; caller callbacks must return promptly. Pack validation is explicitly separate.
-/// This adds at most `max_wire_bytes` of retained HTTP data to the ordinary fetch budgets. Encoded
-/// requests use at most 96 bytes per bounded want plus 2048 bytes for haves/framing. Header/parser
-/// buffers are bounded separately by the HTTP client; see [`HttpRemote`].
+/// The response is spooled to a temporary file up to the remaining `max_wire_bytes` before
+/// synchronous protocol/pack validation. Selection and request encoding are synchronous preflight
+/// work bounded by ref/want counts; caller callbacks must return promptly. Pack validation is
+/// explicitly separate. This adds at most `max_wire_bytes` of temporary disk use to the ordinary
+/// fetch budgets. Encoded requests use at most 96 bytes per bounded want plus 2048 bytes for
+/// haves/framing. Header/parser buffers are bounded separately by the HTTP client; see
+/// [`HttpRemote`].
 ///
 /// Takes shared ownership of `known` for negotiation and later validation; clone the Arc first
 /// if the caller also needs it. `None` requires no history preparation or allocation.
@@ -173,10 +174,10 @@ pub async fn receive_http_with_depth_and_progress(
                 known,
                 limits,
                 remaining,
-                body: Vec::new(),
+                body: Vec::new().into(),
             });
         }
-        let mut live = LiveProgress::new(depth.is_some());
+        let mut live = LiveProgress::new(depth.is_some(), limits.max_shallow_roots);
         let mut validate_prefix = |bytes: &[u8]| {
             let mut reader = bytes;
             let mut wire = Wire {
@@ -187,16 +188,30 @@ pub async fn receive_http_with_depth_and_progress(
             protocol::read_response_prefix(&mut wire, &negotiation, limits).is_ok()
                 && wire.end().is_ok()
         };
-        let response = remote
-            .exchange_observed(
+        let mut body = super::bytes::Bytes::temporary()?;
+        let mut io_error = None;
+        let result = remote
+            .transfer(
                 "git-upload-pack",
                 Some(RequestBody::new(request, Vec::new())),
-                remaining,
                 control,
-                |bytes| live.observe(bytes, &mut validate_prefix, &mut progress),
+                |chunk| {
+                    if chunk.len() > remaining.saturating_sub(body.len()) {
+                        return Err(crate::transport::http::HttpError::Limit("response body"));
+                    }
+                    if let Err(error) = body.append(chunk) {
+                        io_error = Some(error);
+                        return Err(crate::transport::http::HttpError::Network);
+                    }
+                    live.feed(chunk, &mut validate_prefix, &mut progress);
+                    Ok(())
+                },
             )
             .await;
-        response.result?;
+        if let Some(error) = io_error {
+            return Err(error);
+        }
+        result?;
         Ok(DownloadedFetch {
             #[cfg(feature = "tracing")]
             trace: crate::trace::DownloadContext::capture(),
@@ -205,7 +220,7 @@ pub async fn receive_http_with_depth_and_progress(
             known,
             limits,
             remaining,
-            body: response.body,
+            body,
         })
     };
     #[cfg(feature = "tracing")]

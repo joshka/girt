@@ -56,6 +56,29 @@ The girt `util gc` row is reflog expiry and loose-object pruning only; it doesn'
 include this benchmark in the acceptance check of any change touching fetch, object reading, packing
 or retention.
 
+### Streaming receive benchmark
+
+On 2026-10-10, the clone step of `bench-large.sh` was repeated on macOS 26.6.2 arm64 after this
+session’s build jobs completed. Both girt builds used jj 0.45.1; the streaming build patched girt to
+the local workspace and used Rust 1.99.0. Stock jj 0.46.0 is a current reference, rather than the
+same CLI revision. These are individual network measurements, not stable latency guarantees.
+
+| Build                             | Clone time | Peak RSS  |
+| --------------------------------- | ---------- | --------- |
+| jj on girt before streaming       | 19.88 s    | 4,846 MiB |
+| jj on girt with streaming receive | 17.69 s    | 388 MiB   |
+| stock jj 0.46.0                   | 7.80 s     | 114 MiB   |
+
+All three clones received 131,138 objects, produced a 199.68 MiB pack/index pair, and passed
+`git fsck --connectivity-only`. The streaming change for
+[#22](https://github.com/joshka/girt/issues/22) spools protocol responses and packs to temporary
+files, resolves deltas with a 96 MiB cache, and checks connectivity through the indexed pack.
+Thin-pack completion preserves server deltas and appends verified external bases. Native local pack
+construction still buffers its output.
+
+A repeat with the final release build took 19.57 s and peaked at 404 MiB. That clone received
+131,149 objects, produced a 199.65 MiB pack/index pair, and passed `git fsck --connectivity-only`.
+
 ## Open work
 
 Tracked as GitHub issues with the `jj` label, each a self-contained brief with acceptance criteria.

@@ -47,12 +47,14 @@ pub(super) fn send(
     let log_policy = log_policy(&repository)?;
     let hide = HideRules::parse(&repository)?;
     // Objects are always validated, which satisfies `receive.fsckObjects`.
-    for (section, key) in [("receive", "procreceiverefs")] {
-        if repository.config().value(section, None, key).is_some() {
-            return Err(PushError::NotSent(PushFailure::Unsupported(
-                "configured receive policy",
-            )));
-        }
+    if repository
+        .config()
+        .value("receive", None, "procreceiverefs")
+        .is_some()
+    {
+        return Err(PushError::NotSent(PushFailure::Unsupported(
+            "configured receive policy",
+        )));
     }
     if !repository.shallow_roots().is_empty() {
         return Err(PushError::NotSent(PushFailure::Unsupported(
@@ -163,7 +165,7 @@ pub(super) fn send(
                 &repository,
                 Default::default(),
                 control.cancel,
-                &prepared.pack,
+                crate::fetch::PackInput::Slice(&prepared.pack),
                 &prepared.index,
                 false,
             )

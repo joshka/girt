@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
+use super::bytes::Bytes;
 use super::import::Imported;
 use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
@@ -11,21 +12,51 @@ use crate::{ObjectId, Repository};
 
 /// A validated protocol response with resolved delta bases and selected-tip connectivity.
 ///
-/// Owns the original pack and generated index, but no repository files. Drop it to discard a
-/// transfer. Payloads used during validation are released before this result is returned.
-/// Incremental results retain IDs of known-local dependencies; installation rechecks them.
+/// Owns a temporary pack file and generated index, but no repository files. Drop it to discard a
+/// transfer and remove the temporary file. Native local transfers may retain pack bytes in memory.
+/// Payloads used during validation are released before this result is returned. Incremental results
+/// retain IDs of known-local dependencies; installation rechecks them.
 #[derive(Debug)]
 pub struct ReceivedFetch {
     format: crate::ObjectFormat,
     advertisement: Advertisement,
     wants: Vec<ObjectId>,
-    pack: Vec<u8>,
+    pack: Bytes,
     index: Vec<u8>,
     checksum: Option<ObjectId>,
     objects: usize,
     dependencies: Vec<ObjectId>,
     shallow: Vec<ObjectId>,
     limits: FetchLimits,
+}
+
+pub(crate) enum PackInput<'a> {
+    Stored(&'a Bytes),
+    Slice(&'a [u8]),
+}
+impl PackInput<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Stored(b) => b.len(),
+            Self::Slice(b) => b.len(),
+        }
+    }
+    fn reader(&self) -> Result<Box<dyn Read + Send + '_>, FetchError> {
+        match self {
+            Self::Stored(b) => b.reader(),
+            Self::Slice(b) => Ok(Box::new(*b)),
+        }
+    }
+    fn copy_to(&self, output: &mut impl Write, cancel: &AtomicBool) -> Result<(), FetchError> {
+        match self {
+            Self::Stored(b) => b.copy_to(output, cancel),
+            Self::Slice(b) => {
+                check_cancelled(cancel)?;
+                output.write_all(b)?;
+                Ok(())
+            }
+        }
+    }
 }
 
 pub(crate) struct NativeContents {
@@ -45,7 +76,7 @@ impl ReceivedFetch {
             format: crate::ObjectFormat::Sha1,
             advertisement,
             wants: vec![],
-            pack: vec![],
+            pack: vec![].into(),
             index: vec![],
             checksum: None,
             objects: 0,
@@ -64,7 +95,7 @@ impl ReceivedFetch {
             format: contents.format,
             advertisement,
             wants,
-            pack: contents.pack,
+            pack: contents.pack.into(),
             index: contents.index,
             checksum: contents.checksum,
             objects: contents.objects,
@@ -82,7 +113,7 @@ impl ReceivedFetch {
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
         let dependencies = connectivity::validate_with_boundaries(
-            &Default::default(),
+            &std::collections::HashMap::new(),
             known,
             &wants,
             &known.shallow,
@@ -102,7 +133,7 @@ impl ReceivedFetch {
     pub(super) fn validate_known(
         advertisement: Advertisement,
         wants: Vec<ObjectId>,
-        pack: Vec<u8>,
+        pack: impl Into<Bytes>,
         known: &KnownHistory,
         shallow: Vec<ObjectId>,
         options: super::FetchOptions,
@@ -111,7 +142,12 @@ impl ReceivedFetch {
         let super::FetchOptions { limits, depth } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
-        let mut imported = Imported::read_observed(format, &pack, known, limits, observer)?;
+        let mut pack = pack.into();
+        if let Bytes::Memory(data) = pack {
+            pack = Bytes::temporary()?;
+            pack.append(&data)?;
+        }
+        let mut imported = Imported::read_owned(format, pack, known, limits, observer)?;
         let mut dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
             known,
@@ -127,7 +163,7 @@ impl ReceivedFetch {
             && !known.trusted_complete()
         {
             objects += dependencies.len();
-            materialize_dependencies(&mut imported, known, &dependencies, limits, cancel)?;
+            materialize_dependencies(&mut imported, known, &dependencies, cancel)?;
             dependencies.clear();
         }
         check_cancelled(cancel)?;
@@ -136,9 +172,9 @@ impl ReceivedFetch {
             advertisement,
             wants,
             pack: if objects == 0 {
-                Vec::new()
+                Vec::new().into()
             } else {
-                imported.complete_pack.unwrap_or(pack)
+                imported.objects.pack
             },
             index: imported.index,
             checksum: (objects != 0).then_some(imported.checksum),
@@ -161,8 +197,8 @@ impl ReceivedFetch {
         &self.wants
     }
 
-    /// Number of verified pack objects, including materialized local dependencies and server
-    /// extras.
+    /// Number of verified received objects, including server extras and materialized connectivity
+    /// dependencies. Extra bases appended to make a thin pack self-contained are not counted.
     pub fn object_count(&self) -> usize {
         self.objects
     }
@@ -228,7 +264,7 @@ impl ReceivedFetch {
             repository,
             snapshot_limits,
             cancel,
-            &self.pack,
+            PackInput::Stored(&self.pack),
             &self.index,
             false,
         )
@@ -309,7 +345,7 @@ impl ReceivedFetch {
             repository,
             snapshot_limits,
             cancel,
-            &self.pack,
+            PackInput::Stored(&self.pack),
             &self.index,
             shallow_locked,
         )
@@ -320,7 +356,7 @@ impl ReceivedFetch {
         repository: &Repository,
         snapshot_limits: crate::PackLimits,
         cancel: &AtomicBool,
-        pack_bytes: &[u8],
+        pack_bytes: PackInput<'_>,
         index_bytes: &[u8],
         allow_shallow: bool,
     ) -> Result<FetchInstalled, FetchError> {
@@ -383,17 +419,29 @@ impl ReceivedFetch {
             fs::create_dir_all(&directory)?;
             let mut pack = tempfile::NamedTempFile::new_in(&directory)?;
             let mut index = tempfile::NamedTempFile::new_in(&directory)?;
-            pack.write_all(pack_bytes)?;
+            pack_bytes.copy_to(&mut pack, cancel)?;
             pack.as_file().sync_all()?;
             index.write_all(index_bytes)?;
             index.as_file().sync_all()?;
             let basename = directory.join(format!("pack-{checksum}"));
             check_cancelled(cancel)?;
-            publish(pack, &basename.with_extension("pack"), pack_bytes, cancel)?;
+            publish(
+                pack,
+                &basename.with_extension("pack"),
+                pack_bytes.reader()?,
+                pack_bytes.len(),
+                cancel,
+            )?;
             #[cfg(feature = "tracing")]
             span.record("effects", "pack_visible");
             check_cancelled(cancel)?;
-            publish(index, &basename.with_extension("idx"), index_bytes, cancel)?;
+            publish(
+                index,
+                &basename.with_extension("idx"),
+                Box::new(index_bytes),
+                index_bytes.len(),
+                cancel,
+            )?;
             #[cfg(feature = "tracing")]
             span.record("effects", "pack_and_index_visible");
             Ok(result)
@@ -414,62 +462,15 @@ fn materialize_dependencies(
     imported: &mut Imported,
     known: &KnownHistory,
     dependencies: &[ObjectId],
-    limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<(), FetchError> {
-    let format = imported.checksum.format();
-    // The verified snapshot owns these bytes through validation. Copy each reachable
-    // dependency into the new pack so retention protects its complete shallow closure.
-    let mut inputs: Vec<_> = imported
-        .objects
-        .iter()
-        .map(|(&id, object)| crate::PackObject {
-            id,
-            kind: object.kind(),
-            data: object.data(),
-        })
-        .collect();
-    inputs.extend(dependencies.iter().filter_map(|&id| {
-        let object = known.objects.get(&id)?;
-        Some(crate::PackObject {
-            id,
-            kind: object.kind(),
-            data: object.data(),
-        })
-    }));
-    inputs.sort_unstable_by_key(|object| object.id);
-    let mut complete_pack = Vec::new();
-    let mut index = Vec::new();
-    let written = crate::pack::write_controlled(
-        format,
-        &inputs,
-        &mut complete_pack,
-        &mut index,
-        crate::PackWriteLimits {
-            max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
-            max_object_bytes: limits.max_object_bytes as u64,
-            max_input_bytes: limits.max_decode_bytes as u64,
-            max_pack_bytes: limits.max_pack_bytes as u64,
-            ..Default::default()
-        },
-        crate::PackCompression::Ordinary,
-        &mut || {
-            check_cancelled(cancel).map_err(|_| {
-                crate::PackWriteError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "fetch cancelled",
-                ))
-            })
-        },
-    )
-    .map_err(|error| {
-        check_cancelled(cancel)
-            .err()
-            .unwrap_or_else(|| error.into())
-    })?;
-    imported.index = index;
-    imported.checksum = written.checksum;
-    imported.complete_pack = Some(complete_pack);
+    for &id in dependencies {
+        check_cancelled(cancel)?;
+        let object = known.get(id).ok_or(FetchError::Missing(id))?;
+        imported.objects.append_dependency(&object, cancel)?;
+    }
+    imported.checksum = imported.objects.finish_thin(cancel)?;
+    imported.index = imported.objects.index(imported.checksum)?;
     Ok(())
 }
 
@@ -485,30 +486,33 @@ pub struct FetchInstalled {
 fn publish(
     temporary: tempfile::NamedTempFile,
     path: &Path,
-    expected: &[u8],
+    mut expected: Box<dyn Read + Send + '_>,
+    expected_len: usize,
     cancel: &AtomicBool,
 ) -> Result<(), FetchError> {
     match temporary.persist_noclobber(path) {
         Ok(_) => Ok(()),
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
             let mut file = File::open(path)?;
-            if file.metadata()?.len() != expected.len() as u64 {
+            if file.metadata()?.len() != expected_len as u64 {
                 return Err(FetchError::Existing(path.into()));
             }
             let mut position = 0;
             let mut buffer = [0; 8192];
+            let mut reference = [0; 8192];
             loop {
                 check_cancelled(cancel)?;
                 let count = file.read(&mut buffer)?;
                 if count == 0 {
                     break;
                 }
-                if expected.get(position..position + count) != Some(&buffer[..count]) {
+                expected.read_exact(&mut reference[..count])?;
+                if reference[..count] != buffer[..count] {
                     return Err(FetchError::Existing(path.into()));
                 }
                 position += count;
             }
-            if position != expected.len() {
+            if position != expected_len {
                 return Err(FetchError::Existing(path.into()));
             }
             Ok(())

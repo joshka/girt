@@ -224,6 +224,25 @@ impl Session {
         observe: &mut impl FnMut(&[u8]),
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
+        let (result, written) = self
+            .exchange_streaming(request, pack, limit, control, diagnostics, &mut |chunk| {
+                body.extend_from_slice(chunk);
+                observe(&body);
+                Ok(())
+            })
+            .await;
+        (body, result, written)
+    }
+
+    pub(crate) async fn exchange_streaming(
+        &mut self,
+        request: &[u8],
+        pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+        receive: &mut impl FnMut(&[u8]) -> Result<(), SshError>,
+    ) -> (Result<(), SshError>, usize) {
         let mut written = 0;
         let input = self.input.take().expect("one request per session");
         let exchange = async {
@@ -231,7 +250,7 @@ impl Session {
             // no longer consuming input. Retain received status bytes even when writing fails.
             tokio::try_join!(
                 write_request(input, request, pack, &mut written),
-                read_body(&mut self.output, &mut body, limit, observe)
+                read_body(&mut self.output, limit, receive)
             )?;
             Ok(())
         };
@@ -247,7 +266,7 @@ impl Session {
         if result.is_ok() {
             result = self.finish(control, diagnostics).await;
         }
-        (body, result, written)
+        (result, written)
     }
 
     async fn finish(
@@ -381,19 +400,19 @@ async fn write_request(
 }
 async fn read_body(
     output: &mut AsyncFd<ChildStdout>,
-    body: &mut Vec<u8>,
     limit: usize,
-    observe: &mut impl FnMut(&[u8]),
+    receive: &mut impl FnMut(&[u8]) -> Result<(), SshError>,
 ) -> Result<(), SshError> {
     let mut bytes = [0; 8192];
+    let mut total = 0;
     loop {
         let count = read(output, &mut bytes).await?;
         if count == 0 {
             return Ok(());
         }
-        let keep = count.min(limit.saturating_sub(body.len()));
-        body.extend_from_slice(&bytes[..keep]);
-        observe(body);
+        let keep = count.min(limit.saturating_sub(total));
+        receive(&bytes[..keep])?;
+        total += keep;
         if keep != count {
             return Err(SshError::Limit);
         }

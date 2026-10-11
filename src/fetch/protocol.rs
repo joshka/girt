@@ -42,7 +42,8 @@ pub struct Advertisement {
 /// transfer.
 ///
 /// Cancellation is checked between I/O calls, packets, objects, and graph steps. It cannot
-/// interrupt a blocked caller-owned stream or a single inflation/hash. Callers needing deadlines
+/// interrupt a blocked caller-owned stream or a single object hash/parse. Pack inflation checks
+/// cancellation between chunks. Callers needing deadlines
 /// must provide timeout/interrupt-capable streams. Interrupted I/O is returned immediately. The
 /// caller must close both streams on any failure; they cannot be reused. Progress is advisory,
 /// never a success signal.
@@ -362,14 +363,14 @@ pub(super) fn response_observed(
     observer: &mut super::progress::ValidationObserver<'_>,
 ) -> Result<ReceivedFetch, Error> {
     let shallow = read_response_prefix(wire, &negotiation, limits)?;
-    let mut pack = Vec::new();
+    let mut pack = super::bytes::Bytes::temporary()?;
     while let Some(bytes) = wire.packet()? {
         match bytes.split_first() {
             Some((1, data)) => {
                 if data.len() > limits.max_pack_bytes.saturating_sub(pack.len()) {
                     return Err(Error::Limit("pack bytes"));
                 }
-                pack.extend_from_slice(data);
+                pack.append(data)?;
             }
             Some((2, data)) => {
                 if progress(data).is_break() {
