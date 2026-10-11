@@ -66,6 +66,12 @@ repository operations, remote mapping, references, and HTTP runtime suites. See
 making support claims. Local cross-compilation does not replace executing the test suite on the
 target OS.
 
+CI runs on pull requests and on pushes to `main`. A `Changes` job selects its checks from the
+changed paths. Changes that touch only Markdown, licenses, `.vale.ini`, `.config/rumdl.toml` or
+`.config/vale/` run just the `Docs` job (`just docs-check`), and the Rust test, Clippy, MSRV and
+platform jobs report as skipped. Any other path, including non-Markdown files under `docs/`, runs
+the full matrix.
+
 ## Implementation and Tests
 
 Each issue states its acceptance criteria. [Testing and Completion Criteria](docs/testing.md)

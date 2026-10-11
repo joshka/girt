@@ -1,7 +1,10 @@
 name: Security
 
 on:
+  # Pull requests cover branches; a branch push would repeat the same checks.
   push:
+    branches:
+      - main
     paths:
       - .github/**
       - Cargo.toml

@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Pull requests cover branches; a branch push would repeat the same checks.
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
     inputs:
@@ -34,8 +37,80 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      docs: ${{ steps.paths.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Select checks for changed paths
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A pull request checks out its merge commit, whose first parent is the base branch.
+          if [ "$EVENT" = pull_request ]; then
+            changed=$(git diff --name-only HEAD^1 HEAD)
+          elif [ "$EVENT" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed=$(git diff --name-only "$BEFORE" HEAD)
+          else
+            changed=
+            all=true
+          fi
+          printf '%s\n' "$changed"
+          # Prose-only files. Other files under docs/, such as evidence that tests read, are not.
+          prose='(\.md$|^LICENSE|^\.vale\.ini$|^\.config/rumdl\.toml$|^\.config/vale/)'
+          docs_tools='^(justfile|\.github/workflows/validation\.yml)$'
+          if [ -n "${all:-}" ] || grep -qvE "$prose" <<<"$changed"; then
+            echo rust=true >> "$GITHUB_OUTPUT"
+          else
+            echo rust=false >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "${all:-}" ] || grep -qE "$prose|$docs_tools" <<<"$changed"; then
+            echo docs=true >> "$GITHUB_OUTPUT"
+          else
+            echo docs=false >> "$GITHUB_OUTPUT"
+          fi
+
+  docs:
+    name: Docs
+    needs: changes
+    if: ${{ needs.changes.outputs.docs == 'true' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    env:
+      VALE_VERSION: 3.24.0
+      VALE_SHA256: 867534ddb678abca7f214bc4706ead0922bd5252ffe8035fc227013f66c8b214
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install just and rumdl
+        run: uv tool install "rust-just==1.58.0" && uv tool install "rumdl==0.2.77"
+      - name: Install Vale
+        run: |
+          archive="vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          curl -fsSLO "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/${archive}"
+          echo "${VALE_SHA256}  ${archive}" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$archive" -C "$HOME/.local/bin" vale
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Markdown format and prose
+        run: just docs-check
+
   msrv:
     name: MSRV (1.97.1)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -48,7 +123,8 @@ jobs:
 
   unix:
     name: Test (${{ matrix.os }})
-    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -115,7 +191,8 @@ jobs:
 
   windows:
     name: Test (windows-2022)
-    if: ${{ !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
     # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
     timeout-minutes: 20
