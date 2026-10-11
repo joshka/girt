@@ -253,6 +253,10 @@ impl Repository {
             Err(ReuseError::Write(error)) => return Err(error.into()),
             Ok(written) => written,
         };
+        // Fresh delta search must produce objects readable under the caller's limits.
+        if written.deltas.max_depth > policy.read.max_delta_depth {
+            return Err(PackWriteError::Limit("output delta depth").into());
+        }
         pack.as_file().sync_all()?;
         index.as_file().sync_all()?;
         let basename = directory.join(format!("pack-{}", written.checksum));
@@ -330,6 +334,47 @@ mod tests {
     use std::io::Write;
 
     use super::*;
+
+    #[test]
+    fn output_depth_limit_refuses_publication_for_loose_delta_search() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = Repository::init(crate::ObjectFormat::Sha1, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        let data: Vec<u8> = (0..4096u32)
+            .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
+            .collect();
+        let a = repository.loose_objects().write_blob(&data).unwrap();
+        let mut similar = data;
+        similar[0] = b'b';
+        let b = repository.loose_objects().write_blob(&similar).unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![a, b],
+            read: crate::ReadLimits {
+                max_delta_depth: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            repository.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false)),
+            Err(RepackError::Write(PackWriteError::Limit(
+                "output delta depth"
+            )))
+        ));
+        assert_eq!(
+            fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(
+            repository
+                .loose_objects()
+                .read_blob(a, 16_384)
+                .unwrap()
+                .len(),
+            16_384
+        );
+    }
 
     #[test]
     fn cancellation_between_publications_leaves_only_an_unindexed_pack() {

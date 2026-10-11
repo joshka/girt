@@ -91,7 +91,7 @@ pub(crate) fn write_reusing(
     pack.put(&2u32.to_be_bytes())?;
     pack.put(&count.to_be_bytes())?;
     let mut entries = Vec::with_capacity(count as usize);
-    let mut written: HashMap<(usize, usize), u64> = HashMap::with_capacity(order.len());
+    let mut written: HashMap<(usize, usize), (u64, usize)> = HashMap::with_capacity(order.len());
     let mut deltas = DeltaStats::default();
     for &(source_index, _, item) in &order {
         check()?;
@@ -104,12 +104,14 @@ pub(crate) fn write_reusing(
         let header = entry_header(source, &entry).map_err(read_error)?;
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
+        let mut depth = 0;
         match header.base {
             None => source
                 .copy_raw(entry.offset, entry.end, &mut pack)
                 .map_err(output_error)?,
             Some(base) => match written.get(&(source_index, base)) {
-                Some(&base_offset) => {
+                Some(&(base_offset, base_depth)) => {
+                    depth = base_depth + 1;
                     pack.put(&entry_header_code(6, header.length as u64))?;
                     pack.put(&offset_distance(offset - base_offset))?;
                     source
@@ -128,7 +130,8 @@ pub(crate) fn write_reusing(
                 }
             },
         }
-        written.insert((source_index, item.position), offset);
+        deltas.max_depth = deltas.max_depth.max(depth);
+        written.insert((source_index, item.position), (offset, depth));
         entries.push(Entry {
             id: item.id,
             offset,
