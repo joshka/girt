@@ -65,6 +65,11 @@ repository operations, remote mapping, references, and HTTP runtime suites. See
 making support claims. Local cross-compilation does not replace executing the test suite on the
 target OS.
 
+CI runs on pull requests and on pushes to `main`. It calls the index, references and security
+workflows when a change touches their paths. Its `required` job is the single merge gate: it fails
+when any other CI job fails or is cancelled, and treats skipped jobs as passing. Add new CI jobs to
+its `needs` list.
+
 ## Implementation and Tests
 
 Use [Testing and Completion Criteria](docs/testing.md) to define acceptance evidence for each
@@ -108,10 +113,11 @@ The first `girt` release was published manually. Subsequent releases use
 pull request, and merging that request permits the release job to publish through crates.io trusted
 publishing. Review the proposed version, changelog, CI results and supported scope before merging.
 
-The release workflow uses GitHub's default token. GitHub does not start pull-request checks for
-branches created with that token. Close and reopen a release pull request to start its checks, then
-wait for them before merging. The publish job uses a short-lived crates.io token obtained through
-OIDC; do not add a persistent registry token to the workflow.
+The release workflow uses GitHub's default token, so checks on the release pull request do not start
+on their own: GitHub holds them for approval. Approve the waiting runs, or close and reopen the pull
+request, after its last update, then wait for `required` before merging. The publish job uses a
+short-lived crates.io token obtained through OIDC; do not add a persistent registry token to the
+workflow.
 
 ## HTTP Fixtures
 

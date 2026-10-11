@@ -1,13 +1,8 @@
 name: References
 
+# CI calls this workflow for pushes and pull requests that touch its paths.
 on:
-  push:
-    paths:
-      - 'src/**'
-      - 'tests/references_portable.rs'
-      - 'tests/worktree_create.rs'
-      - 'tests/worktree_admin.rs'
-      - '.github/workflows/references.yml'
+  workflow_call:
   workflow_dispatch:
     inputs:
       reflog_only:

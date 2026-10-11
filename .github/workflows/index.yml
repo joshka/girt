@@ -1,12 +1,8 @@
 name: Index
 
+# CI calls this workflow for pushes and pull requests that touch its paths.
 on:
-  push:
-    paths:
-      - 'src/**'
-      - 'tests/index.rs'
-      - 'tests/colocation.rs'
-      - '.github/workflows/index.yml'
+  workflow_call:
   workflow_dispatch:
     inputs:
       r38_only:
