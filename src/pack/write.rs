@@ -326,6 +326,143 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
+/// Streams already compressed entries and builds their new index without retaining payloads.
+pub(crate) struct RepackWriter<'a, W> {
+    pack: Output<'a, W>,
+    entries: Vec<Entry>,
+    count: u32,
+    format: crate::ObjectFormat,
+    offsets: std::collections::HashMap<ObjectId, u64>,
+}
+
+impl<'a, W: Write> RepackWriter<'a, W> {
+    pub(crate) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        count: u32,
+        limits: PackWriteLimits,
+    ) -> Result<Self, PackWriteError> {
+        if count > limits.max_objects {
+            return Err(PackWriteError::Limit("object count"));
+        }
+        let mut pack = Output::new(format, sink, limits.max_pack_bytes, "pack bytes");
+        pack.put(b"PACK")?;
+        pack.put(&2u32.to_be_bytes())?;
+        pack.put(&count.to_be_bytes())?;
+        Ok(Self {
+            pack,
+            entries: Vec::new(),
+            count,
+            format,
+            offsets: std::collections::HashMap::new(),
+        })
+    }
+
+    pub(crate) fn append(&mut self, id: ObjectId, bytes: &[u8]) -> Result<(), PackWriteError> {
+        let offset = self.pack.bytes;
+        self.pack.crc = crc32fast::Hasher::new();
+        self.pack.put(bytes)?;
+        self.offsets.insert(id, offset);
+        self.entries.push(Entry {
+            id,
+            offset,
+            crc: self.pack.crc.clone().finalize(),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn append_reused(
+        &mut self,
+        id: ObjectId,
+        bytes: &[u8],
+    ) -> Result<(), PackWriteError> {
+        // Reuse supplies ordinary or REF entries. Prefer the shorter OFS form for bases already
+        // emitted, retaining the original compressed program and (often) the complete entry.
+        if bytes[0] >> 4 & 7 != 7 {
+            return self.append(id, bytes);
+        }
+        let mut header_end = 1;
+        while bytes[header_end - 1] & 128 != 0 {
+            header_end += 1;
+        }
+        let width = self.format.digest_len();
+        let base =
+            ObjectId::from_bytes(self.format, &bytes[header_end..header_end + width]).unwrap();
+        let Some(&base_offset) = self.offsets.get(&base) else {
+            return self.append(id, bytes);
+        };
+        let mut distance = self.pack.bytes - base_offset;
+        let mut encoded = vec![(distance & 127) as u8];
+        while distance > 127 {
+            distance = (distance >> 7) - 1;
+            encoded.push((distance as u8 & 127) | 128);
+        }
+        let mut relocated = bytes[..header_end].to_vec();
+        relocated[0] = (relocated[0] & 0x8f) | 0x60;
+        relocated.extend(encoded.iter().rev());
+        relocated.extend_from_slice(&bytes[header_end + width..]);
+        self.append(id, &relocated)
+    }
+
+    /// The ordinary writer supplies bounded delta search for loose inputs only.
+    pub(crate) fn append_objects(
+        &mut self,
+        objects: &[PackObject<'_>],
+        limits: PackWriteLimits,
+        compression: PackCompression,
+        check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    ) -> Result<DeltaStats, PackWriteError> {
+        let (mut pack, mut index) = (Vec::new(), Vec::new());
+        let format = self.format;
+        let written = write_controlled(
+            format,
+            objects,
+            &mut pack,
+            &mut index,
+            limits,
+            compression,
+            check,
+        )?;
+        // This pair was produced by our writer, so its index has already validated inputs.
+        let index = super::index::Index::parse(format, &index, pack.len() - format.digest_len())
+            .map_err(|error| PackWriteError::Io(io::Error::other(error)))?;
+        for entry in index.entries {
+            check()?;
+            self.append_reused(entry.id, &pack[entry.offset..entry.end])?;
+        }
+        Ok(written.deltas)
+    }
+
+    pub(crate) fn finish(
+        mut self,
+        index: &mut impl Write,
+        limits: PackWriteLimits,
+        deltas: DeltaStats,
+    ) -> Result<PackWritten, PackWriteError> {
+        if self.entries.len() != self.count as usize {
+            return Err(PackWriteError::Limit("repack entry count"));
+        }
+        self.entries.sort_unstable_by_key(|entry| entry.id);
+        let checksum = self.pack.finish()?;
+        let mut buffered = io::BufWriter::new(index);
+        let mut index = Output::new(
+            checksum.format(),
+            &mut buffered,
+            limits.max_index_bytes,
+            "index bytes",
+        );
+        write_index(&self.entries, checksum, &mut index)?;
+        index.finish()?;
+        Ok(PackWritten {
+            checksum,
+            objects: self.count,
+            pack_bytes: self.pack.bytes,
+            index_bytes: index.bytes,
+            deltas,
+        })
+    }
+}
+
 struct SelectedEntry {
     bytes: Vec<u8>,
     depth: usize,
@@ -467,7 +604,7 @@ fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     entry_header_code(code, size)
 }
 
-fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
+pub(super) fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);

@@ -238,6 +238,43 @@ struct Store {
 }
 
 impl Objects {
+    /// Select each identity once in store/pack order, preserving physical delta locality.
+    pub(crate) fn packed_entries<'a>(
+        &'a self,
+        remaining: &mut std::collections::BTreeSet<ObjectId>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<(ObjectId, &'a FilePack, usize)>, ObjectReadError> {
+        let mut selected = Vec::new();
+        let mut loose = std::collections::BTreeSet::new();
+        for (store_index, store) in self.stores.iter().enumerate() {
+            for pack in &store.packs {
+                for entry in pack.entries() {
+                    check_cancelled(cancel)?;
+                    let (id, position) = entry?;
+                    if remaining.remove(&id) {
+                        selected.push((id, pack.as_ref(), position));
+                    }
+                }
+            }
+            if store_index + 1 < self.stores.len() {
+                // A primary loose object takes precedence over an alternate's packed duplicate.
+                for &id in remaining.iter() {
+                    check_cancelled(cancel)?;
+                    let path = store.loose.object_path(id);
+                    if path
+                        .try_exists()
+                        .map_err(|source| ObjectReadError::Path { path, source })?
+                    {
+                        loose.insert(id);
+                    }
+                }
+                remaining.retain(|id| !loose.contains(id));
+            }
+        }
+        remaining.extend(loose);
+        Ok(selected)
+    }
+
     /// Returns canonical object directories in search order, primary first.
     ///
     /// Subsequent entries are alternates owned outside this repository. A maintenance planner

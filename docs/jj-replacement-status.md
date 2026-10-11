@@ -56,6 +56,61 @@ The girt `util gc` row is reflog expiry and loose-object pruning only; it doesn'
 include this benchmark in the acceptance check of any change touching fetch, object reading, packing
 or retention.
 
+### Repacking retained objects
+
+The unreleased repacker reuses compressed pack entries and their delta programs, relocating base
+references as needed. Only loose objects enter new delta searches; a packed object whose base is
+excluded becomes an ordinary entry. Existing pack order is retained where possible, including
+byte-identical whole-pack reuse. Equivalent legacy v1 indexes remain in place.
+
+`repack_retained` publishes additively. `retire_old_packs` and `run_maintenance` synchronize the
+replacement before retiring old pairs, under the existing `MaintenanceIsolation` contract. Callers
+must exclude writers, old readers, and alternate-store consumers before destructive maintenance.
+
+The [consumer validation patch](../scripts/jj-e2e/repack-validation.patch) targets jj fork revision
+`e8444f2a0e7076e7dd41cd6f8ba3b0144278bb0b`. It restores `run_maintenance` and uses `jj util gc` in
+the packed colocation test. Apply it to a disposable checkout with `patch -p1`, then build using the
+local girt override described below. It is for quiescent validation: jj's `gc.pid` lock excludes
+collectors, but does not by itself meet girt's full isolation contract. Resolve that caller contract
+before enabling destructive collection concurrently with other repository users.
+
+Build `cargo build --release --example repack` to measure repacking separately from jj. Run
+`target/release/examples/repack /path/to/disposable.git` for additive publication, or append
+`retire` for isolated pack retirement. Both use trusted repository limits. Use identical disposable
+clones for the Git comparison, and build before acquiring the shared timing lock.
+
+On 2026-10-10, identical disposable clones at commit `987c084b8f3ff28e8246d8b38c55c323c85611d5`
+contained 131,149 objects in a 206,463,294-byte pack. The release build used Rust 1.99.0 on macOS
+26.6.2 arm64. Builds finished before all measurements acquired the shared timing lock. Git was
+2.56.0.
+
+| Operation                    | Time    | Pack size  | Peak RSS   |
+| ---------------------------- | ------- | ---------- | ---------- |
+| girt additive repack         | 8.06 s  | 196.90 MiB | 372.33 MiB |
+| girt repack with retirement  | 34.46 s | 196.90 MiB | 423.53 MiB |
+| Git `repack -ad`             | 1.27 s  | 196.85 MiB | 267.84 MiB |
+
+These are single-run measurements. Girt preserved the original pack byte for byte; all three outputs
+passed `git fsck --full` and `git verify-pack`. Git disabled bitmap generation with
+`--no-write-bitmap-index`. Retirement includes fresh retention scans and replacement verification;
+that path remains slower than additive publication.
+
+The same locked consumer run passed all 3,386 jj tests, 196 end-to-end checks, and the no-Git
+tripwire (zero invocations). The retained-pack Criterion case measured 25.48–26.71 ms.
+`bench-large.sh` then reported the following against stock jj 0.46.0; the patched consumer was jj
+0.45.1, so these CLI versions differ.
+
+| Operation | jj on girt time / RSS | Stock jj time / RSS |
+| --------- | --------------------- | ------------------- |
+| Clone     | 21.94 s / 388 MiB     | 11.00 s / 113 MiB   |
+| Fetch     | 3.69 s / 108 MiB      | 0.64 s / 26 MiB     |
+| GC        | 64.71 s / 330 MiB     | 2.29 s / 270 MiB    |
+
+Both benchmark clones passed connectivity fsck. Default jj GC retained the recent original pack
+alongside the replacement: total pack/index storage was 401.12 MiB versus stock jj's 200.46 MiB.
+Thus the standalone repacker meets the compression target, but default consumer maintenance still
+needs a policy for recent packs and its isolation contract resolved before production enablement.
+
 ### Streaming receive benchmark
 
 On 2026-10-10, the clone step of `bench-large.sh` was repeated on macOS 26.6.2 arm64 after this

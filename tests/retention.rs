@@ -585,7 +585,12 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
         .unwrap();
     let canonical_index = old_index.canonicalize().unwrap();
+    let new_blob = repo
+        .loose_objects()
+        .write_blob(b"new retained object")
+        .unwrap();
     let policy = RetentionPolicy {
+        heads: vec![new_blob],
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
     };
@@ -1613,4 +1618,262 @@ fn retained_registration_unreadable_metadata_blocks_scan() {
     fs::create_dir(backlink).unwrap();
     let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     assert!(!plan.is_complete());
+}
+
+/// Git's executable creates the delta fixtures; no implementation-source fixtures are used.
+fn delta_fixture(
+    format: &str,
+    offset_deltas: bool,
+) -> (
+    tempfile::TempDir,
+    Repository,
+    Vec<ObjectId>,
+    std::path::PathBuf,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let mut ids = Vec::new();
+    for n in 0..12 {
+        let mut data: Vec<u8> = (0..65536)
+            .map(|i| ((i * 17 + i / 251) % 256) as u8)
+            .collect();
+        data[n * 100..n * 100 + 32].fill(n as u8);
+        let id = git(root.path(), &["hash-object", "-w", "--stdin"], &data);
+        git(
+            root.path(),
+            &["update-ref", &format!("refs/tags/blob-{n}"), &id],
+            b"",
+        );
+        ids.push(id.parse().unwrap());
+    }
+    let mut args = vec![
+        "pack-objects",
+        "--all",
+        "--reflog",
+        "--window=20",
+        "--depth=20",
+    ];
+    if offset_deltas {
+        args.push("--delta-base-offset");
+    }
+    args.push("objects/pack/pack");
+    let hash = git(root.path(), &args, b"");
+    git(root.path(), &["prune-packed"], b"");
+    let index = root.path().join(format!("objects/pack/pack-{hash}.idx"));
+    (root, repo, ids, index)
+}
+
+#[rstest::rstest]
+#[case::sha1_ref("sha1", false)]
+#[case::sha1_offset("sha1", true)]
+#[case::sha256_ref("sha256", false)]
+#[case::sha256_offset("sha256", true)]
+fn repack_reuses_git_deltas_and_remains_small(#[case] format: &str, #[case] offset: bool) {
+    let (root, repo, ids, old_index) = delta_fixture(format, offset);
+    let before = git(
+        root.path(),
+        &["verify-pack", "-v", old_index.to_str().unwrap()],
+        b"",
+    );
+    assert!(
+        before
+            .lines()
+            .any(|line| line.split_whitespace().count() == 7)
+    );
+    let original_size = fs::metadata(old_index.with_extension("pack"))
+        .unwrap()
+        .len();
+    let pinned = repo.objects(PackLimits::default()).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let written = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+        .written;
+    let new_index = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", written.checksum));
+    let after = git(
+        root.path(),
+        &["verify-pack", "-v", new_index.to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(
+        before
+            .lines()
+            .filter(|line| line.split_whitespace().count() == 7)
+            .count(),
+        after
+            .lines()
+            .filter(|line| line.split_whitespace().count() == 7)
+            .count()
+    );
+    assert!(written.pack_bytes <= original_size * 110 / 100);
+    assert_eq!(written.deltas.candidates, 0);
+    assert!(
+        pinned
+            .read(ids[0], ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    git(root.path(), &["fsck", "--full"], b"");
+}
+
+#[test]
+fn excluded_delta_base_is_materialized_without_delta_search() {
+    let (root, repo, _, old_index) = delta_fixture("sha1", true);
+    let listing = git(
+        root.path(),
+        &["verify-pack", "-v", old_index.to_str().unwrap()],
+        b"",
+    );
+    let delta: ObjectId = listing
+        .lines()
+        .find(|line| {
+            line.split_whitespace().count() == 7 && line.split_whitespace().nth(1) == Some("blob")
+        })
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // Remove every root and retain only a deltified blob, excluding its storage dependency.
+    fs::remove_dir_all(root.path().join("refs")).unwrap();
+    fs::create_dir_all(root.path().join("refs")).unwrap();
+    fs::remove_dir_all(root.path().join("logs")).unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![delta],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let written = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+        .written;
+    assert_eq!(written.objects, 1);
+    assert_eq!(written.deltas.candidates, 0);
+    let index = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", written.checksum));
+    let after = git(
+        root.path(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+    assert!(
+        !after
+            .lines()
+            .any(|line| line.split_whitespace().count() == 7)
+    );
+}
+
+#[test]
+fn repack_deduplicates_packs_and_searches_only_loose_objects() {
+    let (root, repo, _, old_index) = delta_fixture("sha1", true);
+    let duplicate = root.path().join("objects/pack/pack-duplicate.idx");
+    fs::copy(&old_index, &duplicate).unwrap();
+    fs::copy(
+        old_index.with_extension("pack"),
+        duplicate.with_extension("pack"),
+    )
+    .unwrap();
+    let mut data: Vec<u8> = (0..16384)
+        .map(|i| ((i * 13 + i / 129) % 256) as u8)
+        .collect();
+    let first = repo.loose_objects().write_blob(&data).unwrap();
+    data[128..144].fill(42);
+    let second = repo.loose_objects().write_blob(&data).unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![first, second],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete());
+    let written = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+        .written;
+    assert_eq!(written.objects as usize, plan.required.len());
+    assert_eq!(written.deltas.entries, 1);
+    assert_eq!(written.deltas.candidates, 1);
+    let index = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", written.checksum));
+    git(root.path(), &["verify-pack", index.to_str().unwrap()], b"");
+    git(root.path(), &["fsck", "--full"], b"");
+}
+
+#[test]
+fn repack_preserves_equivalent_legacy_index() {
+    let (root, repo, _, old_index) = delta_fixture("sha1", true);
+    fs::remove_file(&old_index).unwrap();
+    git(
+        root.path(),
+        &[
+            "index-pack",
+            "--index-version=1",
+            old_index.with_extension("pack").to_str().unwrap(),
+        ],
+        b"",
+    );
+    let original = fs::read(&old_index).unwrap();
+    assert!(!original.starts_with(b"\xfftOc"));
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let written = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+        .written;
+    assert_eq!(written.index_bytes, original.len() as u64);
+    assert_eq!(fs::read(&old_index).unwrap(), original);
+    git(
+        root.path(),
+        &["verify-pack", old_index.to_str().unwrap()],
+        b"",
+    );
+}
+
+#[test]
+fn primary_loose_objects_take_precedence_over_alternate_packs() {
+    let (_source_root, source, ids, _) = delta_fixture("sha1", true);
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        girt::InitKind::Bare,
+    )
+    .unwrap();
+    fs::create_dir_all(repo.object_dir().join("info")).unwrap();
+    fs::write(
+        repo.object_dir().join("info/alternates"),
+        source.object_dir().to_str().unwrap(),
+    )
+    .unwrap();
+    let source_objects = source.objects(PackLimits::default()).unwrap();
+    let object = source_objects
+        .read(ids[0], ReadLimits::default())
+        .unwrap()
+        .unwrap();
+    let first = repo.loose_objects().write_blob(object.data()).unwrap();
+    let mut data = object.data().to_vec();
+    data[8000] ^= 255;
+    let second = repo.loose_objects().write_blob(&data).unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![first, second],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let written = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap()
+        .written;
+    assert_eq!(written.objects, 2);
+    assert_eq!(written.deltas.entries, 1);
+    let index = format!("objects/pack/pack-{}.idx", written.checksum);
+    git(repo.git_dir(), &["verify-pack", &index], b"");
 }

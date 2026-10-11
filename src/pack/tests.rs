@@ -966,3 +966,121 @@ fn file_validation_rejects_pair_disagreement(#[case] format: ObjectFormat) {
         Err(Error::Corrupt("index/pack checksum disagreement"))
     ));
 }
+
+fn reuse_entry(
+    format: ObjectFormat,
+    entries: &[(ObjectId, Vec<u8>)],
+    id: ObjectId,
+    retained: &[ObjectId],
+) -> Result<Option<(Vec<u8>, usize)>, Error> {
+    let (index, data) = fixture(format, entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("reuse.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)?;
+    pack.reuse(
+        pack.find(id)?.unwrap(),
+        &retained.iter().copied().collect(),
+        ReadLimits::default(),
+        &cancelled,
+    )
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn reuse_preserves_compressed_delta_program_verbatim(#[case] format: ObjectFormat) {
+    let base_id = ObjectId::for_blob(format, b"hello");
+    let id = ObjectId::for_blob(format, b"hello!");
+    let base = entry(3, 5, b"", b"hello");
+    let program = [5, 6, 0x90, 5, 1, b'!'];
+    let delta = entry(6, program.len(), &[base.len() as u8], &program);
+    let reused = reuse_entry(format, &[(base_id, base), (id, delta)], id, &[id, base_id])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reused.0,
+        entry(7, program.len(), base_id.as_bytes(), &program)
+    );
+    assert_eq!(reused.1, 6);
+}
+
+#[rstest]
+#[case::reserved_type(vec![0x50])]
+#[case::truncated_size(vec![0xb0])]
+#[case::size_overflow(vec![0xbf; 20])]
+#[case::zero_offset(vec![0x66, 0])]
+#[case::offset_before_header(vec![0x66, 127])]
+#[case::truncated_reference(vec![0x76, 1, 2])]
+#[case::missing_reference(entry(7, 2, &[0; 20], &[0, 0]))]
+fn reuse_rejects_malformed_entry_headers(#[case] bytes: Vec<u8>) {
+    let id = ObjectId::for_blob(ObjectFormat::Sha1, b"invalid");
+    assert!(reuse_entry(ObjectFormat::Sha1, &[(id, bytes)], id, &[id]).is_err());
+}
+
+#[test]
+fn reuse_rejects_truncated_delta_program_sizes() {
+    let format = ObjectFormat::Sha1;
+    let base_id = ObjectId::for_blob(format, b"hello");
+    let id = ObjectId::for_blob(format, b"hello!");
+    let result = reuse_entry(
+        format,
+        &[
+            (base_id, entry(3, 5, b"", b"hello")),
+            (id, entry(7, 1, base_id.as_bytes(), &[0x80])),
+        ],
+        id,
+        &[base_id, id],
+    );
+    assert!(matches!(result, Err(Error::Corrupt(_))));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn reused_forward_reference_delta_remains_self_contained(#[case] format: ObjectFormat) {
+    let base_id = ObjectId::for_blob(format, b"hello");
+    let id = ObjectId::for_blob(format, b"hello!");
+    let delta = entry(7, 6, base_id.as_bytes(), &[5, 6, 0x90, 5, 1, b'!']);
+    let (mut data, mut index) = (Vec::new(), Vec::new());
+    let limits = crate::PackWriteLimits::default();
+    let mut writer = super::write::RepackWriter::new(format, &mut data, 2, limits).unwrap();
+    writer.append_reused(id, &delta).unwrap();
+    writer
+        .append_reused(base_id, &entry(3, 5, b"", b"hello"))
+        .unwrap();
+    writer
+        .finish(&mut index, limits, crate::DeltaStats::default())
+        .unwrap();
+    assert_eq!(&data[12..12 + delta.len()], delta);
+    let pack = Pack::open(format, &index, data).unwrap();
+    assert_eq!(
+        pack.read(pack.find(id).unwrap(), ReadLimits::default())
+            .unwrap()
+            .data(),
+        b"hello!"
+    );
+}
+
+#[test]
+fn reuse_rejects_a_base_whose_payload_disagrees_with_its_identity() {
+    let format = ObjectFormat::Sha1;
+    let base_id = ObjectId::for_blob(format, b"hello");
+    let id = ObjectId::for_blob(format, b"evil!");
+    // The dependent has a valid identity, but its base is falsely indexed as "hello".
+    let result = reuse_entry(
+        format,
+        &[
+            (base_id, entry(3, 4, b"", b"evil")),
+            (
+                id,
+                entry(7, 6, base_id.as_bytes(), &[4, 5, 0x90, 4, 1, b'!']),
+            ),
+        ],
+        id,
+        &[base_id, id],
+    );
+    assert!(matches!(result, Err(Error::Corrupt("object identity"))));
+}

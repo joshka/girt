@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::index::{Entry, Index, word};
 use super::reader::{Source, check_cancelled, decode};
@@ -78,6 +78,8 @@ pub(crate) struct FilePack {
     ranges: Vec<(usize, usize)>,
     offsets: Vec<usize>,
     base_cache: super::reader::BaseCache,
+    // Identity validation survives cache eviction for this immutable pinned generation.
+    verified: Vec<AtomicBool>,
 }
 
 impl FilePack {
@@ -152,6 +154,9 @@ impl FilePack {
             ranges,
             offsets: index.offsets,
             base_cache: super::reader::BaseCache::new(),
+            verified: (0..index.entries.len())
+                .map(|_| AtomicBool::new(false))
+                .collect(),
         })
     }
 
@@ -184,13 +189,78 @@ impl FilePack {
         Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
     }
 
+    pub(crate) fn entries(&self) -> impl Iterator<Item = Result<(ObjectId, usize), Error>> + '_ {
+        self.offsets
+            .iter()
+            .map(|&position| Ok((self.identity(position)?, position)))
+    }
+
+    /// Reuses compressed bytes; OFS bases become REF bases so output order is independent.
+    pub(crate) fn reuse(
+        &self,
+        position: usize,
+        retained: &std::collections::BTreeSet<ObjectId>,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<(Vec<u8>, usize)>, Error> {
+        if !self.verified[position].load(Ordering::Relaxed) {
+            self.read(position, limits, cancelled)?;
+        }
+        let entry = self.entry(position)?;
+        let header = super::reader::header(self, &entry)?;
+        let limit = if header.base.is_some() {
+            limits.max_delta_bytes
+        } else {
+            limits.max_object_bytes
+        };
+        if header.length > limit || entry.end - entry.offset > limits.max_input_bytes {
+            return Err(Error::Limit("reused entry bytes"));
+        }
+        let mut bytes = self.pack.bytes(entry.offset, entry.end)?;
+        let length = if let Some(base) = header.base {
+            let base_id = self.identity(base)?;
+            if !retained.contains(&base_id) {
+                return Ok(None);
+            }
+            // A duplicate base may be selected from another pack or a primary loose store.
+            // Verify this source's base identity before retargeting the unchanged program.
+            if !self.verified[base].load(Ordering::Relaxed) {
+                self.read(base, limits, cancelled)?;
+            }
+            let program = self.inflate(
+                entry.offset + header.bytes,
+                entry.end,
+                header.length,
+                cancelled,
+            )?;
+            let mut input = program.as_slice();
+            super::delta::size(&mut input, 0, 0, true)?;
+            let result_size = super::delta::size(&mut input, 0, 0, true)?;
+            if header.kind == 6 {
+                let mut replacement = super::write::entry_header_code(7, header.length as u64);
+                replacement.extend_from_slice(base_id.as_bytes());
+                replacement.extend_from_slice(&bytes[header.bytes..]);
+                bytes = replacement;
+            }
+            result_size
+        } else {
+            header.length
+        };
+        if length > limits.max_object_bytes {
+            return Err(Error::Limit("object bytes"));
+        }
+        Ok(Some((bytes, length)))
+    }
+
     pub(crate) fn read(
         &self,
         position: usize,
         limits: ReadLimits,
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
-        decode(self, position, limits, cancelled)
+        let object = decode(self, position, limits, cancelled)?;
+        self.verified[position].store(true, Ordering::Relaxed);
+        Ok(object)
     }
 }
 

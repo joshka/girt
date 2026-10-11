@@ -1,0 +1,62 @@
+diff --git a/cli/tests/test_git_colocation.rs b/cli/tests/test_git_colocation.rs
+index eec469d326..f1e952e541 100644
+--- a/cli/tests/test_git_colocation.rs
++++ b/cli/tests/test_git_colocation.rs
+@@ -362,14 +362,8 @@ fn test_git_colocation_enable_disable_with_pack_files() {
+     // (memory-mapped) for as long as the Git repository is open, and Windows
+     // refuses to rename a directory that contains an open file. Moving the Git
+     // repository between .git and .jj/repo/store/git used to fail with "Access
+-    // is denied" once a pack existed. `jj util gc` doesn't repack, so Git
+-    // builds the pack.
+-    let output = std::process::Command::new("git")
+-        .current_dir(workspace_root)
+-        .args(["repack", "-adq"])
+-        .output()
+-        .unwrap();
+-    assert!(output.status.success(), "{output:?}");
++    // is denied" once a pack existed.
++    work_dir.run_jj(["util", "gc"]).success();
+     assert!(has_pack_files(&workspace_root.join(".git")));
+ 
+     let output = work_dir.run_jj(["git", "colocation", "disable"]);
+diff --git a/lib/src/git_maintenance.rs b/lib/src/git_maintenance.rs
+index af6190fb33..eb04adb791 100644
+--- a/lib/src/git_maintenance.rs
++++ b/lib/src/git_maintenance.rs
+@@ -146,13 +146,7 @@ fn unix_seconds(time: SystemTime) -> i128 {
+     }
+ }
+ 
+-/// Expires old reflog entries and removes unreachable loose objects older than
+-/// `keep_newer`.
+-///
+-/// Unlike `git gc`, this doesn't repack: girt's repack decodes every object and
+-/// rewrites them without deltas, which makes typical repositories several
+-/// times larger. Packs are left as they are until girt can repack by reusing
+-/// existing deltas.
++/// Expires old reflog entries, repacks retained objects, and prunes old loose objects.
+ pub(crate) fn collect_garbage(
+     repo: &girt::Repository,
+     keep_newer: SystemTime,
+@@ -165,11 +159,15 @@ pub(crate) fn collect_garbage(
+         ..girt::retention::RetentionPolicy::trusted()
+     };
+     let cancel = AtomicBool::new(false);
+-    repo.expire_reflogs(&mut GcLock, &policy, &cancel)
+-        .map_err(|err| GitGcError::Maintenance(err.into()))?;
+-    let pruned = repo
+-        .prune_unreachable_loose(&mut GcLock, &policy, &cancel)
+-        .map_err(|err| GitGcError::Maintenance(err.into()))?;
+-    tracing::info!(pruned = pruned.deleted.len(), "git gc completed");
++    let report = repo
++        .run_maintenance(
++            &mut GcLock,
++            &policy,
++            girt::retention::RepackLimits::trusted(),
++            &cancel,
++        )
++        .map_err(|err| GitGcError::Maintenance(err.into()))?;
++    let pruned = report.pruned.map_or(0, |report| report.deleted.len());
++    tracing::info!(pruned, "git gc completed");
+     Ok(())
+ }

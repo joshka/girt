@@ -345,7 +345,7 @@ impl LooseObjects {
         result
     }
 
-    fn object_path(&self, id: ObjectId) -> PathBuf {
+    pub(crate) fn object_path(&self, id: ObjectId) -> PathBuf {
         let hex = id.to_string();
         self.directory.join(&hex[..2]).join(&hex[2..])
     }

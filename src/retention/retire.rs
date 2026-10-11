@@ -547,7 +547,14 @@ mod tests {
 
     #[test]
     fn unlink_fault_reports_removed_index_and_uncertain_sidecar() {
-        let (root, repository, policy, old_index) = fixture();
+        let (root, repository, mut policy, old_index) = fixture();
+        // Ensure reuse produces a replacement, rather than retaining an identical old pair.
+        policy.heads.push(
+            repository
+                .loose_objects()
+                .write_blob(b"additional root")
+                .unwrap(),
+        );
         let mut calls = 0;
         let error = repository
             .retire_old_packs_at(

@@ -10,7 +10,7 @@ pub(crate) struct Entry {
 
 /// Identity order serves lookups; a separate offset order serves OFS_DELTA and entry boundaries.
 #[derive(Debug)]
-pub(super) struct Index {
+pub(crate) struct Index {
     pub entries: Vec<Entry>,
     pub offsets: Vec<usize>,
     pub pack_hash: ObjectId,
