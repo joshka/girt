@@ -97,3 +97,17 @@
 - Explain the problem, supported behavior, compatibility evidence, validation commands, and
   limitations.
 - Link relevant issues and identify dependency or public API changes.
+
+## Working with Other Agents
+
+Claude and Codex both work on girt. Coordinate through GitHub so either can pick up where the other
+left off.
+
+- Use [issues](https://github.com/joshka/girt/issues) as the task board. Label each issue with its
+  owner (`agent:codex` or `agent:claude`), and add a one-line comment when work starts and stops.
+- Work in your own jj workspace, `work/<issue>`, created from `main`.
+- Hand off through PRs. The other agent reviews (`codex review` or `claude -p`).
+- Claude gives Codex work with `codex exec -m gpt-6.1-sol` and follows up with
+  `codex exec resume <id>`. Codex asks Claude with `claude -p --resume <id>` when it's stuck.
+- Timing-sensitive work, such as `scripts/jj-e2e/bench-large.sh` or deadline tests, needs a quiet
+  machine. Don't run it while another agent is building or testing.
