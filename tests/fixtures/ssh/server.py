@@ -5,6 +5,7 @@ import getpass
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import shutil
 import signal
@@ -126,15 +127,26 @@ def service(args):
 
 
 def main(args):
+    owner = int(os.environ.get("GIRT_FIXTURE_OWNER", os.getppid()))
+    stopped = False
+    # Signal handlers must never raise in cleanup: a second signal used to orphan sshd.
+    def stop_fixture(_signal, _frame):
+        nonlocal stopped
+        stopped = True
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, stop_fixture)
     with tempfile.TemporaryDirectory(prefix="girt-ssh-") as directory:
         root = Path(directory)
         for name in ("host", "client", "wrong"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
-        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "fixture-passphrase",
-                        "-f", str(root / "encrypted")], check=True)
-        (root / "authorized_keys").write_text(
-            "restrict " + (root / "client.pub").read_text() +
-            "restrict " + (root / "encrypted.pub").read_text())
+        authorized = "restrict " + (root / "client.pub").read_text()
+        # Most tests need only an unencrypted key. Avoid paying bcrypt's passphrase KDF
+        # in every concurrent fixture; the askpass test still exercises a real encrypted key.
+        if args.encrypted_key:
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "fixture-passphrase",
+                            "-f", str(root / "encrypted")], check=True)
+            authorized += "restrict " + (root / "encrypted.pub").read_text()
+        (root / "authorized_keys").write_text(authorized)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -173,10 +185,13 @@ LogLevel ERROR
             (root / name).write_text(f"IdentityFile {root}/{key}\nUserKnownHostsFile {root}/{trust}\nGlobalKnownHostsFile /dev/null\n")
         executable = shutil.which("sshd") or "/usr/sbin/sshd"
         log = (root / "diagnostics").open("w+")
+        if stopped or os.getppid() != owner:
+            return
         child = subprocess.Popen([executable, "-D", "-e", "-f", str(root / "sshd_config")], stderr=log)
         try:
             for _ in range(100):
-                if child.poll() is not None:
+                # Reserve the listener PID until tree cleanup, including startup failure.
+                if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
                     log.seek(0)
                     raise RuntimeError(log.read())
                 try:
@@ -187,19 +202,36 @@ LogLevel ERROR
             else:
                 raise RuntimeError("sshd did not listen on loopback")
             print(json.dumps({"port": port, "user": getpass.getuser(), "root": str(root)}), flush=True)
-            sys.stdin.read()
+            # EOF handles ordinary Drop; parent death also covers SIGKILL and inherited writers.
+            while not stopped and os.getppid() == owner:
+                readable, _, _ = select.select([0], [], [], .05)
+                if readable and not os.read(0, 8192):
+                    break
         finally:
             # sshd session children may create separate groups. Terminate the full owned process
-            # tree before the leader, using a fresh parent map while its PID remains reserved.
-            listing = subprocess.check_output(["ps", "-axo", "pid=,ppid="], text=True)
-            pairs = [tuple(map(int, line.split())) for line in listing.splitlines()]
+            # tree before the leader. Freeze each parent before rescanning so it cannot fork or
+            # reap descendants while we clean up. Our signal handlers cannot interrupt this.
+            try:
+                os.kill(child.pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
             owned = {child.pid}
+            order = [child.pid]
             while True:
+                listing = subprocess.check_output(["ps", "-axo", "pid=,ppid="], text=True)
+                pairs = [tuple(map(int, line.split())) for line in listing.splitlines()]
                 expanded = owned | {pid for pid, parent in pairs if parent in owned}
                 if expanded == owned:
                     break
+                for pid in expanded - owned:
+                    try:
+                        os.kill(pid, signal.SIGSTOP)
+                    except ProcessLookupError:
+                        pass
+                    order.append(pid)
                 owned = expanded
-            for pid in sorted(owned - {child.pid}, reverse=True):
+            # Children precede parents even if the OS wrapped its PID allocation counter.
+            for pid in reversed(order[1:]):
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -215,6 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--root")
     parser.add_argument("--path")
+    parser.add_argument("--encrypted-key", action="store_true")
     args = parser.parse_args()
     if args.serve:
         # Run subprocess cleanup even when SSH disconnects or the finite watchdog fires.
@@ -224,7 +257,4 @@ if __name__ == "__main__":
             signal.signal(signum, terminate)
         signal.alarm(25)
         sys.exit(service(args))
-    def stop_fixture(_signal, _frame):
-        raise SystemExit(1)
-    signal.signal(signal.SIGTERM, stop_fixture)
     main(args)

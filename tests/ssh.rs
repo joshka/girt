@@ -517,7 +517,7 @@ fn configured_askpass_unlocks_encrypted_key() {
     use std::os::unix::fs::PermissionsExt;
 
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
-    let server = Server::new(f.root.path(), "none");
+    let server = Server::start(f.root.path(), "none", true);
     let askpass = server.root.join("askpass");
     std::fs::write(&askpass, "#!/bin/sh\nprintf 'fixture-passphrase\\n'\n").unwrap();
     std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o700)).unwrap();

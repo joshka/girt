@@ -1,0 +1,8 @@
+# Loopback transfers start Python, OpenSSH and Git processes. Bound those fixtures together
+# without lowering parallelism for the rest of the suite or extending transport deadlines.
+[test-groups.transfers]
+max-threads = 2
+
+[[profile.default.overrides]]
+filter = 'binary(ssh) | binary(http) | binary(http_portable) | test(transport::ssh::)'
+test-group = 'transfers'

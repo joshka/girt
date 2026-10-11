@@ -311,8 +311,10 @@ current OS user, and restricts execution to the selected disposable repository a
 It disables password and keyboard-interactive authentication and forwarding. A forced command
 validates service/path arguments before executing the original quoted command through a POSIX shell;
 this exercises the actual quoting. It does not change `~/.ssh`, account settings or system sshd
-configuration. Fault cases have finite watchdogs. Fixture teardown terminates its owned process tree
-and deletes temporary secrets.
+configuration. Fault cases have finite watchdogs. Fixture teardown stops and kills its owned process
+tree, including services in separate process groups, before reaping the fixture. A parent-death
+watch also shuts down sshd when the test process is killed without running Rust destructors. Signal
+handlers request shutdown without interrupting cleanup; temporary secrets are deleted afterwards.
 
 The native fixture worked without elevation on macOS arm64. Some systems restrict unprivileged sshd;
 startup diagnostics are fixture errors, never skipped interoperability evidence. Run in a disposable

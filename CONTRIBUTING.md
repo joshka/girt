@@ -138,3 +138,10 @@ loopback interoperability tests require Python 3, Git, ssh, ssh-keygen and an un
 can authenticate the current OS user with a temporary key and a forced command. No persistent
 SSH/account configuration is changed. Missing or restricted sshd is a concrete fixture failure, not
 a skipped compatibility result. See [SSH contracts and setup](docs/ssh.md).
+
+`cargo nextest run --all-features` keeps at most two SSH/HTTP transfer fixtures running together,
+while the rest of the suite uses default parallelism. This limits competing Python, OpenSSH and Git
+processes without extending the deadlines being tested. After compiling the SSH tests, run
+`python3 tests/fixtures/ssh/check_cleanup.py` to check SIGINT, repeated SIGINT, test-binary SIGKILL
+and nextest timeout cleanup. Coordinate timing-sensitive runs with other local builds and
+benchmarks.
