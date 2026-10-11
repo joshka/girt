@@ -1,0 +1,240 @@
+{
+  "platform": "macOS arm64",
+  "rustc": "1.99.0 (b940084d7 2026-09-28)",
+  "git": "2.56.0",
+  "candidates": {
+    "37": {
+      "commit": "df4eadb21a87e1a8592ba778b01ca31972a92ffa",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "joined_depth_is_checked_before_publication": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "ok",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3027 filtered out; finished in 0.11s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([37, 242, 109, 56, 84, 19, 38, 133, 89, 107, 40, 92, 71, 194, 42, 139, 208, 130, 103, 3]), objects: 4, pack_bytes: 205, index_bytes: 1184, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpROCvSH/objects/pack/pack-97cb7b2ef72003093e12d5d74bac8a2680eff747.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpROCvSH/objects/pack/pack-97cb7b2ef72003093e12d5d74bac8a2680eff747.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpROCvSH/objects/pack/pack-97cb7b2ef72003093e12d5d74bac8a2680eff747.pack\") })"
+      ]
+    },
+    "44": {
+      "commit": "ec693d0e2865a302db8c1daabc89894f9f85d212",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "joined_depth_is_checked_before_publication": "ok",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "FAILED",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "ok",
+        "recent_pack_content_is_not_duplicated": "ok"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[1, 1, 1], bytes=[96, 115, 134]",
+        "protected keep=false: copies=[1, 1, 1], bytes=[96, 147, 198]"
+      ],
+      "budget_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.09s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Ok(RepackPublished { written: PackWritten { checksum: Sha1([213, 244, 15, 227, 62, 98, 209, 182, 81, 43, 152, 13, 52, 170, 76, 125, 125, 175, 92, 217]), objects: 3, pack_bytes: 71, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } }, reused: 2 })"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3020 filtered out; finished in 0.08s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([161, 129, 70, 3, 162, 215, 141, 138, 167, 98, 125, 89, 143, 204, 4, 144, 121, 0, 32, 242]), objects: 3, pack_bytes: 176, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } }, reused: 2 }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpov2GGW/objects/pack/pack-a84c12d00b6bb783876c8d23e9bad5f6b6cae8aa.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpov2GGW/objects/pack/pack-a84c12d00b6bb783876c8d23e9bad5f6b6cae8aa.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpov2GGW/objects/pack/pack-a84c12d00b6bb783876c8d23e9bad5f6b6cae8aa.pack\") })"
+      ]
+    },
+    "45": {
+      "commit": "684b49e0039e4aa2f19a725552b5bfc301738e13",
+      "integrity_tests": {
+        "primary_loose_precedence_survives_alternate_copy": "ok",
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "joined_depth_is_checked_before_publication": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "FAILED",
+        "recent_pack_content_is_not_duplicated": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=false: copies=[1, 1, 1], bytes=[64, 83, 102]",
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.06s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3023 filtered out; finished in 0.11s",
+      "crash_model_evidence": [
+        "persistence replay=false, retirement=Ok(RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([104, 167, 135, 103, 187, 149, 106, 37, 25, 58, 64, 67, 201, 36, 161, 117, 168, 188, 201, 87]), objects: 3, pack_bytes: 176, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpyDAglw/objects/pack/pack-029409b4527a50a04942a834e6553a3caea712db.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpyDAglw/objects/pack/pack-029409b4527a50a04942a834e6553a3caea712db.rev\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpyDAglw/objects/pack/pack-029409b4527a50a04942a834e6553a3caea712db.pack\"] })"
+      ]
+    },
+    "46": {
+      "commit": "5deb8b641d3ec4fef72bcc6b91e6fe8028b18c16",
+      "integrity_tests": {
+        "source_base_identity_does_not_change_delta_content": "ok",
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "joined_depth_is_checked_before_publication": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "ok",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3020 filtered out; finished in 0.08s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([6, 169, 56, 209, 242, 128, 45, 122, 207, 105, 203, 229, 141, 45, 205, 251, 177, 196, 142, 102]), objects: 3, pack_bytes: 176, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpM0vzM5/objects/pack/pack-6ad8071f00209d4db160c9a44540a333c4e79079.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpM0vzM5/objects/pack/pack-6ad8071f00209d4db160c9a44540a333c4e79079.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpM0vzM5/objects/pack/pack-6ad8071f00209d4db160c9a44540a333c4e79079.pack\") })"
+      ]
+    },
+    "47": {
+      "commit": "13d7e7cc7f840e0bfb69c4e02574a1a015eab339",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "ok",
+        "joined_depth_is_checked_before_publication": "ok",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.08s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Ok(RepackPublished { written: PackWritten { checksum: Sha1([96, 195, 98, 25, 105, 110, 108, 108, 136, 79, 181, 52, 51, 64, 253, 212, 43, 231, 38, 162]), objects: 3, pack_bytes: 71, index_bytes: 1156, deltas: DeltaStats { entries: 1, candidates: 0, work: 0, max_depth: 0 } } })"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3012 filtered out; finished in 0.12s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([240, 210, 239, 110, 77, 186, 239, 60, 139, 134, 172, 188, 246, 144, 100, 244, 50, 125, 155, 15]), objects: 4, pack_bytes: 310, index_bytes: 1184, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpEwsHSK/objects/pack/pack-383882161b7a6f2717febeba9789d46e32e37858.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpEwsHSK/objects/pack/pack-383882161b7a6f2717febeba9789d46e32e37858.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpEwsHSK/objects/pack/pack-383882161b7a6f2717febeba9789d46e32e37858.pack\") })"
+      ]
+    },
+    "49": {
+      "commit": "f6221563e22088f6b1acf20c0e57c3067145ed9c",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "ok",
+        "joined_depth_is_checked_before_publication": "ok",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_pack_content_is_not_duplicated": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=false: copies=[1, 1, 1], bytes=[64, 83, 102]",
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.06s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3037 filtered out; finished in 0.11s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([142, 158, 131, 209, 86, 160, 172, 231, 156, 67, 127, 127, 15, 182, 103, 134, 37, 226, 46, 79]), objects: 4, pack_bytes: 203, index_bytes: 1184, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpp5nCrx/objects/pack/pack-1f0539babf6c01a445baa71a07b2913ff4048b43.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpp5nCrx/objects/pack/pack-1f0539babf6c01a445baa71a07b2913ff4048b43.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpp5nCrx/objects/pack/pack-1f0539babf6c01a445baa71a07b2913ff4048b43.pack\") })"
+      ]
+    },
+    "51": {
+      "commit": "d1a690ce3f5fefb655b2fe642aac39148c72a4c1",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "joined_depth_is_checked_before_publication": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "FAILED",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.08s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Ok(RepackPublished { written: PackWritten { checksum: Sha1([96, 195, 98, 25, 105, 110, 108, 108, 136, 79, 181, 52, 51, 64, 253, 212, 43, 231, 38, 162]), objects: 3, pack_bytes: 71, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } }, reused: 2 })"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3027 filtered out; finished in 0.17s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([22, 228, 62, 27, 104, 35, 89, 194, 215, 167, 195, 81, 94, 179, 114, 44, 86, 202, 241, 123]), objects: 4, pack_bytes: 309, index_bytes: 1184, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } }, reused: 3 }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpTbAqhh/objects/pack/pack-2788e75a9ee630320a8269f5b11179a3282c3b30.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpTbAqhh/objects/pack/pack-2788e75a9ee630320a8269f5b11179a3282c3b30.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpTbAqhh/objects/pack/pack-2788e75a9ee630320a8269f5b11179a3282c3b30.pack\") })"
+      ]
+    },
+    "52": {
+      "commit": "03bcce40095aaa6090ef07ba791c06ef5e6c85c6",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "joined_depth_is_checked_before_publication": "FAILED",
+        "primary_loose_precedence_survives_alternate_copy": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "FAILED",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.05s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3022 filtered out; finished in 0.09s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([216, 103, 132, 47, 151, 177, 183, 215, 248, 101, 74, 39, 140, 18, 145, 52, 39, 90, 193, 60]), objects: 3, pack_bytes: 176, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } } }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpH19ED8/objects/pack/pack-64d036b1aec402f43efef6afb691de815be2831c.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpH19ED8/objects/pack/pack-64d036b1aec402f43efef6afb691de815be2831c.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmpH19ED8/objects/pack/pack-64d036b1aec402f43efef6afb691de815be2831c.pack\") })"
+      ]
+    },
+    "53": {
+      "commit": "01d399cee984f31bb06c11dda4e157786ec2d3c1",
+      "integrity_tests": {
+        "retirement_preserves_the_only_copy_of_an_omitted_object": "FAILED",
+        "source_base_identity_does_not_change_delta_content": "ok",
+        "primary_loose_precedence_survives_alternate_copy": "ok",
+        "joined_depth_is_checked_before_publication": "ok",
+        "damaged_protected_entry_does_not_justify_removing_readable_copy": "ok",
+        "damaged_first_blob_does_not_remove_the_readable_copy": "FAILED",
+        "recent_extra_keeps_its_last_readable_copy": "ok",
+        "keep_pack_content_is_not_duplicated": "FAILED",
+        "recent_pack_content_is_not_duplicated": "FAILED"
+      },
+      "protected_counts": [
+        "protected keep=true: copies=[2, 2, 2], bytes=[109, 128, 147]",
+        "protected keep=false: copies=[2, 3, 4], bytes=[109, 192, 294]"
+      ],
+      "budget_result": "ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.06s",
+      "budget_evidence": [
+        "nine logical bytes with budget eight: Err(Write(Limit(\"input bytes\")))"
+      ],
+      "crash_model_result": "FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3013 filtered out; finished in 0.07s",
+      "crash_model_evidence": [
+        "persistence replay=true, retirement=Err(RetireFailure { cause: Io(Custom { kind: Other, error: \"simulated crash persistence cut\" }), report: RetireReport { published: Some(RepackPublished { written: PackWritten { checksum: Sha1([100, 39, 207, 244, 151, 71, 25, 96, 254, 56, 140, 47, 96, 110, 237, 237, 64, 36, 193, 165]), objects: 3, pack_bytes: 176, index_bytes: 1156, deltas: DeltaStats { entries: 0, candidates: 0, work: 0, max_depth: 0 } }, copied: 2, copied_deltas: 0 }), durable: true, removed: [\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmp1vzjWL/objects/pack/pack-fbd8510d8eafb505c9437f7d1d288d7ed2519e75.idx\", \"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmp1vzjWL/objects/pack/pack-fbd8510d8eafb505c9437f7d1d288d7ed2519e75.rev\"] }, uncertain: Some(\"/private/var/folders/qy/vftdx05n0rl4mxvp33zrt3l00000gn/T/.tmp1vzjWL/objects/pack/pack-fbd8510d8eafb505c9437f7d1d288d7ed2519e75.pack\") })"
+      ]
+    }
+  }
+}

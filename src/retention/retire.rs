@@ -414,6 +414,7 @@ fn failed(cause: RetireCause, report: RetireReport) -> RetireFailure {
 
 #[cfg(all(test, unix))]
 mod tests {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/astra_crash.rs"));
     use std::io::Write;
     use std::process::{Command, Stdio};
     use std::time::Duration;
