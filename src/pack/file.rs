@@ -191,6 +191,18 @@ impl FilePack {
         }
         let entry = self.entry(position)?;
         let header = super::reader::header(self, &entry)?;
+        if let Some(base) = header.base {
+            // The base may be written from another pack's copy of the same identity. Verify this
+            // source's base before retargeting the unchanged delta program onto that copy.
+            let base_verified = self
+                .verified_sizes
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains_key(&base);
+            if !base_verified {
+                self.read(base, limits, cancelled)?;
+            }
+        }
         let base = header
             .base
             .map(|position| self.identity(position))
