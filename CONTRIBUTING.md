@@ -31,10 +31,10 @@ For Markdown-only changes, run `just docs-check` (rumdl and Vale). Vale checks s
 Git terminology in the README, this guide, and the repository, configuration, reference, HTTP, SSH,
 and working-tree guides. Its [project vocabulary](.config/vale/config/vocabularies/Girt/accept.txt)
 accepts domain terms; review a warning in context before changing a technical contract. Use
-`just fmt-md` to fix formatting. Vale covers these guides while the remaining historical evidence
-and API documentation are being audited. For Rustdoc-only changes, run the checks applicable to the
-change in [Rustdoc Standard](docs/rustdoc.md#examples-and-validation). Corrections that preserve
-meaning, links, and examples need prose review, but no Rust tests or documentation builds.
+`just fmt-md` to fix formatting. Vale does not check historical evidence or Rustdoc. For
+Rustdoc-only changes, run the checks applicable to the change in
+[Rustdoc Standard](docs/rustdoc.md#examples-and-validation). Corrections that preserve meaning,
+links, and examples need prose review, but no Rust tests or documentation builds.
 
 For Rust implementation changes, run these checks before submitting a contribution:
 
@@ -55,7 +55,8 @@ columns and separators stay aligned, even when a table must be wider.
 
 For performance-sensitive changes, run `just bench`. See
 [performance measurements](docs/benchmarks.md) for workloads, measured operations, cache conditions,
-and recorded results.
+and recorded results. Changes touching fetch, object reading, packing or retention also need the
+[large-repository benchmark](docs/jj-replacement-status.md#large-repository-benchmark).
 
 The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
 checks on macOS and Linux, with a separate Windows portable-test job. Its explicit
@@ -67,9 +68,9 @@ target OS.
 
 ## Implementation and Tests
 
-Use [Testing and Completion Criteria](docs/testing.md) to define acceptance evidence for each
-capability before implementation. Include its concrete checklist in the task description. Unit
-tests, integration tests, and benchmarks should address the change's contracts and risks.
+Each issue states its acceptance criteria. [Testing and Completion Criteria](docs/testing.md)
+describes the evidence a change needs; unit tests, integration tests, and benchmarks should address
+the change's contracts and risks.
 
 Organize modules under `src/` around coherent Git concepts. Prefer readable control flow, explicit
 side effects, and types that protect meaningful invariants. Document public API contracts and add
@@ -90,10 +91,11 @@ checkout or global Git configuration. Unsupported features should fail explicitl
 
 ## Originality and Licensing
 
-Contributions must be original and suitable for distribution under `MIT OR Apache-2.0`. Do not copy,
-translate, or adapt copyrightable expression from Git source code, including its tests and comments.
-Non-copyrightable ideas, algorithms, and processes may inform independent implementations. Record
-specification references and fixture provenance, and check dependency licenses before adding them.
+Contributions must be original and suitable for distribution under `MIT OR Apache-2.0`. Do not use
+Git, gix, or libgit2 implementation or test source, including comments, as input to girt code,
+documentation, or tests. Work from format specifications, consumer requirements, and independent
+observations of the Git executable. Record specification references and fixture provenance, and
+check dependency licenses before adding them.
 
 ## Pull Requests
 

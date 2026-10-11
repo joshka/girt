@@ -1,5 +1,9 @@
 # jj Git Acceptance Contracts
 
+> **Historical.** These contracts belong to the earlier [roadmap](jj-roadmap.md) phase and are no
+> longer maintained. Current acceptance criteria live in each
+> [GitHub issue](https://github.com/joshka/girt/issues).
+
 This is a requirements matrix and corpus plan, not a passing-test report. IDs link the
 [roadmap](jj-roadmap.md) to concrete acceptance evidence. Capability completion evidence is linked
 from the roadmap; uncompleted rows remain pending or explicitly deferred under the

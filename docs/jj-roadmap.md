@@ -1,5 +1,11 @@
 # Full jj Git Coverage Roadmap
 
+> **Historical.** This roadmap drove the earlier phase of girt's development and is no longer
+> maintained. Current work is tracked in [GitHub issues](https://github.com/joshka/girt/issues), and
+> [jj on girt status](jj-replacement-status.md) records the current contract and benchmark. Statuses
+> below, including R35's, describe that earlier phase. Items in the
+> [comeback backlog](#comeback-backlog) that have no issue are not tracked anywhere else.
+
 The target is girt coverage of jj's Git responsibilities followed by one final jj replacement task.
 The final target has no retained Git executable provider. The current R35 integration attempt uses a
 default-off jj `git.native-local-operations` setting for local clone, fetch, push and default-branch
@@ -91,7 +97,7 @@ consumer or native-platform evidence.
 
 | ID  | Bounded deliverable                                         | Depends on                      | Status              | Size | Acceptance / completion                                                                                                                                                      |
 | --- | ----------------------------------------------------------- | ------------------------------- | ------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | S    | This document; [matrix](jj-acceptance.md); [process](testing.md#roadmap-completion-and-coordination)                                                                         |
+| R00 | Roadmap, identity decision, contributor contracts           | —                               | Complete (planning) | S    | This document; [matrix](jj-acceptance.md); [process](testing.md)                                                                                                             |
 | R01 | Commit timestamps, identities, exact signature bytes        | R00                             | Complete            | M    | [A01](jj-acceptance.md#a01--commit-identities-timestamps-and-signature-payloads); [evidence](evidence/r01.md)                                                                |
 | R02 | Format-bearing identity and hashing foundation              | R01                             | Complete            | M    | [A02](jj-acceptance.md#a02--object-format-and-identity-foundations); [evidence](evidence/r02.md)                                                                             |
 | R03 | Optional tracing and operation failure visibility           | R02                             | Complete            | M    | [A03](jj-acceptance.md#a03--instrumentation-errors-and-scheduling); [evidence](evidence/r03.md)                                                                              |

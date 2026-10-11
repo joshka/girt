@@ -1,7 +1,7 @@
 # Rust Conventions
 
-Use these conventions alongside the [Rustdoc Standard](rustdoc.md) and the repository's
-maintainability and testing guidance.
+Use these conventions alongside the [Rustdoc Standard](rustdoc.md) and
+[Testing and Completion Criteria](testing.md).
 
 ## Module Roots and Ownership
 
@@ -48,7 +48,7 @@ Characterize parsing separately from operational validation. Supported semantics
 observations; do not reject Git-accepted data merely to simplify library invariants. Name the Git
 operation used as the oracle: storing raw bytes, reading an object, and validating it can have
 different acceptance rules. Choose practical deterministic ambiguity resolution and document it.
-Safety, resource, and unsupported restrictions need evidence, explicit errors, and queued follow-ups
+Safety, resource, and unsupported restrictions need evidence, explicit errors, and a GitHub issue
 when they block required compatibility. No finite corpus establishes every edge case.
 
 ## Errors
@@ -81,7 +81,9 @@ including explicit span handles and suspension/worker ownership tests.
 
 - Keep unit and integration test bodies simple: setup, the operation, and direct assertions.
 - Avoid `if`, `match`, `for`, and `while` in test bodies when they select scenarios or expected
-  results. Prefer named `rstest` cases with explicit inputs and expectations.
+  results. Use `rstest` with named `#[case::name(...)]` inputs that supply the expected values; do
+  not reimplement the algorithm under test to calculate them. Keep plain `#[test]` functions for
+  single scenarios.
 - Put reusable fixture construction in small, named helpers. Keep logic that is intrinsic to the
   behavior being tested, such as coordinating concurrent writers, explicit and minimal; do not move
   scenario-selection logic into helpers merely to hide it.
@@ -94,27 +96,17 @@ including explicit span handles and suspension/worker ownership tests.
 - Assert observable behavior and invariants rather than reproduce implementation steps or test
   derived traits. Keep cases focused on meaningful regressions.
 
-## Synchronous Storage and Async Deferral
+## Synchronous Storage and Async Network Boundaries
 
-- Keep the current experimental local loose-object API explicitly synchronous and blocking. Its
-  scope does not yet justify an async runtime dependency, adapter, or backend framework.
-- Keep parsing, encoding, hashing, and compression independent of an async runtime.
-- Revisit the boundary before defining a shared object-store trait that consumers implement,
-  allowing object lookup to fetch remote data, or integrating an async consumer with concrete
-  responsiveness or concurrency requirements.
-- At that point, decide the local-versus-remote boundary, owned buffers for worker dispatch,
-  concurrency limits, and cancellation and write-completion semantics.
-- Consider a whole-operation blocking-worker adapter for local storage; async integration does not
-  necessarily require rewriting the core.
-- Treat this as a deferred design decision, not authorization to add async or expand the supported
-  storage scope.
-
-## Async Network Boundaries
+Local storage, parsing, encoding, hashing, compression and graph algorithms are synchronous and
+independent of any async runtime. Do not make them async because a network caller uses them, and do
+not add an async storage trait or adapter without a consumer that needs remote object lookup or a
+concrete storage responsiveness guarantee. A whole-operation blocking-worker adapter would be the
+first option to consider then; async integration does not require rewriting the core.
 
 Use async I/O where waiting for a remote peer must remain responsive to cancellation and deadlines.
 Keep the runtime owned by the caller; isolate network dependencies behind the `http` and `ssh`
-features. Do not make object formats, hashing, graph algorithms or local storage async solely
-because a network caller uses them.
+features.
 
 Separate potentially substantial synchronous work from async network calls. HTTP and SSH fetch
 return an owned bounded download whose explicit `validate` method imports the pack and checks
@@ -122,6 +114,4 @@ connectivity. Push preparation remains synchronous and precedes sending; sending
 prepared buffers without copying the pack. This keeps executor scheduling and CPU concurrency under
 caller control without creating detached blocking jobs whose cancellation and resource lifetime
 would be hidden. Callers should use a bounded worker pool for large validation/preparation/install
-operations. Broader async storage APIs remain deferred until a consumer needs remote object lookup
-or a concrete storage responsiveness guarantee. See [HTTP contracts](http.md) and
-[SSH contracts](ssh.md) for current boundaries.
+operations. See [HTTP contracts](http.md) and [SSH contracts](ssh.md) for current boundaries.
