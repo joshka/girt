@@ -4,6 +4,72 @@ A change is complete when its issue's acceptance criteria hold and the evidence 
 Select tests by the promises and risks involved; one test can satisfy several criteria without
 duplicating assertions across suites.
 
+## Specify Before Implementing
+
+Write the specification before any implementation starts when a change deletes, retires, replaces or
+re-encodes stored data (objects, packs, references, reflogs, the index), adds a fast path that
+reuses stored bytes or skips a validation, or optimizes a path measured by the
+[large-repository benchmark](jj-replacement-status.md#large-repository-benchmark). On
+[#23](https://github.com/joshka/girt/issues/23), nine independent repack implementations each failed
+at least one integrity test, in eight predictable classes, and the design that avoided two of those
+classes outright was found only by judges comparing finished attempts. A specification makes the
+target a test suite rather than prose, so one implementation can get it right.
+
+Skip the process for routine work: read-only operations, new parsers or writers covered by Git
+fidelity tests, API additions, documentation, and bug fixes with a reproducing test go straight to
+one implementation with the [required evidence](#required-evidence). A read-path optimization needs
+only the inventory and the profile when it keeps every validation, observable contract and resource
+account unchanged; one that changes what a planner validates or counts is in scope, because a later
+deletion depends on its output. Record the steps below in the issue, in order, before implementation
+begins.
+
+1. **Failure-mode inventory.** Walk every class and state whether it applies and why. "Does not
+   apply" needs a reason, such as "this phase deletes no objects".
+   - *Last readable copy:* the change could remove the only copy that decodes to the right object.
+     Index membership, CRCs, checksums and header-only checks show that a copy exists, not that it
+     reconstructs the object.
+   - *Identity of reused bytes:* copied or reused bytes carry a claimed identity that nothing
+     verified, such as a delta base chosen by ID from another pack.
+   - *Resource and depth limits:* pieces valid in their own source combine past a reader limit, such
+     as delta chains exceeding `max_delta_depth`, and the result is published before the limit is
+     checked.
+   - *Snapshot consistency:* the plan and the action observe different stores, such as a store
+     reopened between scanning and copying.
+   - *Store precedence:* with alternates or duplicate copies, the copy taken differs from the one
+     object lookup would return.
+   - *Protected files:* `.keep` packs, recent packs and alternates are rewritten, duplicated into
+     new output on every run, or used as proof that an object is safe to omit.
+   - *Crash ordering:* a failure between publishing and retiring, or an unlink persisted before the
+     sync that should precede it, leaves a repository that does not open cold.
+   - *Budgets and statistics:* copied or skipped data escapes the caller's limits or the reported
+     counts.
+   - *Git fidelity:* Git cannot read the output, or the retained set differs from Git's equivalent
+     operation.
+   - *Concurrency with readers:* open readers, concurrent Git processes or a second maintenance run
+     observe an intermediate state.
+2. **Executable acceptance tests first.** Map each applicable class to executable evidence. Reuse an
+   existing test when it already asserts the invariant, and write a new failing test only for
+   behavior that is new or uncovered, named after the invariant. Use Git to generate the fixture and
+   check the result where it can act as the oracle, including the comparison with Git's equivalent
+   operation; keep focused unit or fault-model tests where it cannot, such as sync ordering or
+   caller budgets. Commit the new tests before the design round; the mapping is the implementer's
+   target and the reviewer's checklist.
+3. **Profile before choosing a design.** For performance work, time each phase of the current path
+   on the large-repository fixture while holding the shared timing lock
+   (`shlock -f /tmp/girt-timing.lock`), with Git's equivalent operation as the control, and report
+   peak RSS beside wall time. State the budget relative to Git and list the validations the fast
+   path must keep, such as decoding every retained object from the replacement before unlinking
+   anything. A repeated walk or scan inherited from the current code is the first thing to look for.
+4. **Cheap design round.** Write two or three candidate designs, about a page each, and judge them
+   against the inventory: for each applicable class, say whether the design makes the failure
+   impossible by construction, detects it with a check, or leaves it open. Prefer a structural
+   constraint that removes a whole class, such as reusing only same-pack, already-written bases,
+   over a check added afterwards. Record the choice and its reasons in the issue.
+5. **One implementation.** Implement the chosen design once, by default with Sol at medium effort.
+   Review it by running the pre-written tests and with one cross-provider review that reads the
+   inventory and tries to break each "impossible by construction" claim. Run parallel attempts only
+   when the design round cannot choose between candidates.
+
 ## Required Evidence
 
 - **Behavior:** State what callers can do, supported formats, and explicit exclusions. Reject
