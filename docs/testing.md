@@ -158,3 +158,5 @@ supported native platforms. Named SHA-1/SHA-256 cases in `object_ids`, `sha256`,
 and `references` establish format-specific execution; a successful compile or a suite's filename is
 not sufficient evidence. Native run logs record OS, filesystem, compiler and Git versions for
 checkout and temporary-fixture storage.
+
+<!-- CI path filter evidence; throwaway. -->
