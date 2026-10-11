@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(unix)]
 use std::fs::{self, File};
 use std::io;
@@ -89,9 +89,10 @@ impl Repository {
     /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
     /// synchronizes the pack and object directories, verifies each retained ID through that pair,
     /// and compares
-    /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
-    /// packs and packs with unsupported sidecars remain untouched. Optional `.rev` and `.bitmap`
-    /// sidecars are retired with their pair. Alternate stores are never
+    /// old pack generations before deleting an old index followed by its pack. `.keep` packs and
+    /// packs with unsupported sidecars remain untouched. Recent packs are retired only when every
+    /// indexed object, including unreachable objects, is present in the replacement. Optional
+    /// `.rev` and `.bitmap` sidecars are retired with their pair. Alternate stores are never
     /// mutated. A replacement identical to an old pair is retained. On non-Unix platforms the
     /// operation refuses before publication because directory durability is not established.
     ///
@@ -214,6 +215,9 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+        if pack.checksum() != published.written.checksum {
+            return Err(failed(RetireCause::Changed, report));
+        }
         for id in &first.required {
             check(cancel, &report)?;
             let position = pack
@@ -227,19 +231,54 @@ impl Repository {
                 return Err(failed(RetireCause::ReplacementMissing(*id), report));
             }
         }
+        let mut copied_recent = BTreeSet::new();
+        let mut budget = policy.packs;
+        for index in before
+            .keys()
+            .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
+        {
+            let path = index.with_extension("pack");
+            if path == replacement_pack
+                || !first.protected_packs.contains(&path)
+                || before.contains_key(&index.with_extension("keep"))
+            {
+                continue;
+            }
+            let old = FilePack::open(self.object_format(), index, &mut budget, cancel)
+                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            let mut complete = true;
+            for id in old
+                .identities()
+                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
+            {
+                check(cancel, &report)?;
+                if pack
+                    .find(id)
+                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
+                    .is_none()
+                {
+                    complete = false;
+                    break;
+                }
+            }
+            if complete {
+                copied_recent.insert(path);
+            }
+        }
         drop(pack);
         let after = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
         if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
             return Err(failed(RetireCause::Changed, report));
         }
-        let retiring = old_indices(&before, &first, &replacement_pack);
+        let retiring = old_indices(&before, &first, &replacement_pack, &copied_recent);
         if !retiring.is_empty() {
             // A multi-pack index (and its bitmaps) naming a retired pack would make the object
             // store unreadable to Git; Git rebuilds it when needed, as `git repack -d` does.
-            for path in multi_pack_index_paths(&directory)
-                .map_err(|error| failed(RetireCause::Io(error), report.clone()))?
-            {
+            let indices = multi_pack_index_paths(&directory)
+                .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
+            let removed_index = !indices.is_empty();
+            for path in indices {
                 let result = if path.is_dir() {
                     fs::remove_dir_all(&path)
                 } else {
@@ -251,6 +290,13 @@ impl Repository {
                     uncertain: Some(path.clone()),
                 })?;
                 report.removed.push(path);
+            }
+            if removed_index {
+                sync_directory(&directory).map_err(|error| RetireFailure {
+                    cause: RetireCause::Io(error),
+                    report: Box::new(report.clone()),
+                    uncertain: Some(directory.clone()),
+                })?;
             }
         }
         for index in retiring {
@@ -266,7 +312,17 @@ impl Repository {
                     report: Box::new(report.clone()),
                     uncertain: Some(path.clone()),
                 })?;
+                let index_removed = path == index;
                 report.removed.push(path);
+                if index_removed {
+                    // A durable index unlink prevents power-loss reordering from leaving an
+                    // indexed missing pack. Sidecars and pack bytes can now be removed safely.
+                    sync_directory(&directory).map_err(|error| RetireFailure {
+                        cause: RetireCause::Io(error),
+                        report: Box::new(report.clone()),
+                        uncertain: Some(index.clone()),
+                    })?;
+                }
             }
             sync_directory(&directory).map_err(|error| RetireFailure {
                 cause: RetireCause::Io(error),
@@ -349,6 +405,7 @@ fn old_indices(
     before: &BTreeMap<PathBuf, Stamp>,
     plan: &RetentionPlan,
     new_pack: &Path,
+    copied_recent: &BTreeSet<PathBuf>,
 ) -> Vec<PathBuf> {
     before
         .keys()
@@ -357,7 +414,7 @@ fn old_indices(
             let pack = index.with_extension("pack");
             pack != new_pack
                 && before.contains_key(&pack)
-                && !plan.protected_packs.contains(&pack)
+                && (!plan.protected_packs.contains(&pack) || copied_recent.contains(&pack))
                 && !before.keys().any(|path| {
                     path.file_stem() == pack.file_stem()
                         && !matches!(
@@ -547,7 +604,14 @@ mod tests {
 
     #[test]
     fn unlink_fault_reports_removed_index_and_uncertain_sidecar() {
-        let (root, repository, policy, old_index) = fixture();
+        let (root, repository, mut policy, old_index) = fixture();
+        // Include a fresh object so verbatim reuse cannot retain the old pair itself.
+        policy.heads.push(
+            repository
+                .loose_objects()
+                .write_blob(b"new loose object")
+                .unwrap(),
+        );
         let mut calls = 0;
         let error = repository
             .retire_old_packs_at(
@@ -572,6 +636,41 @@ mod tests {
         assert!(error.uncertain.is_some());
         let tip = git(root.path(), &["rev-parse", "refs/heads/main"], b"");
         assert_eq!(git(root.path(), &["cat-file", "-t", &tip], b""), "commit");
+    }
+
+    #[test]
+    fn index_removal_is_synchronized_before_pack_unlink() {
+        let (root, repository, mut policy, old_index) = fixture();
+        policy.heads.push(
+            repository
+                .loose_objects()
+                .write_blob(b"new loose object")
+                .unwrap(),
+        );
+        let mut syncs = 0;
+        let error = repository
+            .retire_old_packs_at(
+                &policy,
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+                || {},
+                |path| fs::remove_file(path),
+                |directory| {
+                    syncs += 1;
+                    if syncs == 3 {
+                        assert!(!old_index.exists());
+                        assert!(old_index.with_extension("pack").exists());
+                        Err(io::Error::from_raw_os_error(28))
+                    } else {
+                        File::open(directory).and_then(|dir| dir.sync_all())
+                    }
+                },
+            )
+            .unwrap_err();
+        assert!(error.report.durable);
+        assert_eq!(error.report.removed, std::slice::from_ref(&old_index));
+        assert_eq!(error.uncertain, Some(old_index));
+        git(root.path(), &["fsck", "--full"], b"");
     }
 
     #[test]

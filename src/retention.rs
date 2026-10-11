@@ -175,6 +175,7 @@ pub struct RetentionPlan {
     /// One-based record positions eligible for expiry in each stored log.
     pub reflog_expiry_candidates: BTreeMap<ReflogSource, Vec<usize>>,
     observed_logs: Vec<ObservedLog>,
+    object_sizes: BTreeMap<ObjectId, u64>,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
     /// Packs protected by `.keep` or by a recent pack modification time.
@@ -237,12 +238,21 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
+        self.plan_retention_with_objects(policy, cancel).0
+    }
+
+    pub(super) fn plan_retention_with_objects(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+    ) -> (RetentionPlan, Option<crate::Objects>) {
         let mut plan = RetentionPlan {
             roots: policy.heads.iter().copied().collect(),
             strong_roots: policy.heads.iter().copied().collect(),
             required: BTreeSet::new(),
             reflog_expiry_candidates: BTreeMap::new(),
             observed_logs: Vec::new(),
+            object_sizes: BTreeMap::new(),
             reachable: BTreeSet::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
@@ -254,15 +264,15 @@ impl Repository {
             .any(|id| id.format() != self.object_format() || id.is_null())
         {
             plan.fail("invalid caller head");
-            return plan;
+            return (plan, None);
         }
         if policy.heads.len() > policy.max_entries {
             plan.fail("caller head limit");
-            return plan;
+            return (plan, None);
         }
         if let Err(reason) = collect_roots(self, policy, cancel, &mut plan) {
             plan.fail(reason);
-            return plan;
+            return (plan, None);
         }
         let store = match self.objects_controlled(
             policy.packs,
@@ -272,7 +282,7 @@ impl Repository {
             Ok(store) => store,
             Err(error) => {
                 plan.fail(error.to_string());
-                return plan;
+                return (plan, None);
             }
         };
         plan.alternate_stores = store
@@ -280,18 +290,38 @@ impl Repository {
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        match walk(self, &store, policy, cancel, &plan.roots) {
+        match walk(
+            self,
+            &store,
+            policy,
+            cancel,
+            &plan.roots,
+            &mut plan.object_sizes,
+        ) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
-                return plan;
+                return (plan, None);
             }
         }
-        let live = match walk(self, &store, policy, cancel, &plan.strong_roots) {
-            Ok(reachable) => reachable,
-            Err(reason) => {
-                plan.fail(reason);
-                return plan;
+        // Reuse a completed walk when reflog policy names the same roots. This retains the
+        // same validated snapshot without inflating every packed blob again.
+        let live = if plan.strong_roots == plan.roots {
+            plan.reachable.clone()
+        } else {
+            match walk(
+                self,
+                &store,
+                policy,
+                cancel,
+                &plan.strong_roots,
+                &mut plan.object_sizes,
+            ) {
+                Ok(reachable) => reachable,
+                Err(reason) => {
+                    plan.fail(reason);
+                    return (plan, None);
+                }
             }
         };
         let mut required_roots = plan.strong_roots.clone();
@@ -315,11 +345,22 @@ impl Repository {
                 );
             }
         }
-        match walk(self, &store, policy, cancel, &required_roots) {
+        if required_roots == plan.roots {
+            plan.required = plan.reachable.clone();
+            return (plan, Some(store));
+        }
+        match walk(
+            self,
+            &store,
+            policy,
+            cancel,
+            &required_roots,
+            &mut plan.object_sizes,
+        ) {
             Ok(required) => plan.required = required,
             Err(reason) => plan.fail(reason),
         }
-        plan
+        (plan, Some(store))
     }
 }
 
@@ -629,6 +670,7 @@ fn walk(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
+    object_sizes: &mut BTreeMap<ObjectId, u64>,
 ) -> Result<BTreeSet<ObjectId>, String> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
     let mut reachable = BTreeSet::new();
@@ -706,6 +748,7 @@ fn walk(
                 add(tag.target(), tag.target_kind())?;
             }
         }
+        object_sizes.insert(id, object.data().len() as u64);
         kinds.insert(id, object.kind());
         reachable.insert(id);
     }

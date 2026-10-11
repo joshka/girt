@@ -585,7 +585,12 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
         .unwrap();
     let canonical_index = old_index.canonicalize().unwrap();
+    let loose = repo
+        .loose_objects()
+        .write_blob(b"new loose object")
+        .unwrap();
     let policy = RetentionPolicy {
+        heads: vec![loose],
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
     };
@@ -633,7 +638,12 @@ fn kept_pack_is_not_retired() {
         })
         .unwrap();
     fs::write(old_pack.with_extension("keep"), b"keep\n").unwrap();
+    let loose = repo
+        .loose_objects()
+        .write_blob(b"new loose object")
+        .unwrap();
     let policy = RetentionPolicy {
+        heads: vec![loose],
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
     };
@@ -645,6 +655,11 @@ fn kept_pack_is_not_retired() {
             &AtomicBool::new(false),
         )
         .unwrap();
+    let replacement = report.published.unwrap().written.checksum;
+    assert_ne!(
+        old_pack.file_stem().unwrap().to_str().unwrap(),
+        format!("pack-{replacement}")
+    );
     assert!(report.removed.is_empty());
     assert!(old_pack.exists());
 }
@@ -1613,4 +1628,352 @@ fn retained_registration_unreadable_metadata_blocks_scan() {
     fs::create_dir(backlink).unwrap();
     let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     assert!(!plan.is_complete());
+}
+
+#[cfg(unix)]
+fn remove_loose_copy(repo: &Repository, id: ObjectId) {
+    let hex = id.to_string();
+    fs::remove_file(repo.object_dir().join(&hex[..2]).join(&hex[2..])).unwrap();
+}
+
+fn similar_blobs() -> (Vec<u8>, Vec<u8>) {
+    let mut state = 42u32;
+    let base: Vec<u8> = (0..65536)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect();
+    let mut edited = base.clone();
+    edited[30000..30100].fill(42);
+    (base, edited)
+}
+
+#[test]
+fn repack_computes_deltas_for_loose_objects() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("repo"),
+        girt::InitKind::Bare,
+    )
+    .unwrap();
+    let (base, edited) = similar_blobs();
+    let a = repo.loose_objects().write_blob(&base).unwrap();
+    let b = repo.loose_objects().write_blob(&edited).unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![a, b],
+        ..Default::default()
+    };
+    let result = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(result.written.deltas.entries, 1);
+    assert!(result.written.deltas.candidates > 0);
+    let index = format!("objects/pack/pack-{}.idx", result.written.checksum);
+    git(
+        &root.path().join("repo"),
+        &["verify-pack", "-v", &index],
+        b"",
+    );
+}
+
+// Git executable fixtures are generated from original pseudorandom blobs, never upstream sources.
+fn delta_fixture(
+    format: &str,
+    ofs: bool,
+) -> (
+    tempfile::TempDir,
+    Repository,
+    Vec<ObjectId>,
+    std::path::PathBuf,
+) {
+    delta_fixture_index(format, ofs, 2)
+}
+
+fn delta_fixture_index(
+    format: &str,
+    ofs: bool,
+    version: u8,
+) -> (
+    tempfile::TempDir,
+    Repository,
+    Vec<ObjectId>,
+    std::path::PathBuf,
+) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={format}"),
+            ".",
+        ],
+        b"",
+    );
+    let (base, edited) = similar_blobs();
+    let a = git(root.path(), &["hash-object", "-w", "--stdin"], &base);
+    let b = git(root.path(), &["hash-object", "-w", "--stdin"], &edited);
+    let index_version = format!("--index-version={version}");
+    let mut args = vec!["pack-objects", "--window=10", "--depth=10", &index_version];
+    if ofs {
+        args.push("--delta-base-offset");
+    }
+    args.push("objects/pack/pack");
+    let hash = git(root.path(), &args, format!("{a}\n{b}\n").as_bytes());
+    let index = root.path().join(format!("objects/pack/pack-{hash}.idx"));
+    let listing = git(
+        root.path(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+    let delta = listing
+        .lines()
+        .find(|line| line.split_whitespace().count() == 7)
+        .unwrap();
+    let id = delta.split_whitespace().next().unwrap().parse().unwrap();
+    let base_id = delta.split_whitespace().nth(6).unwrap().parse().unwrap();
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo, vec![base_id, id], index)
+}
+
+#[rstest::rstest]
+#[case::sha1_ofs("sha1", true)]
+#[case::sha1_ref("sha1", false)]
+#[case::sha256_ofs("sha256", true)]
+#[case::sha256_ref("sha256", false)]
+fn repack_preserves_complete_git_pack_verbatim(#[case] format: &str, #[case] ofs: bool) {
+    let (root, repo, ids, index) = delta_fixture(format, ofs);
+    let original = fs::read(index.with_extension("pack")).unwrap();
+    let policy = RetentionPolicy {
+        heads: ids,
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let result = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(result.written.deltas.entries, 1);
+    assert_eq!(result.written.deltas.candidates, 0);
+    let pack = root.path().join(format!(
+        "objects/pack/pack-{}.pack",
+        result.written.checksum
+    ));
+    assert_eq!(fs::read(pack).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1_ofs("sha1", true)]
+#[case::sha1_ref("sha1", false)]
+#[case::sha256_ofs("sha256", true)]
+#[case::sha256_ref("sha256", false)]
+fn repack_reuses_git_deltas_and_retires_old_pairs(#[case] format: &str, #[case] ofs: bool) {
+    let (root, repo, ids, old_index) = delta_fixture(format, ofs);
+    let old_size = fs::metadata(old_index.with_extension("pack"))
+        .unwrap()
+        .len();
+    let pinned = repo.objects(PackLimits::default()).unwrap();
+    let loose = repo
+        .loose_objects()
+        .write_blob(b"new loose object")
+        .unwrap();
+    let mut heads = ids.clone();
+    heads.push(loose);
+    let policy = RetentionPolicy {
+        heads,
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let written = report.published.unwrap().written;
+    assert_eq!(written.objects, 3);
+    assert_eq!(written.deltas.entries, 1);
+    assert_eq!(written.deltas.candidates, 0);
+    assert!(!old_index.exists());
+    assert!(written.pack_bytes <= old_size * 110 / 100);
+    let index = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", written.checksum));
+    git(
+        root.path(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+    git(root.path(), &["fsck", "--full"], b"");
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "pack"))
+            .count(),
+        1
+    );
+    assert!(
+        pinned
+            .read(ids[1], ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[rstest::rstest]
+#[case::ofs(true)]
+#[case::reference(false)]
+fn repack_materializes_delta_when_base_is_not_retained(#[case] ofs: bool) {
+    let (root, repo, ids, _) = delta_fixture("sha1", ofs);
+    let policy = RetentionPolicy {
+        heads: vec![ids[1]],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let result = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(result.written.objects, 1);
+    assert_eq!(result.written.deltas.entries, 0);
+    let index = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", result.written.checksum));
+    git(
+        root.path(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+}
+
+#[test]
+fn reused_delta_charges_reconstructed_payload_size() {
+    let (_root, repo, ids, _) = delta_fixture("sha1", true);
+    let policy = RetentionPolicy {
+        heads: vec![ids[1]],
+        ..Default::default()
+    };
+    let limits = RepackLimits {
+        write: girt::PackWriteLimits {
+            max_object_bytes: 65535,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(matches!(
+        repo.repack_retained(&policy, limits, &AtomicBool::new(false)),
+        Err(RepackError::Write(girt::PackWriteError::Limit(
+            "object bytes"
+        )))
+    ));
+}
+
+#[test]
+fn repack_reuses_deltas_from_legacy_index() {
+    let (root, repo, ids, index) = delta_fixture_index("sha1", false, 1);
+    let policy = RetentionPolicy {
+        heads: ids,
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let result = repo
+        .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(result.written.deltas.entries, 1);
+    assert_eq!(
+        result.written.index_bytes,
+        fs::metadata(&index).unwrap().len()
+    );
+    assert!(!fs::read(&index).unwrap().starts_with(b"\xfftOc"));
+    let replacement = root
+        .path()
+        .join(format!("objects/pack/pack-{}.idx", result.written.checksum));
+    git(
+        root.path(),
+        &["verify-pack", "-v", replacement.to_str().unwrap()],
+        b"",
+    );
+}
+
+#[test]
+fn reused_entry_output_limit_leaves_old_pack_intact() {
+    let (root, repo, ids, index) = delta_fixture("sha1", true);
+    let before = fs::read_dir(root.path().join("objects/pack"))
+        .unwrap()
+        .count();
+    let original = fs::read(index.with_extension("pack")).unwrap();
+    let policy = RetentionPolicy {
+        heads: ids,
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let limits = RepackLimits {
+        write: girt::PackWriteLimits {
+            max_pack_bytes: 100,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(matches!(
+        repo.repack_retained(&policy, limits, &AtomicBool::new(false)),
+        Err(RepackError::Write(girt::PackWriteError::Limit(
+            "pack bytes"
+        )))
+    ));
+    assert_eq!(fs::read(index.with_extension("pack")).unwrap(), original);
+    assert_eq!(
+        fs::read_dir(root.path().join("objects/pack"))
+            .unwrap()
+            .count(),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn recent_pack_retirement_preserves_unreachable_entries() {
+    let (root, repo, ids, index) = delta_fixture("sha1", true);
+    remove_loose_copy(&repo, ids[0]);
+    remove_loose_copy(&repo, ids[1]);
+    let loose = repo.loose_objects().write_blob(b"new loose root").unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![loose],
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(report.published.unwrap().written.objects, 3);
+    assert!(!index.exists());
+    assert!(!index.with_extension("pack").exists());
+    let reader = repo.objects(PackLimits::default()).unwrap();
+    assert!(
+        reader
+            .read(ids[0], ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        reader
+            .read(ids[1], ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    git(root.path(), &["fsck", "--full"], b"");
 }

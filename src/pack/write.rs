@@ -83,7 +83,7 @@ pub struct PackWritten {
     pub pack_bytes: u64,
     /// Total index bytes, including both checksums.
     pub index_bytes: u64,
-    /// Delta search and dependency accounting; zero for the ordinary path.
+    /// Delta entries and search accounting, including reused deltas during repacking.
     pub deltas: DeltaStats,
 }
 
@@ -326,6 +326,96 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
+/// Streams already encoded entries, rebuilding CRCs, offsets and both checksums.
+/// Inputs must have been validated by the retention scan and have internal retained bases.
+pub(crate) struct RepackWriter<'a, W> {
+    output: Output<'a, W>,
+    entries: Vec<Entry>,
+    limits: PackWriteLimits,
+    deltas: DeltaStats,
+}
+
+impl<'a, W: Write> RepackWriter<'a, W> {
+    pub(crate) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        count: u32,
+        limits: PackWriteLimits,
+    ) -> Result<Self, PackWriteError> {
+        let mut output = Output::new(format, sink, limits.max_pack_bytes, "pack bytes");
+        output.put(b"PACK")?;
+        output.put(&2u32.to_be_bytes())?;
+        output.put(&count.to_be_bytes())?;
+        Ok(Self {
+            output,
+            entries: Vec::with_capacity(count as usize),
+            limits,
+            deltas: DeltaStats::default(),
+        })
+    }
+
+    pub(crate) fn offset(&self) -> u64 {
+        self.output.bytes
+    }
+
+    pub(crate) fn append<E>(
+        &mut self,
+        id: ObjectId,
+        delta: bool,
+        copy: impl FnOnce(&mut dyn Write) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let offset = self.output.bytes;
+        self.output.crc = crc32fast::Hasher::new();
+        copy(&mut self.output)?;
+        self.entries.push(Entry {
+            id,
+            offset,
+            crc: self.output.crc.clone().finalize(),
+        });
+        if delta {
+            self.deltas.entries += 1;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ordinary(&mut self, object: PackObject<'_>) -> Result<(), PackWriteError> {
+        let offset = self.output.bytes;
+        self.output.crc = crc32fast::Hasher::new();
+        self.output
+            .put(&entry_header(object.kind, object.data.len() as u64))?;
+        let mut encoder = ZlibEncoder::new(&mut self.output, Compression::new(6));
+        encoder.write_all(object.data).map_err(output_error)?;
+        encoder.finish().map_err(output_error)?;
+        self.entries.push(Entry {
+            id: object.id,
+            offset,
+            crc: self.output.crc.clone().finalize(),
+        });
+        Ok(())
+    }
+
+    pub(crate) fn finish(mut self, index: &mut impl Write) -> Result<PackWritten, PackWriteError> {
+        let checksum = self.output.finish()?;
+        let pack_bytes = self.output.bytes;
+        self.entries.sort_unstable_by_key(|entry| entry.id);
+        let mut index = Output::new(
+            checksum.format(),
+            index,
+            self.limits.max_index_bytes,
+            "index bytes",
+        );
+        write_index(&self.entries, checksum, &mut index)?;
+        index.finish()?;
+        Ok(PackWritten {
+            checksum,
+            objects: self.entries.len() as u32,
+            pack_bytes,
+            index_bytes: index.bytes,
+            deltas: self.deltas,
+        })
+    }
+}
+
 struct SelectedEntry {
     bytes: Vec<u8>,
     depth: usize,
@@ -545,7 +635,7 @@ fn write_index(
 #[error("output limit: {0}")]
 struct OutputLimit(&'static str);
 
-fn output_error(error: io::Error) -> PackWriteError {
+pub(crate) fn output_error(error: io::Error) -> PackWriteError {
     if let Some(limit) = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<OutputLimit>())

@@ -1,0 +1,57 @@
+--- a/lib/src/git_maintenance.rs
++++ b/lib/src/git_maintenance.rs
+@@ -149,10 +149,6 @@
+ /// Expires old reflog entries and removes unreachable loose objects older than
+ /// `keep_newer`.
+ ///
+-/// Unlike `git gc`, this doesn't repack: girt's repack decodes every object and
+-/// rewrites them without deltas, which makes typical repositories several
+-/// times larger. Packs are left as they are until girt can repack by reusing
+-/// existing deltas.
+ pub(crate) fn collect_garbage(
+     repo: &girt::Repository,
+     keep_newer: SystemTime,
+@@ -165,11 +161,15 @@
+         ..girt::retention::RetentionPolicy::trusted()
+     };
+     let cancel = AtomicBool::new(false);
+-    repo.expire_reflogs(&mut GcLock, &policy, &cancel)
++    let report = repo
++        .run_maintenance(
++            &mut GcLock,
++            &policy,
++            girt::retention::RepackLimits::trusted(),
++            &cancel,
++        )
+         .map_err(|err| GitGcError::Maintenance(err.into()))?;
+-    let pruned = repo
+-        .prune_unreachable_loose(&mut GcLock, &policy, &cancel)
+-        .map_err(|err| GitGcError::Maintenance(err.into()))?;
+-    tracing::info!(pruned = pruned.deleted.len(), "git gc completed");
++    let pruned = report.pruned.map_or(0, |report| report.deleted.len());
++    tracing::info!(pruned, "git gc completed");
+     Ok(())
+ }
+--- a/cli/tests/test_git_colocation.rs
++++ b/cli/tests/test_git_colocation.rs
+@@ -358,18 +358,8 @@
+     work_dir.write_file("file", "contents\n");
+     work_dir.run_jj(["commit", "-m", "first"]).success();
+ 
+-    // Pack the loose objects. Unlike loose objects, pack files stay open
+-    // (memory-mapped) for as long as the Git repository is open, and Windows
+-    // refuses to rename a directory that contains an open file. Moving the Git
+-    // repository between .git and .jj/repo/store/git used to fail with "Access
+-    // is denied" once a pack existed. `jj util gc` doesn't repack, so Git
+-    // builds the pack.
+-    let output = std::process::Command::new("git")
+-        .current_dir(workspace_root)
+-        .args(["repack", "-adq"])
+-        .output()
+-        .unwrap();
+-    assert!(output.status.success(), "{output:?}");
++    // Pack the loose objects before relocating the colocated repository.
++    work_dir.run_jj(["util", "gc"]).success();
+     assert!(has_pack_files(&workspace_root.join(".git")));
+ 
+     let output = work_dir.run_jj(["git", "colocation", "disable"]);

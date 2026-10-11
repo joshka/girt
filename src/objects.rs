@@ -238,6 +238,27 @@ struct Store {
 }
 
 impl Objects {
+    pub(crate) fn primary_packs(&self) -> impl Iterator<Item = &FilePack> {
+        self.stores
+            .first()
+            .into_iter()
+            .flat_map(|store| store.packs.iter().map(Arc::as_ref))
+    }
+
+    pub(crate) fn packed(
+        &self,
+        id: ObjectId,
+    ) -> Result<Option<(&FilePack, usize, bool)>, ObjectReadError> {
+        for (store_index, store) in self.stores.iter().enumerate() {
+            for pack in &store.packs {
+                if let Some(position) = pack.find(id)? {
+                    return Ok(Some((pack, position, store_index == 0)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Returns canonical object directories in search order, primary first.
     ///
     /// Subsequent entries are alternates owned outside this repository. A maintenance planner

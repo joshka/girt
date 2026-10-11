@@ -54,16 +54,20 @@ pub struct DeltaOptions {
     pub min_savings: usize,
 }
 
+impl DeltaOptions {
+    pub(crate) const DEFAULT: Self = Self {
+        window: 16,
+        max_candidates: 4,
+        max_object_bytes: 1024 * 1024,
+        max_work: 8_000_000,
+        max_depth: 4,
+        min_savings: 16,
+    };
+}
+
 impl Default for DeltaOptions {
     fn default() -> Self {
-        Self {
-            window: 16,
-            max_candidates: 4,
-            max_object_bytes: 1024 * 1024,
-            max_work: 8_000_000,
-            max_depth: 4,
-            min_savings: 16,
-        }
+        Self::DEFAULT
     }
 }
 
