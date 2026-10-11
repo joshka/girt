@@ -20,14 +20,14 @@ pub(crate) mod reader;
 pub(crate) mod write;
 
 pub use compression::{DeltaOptions, DeltaStats, PackCompression};
-pub(crate) use file::FilePack;
+pub(crate) use file::{FilePack, Stored};
 #[cfg(test)]
 pub(crate) use reader::Pack;
+pub(crate) use write::{PackBuilder, validate, write_controlled_observed};
 pub use write::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack,
     write_pack_with_compression,
 };
-pub(crate) use write::{write_controlled, write_controlled_observed};
 
 #[cfg(test)]
 mod tests;

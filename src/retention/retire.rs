@@ -173,8 +173,9 @@ impl Repository {
         let directory = current.object_dir().join("pack");
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
+        // The second plan below re-establishes this one before anything is removed.
         let published = current
-            .repack_retained(&keep_all_logs, limits, cancel)
+            .repack_required(&first.required, &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -214,12 +215,19 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+        let mut positions = Vec::with_capacity(first.required.len());
         for id in &first.required {
             check(cancel, &report)?;
             let position = pack
                 .find(*id)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
                 .ok_or_else(|| failed(RetireCause::ReplacementMissing(*id), report.clone()))?;
+            positions.push((pack.offset(position), position, id));
+        }
+        // Pack order reads delta bases just before their dependents, while they are still cached.
+        positions.sort_unstable();
+        for (_, position, id) in positions {
+            check(cancel, &report)?;
             let object = pack
                 .read(position, policy.read, cancel)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
@@ -454,11 +462,20 @@ mod tests {
             &["update-ref", "refs/heads/main", &commit],
             b"",
         );
+        // The old pack also holds an object the replacement drops; otherwise copying every entry
+        // reproduces Git's pack byte for byte, and an identical replacement retires nothing.
+        let dropped = git(root.path(), &["hash-object", "-w", "--stdin"], b"dropped");
+        git(
+            root.path(),
+            &["update-ref", "refs/tags/dropped", &dropped],
+            b"",
+        );
         git(
             root.path(),
             &["repack", "-ad", "--no-write-bitmap-index"],
             b"",
         );
+        git(root.path(), &["update-ref", "-d", "refs/tags/dropped"], b"");
         let repository = Repository::open(root.path()).unwrap();
         let directory = repository.object_dir().join("pack");
         let old_index = fs::read_dir(directory)

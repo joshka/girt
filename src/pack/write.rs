@@ -272,58 +272,179 @@ pub(crate) fn write_controlled_observed(
     let count = objects.len() as u32;
     observe(0, u64::from(count));
     check()?;
-    let mut pack = Output::new(format, pack, limits.max_pack_bytes, "pack bytes");
-    pack.put(b"PACK")?;
-    pack.put(&2u32.to_be_bytes())?;
-    pack.put(&count.to_be_bytes())?;
-    let mut entries = Vec::with_capacity(objects.len());
-    let mut depths = Vec::with_capacity(objects.len());
-    let mut deltas = DeltaStats::default();
-    for (position, object) in objects.iter().enumerate() {
-        check()?;
-        let selected = match compression {
-            PackCompression::Ordinary => None,
-            PackCompression::Delta(options) => {
-                select_entry(&objects, position, &depths, options, &mut deltas, check)?
-            }
-        };
-        let offset = pack.bytes;
-        pack.crc = crc32fast::Hasher::new();
-        if let Some(selected) = selected {
-            pack.put(&selected.bytes)?;
-            depths.push(selected.depth);
-            if selected.depth != 0 {
-                deltas.entries += 1;
-                deltas.max_depth = deltas.max_depth.max(selected.depth);
-            }
-        } else {
-            pack.put(&entry_header(object.kind, object.data.len() as u64))?;
-            // Finish explicitly so buffered-write failures are reported on the success path.
-            let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
-            encoder.write_all(object.data).map_err(output_error)?;
-            encoder.finish().map_err(output_error)?;
-            depths.push(0);
-        }
-        entries.push(Entry {
-            id: object.id,
-            offset,
-            crc: pack.crc.clone().finalize(),
-        });
-        observe(position as u64 + 1, u64::from(count));
-        check()?;
+    let mut builder = PackBuilder::new(format, pack, limits.max_pack_bytes, count)?;
+    builder.put_objects(&objects, compression, check, |written| {
+        observe(written, u64::from(count));
+    })?;
+    builder.finish(index, limits.max_index_bytes)
+}
+
+/// Streams one pack: validated fresh objects first, then stored entries copied from other packs.
+///
+/// A stored delta's base must already be written, so an OFS_DELTA copy can point back at it. The
+/// index is written only after the pack is complete.
+pub(crate) struct PackBuilder<'a, W> {
+    pack: Output<'a, W>,
+    count: u32,
+    entries: Vec<Entry>,
+    offsets: std::collections::HashMap<ObjectId, u64>,
+    deltas: DeltaStats,
+}
+
+impl<'a, W: Write> PackBuilder<'a, W> {
+    /// Writes the pack header announcing exactly `count` entries.
+    pub(crate) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        max_pack_bytes: u64,
+        count: u32,
+    ) -> Result<Self, PackWriteError> {
+        let mut pack = Output::new(format, sink, max_pack_bytes, "pack bytes");
+        pack.put(b"PACK")?;
+        pack.put(&2u32.to_be_bytes())?;
+        pack.put(&count.to_be_bytes())?;
+        Ok(Self {
+            pack,
+            count,
+            entries: Vec::with_capacity(count as usize),
+            offsets: std::collections::HashMap::with_capacity(count as usize),
+            deltas: DeltaStats::default(),
+        })
     }
-    let checksum = pack.finish()?;
-    let pack_bytes = pack.bytes;
-    let mut index = Output::new(format, index, limits.max_index_bytes, "index bytes");
-    write_index(&entries, checksum, &mut index)?;
-    index.finish()?;
-    Ok(PackWritten {
-        checksum,
-        objects: count,
-        pack_bytes,
-        index_bytes: index.bytes,
-        deltas,
-    })
+
+    /// Writes objects returned by [`validate`], searching for deltas among them under
+    /// `compression`.
+    pub(crate) fn put_objects(
+        &mut self,
+        objects: &[PackObject<'_>],
+        compression: PackCompression,
+        check: &mut impl FnMut() -> Result<(), PackWriteError>,
+        mut written: impl FnMut(u64),
+    ) -> Result<(), PackWriteError> {
+        let mut depths = Vec::with_capacity(objects.len());
+        for (position, object) in objects.iter().enumerate() {
+            check()?;
+            let selected = match compression {
+                PackCompression::Ordinary => None,
+                PackCompression::Delta(options) => {
+                    select_entry(objects, position, &depths, options, &mut self.deltas, check)?
+                }
+            };
+            let offset = self.begin()?;
+            if let Some(selected) = selected {
+                self.pack.put(&selected.bytes)?;
+                depths.push(selected.depth);
+                if selected.depth != 0 {
+                    self.deltas.entries += 1;
+                    self.deltas.max_depth = self.deltas.max_depth.max(selected.depth);
+                }
+            } else {
+                self.pack
+                    .put(&entry_header(object.kind, object.data.len() as u64))?;
+                // Finish explicitly so buffered-write failures are reported on the success path.
+                let mut encoder = ZlibEncoder::new(&mut self.pack, Compression::new(6));
+                encoder.write_all(object.data).map_err(output_error)?;
+                encoder.finish().map_err(output_error)?;
+                depths.push(0);
+            }
+            self.end(object.id, offset)?;
+            written(self.entries.len() as u64);
+            check()?;
+        }
+        Ok(())
+    }
+
+    /// Copies one stored entry whose zlib stream `copy` passes verbatim to its writer.
+    ///
+    /// `code` is the stored type code and `size` the inflated object or delta program length. An
+    /// OFS_DELTA's `base` must already be in this pack; a REF_DELTA keeps naming its base, so
+    /// copying an entry this builder wrote reproduces it.
+    pub(crate) fn put_stored<E: From<PackWriteError>>(
+        &mut self,
+        id: ObjectId,
+        code: u8,
+        size: u64,
+        base: Option<ObjectId>,
+        copy: impl FnOnce(&mut dyn FnMut(&[u8]) -> Result<(), PackWriteError>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let offset = self.begin()?;
+        self.pack.put(&entry_header_code(code, size))?;
+        match base {
+            None => {}
+            Some(base) if code == 7 => self.pack.put(base.as_bytes())?,
+            Some(base) => {
+                let base_offset = *self
+                    .offsets
+                    .get(&base)
+                    .ok_or(PackWriteError::Limit("stored delta base order"))?;
+                self.pack.put(&delta_distance(offset - base_offset))?;
+            }
+        }
+        if base.is_some() {
+            self.deltas.entries += 1;
+        }
+        copy(&mut |chunk| self.pack.put(chunk))?;
+        self.end(id, offset)?;
+        Ok(())
+    }
+
+    fn begin(&mut self) -> Result<u64, PackWriteError> {
+        if self.entries.len() as u64 >= u64::from(self.count) {
+            return Err(PackWriteError::Limit("pack entry count"));
+        }
+        self.pack.crc = crc32fast::Hasher::new();
+        Ok(self.pack.bytes)
+    }
+
+    fn end(&mut self, id: ObjectId, offset: u64) -> Result<(), PackWriteError> {
+        if self.offsets.insert(id, offset).is_some() {
+            return Err(PackWriteError::ConflictingDuplicate(id));
+        }
+        self.entries.push(Entry {
+            id,
+            offset,
+            crc: self.pack.crc.clone().finalize(),
+        });
+        Ok(())
+    }
+
+    /// Completes the pack, then writes its index in identity order.
+    pub(crate) fn finish(
+        mut self,
+        index: &mut impl Write,
+        max_index_bytes: u64,
+    ) -> Result<PackWritten, PackWriteError> {
+        if self.entries.len() as u64 != u64::from(self.count) {
+            return Err(PackWriteError::Limit("pack entry count"));
+        }
+        let checksum = self.pack.finish()?;
+        let pack_bytes = self.pack.bytes;
+        self.entries.sort_unstable_by_key(|entry| entry.id);
+        let format = checksum.format();
+        let mut index = Output::new(format, index, max_index_bytes, "index bytes");
+        write_index(&self.entries, checksum, &mut index)?;
+        index.finish()?;
+        Ok(PackWritten {
+            checksum,
+            objects: self.count,
+            pack_bytes,
+            index_bytes: index.bytes,
+            deltas: self.deltas,
+        })
+    }
+}
+
+/// Encodes an OFS_DELTA distance: big-endian 7-bit groups, each continuation adding one.
+fn delta_distance(mut distance: u64) -> Vec<u8> {
+    let mut bytes = vec![(distance & 127) as u8];
+    distance >>= 7;
+    while distance != 0 {
+        distance -= 1;
+        bytes.push(128 | (distance & 127) as u8);
+        distance >>= 7;
+    }
+    bytes.reverse();
+    bytes
 }
 
 struct SelectedEntry {
@@ -407,7 +528,7 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
     Ok(encoder.finish()?)
 }
 
-fn validate<'a>(
+pub(crate) fn validate<'a>(
     format: crate::ObjectFormat,
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
@@ -835,6 +956,16 @@ mod tests {
         .unwrap();
         assert_eq!(pack.bytes, expected_pack);
         assert_eq!(index, expected_index);
+    }
+
+    #[rstest]
+    #[case::one(1, &[1])]
+    #[case::one_group(127, &[127])]
+    #[case::two_groups(128, &[0x80, 0])]
+    #[case::two_groups_max(16_511, &[0xff, 0x7f])]
+    #[case::three_groups(16_512, &[0x80, 0x80, 0])]
+    fn delta_distance_vectors(#[case] distance: u64, #[case] expected: &[u8]) {
+        assert_eq!(delta_distance(distance), expected);
     }
 
     #[rstest]

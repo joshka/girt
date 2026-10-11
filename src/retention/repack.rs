@@ -1,20 +1,30 @@
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
 use super::RetentionPolicy;
-use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_controlled};
-use crate::{ObjectId, ObjectReadError, PackCompression, Repository};
+use crate::pack::{
+    FilePack, PackBuilder, PackObject, PackWriteError, PackWriteLimits, PackWritten, Stored,
+    validate,
+};
+use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository};
 
-/// Bounds one additive repack. Payloads remain in memory until the pack is written.
+/// Bounds one additive repack.
+///
+/// Entries copied from existing packs stream from their pinned pack files. Objects written afresh
+/// (loose objects and deltas against unretained bases) remain decoded in memory until the pack is
+/// written.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count, decoded input bytes, and both output artifacts.
+    /// Bounds object count, input bytes and both output artifacts. A copied entry charges its
+    /// stored (compressed) bytes; an object written afresh charges its decoded bytes.
     pub write: PackWriteLimits,
-    /// Selects ordinary or bounded delta compression.
+    /// Selects ordinary or bounded delta compression for objects written afresh. Copied entries
+    /// keep their stored representation.
     pub compression: PackCompression,
 }
 
@@ -22,7 +32,7 @@ impl Default for RepackLimits {
     fn default() -> Self {
         Self {
             write: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -35,7 +45,7 @@ impl RepackLimits {
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(DeltaOptions::DEFAULT),
         }
     }
 }
@@ -86,12 +96,20 @@ impl Repository {
     /// Publishes a pack of objects required by a fresh complete retention scan.
     ///
     /// This additive operation rescans roots and recent objects instead of trusting an older
-    /// [`super::RetentionPlan`]. It reads required objects through pinned packs, writes two bounded
-    /// temporary files in the primary pack directory, synchronizes each file, then publishes the
-    /// pack before its index. The index is the visibility marker. An existing checksum-named file
-    /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
-    /// remain untouched, including protected packs. Readers with pinned generations keep their
-    /// handles; new readers discover the indexed pair and existing readers can refresh explicitly.
+    /// [`super::RetentionPlan`]. Like `git repack -a`, it copies each required packed entry
+    /// verbatim from the pinned pack where a read finds it, including a delta whose base is also
+    /// required. An OFS_DELTA is re-pointed at its base's new offset; a REF_DELTA keeps naming its
+    /// base, so repacking an unchanged repository reproduces its pack. Each copied zlib stream is
+    /// checked to inflate to its declared length, but deltas are not reconstructed. Loose objects,
+    /// deltas against unrequired bases, and one member of any delta cycle between packs are decoded
+    /// and written afresh under [`RepackLimits::compression`], before the copies.
+    ///
+    /// It writes two bounded temporary files in the primary pack directory, synchronizes each file,
+    /// then publishes the pack before its index. The index is the visibility marker. An existing
+    /// checksum-named file is reused only when every byte matches. Old packs, loose objects,
+    /// reflogs and alternates remain untouched, including protected packs. Readers with pinned
+    /// generations keep their handles; new readers discover the indexed pair and existing readers
+    /// can refresh explicitly. [`Repository::retire_old_packs`] removes the old packs afterwards.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -132,33 +150,51 @@ impl Repository {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
+        self.repack_required(&plan.required, policy, limits, cancel)
+    }
+
+    /// Publishes a pack of `required` from a fresh object snapshot, trusting the caller's plan.
+    pub(super) fn repack_required(
+        &self,
+        required: &BTreeSet<ObjectId>,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+    ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
         let objects =
             self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
-        let count = u32::try_from(plan.required.len())
-            .map_err(|_| PackWriteError::Limit("object count"))?;
+        let count =
+            u32::try_from(required.len()).map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let mut decoded = Vec::with_capacity(plan.required.len());
+        let (copies, fresh_ids) = plan_copies(&objects, required, cancel)?;
         let mut bytes = 0u64;
-        for id in plan.required {
+        let mut charge = |len: u64| {
+            if len > limits.write.max_object_bytes {
+                return Err(PackWriteError::Limit("object bytes"));
+            }
+            bytes = bytes
+                .checked_add(len)
+                .ok_or(PackWriteError::Limit("input bytes"))?;
+            if bytes > limits.write.max_input_bytes {
+                return Err(PackWriteError::Limit("input bytes"));
+            }
+            Ok(())
+        };
+        for copy in &copies {
+            charge(copy.stored.len() as u64)?;
+        }
+        let mut decoded = Vec::with_capacity(fresh_ids.len());
+        for id in fresh_ids {
             check(cancel)?;
             let object = objects
                 .read_controlled(id, policy.read, cancel)
                 .map_err(|source| RepackError::Read { id, source })?
                 .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
-            let len = object.data().len() as u64;
-            if len > limits.write.max_object_bytes {
-                return Err(PackWriteError::Limit("object bytes").into());
-            }
-            bytes = bytes
-                .checked_add(len)
-                .ok_or(PackWriteError::Limit("input bytes"))?;
-            if bytes > limits.write.max_input_bytes {
-                return Err(PackWriteError::Limit("input bytes").into());
-            }
+            charge(object.data().len() as u64)?;
             decoded.push((id, object));
         }
         let input: Vec<_> = decoded
@@ -173,20 +209,13 @@ impl Repository {
         fs::create_dir_all(&directory)?;
         let mut pack = NamedTempFile::new_in(&directory)?;
         let mut index = NamedTempFile::new_in(&directory)?;
-        let write_result = write_controlled(
+        let write_result = write_reusing(
             self.object_format(),
             &input,
-            &mut pack,
-            &mut index,
-            limits.write,
-            limits.compression,
-            &mut || {
-                if cancel.load(Ordering::Relaxed) {
-                    Err(PackWriteError::Io(io::ErrorKind::Interrupted.into()))
-                } else {
-                    Ok(())
-                }
-            },
+            &copies,
+            (&mut pack, &mut index),
+            limits,
+            cancel,
         );
         let written = match write_result {
             Err(_) if cancel.load(Ordering::Relaxed) => return Err(RepackError::Cancelled),
@@ -198,6 +227,143 @@ impl Repository {
         publish_pair(pack, index, &basename, cancel, || {})?;
         Ok(RepackPublished { written })
     }
+}
+
+/// A required object copied verbatim from the pack where a read would find it.
+struct Copy<'a> {
+    id: ObjectId,
+    pack: &'a FilePack,
+    stored: Stored,
+}
+
+/// Splits required objects into stored entries to copy, ordered so every delta follows its base,
+/// and objects to decode and write afresh.
+///
+/// A stored delta is copied only when its base is also required. Loose objects, deltas against
+/// unrequired bases, and one member of any cross-pack delta cycle are decoded instead. Copies keep
+/// their source pack order, which already places same-pack bases first.
+fn plan_copies<'a>(
+    objects: &'a crate::Objects,
+    required: &BTreeSet<ObjectId>,
+    cancel: &AtomicBool,
+) -> Result<(Vec<Copy<'a>>, Vec<ObjectId>), RepackError> {
+    let mut stored = HashMap::new();
+    let mut fresh = Vec::new();
+    for &id in required {
+        check(cancel)?;
+        let found = objects
+            .find_packed(id)
+            .map_err(|source| RepackError::Read { id, source })?;
+        let Some((ordinal, pack, position)) = found else {
+            fresh.push(id);
+            continue;
+        };
+        let entry = pack
+            .stored(position)
+            .map_err(|source| RepackError::Read { id, source })?;
+        if entry.base.is_some_and(|base| !required.contains(&base)) {
+            fresh.push(id);
+        } else {
+            stored.insert(
+                id,
+                (
+                    ordinal,
+                    Copy {
+                        id,
+                        pack,
+                        stored: entry,
+                    },
+                ),
+            );
+        }
+    }
+    let mut source_order: Vec<_> = stored
+        .iter()
+        .map(|(&id, (ordinal, copy))| (*ordinal, copy.stored.offset, id))
+        .collect();
+    source_order.sort_unstable();
+    let mut placed = HashSet::with_capacity(stored.len());
+    let mut order = Vec::with_capacity(stored.len());
+    let mut chain = Vec::new();
+    let mut on_chain = HashSet::new();
+    for (_, _, id) in source_order {
+        if placed.contains(&id) || !stored.contains_key(&id) {
+            continue;
+        }
+        chain.clear();
+        on_chain.clear();
+        chain.push(id);
+        on_chain.insert(id);
+        loop {
+            check(cancel)?;
+            let current = *chain.last().expect("chain starts with an entry");
+            let Some(base) = stored[&current].1.stored.base else {
+                break;
+            };
+            if placed.contains(&base) || !stored.contains_key(&base) {
+                break;
+            }
+            if !on_chain.insert(base) {
+                // Breaking the cycle here leaves `current` to be decoded and written before every
+                // copy, so the rest of the chain still finds its base.
+                stored.remove(&current);
+                chain.pop();
+                fresh.push(current);
+                break;
+            }
+            chain.push(base);
+        }
+        for &id in chain.iter().rev() {
+            placed.insert(id);
+            order.push(id);
+        }
+    }
+    fresh.sort_unstable();
+    let copies = order
+        .into_iter()
+        .map(|id| stored.remove(&id).expect("ordered copies are stored").1)
+        .collect();
+    Ok((copies, fresh))
+}
+
+/// Writes decoded objects, then verbatim copies, to the temporary pack and its index.
+fn write_reusing(
+    format: crate::ObjectFormat,
+    input: &[PackObject<'_>],
+    copies: &[Copy<'_>],
+    (pack, index): (&mut NamedTempFile, &mut NamedTempFile),
+    limits: RepackLimits,
+    cancel: &AtomicBool,
+) -> Result<PackWritten, RepackError> {
+    let mut check = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err(PackWriteError::Io(io::ErrorKind::Interrupted.into()))
+        } else {
+            Ok(())
+        }
+    };
+    let input = validate(format, input, limits.write, &mut check)?;
+    let count = u32::try_from(input.len() + copies.len())
+        .map_err(|_| PackWriteError::Limit("object count"))?;
+    let mut pack = BufWriter::with_capacity(256 * 1024, pack.as_file_mut());
+    let mut builder = PackBuilder::new(format, &mut pack, limits.write.max_pack_bytes, count)?;
+    builder.put_objects(&input, limits.compression, &mut check, |_| {})?;
+    for copy in copies {
+        check()?;
+        let Copy { id, pack, stored } = copy;
+        builder.put_stored(*id, stored.code, stored.size as u64, stored.base, |write| {
+            pack.copy_stored(stored, cancel, |chunk| {
+                write(chunk).map_err(RepackError::from)
+            })
+            .map_err(|error| match error {
+                RepackError::Open(source) => RepackError::Read { id: *id, source },
+                error => error,
+            })
+        })?;
+    }
+    let mut index = BufWriter::new(index.as_file_mut());
+    let written = builder.finish(&mut index, limits.write.max_index_bytes)?;
+    Ok(written)
 }
 
 fn publish_pair(
@@ -320,5 +486,328 @@ mod tests {
             repository.loose_objects().read_blob(id, 64).unwrap(),
             b"new writer"
         );
+    }
+
+    mod stored {
+        use std::process::Command;
+
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use rstest::rstest;
+
+        use super::*;
+        use crate::ObjectFormat;
+        use crate::pack::write::{Entry, encode_index};
+
+        const FORMAT: ObjectFormat = ObjectFormat::Sha1;
+
+        fn repository() -> (tempfile::TempDir, Repository) {
+            let root = tempfile::tempdir().unwrap();
+            let repository =
+                Repository::init(FORMAT, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+            (root, repository)
+        }
+
+        fn header(code: u8, mut size: usize) -> Vec<u8> {
+            let mut bytes = vec![(code << 4) | (size & 15) as u8];
+            size >>= 4;
+            while size != 0 {
+                *bytes.last_mut().unwrap() |= 128;
+                bytes.push((size & 127) as u8);
+                size >>= 7;
+            }
+            bytes
+        }
+
+        fn zlib(data: &[u8]) -> Vec<u8> {
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(6));
+            encoder.write_all(data).unwrap();
+            encoder.finish().unwrap()
+        }
+
+        fn whole(data: &[u8]) -> Vec<u8> {
+            [header(3, data.len()), zlib(data)].concat()
+        }
+
+        /// A REF_DELTA whose program inserts `target` literally (at most 127 bytes).
+        fn ref_delta(base: ObjectId, base_len: usize, target: &[u8]) -> Vec<u8> {
+            let program = [
+                &[base_len as u8, target.len() as u8, target.len() as u8],
+                target,
+            ]
+            .concat();
+            [
+                header(7, program.len()),
+                base.as_bytes().to_vec(),
+                zlib(&program),
+            ]
+            .concat()
+        }
+
+        /// Installs raw entries as an indexed pack, the way a foreign writer could have.
+        fn install(repository: &Repository, entries: &[(ObjectId, Vec<u8>)]) -> std::path::PathBuf {
+            let mut pack = b"PACK".to_vec();
+            pack.extend(2u32.to_be_bytes());
+            pack.extend((entries.len() as u32).to_be_bytes());
+            let mut index = Vec::new();
+            for (id, raw) in entries {
+                index.push(Entry {
+                    id: *id,
+                    offset: pack.len() as u64,
+                    crc: crc32fast::hash(raw),
+                });
+                pack.extend(raw);
+            }
+            let checksum = FORMAT.checksum(&pack);
+            pack.extend(checksum.as_bytes());
+            index.sort_by_key(|entry| entry.id);
+            let directory = repository.object_dir().join("pack");
+            fs::create_dir_all(&directory).unwrap();
+            let path = directory.join(format!("pack-{checksum}.idx"));
+            fs::write(path.with_extension("pack"), pack).unwrap();
+            fs::write(&path, encode_index(&index, checksum).unwrap()).unwrap();
+            path
+        }
+
+        fn tag(repository: &Repository, name: &str, id: ObjectId) {
+            let path = repository.git_dir().join("refs/tags").join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, format!("{id}\n")).unwrap();
+        }
+
+        fn repack(repository: &Repository) -> Result<RepackPublished, RepackError> {
+            repository.repack_retained(
+                &RetentionPolicy::default(),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+            )
+        }
+
+        /// Plans against whole copies of `objects`, then replaces them with `packs` before the
+        /// copy, as a concurrent external writer could. Planning decodes every object, so this is
+        /// how storage that a scan rejects can reach the copy.
+        fn repack_after_swap(
+            repository: &Repository,
+            objects: &[&[u8]],
+            packs: &[&[(ObjectId, Vec<u8>)]],
+        ) -> Result<RepackPublished, RepackError> {
+            let entries: Vec<_> = objects
+                .iter()
+                .map(|data| (ObjectId::for_blob(FORMAT, data), whole(data)))
+                .collect();
+            for (id, _) in &entries {
+                tag(repository, &id.to_string(), *id);
+            }
+            let planned = install(repository, &entries);
+            repository.repack_retained_after_plan(
+                &RetentionPolicy::default(),
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+                || {
+                    fs::remove_file(&planned).unwrap();
+                    fs::remove_file(planned.with_extension("pack")).unwrap();
+                    for pack in packs {
+                        install(repository, pack);
+                    }
+                },
+            )
+        }
+
+        fn pack_files(repository: &Repository) -> Vec<std::path::PathBuf> {
+            let mut paths: Vec<_> = fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            paths.sort();
+            paths
+        }
+
+        fn open_written(repository: &Repository, written: &PackWritten) -> FilePack {
+            let index = repository
+                .object_dir()
+                .join(format!("pack/pack-{}.idx", written.checksum));
+            FilePack::open(
+                FORMAT,
+                &index,
+                &mut Default::default(),
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+        }
+
+        fn git_verify_pack(repository: &Repository, written: &PackWritten) {
+            let index = repository
+                .object_dir()
+                .join(format!("pack/pack-{}.idx", written.checksum));
+            let status = Command::new("git")
+                .args(["verify-pack"])
+                .arg(index)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        #[test]
+        fn delta_against_unretained_base_is_written_whole() {
+            let (_root, repository) = repository();
+            let base = b"unretained base";
+            let target = b"retained target";
+            let base_id = ObjectId::for_blob(FORMAT, base);
+            let target_id = ObjectId::for_blob(FORMAT, target);
+            install(
+                &repository,
+                &[
+                    (base_id, whole(base)),
+                    (target_id, ref_delta(base_id, base.len(), target)),
+                ],
+            );
+            tag(&repository, "target", target_id);
+            let written = repack(&repository).unwrap().written;
+            assert_eq!(written.objects, 1);
+            assert_eq!(written.deltas.entries, 0);
+            git_verify_pack(&repository, &written);
+            let pack = open_written(&repository, &written);
+            let position = pack.find(target_id).unwrap().unwrap();
+            assert_eq!(pack.stored(position).unwrap().base, None);
+            let object = pack
+                .read(position, Default::default(), &AtomicBool::new(false))
+                .unwrap();
+            assert_eq!(object.data(), target);
+        }
+
+        #[test]
+        fn base_in_another_pack_is_joined_with_its_delta() {
+            let (_root, repository) = repository();
+            let base = b"base stored in the first pack";
+            let target = b"target deltified in the second";
+            let base_id = ObjectId::for_blob(FORMAT, base);
+            let target_id = ObjectId::for_blob(FORMAT, target);
+            let written = repack_after_swap(
+                &repository,
+                &[base, target],
+                &[
+                    &[(base_id, whole(base))],
+                    &[(target_id, ref_delta(base_id, base.len(), target))],
+                ],
+            )
+            .unwrap()
+            .written;
+            assert_eq!((written.objects, written.deltas.entries), (2, 1));
+            git_verify_pack(&repository, &written);
+            let pack = open_written(&repository, &written);
+            let position = pack.find(target_id).unwrap().unwrap();
+            assert_eq!(pack.stored(position).unwrap().base, Some(base_id));
+            let object = pack
+                .read(position, Default::default(), &AtomicBool::new(false))
+                .unwrap();
+            assert_eq!(object.data(), target);
+        }
+
+        #[test]
+        fn delta_cycle_between_packs_fails_before_writing() {
+            let (_root, repository) = repository();
+            let a = b"first object in the cycle";
+            let b = b"second object in the cycle";
+            let a_id = ObjectId::for_blob(FORMAT, a);
+            let b_id = ObjectId::for_blob(FORMAT, b);
+            let error = repack_after_swap(
+                &repository,
+                &[a, b],
+                &[
+                    &[(a_id, ref_delta(b_id, b.len(), a))],
+                    &[(b_id, ref_delta(a_id, a.len(), b))],
+                ],
+            )
+            .unwrap_err();
+            // Breaking the cycle decodes one member, whose base lives in the other pack.
+            assert!(
+                matches!(
+                    error,
+                    RepackError::Read {
+                        source: ObjectReadError::MissingBase(_),
+                        ..
+                    }
+                ),
+                "{error:?}"
+            );
+            assert_eq!(pack_files(&repository).len(), 4);
+        }
+
+        #[test]
+        fn self_referential_delta_fails_before_writing() {
+            let (_root, repository) = repository();
+            let data = b"refers to itself";
+            let id = ObjectId::for_blob(FORMAT, data);
+            let error = repack_after_swap(
+                &repository,
+                &[data],
+                &[&[(id, ref_delta(id, data.len(), data))]],
+            )
+            .unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    RepackError::Read {
+                        source: ObjectReadError::DeltaCycle,
+                        ..
+                    }
+                ),
+                "{error:?}"
+            );
+            assert_eq!(pack_files(&repository).len(), 2);
+        }
+
+        #[test]
+        fn delta_rejected_by_the_scan_is_not_published() {
+            let (_root, repository) = repository();
+            let data = b"refers to itself";
+            let id = ObjectId::for_blob(FORMAT, data);
+            install(&repository, &[(id, ref_delta(id, data.len(), data))]);
+            tag(&repository, "self", id);
+            let before = pack_files(&repository);
+            let error = repack(&repository).unwrap_err();
+            assert!(matches!(error, RepackError::Incomplete(_)), "{error:?}");
+            assert_eq!(pack_files(&repository), before);
+        }
+
+        #[rstest]
+        #[case::shorter_than_declared([header(3, 20), zlib(b"declared longer")].concat())]
+        #[case::longer_than_declared([header(3, 4), zlib(b"declared longer")].concat())]
+        #[case::trailing_bytes([whole(b"declared longer"), b"junk".to_vec()].concat())]
+        #[case::truncated_stream({
+            let mut raw = whole(b"declared longer");
+            raw.truncate(raw.len() - 6);
+            raw
+        })]
+        #[case::invalid_stream([header(3, 15), vec![0x78, 0x9c, 0xff, 0xff, 0xff]].concat())]
+        fn corrupt_stored_stream_fails_without_publication(#[case] raw: Vec<u8>) {
+            let (_root, repository) = repository();
+            let data = b"declared longer";
+            let id = ObjectId::for_blob(FORMAT, data);
+            let error = repack_after_swap(&repository, &[data], &[&[(id, raw)]]).unwrap_err();
+            assert!(
+                matches!(&error, RepackError::Read { id: failed, source: ObjectReadError::Corrupt(_) } if *failed == id),
+                "{error:?}"
+            );
+            // Only the swapped-in pair remains; both temporary files are gone.
+            assert_eq!(pack_files(&repository).len(), 2);
+        }
+
+        #[test]
+        fn repacking_twice_reproduces_the_pack() {
+            let (_root, repository) = repository();
+            let base: Vec<u8> = (0..4096u32).flat_map(|n| n.to_le_bytes()).collect();
+            let mut edited = base.clone();
+            edited[100] ^= 1;
+            for (name, data) in [("base", &base), ("edited", &edited)] {
+                let id = repository.loose_objects().write_blob(data).unwrap();
+                tag(&repository, name, id);
+            }
+            let first = repack(&repository).unwrap().written;
+            assert_eq!(first.deltas.entries, 1);
+            git_verify_pack(&repository, &first);
+            let second = repack(&repository).unwrap().written;
+            assert_eq!(second.checksum, first.checksum);
+        }
     }
 }

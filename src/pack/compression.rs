@@ -56,21 +56,25 @@ pub struct DeltaOptions {
 
 impl Default for DeltaOptions {
     fn default() -> Self {
-        Self {
-            window: 16,
-            max_candidates: 4,
-            max_object_bytes: 1024 * 1024,
-            max_work: 8_000_000,
-            max_depth: 4,
-            min_savings: 16,
-        }
+        Self::DEFAULT
     }
+}
+
+impl DeltaOptions {
+    pub(crate) const DEFAULT: Self = Self {
+        window: 16,
+        max_candidates: 4,
+        max_object_bytes: 1024 * 1024,
+        max_work: 8_000_000,
+        max_depth: 4,
+        min_savings: 16,
+    };
 }
 
 /// Search accounting for a completed pack; excludes ordinary hashing and zlib work.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DeltaStats {
-    /// Number of emitted REF_DELTA entries.
+    /// Number of emitted delta entries, including stored deltas copied by a repack.
     pub entries: u32,
     /// Suitable candidate attempts, including work-exhausted attempts.
     pub candidates: u64,

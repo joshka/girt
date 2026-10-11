@@ -6,9 +6,9 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use super::index::{Entry, Index, word};
-use super::reader::{Source, check_cancelled, decode};
+use super::reader::{Base, Source, check_cancelled, decode, header};
 use crate::object::Hasher;
-use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
+use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
 
 /// Serializes short seek/read operations without cloning descriptors or sharing cursor state.
 #[derive(Debug)]
@@ -192,6 +192,148 @@ impl FilePack {
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
     }
+}
+
+/// One entry's stored representation: its type code, inflated length, delta base and zlib stream.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Stored {
+    /// Pack type code: 1 to 4 for whole objects, 6 or 7 for deltas.
+    pub code: u8,
+    /// Inflated object or delta program length.
+    pub size: usize,
+    /// Identity of a delta's base.
+    pub base: Option<ObjectId>,
+    /// Entry offset in its pack.
+    pub offset: usize,
+    start: usize,
+    end: usize,
+}
+
+impl Stored {
+    /// Compressed bytes the entry occupies in its pack, including the header.
+    pub(crate) fn len(&self) -> usize {
+        self.end - self.offset
+    }
+}
+
+impl FilePack {
+    /// Returns the pack offset of the entry at `position`.
+    pub(crate) fn offset(&self, position: usize) -> usize {
+        self.ranges[position].0
+    }
+
+    /// Parses the entry at `position` without inflating it.
+    pub(crate) fn stored(&self, position: usize) -> Result<Stored, Error> {
+        let entry = Source::entry(self, position)?;
+        let header = header(self, &entry)?;
+        let base = match header.base {
+            None => None,
+            Some(Base::Position(base)) => Some(self.identity(base)?),
+            Some(Base::Id(id)) => Some(id),
+        };
+        Ok(Stored {
+            code: header.code,
+            size: header.size,
+            base,
+            offset: entry.offset,
+            start: header.start,
+            end: entry.end,
+        })
+    }
+
+    /// Returns an entry's object kind from its header, following delta bases without inflating.
+    ///
+    /// Charges each followed base against `limits.max_delta_depth`. Nothing is decoded, so this
+    /// neither checks the entry's identity nor its compressed stream.
+    pub(crate) fn kind(
+        &self,
+        mut position: usize,
+        limits: ReadLimits,
+    ) -> Result<ObjectKind, Error> {
+        for _ in 0..=limits.max_delta_depth {
+            let header = header(self, &Source::entry(self, position)?)?;
+            position = match header.base {
+                None => return kind(header.code),
+                Some(Base::Position(base)) => base,
+                Some(Base::Id(id)) => self.find(id)?.ok_or(Error::MissingBase(id))?,
+            };
+        }
+        Err(Error::Limit("delta depth"))
+    }
+
+    /// Passes an entry's zlib stream to `out` in chunks, checking that it inflates to exactly the
+    /// declared length and ends exactly at the entry's end.
+    ///
+    /// Chunks reach `out` before the whole stream is checked, so discard its output on error.
+    pub(crate) fn copy_stored<E: From<Error>>(
+        &self,
+        stored: &Stored,
+        cancelled: &AtomicBool,
+        mut out: impl FnMut(&[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut decoder = flate2::Decompress::new(true);
+        let mut input = vec![0; 64 * 1024];
+        let mut scratch = vec![0; 64 * 1024];
+        let mut position = stored.start;
+        let mut finished = false;
+        while position < stored.end {
+            check_cancelled(cancelled)?;
+            let count = input.len().min(stored.end - position);
+            let chunk = &mut input[..count];
+            self.pack.read_at(position, chunk)?;
+            position += count;
+            let mut pending: &[u8] = chunk;
+            while !pending.is_empty() {
+                if finished {
+                    return Err(Error::Corrupt("packed entry length or trailing data").into());
+                }
+                let before_in = decoder.total_in();
+                let before_out = decoder.total_out();
+                let status = decoder
+                    .decompress(pending, &mut scratch, flate2::FlushDecompress::None)
+                    .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
+                let consumed = (decoder.total_in() - before_in) as usize;
+                let produced = decoder.total_out() - before_out;
+                pending = &pending[consumed..];
+                if decoder.total_out() > stored.size as u64 {
+                    return Err(Error::Corrupt("inflated entry exceeds declared size").into());
+                }
+                finished = status == flate2::Status::StreamEnd;
+                if consumed == 0 && produced == 0 && !finished {
+                    return Err(Error::Corrupt("truncated packed zlib stream").into());
+                }
+            }
+            out(chunk)?;
+        }
+        // An empty payload can still need a final call to report the stream's end.
+        while !finished {
+            let before_out = decoder.total_out();
+            let status = decoder
+                .decompress(&[], &mut scratch, flate2::FlushDecompress::Finish)
+                .map_err(|_| Error::Corrupt("truncated packed zlib stream"))?;
+            if decoder.total_out() > stored.size as u64 {
+                return Err(Error::Corrupt("inflated entry exceeds declared size").into());
+            }
+            finished = status == flate2::Status::StreamEnd;
+            if !finished && decoder.total_out() == before_out {
+                return Err(Error::Corrupt("truncated packed zlib stream").into());
+            }
+        }
+        if decoder.total_out() != stored.size as u64 {
+            return Err(Error::Corrupt("packed entry length or trailing data").into());
+        }
+        Ok(())
+    }
+}
+
+fn kind(code: u8) -> Result<ObjectKind, Error> {
+    Ok(match code {
+        1 => ObjectKind::Commit,
+        2 => ObjectKind::Tree,
+        3 => ObjectKind::Blob,
+        4 => ObjectKind::Tag,
+        other => return Err(Error::ObjectType(other)),
+    })
 }
 
 fn validate_pack(pack: &Artifact, index: &Index, cancelled: &AtomicBool) -> Result<(), Error> {

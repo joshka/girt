@@ -457,6 +457,56 @@ impl Objects {
     }
 }
 
+impl Objects {
+    /// Returns an object's kind, or `None` when absent, searching as [`Self::read_controlled`]
+    /// does.
+    ///
+    /// A packed object's kind comes from its entry headers without inflating it, so its payload
+    /// and identity are not checked. A loose object is read in full.
+    pub(crate) fn kind_controlled(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<ObjectKind>, ObjectReadError> {
+        let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
+        for store in &self.stores {
+            check_cancelled(cancelled)?;
+            for pack in &store.packs {
+                if let Some(position) = pack.find(id)? {
+                    return pack.kind(position, limits).map(Some);
+                }
+            }
+            match store.loose.read_raw(id, loose_limit) {
+                Ok(object) => return Ok(Some(object.kind)),
+                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if id == self.format.hash_object(ObjectKind::Tree, b"") {
+            return Ok(Some(ObjectKind::Tree));
+        }
+        Ok(None)
+    }
+
+    /// Finds the first indexed pack entry holding `id`, with that pack's search-order ordinal.
+    ///
+    /// Every store's packs are searched in read order; loose copies are ignored. Any stored copy
+    /// serves, since an identity determines its content.
+    pub(crate) fn find_packed(
+        &self,
+        id: ObjectId,
+    ) -> Result<Option<(usize, &FilePack, usize)>, ObjectReadError> {
+        let packs = self.stores.iter().flat_map(|store| &store.packs);
+        for (ordinal, pack) in packs.enumerate() {
+            if let Some(position) = pack.find(id)? {
+                return Ok(Some((ordinal, pack, position)));
+            }
+        }
+        Ok(None)
+    }
+}
+
 impl Store {
     fn open(
         format: ObjectFormat,

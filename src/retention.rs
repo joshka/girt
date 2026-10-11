@@ -188,7 +188,8 @@ pub struct RetentionPlan {
 /// Why a plan can or cannot describe complete reachability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RetentionOutcome {
-    /// Every discovered root and edge was read under the supplied bounds.
+    /// Every discovered root and edge was read under the supplied bounds. A blob reached through
+    /// a tree is located and its kind confirmed, but its payload is not decoded or verified.
     Complete,
     /// A source or reachable graph was incomplete. The string names the failed boundary.
     Incomplete(String),
@@ -643,6 +644,19 @@ fn walk(
         }
         if reachable.len() >= policy.max_entries {
             return Err("reachable object limit".into());
+        }
+        // Blobs have no outgoing edges: locating one and confirming its kind is enough.
+        if expected.get(&id) == Some(&ObjectKind::Blob) {
+            let kind = store
+                .kind_controlled(id, policy.read, cancel)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("missing reachable object {id}"))?;
+            if kind != ObjectKind::Blob {
+                return Err(format!("wrong reachable kind {id}"));
+            }
+            kinds.insert(id, kind);
+            reachable.insert(id);
+            continue;
         }
         let object = store
             .read_controlled(id, policy.read, cancel)
