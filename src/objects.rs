@@ -250,6 +250,29 @@ impl Objects {
         &self.shallow
     }
 
+    /// Indexed packs of the primary store, in read-precedence order.
+    pub(crate) fn primary_packs(&self) -> &[Arc<FilePack>] {
+        self.stores.first().map_or(&[], |store| &store.packs)
+    }
+
+    /// Finds the kind of the first packed copy of `id`, reading entry headers only.
+    ///
+    /// Returns `None` when no pack in any store holds `id`; loose objects are not consulted.
+    pub(crate) fn packed_kind(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+    ) -> Result<Option<ObjectKind>, ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                if let Some(position) = pack.find(id)? {
+                    return pack.kind(position, limits.max_delta_depth).map(Some);
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Format shared by all objects in this store.
     pub fn object_format(&self) -> ObjectFormat {
         self.format

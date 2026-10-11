@@ -51,10 +51,12 @@ Release builds on macOS arm64. The girt column is jj on girt 0.3.1:
 | no-op fetch | 2.1 s / 98 MB    | 0.67 s / 28 MB        |
 | `util gc`   | 75 s / 365 MB    | 2.3 s / 262 MB        |
 
-The girt `util gc` row is reflog expiry and loose-object pruning only; it doesn't repack
-([#23](https://github.com/joshka/girt/issues/23)). Small fixtures hid every one of these costs, so
-include this benchmark in the acceptance check of any change touching fetch, object reading, packing
-or retention.
+The girt `util gc` row is reflog expiry and loose-object pruning only; it doesn't repack. girt's
+repack now copies existing entries and deltas verbatim
+([#23](https://github.com/joshka/girt/issues/23)); jj's GC still has to switch back to
+`run_maintenance` and be re-measured. Small fixtures hid every one of these costs, so include this
+benchmark in the acceptance check of any change touching fetch, object reading, packing or
+retention.
 
 ### Streaming receive benchmark
 

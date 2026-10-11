@@ -95,7 +95,8 @@ pub struct RetentionPolicy {
     pub max_entries: usize,
     /// Maximum graph edges followed in each of the three closure traversals.
     pub max_edges: usize,
-    /// Maximum decoded bytes in each closure traversal.
+    /// Maximum decoded bytes in each closure traversal. Packed blobs reached through trees or tags
+    /// are checked from entry headers and not decoded, so they are not charged.
     pub max_bytes: u64,
     /// Bound for each imported history.
     pub reflog: ReflogLimits,
@@ -643,6 +644,22 @@ fn walk(
         }
         if reachable.len() >= policy.max_entries {
             return Err("reachable object limit".into());
+        }
+        // Like Git's reachability walk, confirm a packed blob's presence and kind without
+        // inflating it: blobs have no outgoing edges. Their bytes are not charged.
+        if expected.get(&id) == Some(&ObjectKind::Blob) {
+            match store
+                .packed_kind(id, policy.read)
+                .map_err(|e| e.to_string())?
+            {
+                Some(ObjectKind::Blob) => {
+                    kinds.insert(id, ObjectKind::Blob);
+                    reachable.insert(id);
+                    continue;
+                }
+                Some(_) => return Err(format!("wrong reachable kind {id}")),
+                None => {}
+            }
         }
         let object = store
             .read_controlled(id, policy.read, cancel)

@@ -573,11 +573,19 @@ fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
 #[case::sha256("sha256")]
 fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
+    // A packed object that is no longer reachable makes the replacement differ from the old pack.
+    let dropped = git(root.path(), &["hash-object", "-w", "--stdin"], b"dropped");
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/dropped", &dropped],
+        b"",
+    );
     git(
         root.path(),
         &["repack", "-ad", "--no-write-bitmap-index"],
         b"",
     );
+    git(root.path(), &["update-ref", "-d", "refs/tags/dropped"], b"");
     let directory = root.path().join("objects/pack");
     let old_index = fs::read_dir(&directory)
         .unwrap()

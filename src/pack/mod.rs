@@ -27,7 +27,9 @@ pub use write::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack,
     write_pack_with_compression,
 };
-pub(crate) use write::{write_controlled, write_controlled_observed};
+pub(crate) use write::{
+    PackStream, entry_header_code, offset_delta_distance, select_entry, write_controlled_observed,
+};
 
 #[cfg(test)]
 mod tests;

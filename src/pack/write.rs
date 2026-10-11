@@ -326,12 +326,122 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
-struct SelectedEntry {
-    bytes: Vec<u8>,
-    depth: usize,
+/// Writes a pack entry by entry for callers that copy existing encodings, then its index.
+///
+/// The caller declares the entry count up front and supplies whole entries, so OFS_DELTA bases
+/// must be written before their deltas. Entries are indexed in identity order at [`Self::finish`].
+pub(crate) struct PackStream<'a, W> {
+    pack: Output<'a, W>,
+    entries: Vec<Entry>,
+    count: u32,
+    format: crate::ObjectFormat,
 }
 
-fn select_entry(
+impl<'a, W: Write> PackStream<'a, W> {
+    pub(crate) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        count: u32,
+        max_pack_bytes: u64,
+    ) -> Result<Self, PackWriteError> {
+        let mut pack = Output::new(format, sink, max_pack_bytes, "pack bytes");
+        pack.put(b"PACK")?;
+        pack.put(&2u32.to_be_bytes())?;
+        pack.put(&count.to_be_bytes())?;
+        Ok(Self {
+            pack,
+            entries: Vec::with_capacity(count as usize),
+            count,
+            format,
+        })
+    }
+
+    /// Starts an entry and returns its pack offset.
+    pub(crate) fn begin(&mut self) -> Result<u64, PackWriteError> {
+        if self.entries.len() as u64 >= u64::from(self.count) {
+            return Err(PackWriteError::Limit("declared entry count"));
+        }
+        self.pack.crc = crc32fast::Hasher::new();
+        Ok(self.pack.bytes)
+    }
+
+    pub(crate) fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
+        self.pack.put(bytes)
+    }
+
+    /// Writes a whole object's header and zlib stream.
+    pub(crate) fn put_object(
+        &mut self,
+        kind: ObjectKind,
+        data: &[u8],
+    ) -> Result<(), PackWriteError> {
+        self.pack.put(&entry_header(kind, data.len() as u64))?;
+        let mut encoder = ZlibEncoder::new(&mut self.pack, Compression::new(6));
+        encoder.write_all(data).map_err(output_error)?;
+        encoder.finish().map_err(output_error)?;
+        Ok(())
+    }
+
+    /// Records the entry started at `offset` under `id`.
+    pub(crate) fn end(&mut self, id: ObjectId, offset: u64) {
+        self.entries.push(Entry {
+            id,
+            offset,
+            crc: self.pack.crc.clone().finalize(),
+        });
+    }
+
+    pub(crate) fn finish(
+        mut self,
+        index: &mut impl Write,
+        max_index_bytes: u64,
+        deltas: DeltaStats,
+    ) -> Result<PackWritten, PackWriteError> {
+        if self.entries.len() as u64 != u64::from(self.count) {
+            return Err(PackWriteError::Limit("declared entry count"));
+        }
+        let checksum = self.pack.finish()?;
+        let pack_bytes = self.pack.bytes;
+        self.entries.sort_unstable_by_key(|entry| entry.id);
+        if let Some(pair) = self
+            .entries
+            .windows(2)
+            .find(|pair| pair[0].id == pair[1].id)
+        {
+            return Err(PackWriteError::ConflictingDuplicate(pair[0].id));
+        }
+        let mut index = Output::new(self.format, index, max_index_bytes, "index bytes");
+        write_index(&self.entries, checksum, &mut index)?;
+        index.finish()?;
+        Ok(PackWritten {
+            checksum,
+            objects: self.count,
+            pack_bytes,
+            index_bytes: index.bytes,
+            deltas,
+        })
+    }
+}
+
+/// Encodes an OFS_DELTA backward distance.
+pub(crate) fn offset_delta_distance(mut distance: u64) -> Vec<u8> {
+    let mut bytes = vec![(distance & 127) as u8];
+    distance >>= 7;
+    while distance != 0 {
+        distance -= 1;
+        bytes.push(128 | (distance & 127) as u8);
+        distance >>= 7;
+    }
+    bytes.reverse();
+    bytes
+}
+
+pub(crate) struct SelectedEntry {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) depth: usize,
+}
+
+pub(crate) fn select_entry(
     objects: &[PackObject<'_>],
     position: usize,
     depths: &[usize],
@@ -467,7 +577,7 @@ fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     entry_header_code(code, size)
 }
 
-fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
+pub(crate) fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);

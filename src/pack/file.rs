@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use super::index::{Entry, Index, word};
-use super::reader::{Source, check_cancelled, decode};
+use super::reader::{EntryHeader, Source, check_cancelled, decode, parse_header};
 use crate::object::Hasher;
 use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
 
@@ -191,6 +191,73 @@ impl FilePack {
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
+    }
+
+    /// Entry positions in pack-offset order, where every OFS_DELTA base precedes its delta.
+    pub(crate) fn positions_by_offset(&self) -> &[usize] {
+        &self.offsets
+    }
+
+    pub(crate) fn id_at(&self, position: usize) -> Result<ObjectId, Error> {
+        self.identity(position)
+    }
+
+    /// Parses an entry's header without inflating it, for verbatim copying.
+    pub(crate) fn header(&self, position: usize) -> Result<EntryHeader, Error> {
+        parse_header(self, &self.entry(position)?)
+    }
+
+    /// Resolves an entry's object kind from headers alone, following its delta chain to the
+    /// base without inflating anything. Content and identity are not verified.
+    pub(crate) fn kind(
+        &self,
+        mut position: usize,
+        max_depth: usize,
+    ) -> Result<crate::ObjectKind, Error> {
+        for _ in 0..=max_depth {
+            let header = self.header(position)?;
+            position = match header.base {
+                None => {
+                    return Ok(match header.kind {
+                        1 => crate::ObjectKind::Commit,
+                        2 => crate::ObjectKind::Tree,
+                        3 => crate::ObjectKind::Blob,
+                        4 => crate::ObjectKind::Tag,
+                        other => return Err(Error::ObjectType(other)),
+                    });
+                }
+                Some(super::reader::EntryBase::Offset(base)) => base,
+                Some(super::reader::EntryBase::Id(id)) => {
+                    self.find(id)?.ok_or(Error::MissingBase(id))?
+                }
+            };
+        }
+        Err(Error::Limit("delta depth"))
+    }
+
+    /// Pack byte range of a whole entry, from its header to the end of its zlib stream.
+    pub(crate) fn entry_range(&self, position: usize) -> (usize, usize) {
+        self.ranges[position]
+    }
+
+    /// Streams pack bytes `start..end` to `output`, checking cancellation per chunk.
+    pub(crate) fn copy_range<E: From<Error>>(
+        &self,
+        start: usize,
+        end: usize,
+        output: &mut impl FnMut(&[u8]) -> Result<(), E>,
+        cancelled: &AtomicBool,
+    ) -> Result<(), E> {
+        let mut buffer = vec![0; (end - start).min(64 * 1024)];
+        let mut offset = start;
+        while offset < end {
+            check_cancelled(cancelled)?;
+            let count = buffer.len().min(end - offset);
+            self.pack.read_at(offset, &mut buffer[..count])?;
+            output(&buffer[..count])?;
+            offset += count;
+        }
+        Ok(())
     }
 }
 

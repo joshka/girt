@@ -87,7 +87,8 @@ impl Repository {
     /// old readers pinned to packs, and repositories depending on this store as an alternate for
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
     /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
-    /// synchronizes the pack and object directories, verifies each retained ID through that pair,
+    /// synchronizes the pack and object directories, verifies the pair's checksum and entry CRCs
+    /// and that each retained ID resolves within it to a whole base entry,
     /// and compares
     /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
     /// packs and packs with unsupported sidecars remain untouched. Optional `.rev` and `.bitmap`
@@ -220,12 +221,11 @@ impl Repository {
                 .find(*id)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
                 .ok_or_else(|| failed(RetireCause::ReplacementMissing(*id), report.clone()))?;
-            let object = pack
-                .read(position, policy.read, cancel)
+            // Opening the pair validated its checksum and every entry CRC. Resolving each delta
+            // chain to its base proves every retained object is reconstructible from this pack
+            // alone, without inflating it.
+            pack.kind(position, policy.read.max_delta_depth)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-            if object.id() != *id {
-                return Err(failed(RetireCause::ReplacementMissing(*id), report));
-            }
         }
         drop(pack);
         let after = snapshot(&directory, policy.max_entries, cancel)
@@ -547,7 +547,27 @@ mod tests {
 
     #[test]
     fn unlink_fault_reports_removed_index_and_uncertain_sidecar() {
-        let (root, repository, policy, old_index) = fixture();
+        let (root, _repository, policy, _) = fixture();
+        // A packed object that is no longer reachable makes the replacement differ from the old
+        // pack, which a verbatim copy would otherwise reproduce.
+        let dropped = git(root.path(), &["hash-object", "-w", "--stdin"], b"dropped");
+        git(
+            root.path(),
+            &["update-ref", "refs/tags/dropped", &dropped],
+            b"",
+        );
+        git(
+            root.path(),
+            &["repack", "-ad", "--no-write-bitmap-index"],
+            b"",
+        );
+        git(root.path(), &["update-ref", "-d", "refs/tags/dropped"], b"");
+        let repository = Repository::open(root.path()).unwrap();
+        let old_index = fs::read_dir(repository.object_dir().join("pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+            .unwrap();
         let mut calls = 0;
         let error = repository
             .retire_old_packs_at(
