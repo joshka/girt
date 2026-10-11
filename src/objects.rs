@@ -238,6 +238,27 @@ struct Store {
 }
 
 impl Objects {
+    // Match read_controlled's pack-before-loose precedence within each store.
+    pub(crate) fn packed_location(
+        &self,
+        id: ObjectId,
+    ) -> Result<Option<(Arc<FilePack>, usize)>, ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                if let Some(position) = pack.find(id)? {
+                    return Ok(Some((Arc::clone(pack), position)));
+                }
+            }
+            let path = store.loose.object_path(id);
+            match fs::symlink_metadata(&path) {
+                Ok(_) => return Ok(None),
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(ObjectReadError::Path { path, source }),
+            }
+        }
+        Ok(None)
+    }
+
     /// Returns canonical object directories in search order, primary first.
     ///
     /// Subsequent entries are alternates owned outside this repository. A maintenance planner

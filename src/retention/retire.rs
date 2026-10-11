@@ -466,7 +466,13 @@ mod tests {
             .map(|entry| entry.unwrap().path())
             .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
             .unwrap();
+        // A new loose root makes the replacement differ even when every old entry is reused.
+        let loose = repository
+            .loose_objects()
+            .write_blob(b"new retained payload")
+            .unwrap();
         let policy = RetentionPolicy {
+            heads: vec![loose],
             recent_cutoff: SystemTime::now() + Duration::from_secs(60),
             ..Default::default()
         };

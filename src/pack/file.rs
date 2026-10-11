@@ -184,6 +184,56 @@ impl FilePack {
         Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
     }
 
+    pub(crate) fn result_size(
+        &self,
+        entry: &Entry,
+        header: &super::reader::Header,
+    ) -> Result<usize, Error> {
+        if header.base.is_none() {
+            return Ok(header.length);
+        }
+        // Only the two delta size integers are needed; payload validation belongs to the scan.
+        let range = Range {
+            artifact: &self.pack,
+            position: entry.offset + header.bytes,
+            end: entry.end,
+        };
+        let decoder = flate2::read::ZlibDecoder::new(range);
+        let mut sizes = Vec::new();
+        decoder
+            .take(20)
+            .read_to_end(&mut sizes)
+            .map_err(|source| path_error(&self.pack.path, source))?;
+        let mut input = sizes.as_slice();
+        super::delta::size(&mut input, 0, 0, true)?;
+        super::delta::size(&mut input, 0, 0, true)
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.index.path
+    }
+
+    pub(crate) fn copy_range(
+        &self,
+        start: usize,
+        end: usize,
+        output: &mut impl io::Write,
+        cancelled: &AtomicBool,
+    ) -> Result<(), super::reuse::ReuseError> {
+        let mut buffer = [0; 64 * 1024];
+        let mut position = start;
+        while position < end {
+            check_cancelled(cancelled)?;
+            let count = buffer.len().min(end - position);
+            self.pack.read_at(position, &mut buffer[..count])?;
+            output
+                .write_all(&buffer[..count])
+                .map_err(super::write::output_error)?;
+            position += count;
+        }
+        Ok(())
+    }
+
     pub(crate) fn read(
         &self,
         position: usize,

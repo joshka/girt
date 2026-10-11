@@ -502,9 +502,10 @@ dependencies and A17 fault matrix remain open.
 ## R32 Additive Repack Publication
 
 [Implementation evidence](evidence/r32.md) records a bounded fresh-scan repack and pack-before-index
-publication. Existing storage remains available to pinned readers and concurrent writers because
-this slice never removes it. R33 retains owned-data pruning, reflog expiry, generation verification
-before destructive mutation, and old-reader retirement.
+publication. Repacking now preserves existing compressed entries and deltas when their bases are
+retained; only loose objects undergo new delta search. Existing storage remains available to pinned
+readers and concurrent writers because this slice never removes it. R33 retains owned-data pruning,
+reflog expiry, generation verification before destructive mutation, and old-reader retirement.
 
 R32 is coordinator-accepted for additive publication at executable
 `3eb9b07ec19dffeedf4f78f8dd9b8b30e5d50df2`, with four-host focused native evidence in the linked

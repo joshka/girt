@@ -83,7 +83,7 @@ pub struct PackWritten {
     pub pack_bytes: u64,
     /// Total index bytes, including both checksums.
     pub index_bytes: u64,
-    /// Delta search and dependency accounting; zero for the ordinary path.
+    /// Delta search and dependency accounting; reused deltas also count during repacking.
     pub deltas: DeltaStats,
 }
 
@@ -326,12 +326,12 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
-struct SelectedEntry {
-    bytes: Vec<u8>,
-    depth: usize,
+pub(crate) struct SelectedEntry {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) depth: usize,
 }
 
-fn select_entry(
+pub(crate) fn select_entry(
     objects: &[PackObject<'_>],
     position: usize,
     depths: &[usize],
@@ -407,7 +407,7 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
     Ok(encoder.finish()?)
 }
 
-fn validate<'a>(
+pub(crate) fn validate<'a>(
     format: crate::ObjectFormat,
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
@@ -457,7 +457,7 @@ fn validate<'a>(
     Ok(sorted)
 }
 
-fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
+pub(crate) fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     let code = match kind {
         ObjectKind::Commit => 1,
         ObjectKind::Tree => 2,
@@ -467,7 +467,7 @@ fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     entry_header_code(code, size)
 }
 
-fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
+pub(crate) fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);
@@ -497,7 +497,7 @@ pub(crate) fn encode_index(
     Ok(bytes)
 }
 
-fn write_index(
+pub(crate) fn write_index(
     entries: &[Entry],
     checksum: ObjectId,
     out: &mut Output<'_, impl Write>,
@@ -545,7 +545,7 @@ fn write_index(
 #[error("output limit: {0}")]
 struct OutputLimit(&'static str);
 
-fn output_error(error: io::Error) -> PackWriteError {
+pub(crate) fn output_error(error: io::Error) -> PackWriteError {
     if let Some(limit) = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<OutputLimit>())
@@ -556,17 +556,22 @@ fn output_error(error: io::Error) -> PackWriteError {
     }
 }
 
-struct Output<'a, W> {
+pub(crate) struct Output<'a, W> {
     sink: &'a mut W,
-    bytes: u64,
+    pub(crate) bytes: u64,
     limit: u64,
     label: &'static str,
     hash: Hasher,
-    crc: crc32fast::Hasher,
+    pub(crate) crc: crc32fast::Hasher,
 }
 
 impl<'a, W: Write> Output<'a, W> {
-    fn new(format: crate::ObjectFormat, sink: &'a mut W, limit: u64, label: &'static str) -> Self {
+    pub(crate) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        limit: u64,
+        label: &'static str,
+    ) -> Self {
         Self {
             sink,
             bytes: 0,
@@ -576,10 +581,10 @@ impl<'a, W: Write> Output<'a, W> {
             crc: crc32fast::Hasher::new(),
         }
     }
-    fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
+    pub(crate) fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
         self.write_all(bytes).map_err(output_error)
     }
-    fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
+    pub(crate) fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
         let checksum = self.hash.clone().finalize();
         self.put(checksum.as_bytes())?;
         self.flush()?;

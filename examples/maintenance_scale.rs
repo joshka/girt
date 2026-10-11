@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial_bytes = pack_bytes(&pack_directory)?;
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
+        ..RetentionPolicy::trusted()
     };
     let cancel = AtomicBool::new(false);
     let running = AtomicBool::new(true);
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = repository.run_maintenance(
             &mut DisposableIsolation,
             &policy,
-            RepackLimits::default(),
+            RepackLimits::trusted(),
             &cancel,
         );
         running.store(false, Ordering::Relaxed);

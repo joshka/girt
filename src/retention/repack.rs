@@ -1,20 +1,22 @@
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
 use super::RetentionPolicy;
-use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_controlled};
+use crate::pack::reuse::{ReuseError, ReusedEntry, write_reused};
+use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten};
 use crate::{ObjectId, ObjectReadError, PackCompression, Repository};
 
-/// Bounds one additive repack. Payloads remain in memory until the pack is written.
+/// Bounds one additive repack. Only loose objects and packed fallbacks retain decoded payloads.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
     /// Bounds object count, decoded input bytes, and both output artifacts.
     pub write: PackWriteLimits,
-    /// Selects ordinary or bounded delta compression.
+    /// Selects compression for loose objects; defaults to bounded delta search.
+    /// Existing packed deltas are reused independently of this policy.
     pub compression: PackCompression,
 }
 
@@ -22,7 +24,7 @@ impl Default for RepackLimits {
     fn default() -> Self {
         Self {
             write: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }
@@ -35,7 +37,7 @@ impl RepackLimits {
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }
@@ -86,7 +88,10 @@ impl Repository {
     /// Publishes a pack of objects required by a fresh complete retention scan.
     ///
     /// This additive operation rescans roots and recent objects instead of trusting an older
-    /// [`super::RetentionPlan`]. It reads required objects through pinned packs, writes two bounded
+    /// [`super::RetentionPlan`]. Existing compressed entries and delta programs are copied through
+    /// pinned packs when their base is retained. Offset-delta framing is rewritten for relocated
+    /// bases; an omitted base forces ordinary encoding. Only loose objects undergo new delta
+    /// search. It writes two bounded
     /// temporary files in the primary pack directory, synchronizes each file, then publishes the
     /// pack before its index. The index is the visibility marker. An existing checksum-named file
     /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
@@ -127,40 +132,50 @@ impl Repository {
         after_plan: impl FnOnce(),
     ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
-        let plan = self.plan_retention(policy, cancel);
+        let objects =
+            self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
+        let plan = self.plan_retention_from(policy, cancel, Some(&objects));
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
         check(cancel)?;
-        let objects =
-            self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
         let count = u32::try_from(plan.required.len())
             .map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let mut decoded = Vec::with_capacity(plan.required.len());
+        let mut decoded = Vec::new();
+        let mut reused = Vec::new();
+        let mut fallback = Vec::new();
         let mut bytes = 0u64;
-        for id in plan.required {
+        for &id in &plan.required {
             check(cancel)?;
+            let location = objects.packed_location(id)?;
+            if let Some((pack, position)) = &location {
+                let entry = ReusedEntry::new(std::sync::Arc::clone(pack), *position)?;
+                if entry.base.is_none_or(|base| plan.required.contains(&base)) {
+                    let len = pack.result_size(&entry.entry, &entry.header)? as u64;
+                    charge_input(len, &mut bytes, limits.write)?;
+                    reused.push(entry);
+                    continue;
+                }
+            }
             let object = objects
                 .read_controlled(id, policy.read, cancel)
                 .map_err(|source| RepackError::Read { id, source })?
                 .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
-            let len = object.data().len() as u64;
-            if len > limits.write.max_object_bytes {
-                return Err(PackWriteError::Limit("object bytes").into());
+            charge_input(object.data().len() as u64, &mut bytes, limits.write)?;
+            if location.is_some() {
+                fallback.push((id, object));
+            } else {
+                decoded.push((id, object));
             }
-            bytes = bytes
-                .checked_add(len)
-                .ok_or(PackWriteError::Limit("input bytes"))?;
-            if bytes > limits.write.max_input_bytes {
-                return Err(PackWriteError::Limit("input bytes").into());
-            }
-            decoded.push((id, object));
         }
+        let ordinary = fallback.len();
+        fallback.extend(decoded);
+        let decoded = fallback;
         let input: Vec<_> = decoded
             .iter()
             .map(|(id, object)| PackObject {
@@ -173,21 +188,22 @@ impl Repository {
         fs::create_dir_all(&directory)?;
         let mut pack = NamedTempFile::new_in(&directory)?;
         let mut index = NamedTempFile::new_in(&directory)?;
-        let write_result = write_controlled(
+        let write_result = write_reused(
             self.object_format(),
-            &input,
-            &mut pack,
-            &mut index,
+            &mut reused,
+            (&input[..ordinary], &input[ordinary..]),
+            (
+                &mut BufWriter::new(&mut pack),
+                &mut BufWriter::new(&mut index),
+            ),
             limits.write,
             limits.compression,
-            &mut || {
-                if cancel.load(Ordering::Relaxed) {
-                    Err(PackWriteError::Io(io::ErrorKind::Interrupted.into()))
-                } else {
-                    Ok(())
-                }
-            },
-        );
+            cancel,
+        )
+        .map_err(|error| match error {
+            ReuseError::Read(error) => RepackError::Open(error),
+            ReuseError::Write(error) => RepackError::Write(error),
+        });
         let written = match write_result {
             Err(_) if cancel.load(Ordering::Relaxed) => return Err(RepackError::Cancelled),
             result => result?,
@@ -198,6 +214,19 @@ impl Repository {
         publish_pair(pack, index, &basename, cancel, || {})?;
         Ok(RepackPublished { written })
     }
+}
+
+fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {
+    if len > limits.max_object_bytes {
+        return Err(PackWriteError::Limit("object bytes"));
+    }
+    *bytes = bytes
+        .checked_add(len)
+        .ok_or(PackWriteError::Limit("input bytes"))?;
+    if *bytes > limits.max_input_bytes {
+        return Err(PackWriteError::Limit("input bytes"));
+    }
+    Ok(())
 }
 
 fn publish_pair(
@@ -257,6 +286,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_repack_searches_only_new_loose_objects() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let base: Vec<u8> = (0..=255).cycle().take(4096).collect();
+        let mut target = base.clone();
+        target[1000] ^= 255;
+        repository.loose_objects().write_blob(&base).unwrap();
+        repository.loose_objects().write_blob(&target).unwrap();
+        let cancel = AtomicBool::new(false);
+        let first = repository
+            .repack_retained(
+                &RetentionPolicy::default(),
+                RepackLimits::default(),
+                &cancel,
+            )
+            .unwrap();
+        let second = repository
+            .repack_retained(
+                &RetentionPolicy::default(),
+                RepackLimits::default(),
+                &cancel,
+            )
+            .unwrap();
+        assert_eq!(first.written.deltas.entries, 1);
+        assert!(first.written.deltas.candidates > 0);
+        assert_eq!(second.written.deltas.entries, 1);
+        assert_eq!(second.written.deltas.candidates, 0);
+        assert_eq!(first.written.checksum, second.written.checksum);
+    }
+
+    #[test]
     fn cancellation_between_publications_leaves_only_an_unindexed_pack() {
         let root = tempfile::tempdir().unwrap();
         let basename = root.path().join("pack-test");
@@ -288,6 +353,91 @@ mod tests {
         let result = publish(candidate, &path, &AtomicBool::new(false));
         assert!(matches!(result, Err(RepackError::Existing(_))));
         assert_eq!(fs::read(path).unwrap(), b"old bytes");
+    }
+
+    #[rstest::rstest]
+    #[case::sha1_offset(crate::ObjectFormat::Sha1, 6)]
+    #[case::sha1_reference(crate::ObjectFormat::Sha1, 7)]
+    #[case::sha256_offset(crate::ObjectFormat::Sha256, 6)]
+    #[case::sha256_reference(crate::ObjectFormat::Sha256, 7)]
+    fn omitted_delta_base_is_reencoded_without_search(
+        #[case] format: crate::ObjectFormat,
+        #[case] code: u8,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let repository =
+            Repository::init(format, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        let (_, base, target) =
+            crate::pack::reuse::tests::fixture(&repository.object_dir().join("pack"), format, code);
+        let policy = RetentionPolicy {
+            heads: vec![target],
+            recent_cutoff: std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+            ..Default::default()
+        };
+        let published = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
+        let index = repository
+            .object_dir()
+            .join(format!("pack/pack-{}.idx", published.written.checksum));
+        let pack = crate::pack::FilePack::open(
+            format,
+            &index,
+            &mut crate::PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(pack.find(base).unwrap().is_none());
+        assert_eq!(
+            pack.read(
+                pack.find(target).unwrap().unwrap(),
+                crate::ReadLimits::default(),
+                &AtomicBool::new(false)
+            )
+            .unwrap()
+            .data(),
+            b"target payload"
+        );
+        assert_eq!(published.written.deltas.entries, 0);
+        assert_eq!(published.written.deltas.candidates, 0);
+    }
+
+    #[rstest::rstest]
+    #[case::individual(10, 100, "object bytes")]
+    #[case::aggregate(100, 10, "input bytes")]
+    fn reused_delta_payload_is_charged_before_publication(
+        #[case] maximum: u64,
+        #[case] total: u64,
+        #[case] label: &str,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let format = crate::ObjectFormat::Sha1;
+        let repository =
+            Repository::init(format, root.path().join("repo"), crate::InitKind::Bare).unwrap();
+        let (_, base, target) =
+            crate::pack::reuse::tests::fixture(&repository.object_dir().join("pack"), format, 6);
+        let policy = RetentionPolicy {
+            heads: vec![base, target],
+            ..Default::default()
+        };
+        let limits = RepackLimits {
+            write: PackWriteLimits {
+                max_object_bytes: maximum,
+                max_input_bytes: total,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = repository.repack_retained(&policy, limits, &AtomicBool::new(false));
+        assert!(
+            matches!(result, Err(RepackError::Write(PackWriteError::Limit(actual))) if actual == label)
+        );
+        assert_eq!(
+            fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            2
+        );
     }
 
     #[test]

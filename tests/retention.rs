@@ -107,6 +107,90 @@ impl MaintenanceIsolation for RefusingIsolation {
     }
 }
 
+// Original deterministic payloads, packed by Git's executable, exercise real selected deltas.
+fn deltified_fixture(format: &str) -> (tempfile::TempDir, Repository, std::path::PathBuf) {
+    let (root, repo, _, _) = fixture_format(format);
+    let base: Vec<_> = (0..16384u32)
+        .map(|n| (n.wrapping_mul(2654435761) >> 24) as u8)
+        .collect();
+    let mut target = base.clone();
+    target[8192] ^= 255;
+    let first_blob = git(root.path(), &["hash-object", "-w", "--stdin"], &base);
+    let first_tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {first_blob}\tfile\n").as_bytes(),
+    );
+    let first_commit = git(root.path(), &["commit-tree", &first_tree], b"base\n");
+    let second_blob = git(root.path(), &["hash-object", "-w", "--stdin"], &target);
+    let second_tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {second_blob}\tfile\n").as_bytes(),
+    );
+    let second_commit = git(
+        root.path(),
+        &["commit-tree", &second_tree, "-p", &first_commit],
+        b"target\n",
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/deltas", &second_commit],
+        b"",
+    );
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    let index = fs::read_dir(repo.object_dir().join("pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+        .unwrap();
+    (root, repo, index)
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn git_selected_deltas_survive_repack_and_old_pack_retirement(#[case] format: &str) {
+    let (root, repo, old_index) = deltified_fixture(format);
+    let original_size = fs::metadata(old_index.with_extension("pack"))
+        .unwrap()
+        .len();
+    let policy = RetentionPolicy {
+        heads: vec![repo.loose_objects().write_blob(b"new loose root").unwrap()],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let written = report.published.unwrap().written;
+    let index = repo
+        .object_dir()
+        .join(format!("pack/pack-{}.idx", written.checksum));
+    assert!(report.durable);
+    assert!(written.deltas.entries > 0);
+    assert_eq!(written.deltas.candidates, 0);
+    assert!(written.pack_bytes <= original_size + 64);
+    assert!(!old_index.exists());
+    assert!(!old_index.with_extension("pack").exists());
+    git(
+        root.path(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+    git(root.path(), &["fsck", "--full"], b"");
+}
+
 #[cfg(unix)]
 #[rstest::rstest]
 #[case::sha1("sha1")]
@@ -586,6 +670,11 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .unwrap();
     let canonical_index = old_index.canonicalize().unwrap();
     let policy = RetentionPolicy {
+        heads: vec![
+            repo.loose_objects()
+                .write_blob(b"new retained root")
+                .unwrap(),
+        ],
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
     };
