@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/joshka/girt/compare/v0.3.1...v0.3.2) - 2026-10-11
+
+### Other
+
+- Skip Rust CI for docs-only changes ([#40](https://github.com/joshka/girt/pull/40))
+- Gate merges on a single required CI check ([#36](https://github.com/joshka/girt/pull/36))
+- Prune roadmap-phase process from agent guidance ([#38](https://github.com/joshka/girt/pull/38))
+- Isolate reftable fixtures from global config portably ([#35](https://github.com/joshka/girt/pull/35))
+- Stream received packs with bounded delta caching
+- Track jj follow-up work as GitHub issues
+- Add large-repository and no-Git checks for jj
+- Widen lock-wait test margins for Windows runners
+- Retry Windows ref locks that are still being released
+- Escape Windows paths written into test configuration
+
 ## [0.3.1](https://github.com/joshka/girt/compare/v0.3.0...v0.3.1) - 2026-09-30
 
 ### Other
