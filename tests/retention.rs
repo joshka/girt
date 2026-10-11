@@ -569,9 +569,14 @@ fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
 
 #[cfg(unix)]
 #[rstest::rstest]
-#[case::sha1("sha1")]
-#[case::sha256("sha256")]
-fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
+#[case::sha1_old("sha1", SystemTime::now() + Duration::from_secs(60))]
+#[case::sha256_old("sha256", SystemTime::now() + Duration::from_secs(60))]
+#[case::sha1_recent("sha1", SystemTime::UNIX_EPOCH)]
+#[case::sha256_recent("sha256", SystemTime::UNIX_EPOCH)]
+fn isolated_pack_retirement_preserves_git_readability(
+    #[case] format: &str,
+    #[case] cutoff: SystemTime,
+) {
     let (root, repo, first, second) = fixture_format(format);
     git(
         root.path(),
@@ -585,8 +590,15 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
         .unwrap();
     let canonical_index = old_index.canonicalize().unwrap();
+    // Make a new replacement necessary even when the old entries are reused verbatim.
+    let extra = repo
+        .loose_objects()
+        .write_blob(b"new loose object")
+        .unwrap();
+    let pinned = repo.objects(PackLimits::default()).unwrap();
     let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        heads: vec![extra],
+        recent_cutoff: cutoff,
         ..Default::default()
     };
     let report = repo
@@ -605,6 +617,16 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
     );
     assert!(!old_index.exists());
     assert_eq!(
+        pinned
+            .read(second, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        second
+    );
+    git(root.path(), &["fsck", "--full"], b"");
+
+    assert_eq!(
         git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
         "commit"
     );
@@ -612,6 +634,60 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
         "commit"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn retirement_keeps_the_last_copy_of_an_omitted_packed_object() {
+    let (root, repo, _, _) = fixture();
+    let orphan: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"packed orphan",
+    )
+    .parse()
+    .unwrap();
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/orphan", &orphan.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["repack", "-ad", "--no-write-bitmap-index"],
+        b"",
+    );
+    git(root.path(), &["prune-packed"], b"");
+    git(root.path(), &["update-ref", "-d", "refs/tags/orphan"], b"");
+    let extra = repo.loose_objects().write_blob(b"extra").unwrap();
+    let policy = RetentionPolicy {
+        heads: vec![extra],
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete());
+    assert!(!plan.required.contains(&orphan));
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert!(report.published.is_some());
+    assert!(report.removed.is_empty());
+    assert_eq!(
+        repo.objects(PackLimits::default())
+            .unwrap()
+            .read(orphan, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        orphan
+    );
+    git(root.path(), &["fsck", "--full"], b"");
 }
 
 #[cfg(unix)]

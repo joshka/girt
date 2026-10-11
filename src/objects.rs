@@ -51,7 +51,9 @@ impl Object {
 /// Bounds the aggregate pack snapshot across primary and borrowed stores retained by
 /// [`crate::Repository::objects`].
 ///
-/// Artifact bytes bound validation work, not retained pack memory. Index input and derived tables
+/// Artifact bytes bound each validation attempt, not retained pack memory. A disappearing pack
+/// artifact permits one retry per store; aggregate validation work can reach twice these bounds.
+/// Index input and derived tables
 /// have a separate bound. These are per-reader bounds, not a process RSS quota. Zero values permit
 /// no indexed packs. Unindexed files are ignored.
 #[derive(Debug, Clone, Copy)]
@@ -186,8 +188,11 @@ impl ReadLimits {
 /// Artifacts must remain immutable while readers use them: pinned handles do not defend against
 /// in-place writes (including truncation). Atomic path replacement leaves pinned artifacts intact.
 /// Opening and refresh validate each pinned pair, but do not capture an atomic directory or
-/// topology snapshot. Exclude writers when a point-in-time view is required. [`Self::refresh`]
-/// makes one bounded attempt and leaves this reader unchanged on failure. Reads never refresh
+/// topology snapshot. A pack directory is rescanned once if a listed artifact disappears while
+/// opening it, so a completed repack can be discovered without silently skipping missing objects.
+/// Persistent missing pairs remain errors. Validation work may reach twice the pack limits; failed
+/// candidate handles are released before retrying. Exclude writers when a point-in-time view is
+/// required. [`Self::refresh`] leaves this reader unchanged on failure. Reads never refresh
 /// implicitly. The object directory and its ancestors must be trusted, as with [`LooseObjects`].
 /// This is not a snapshot of loose files or repository references.
 ///
@@ -238,6 +243,12 @@ struct Store {
 }
 
 impl Objects {
+    pub(crate) fn packed(&self) -> impl Iterator<Item = &FilePack> {
+        self.stores
+            .iter()
+            .flat_map(|store| store.packs.iter().map(Arc::as_ref))
+    }
+
     /// Returns canonical object directories in search order, primary first.
     ///
     /// Subsequent entries are alternates owned outside this repository. A maintenance planner
@@ -332,10 +343,11 @@ impl Objects {
     ///
     /// Returns opening errors without changing this reader or its clones. An index whose pack is
     /// absent, a mismatched pair, malformed alternate metadata or corrupt artifact is an error,
-    /// never absence. There are no automatic retries, sleeps or filesystem changes. After a
-    /// publisher finishes or a broken pair is repaired/removed, the caller may explicitly retry
-    /// with its own finite attempt budget. Continuing publication may require another refresh even
-    /// after success: directory enumeration and alternate discovery are not atomic snapshots.
+    /// never absence. A disappearing artifact gets one directory rescan; other failures are not
+    /// retried. There are no sleeps or filesystem changes. After a publisher finishes or a broken
+    /// pair is repaired/removed, the caller may explicitly retry with its own finite attempt
+    /// budget. Continuing publication may require another refresh even after success: directory
+    /// enumeration and alternate discovery are not atomic snapshots.
     pub fn refresh(
         &mut self,
         packs: PackLimits,
@@ -464,6 +476,37 @@ impl Store {
         budget: &mut PackLimits,
         cancelled: &AtomicBool,
     ) -> Result<Self, ObjectReadError> {
+        Self::open_after_list(format, directory, budget, cancelled, || {})
+    }
+
+    fn open_after_list(
+        format: ObjectFormat,
+        directory: &Path,
+        budget: &mut PackLimits,
+        cancelled: &AtomicBool,
+        after_list: impl FnOnce(),
+    ) -> Result<Self, ObjectReadError> {
+        let initial = *budget;
+        match Self::open_once(format, directory, budget, cancelled, after_list) {
+            Err(ObjectReadError::Path { source, .. })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                // Pack publication precedes retirement. Re-enumerate to discover that replacement,
+                // rather than ignoring a missing old pair and returning a reader with holes.
+                *budget = initial;
+                Self::open_once(format, directory, budget, cancelled, || {})
+            }
+            result => result,
+        }
+    }
+
+    fn open_once(
+        format: ObjectFormat,
+        directory: &Path,
+        budget: &mut PackLimits,
+        cancelled: &AtomicBool,
+        after_list: impl FnOnce(),
+    ) -> Result<Self, ObjectReadError> {
         let loose = LooseObjects::new(directory, format);
         let pack_directory = directory.join("pack");
         let entries = match fs::read_dir(&pack_directory) {
@@ -504,6 +547,7 @@ impl Store {
             }
         }
         paths.sort();
+        after_list();
         let mut packs = Vec::new();
         for path in paths {
             budget.max_open_files = budget
@@ -594,4 +638,89 @@ pub enum ObjectReadError {
     /// A delta refers back to an object already in its reconstruction chain.
     #[error("cyclic delta chain")]
     DeltaCycle,
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use rstest::rstest;
+
+    use super::*;
+    use crate::{ObjectKind, PackObject, PackWriteLimits};
+
+    fn pair(directory: &Path, name: &str, format: ObjectFormat, data: &[u8]) -> PathBuf {
+        fs::create_dir_all(directory.join("pack")).unwrap();
+        let object = PackObject {
+            id: ObjectId::for_blob(format, data),
+            kind: ObjectKind::Blob,
+            data,
+        };
+        let (mut pack, mut index) = (Vec::new(), Vec::new());
+        crate::write_pack(
+            format,
+            &[object],
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+        )
+        .unwrap();
+        let path = directory.join("pack").join(name).with_extension("idx");
+        fs::write(&path, index).unwrap();
+        fs::write(path.with_extension("pack"), pack).unwrap();
+        path
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn discovers_replacement_when_a_listed_pair_is_retired(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("objects");
+        let old = pair(&directory, "old", format, b"retained");
+        let prepared = pair(&root.path().join("prepared"), "new", format, b"retained");
+        let replacement = directory.join("pack/new.idx");
+        let mut limits = PackLimits {
+            max_packs: 1,
+            max_open_files: 2,
+            ..Default::default()
+        };
+        let store = Store::open_after_list(
+            format,
+            &directory,
+            &mut limits,
+            &AtomicBool::new(false),
+            || {
+                fs::rename(
+                    prepared.with_extension("pack"),
+                    replacement.with_extension("pack"),
+                )
+                .unwrap();
+                fs::rename(prepared, &replacement).unwrap();
+                fs::remove_file(&old).unwrap();
+                fs::remove_file(old.with_extension("pack")).unwrap();
+            },
+        )
+        .unwrap();
+        assert_eq!(store.packs.len(), 1);
+        let id = ObjectId::for_blob(format, b"retained");
+        let position = store.packs[0].find(id).unwrap().unwrap();
+        assert_eq!(
+            store.packs[0]
+                .read(position, ReadLimits::default(), &AtomicBool::new(false))
+                .unwrap()
+                .data(),
+            b"retained"
+        );
+        assert_eq!(limits.max_packs, 0);
+        assert_eq!(limits.max_open_files, 0);
+    }
+
+    #[test]
+    fn persistent_missing_pair_is_an_error_after_rescan() {
+        let root = tempfile::tempdir().unwrap();
+        let old = pair(root.path(), "broken", ObjectFormat::Sha1, b"retained");
+        fs::remove_file(old.with_extension("pack")).unwrap();
+        assert!(
+            matches!(Store::open(ObjectFormat::Sha1, root.path(), &mut PackLimits::default(), &AtomicBool::new(false)), Err(ObjectReadError::Path { source, .. }) if source.kind() == io::ErrorKind::NotFound)
+        );
+    }
 }

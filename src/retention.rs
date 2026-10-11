@@ -237,6 +237,15 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
+        self.plan_retention_with_store(policy, cancel, None)
+    }
+
+    pub(crate) fn plan_retention_with_store(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        store: Option<&crate::Objects>,
+    ) -> RetentionPlan {
         let mut plan = RetentionPlan {
             roots: policy.heads.iter().copied().collect(),
             strong_roots: policy.heads.iter().copied().collect(),
@@ -264,34 +273,46 @@ impl Repository {
             plan.fail(reason);
             return plan;
         }
-        let store = match self.objects_controlled(
-            policy.packs,
-            crate::AlternateLimits::default(),
-            cancel,
-        ) {
-            Ok(store) => store,
-            Err(error) => {
-                plan.fail(error.to_string());
-                return plan;
-            }
+        let owned;
+        let store = if let Some(store) = store {
+            store
+        } else {
+            owned = match self.objects_controlled(
+                policy.packs,
+                crate::AlternateLimits::default(),
+                cancel,
+            ) {
+                Ok(store) => store,
+                Err(error) => {
+                    plan.fail(error.to_string());
+                    return plan;
+                }
+            };
+            &owned
         };
         plan.alternate_stores = store
             .store_directories()
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        match walk(self, &store, policy, cancel, &plan.roots) {
+        match walk(self, store, policy, cancel, &plan.roots) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
                 return plan;
             }
         }
-        let live = match walk(self, &store, policy, cancel, &plan.strong_roots) {
-            Ok(reachable) => reachable,
-            Err(reason) => {
-                plan.fail(reason);
-                return plan;
+        // A clone with no expiring history has the same closure for all three policies. Reuse
+        // that verified closure instead of reconstructing every packed blob again.
+        let live = if plan.strong_roots == plan.roots {
+            plan.reachable.clone()
+        } else {
+            match walk(self, store, policy, cancel, &plan.strong_roots) {
+                Ok(reachable) => reachable,
+                Err(reason) => {
+                    plan.fail(reason);
+                    return plan;
+                }
             }
         };
         let mut required_roots = plan.strong_roots.clone();
@@ -315,9 +336,18 @@ impl Repository {
                 );
             }
         }
-        match walk(self, &store, policy, cancel, &required_roots) {
-            Ok(required) => plan.required = required,
-            Err(reason) => plan.fail(reason),
+        if required_roots == plan.roots {
+            plan.required = plan.reachable.clone();
+        } else if required_roots == plan.strong_roots {
+            plan.required = live;
+        } else {
+            match walk(self, store, policy, cancel, &required_roots) {
+                Ok(required) => plan.required = required,
+                Err(reason) => plan.fail(reason),
+            }
+        }
+        if let Err(reason) = check(cancel) {
+            plan.fail(reason);
         }
         plan
     }

@@ -6,15 +6,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::NamedTempFile;
 
 use super::RetentionPolicy;
-use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten, write_controlled};
+use crate::pack::{PackObject, PackWriteError, PackWriteLimits, PackWritten};
 use crate::{ObjectId, ObjectReadError, PackCompression, Repository};
 
-/// Bounds one additive repack. Payloads remain in memory until the pack is written.
+/// Bounds one repack. Existing compressed entries stream from pinned packs.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count, decoded input bytes, and both output artifacts.
+    /// Bounds object count, logical payload bytes (including reused entries), and both artifacts.
     pub write: PackWriteLimits,
-    /// Selects ordinary or bounded delta compression.
+    /// Selects compression for loose objects; existing usable deltas are always preserved.
     pub compression: PackCompression,
 }
 
@@ -22,7 +22,7 @@ impl Default for RepackLimits {
     fn default() -> Self {
         Self {
             write: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }
@@ -35,7 +35,7 @@ impl RepackLimits {
     pub const fn trusted() -> Self {
         Self {
             write: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }
@@ -88,10 +88,17 @@ impl Repository {
     /// This additive operation rescans roots and recent objects instead of trusting an older
     /// [`super::RetentionPlan`]. It reads required objects through pinned packs, writes two bounded
     /// temporary files in the primary pack directory, synchronizes each file, then publishes the
-    /// pack before its index. The index is the visibility marker. An existing checksum-named file
-    /// is reused only when every byte matches. Old packs, loose objects, reflogs and alternates
-    /// remain untouched, including protected packs. Readers with pinned generations keep their
-    /// handles; new readers discover the indexed pair and existing readers can refresh explicitly.
+    /// pack before its index. Existing entries retain their compressed bytes and deltas when the
+    /// base is required too. OFS distances are adjusted for new positions; forward bases use REF
+    /// encoding. A delta whose base is omitted is materialized without another delta search.
+    /// Only loose objects enter the configured delta search. Logical input limits include reused
+    /// payloads, while only loose and materialized payloads remain in memory during writing.
+    /// The index is the visibility marker. An existing checksum-named file
+    /// is reused only when every byte matches, except that a valid legacy v1 index is retained
+    /// when its IDs, offsets and pack checksum match the generated v2 index. Old packs, loose
+    /// objects, reflogs and alternates remain untouched, including protected packs. Readers
+    /// with pinned generations keep their handles; new readers discover the indexed pair and
+    /// existing readers can refresh explicitly.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -107,7 +114,8 @@ impl Repository {
     /// replacing an existing artifact. Failure after pack publication can leave an unindexed pack;
     /// readers ignore it and a retry may reuse it. Cancellation after index publication reports
     /// success. Temporary files are cleaned up on ordinary failure but can survive process death.
-    /// File contents are synchronized; directory entries are not, so power-loss durability is not
+    /// New files and, on Unix, reused files are synchronized. Directory entries are not, so
+    /// power-loss durability is not
     /// promised. Publication assumes a trusted local filesystem with no in-place artifact edits.
     pub fn repack_retained(
         &self,
@@ -127,22 +135,44 @@ impl Repository {
         after_plan: impl FnOnce(),
     ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
-        let plan = self.plan_retention(policy, cancel);
+        let objects =
+            self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
+        let plan = self.plan_retention_with_store(policy, cancel, Some(&objects));
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
         check(cancel)?;
-        let objects =
-            self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
         let count = u32::try_from(plan.required.len())
             .map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let mut decoded = Vec::with_capacity(plan.required.len());
+        let mut remaining = plan.required.clone();
+        let mut reused = Vec::new();
         let mut bytes = 0u64;
-        for id in plan.required {
+        let mut packed_fallback = std::collections::BTreeSet::new();
+        for pack in objects.packed() {
+            for position in pack.positions() {
+                check(cancel)?;
+                let id = pack.identity(position)?;
+                // Keep the first representation even when its omitted base requires
+                // materialization; replacing it later can create a dependency cycle.
+                if !remaining.contains(&id) || packed_fallback.contains(&id) {
+                    continue;
+                }
+                let entry = pack.stored_entry(position, policy.read, cancel)?;
+                if entry.base.is_none_or(|base| plan.required.contains(&base)) {
+                    charge_input(entry.object_bytes as u64, &mut bytes, limits.write)?;
+                    remaining.remove(&entry.id);
+                    reused.push((pack, entry));
+                } else {
+                    packed_fallback.insert(entry.id);
+                }
+            }
+        }
+        let mut decoded = Vec::with_capacity(remaining.len());
+        for id in remaining {
             check(cancel)?;
             let object = objects
                 .read_controlled(id, policy.read, cancel)
@@ -150,34 +180,36 @@ impl Repository {
                 .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
             let len = object.data().len() as u64;
-            if len > limits.write.max_object_bytes {
-                return Err(PackWriteError::Limit("object bytes").into());
-            }
-            bytes = bytes
-                .checked_add(len)
-                .ok_or(PackWriteError::Limit("input bytes"))?;
-            if bytes > limits.write.max_input_bytes {
-                return Err(PackWriteError::Limit("input bytes").into());
-            }
+            charge_input(len, &mut bytes, limits.write)?;
             decoded.push((id, object));
         }
-        let input: Vec<_> = decoded
-            .iter()
-            .map(|(id, object)| PackObject {
+        let mut ordinary = Vec::new();
+        let mut loose = Vec::new();
+        for (id, object) in &decoded {
+            let input = PackObject {
                 id: *id,
                 kind: object.kind(),
                 data: object.data(),
-            })
-            .collect();
+            };
+            if packed_fallback.contains(id) {
+                ordinary.push(input);
+            } else {
+                loose.push(input);
+            }
+        }
         let directory = self.object_dir().join("pack");
         fs::create_dir_all(&directory)?;
         let mut pack = NamedTempFile::new_in(&directory)?;
         let mut index = NamedTempFile::new_in(&directory)?;
-        let write_result = write_controlled(
+        let input = crate::pack::write::RepackInput {
+            reused: &reused,
+            ordinary: &ordinary,
+            loose: &loose,
+        };
+        let write_result = crate::pack::write::write_reused(
             self.object_format(),
-            &input,
-            &mut pack,
-            &mut index,
+            input,
+            (&mut pack, &mut index),
             limits.write,
             limits.compression,
             &mut || {
@@ -188,16 +220,34 @@ impl Repository {
                 }
             },
         );
-        let written = match write_result {
+        let mut written = match write_result {
             Err(_) if cancel.load(Ordering::Relaxed) => return Err(RepackError::Cancelled),
             result => result?,
         };
+        // Deduplicating bases across packs can deepen a chain even when each input chain fit.
+        // Refuse that predictable read failure before making the replacement visible.
+        if written.deltas.max_depth > policy.read.max_delta_depth {
+            return Err(PackWriteError::Limit("output delta depth").into());
+        }
         pack.as_file().sync_all()?;
         index.as_file().sync_all()?;
         let basename = directory.join(format!("pack-{}", written.checksum));
-        publish_pair(pack, index, &basename, cancel, || {})?;
+        written.index_bytes = publish_pair(pack, index, &basename, cancel, || {}, Some(written))?;
         Ok(RepackPublished { written })
     }
+}
+
+fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {
+    if len > limits.max_object_bytes {
+        return Err(PackWriteError::Limit("object bytes"));
+    }
+    *bytes = bytes
+        .checked_add(len)
+        .ok_or(PackWriteError::Limit("input bytes"))?;
+    if *bytes > limits.max_input_bytes {
+        return Err(PackWriteError::Limit("input bytes"));
+    }
+    Ok(())
 }
 
 fn publish_pair(
@@ -206,13 +256,65 @@ fn publish_pair(
     basename: &Path,
     cancel: &AtomicBool,
     after_pack: impl FnOnce(),
-) -> Result<(), RepackError> {
+    written: Option<PackWritten>,
+) -> Result<u64, RepackError> {
     check(cancel)?;
     publish(pack, &basename.with_extension("pack"), cancel)?;
     after_pack();
     check(cancel)?;
-    publish(index, &basename.with_extension("idx"), cancel)?;
-    Ok(())
+    publish_index(index, &basename.with_extension("idx"), cancel, written)
+}
+
+// A byte-identical pack can already have a valid v1 index. Keep that readable pair rather than
+// treating its different index encoding as a checksum-name collision or replacing pinned files.
+fn publish_index(
+    temporary: NamedTempFile,
+    path: &Path,
+    cancel: &AtomicBool,
+    written: Option<PackWritten>,
+) -> Result<u64, RepackError> {
+    let candidate_len = temporary.as_file().metadata()?.len();
+    if let Some(written) = written {
+        match File::open(path) {
+            Ok(mut existing) => {
+                let existing_len = existing.metadata()?.len();
+                if existing_len >= 4 && existing_len <= candidate_len {
+                    let mut prefix = [0; 4];
+                    existing.read_exact(&mut prefix)?;
+                    if prefix != *b"\xfftOc" {
+                        check(cancel)?;
+                        let mut old = prefix.to_vec();
+                        existing.read_to_end(&mut old)?;
+                        let mut new = Vec::new();
+                        temporary.reopen()?.read_to_end(&mut new)?;
+                        let format = written.checksum.format();
+                        let end = usize::try_from(written.pack_bytes)
+                            .map_err(|_| PackWriteError::Limit("pack address space"))?
+                            - format.digest_len();
+                        let old = crate::pack::index::Index::parse(format, &old, end)?;
+                        let new = crate::pack::index::Index::parse(format, &new, end)?;
+                        if old.pack_hash == new.pack_hash
+                            && old.entries.len() == new.entries.len()
+                            && old
+                                .entries
+                                .iter()
+                                .zip(&new.entries)
+                                .all(|(old, new)| old.id == new.id && old.offset == new.offset)
+                        {
+                            check(cancel)?;
+                            #[cfg(unix)]
+                            existing.sync_all()?;
+                            return Ok(existing_len);
+                        }
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    publish(temporary, path, cancel)?;
+    Ok(candidate_len)
 }
 
 fn check(cancel: &AtomicBool) -> Result<(), RepackError> {
@@ -242,6 +344,8 @@ fn publish(temporary: NamedTempFile, path: &Path, cancel: &AtomicBool) -> Result
                     return Err(RepackError::Existing(path.into()));
                 }
                 if n == 0 {
+                    #[cfg(unix)]
+                    existing.sync_all()?;
                     return Ok(());
                 }
             }
@@ -254,7 +358,452 @@ fn publish(temporary: NamedTempFile, path: &Path, cancel: &AtomicBool) -> Result
 mod tests {
     use std::io::Write;
 
+    use rstest::rstest;
+
     use super::*;
+    use crate::{ObjectFormat, PackLimits, ReadLimits};
+
+    // Original pack bytes from gitformat-pack, with indexes built by girt. Git independently
+    // verifies the resulting packs in the integration suite; no implementation fixtures are used.
+    fn blob_pack(
+        repository: &Repository,
+        name: &str,
+        delta_kind: u8,
+        forward: bool,
+        malformed: bool,
+    ) -> (ObjectId, ObjectId, std::path::PathBuf) {
+        let format = repository.object_format();
+        let base = vec![b'a'; 128];
+        let mut target = base.clone();
+        target.push(b'b');
+        let base_id = ObjectId::for_blob(format, &base);
+        let target_id = ObjectId::for_blob(format, &target);
+        let ordinary = encoded(&[0xb0, 8], &base);
+        let program = if malformed {
+            vec![0x80, 1, 0x81, 1, 0]
+        } else {
+            vec![0x80, 1, 0x81, 1, 0x90, 0x80, 1, b'b']
+        };
+        let mut header = vec![(delta_kind << 4) | program.len() as u8];
+        if delta_kind == 6 {
+            header.push(ordinary.len() as u8);
+        } else {
+            header.extend_from_slice(base_id.as_bytes());
+        }
+        let delta = encoded(&header, &program);
+        let ordered = if forward {
+            vec![(target_id, delta), (base_id, ordinary)]
+        } else {
+            vec![(base_id, ordinary), (target_id, delta)]
+        };
+        let path = pack_entries(repository, name, ordered);
+        (base_id, target_id, path)
+    }
+
+    fn pack_entries(
+        repository: &Repository,
+        name: &str,
+        ordered: Vec<(ObjectId, Vec<u8>)>,
+    ) -> std::path::PathBuf {
+        let format = repository.object_format();
+        let mut bytes = b"PACK\0\0\0\x02".to_vec();
+        bytes.extend_from_slice(&(ordered.len() as u32).to_be_bytes());
+        let mut entries = Vec::new();
+        for (id, entry) in ordered {
+            entries.push(crate::pack::write::Entry {
+                id,
+                offset: bytes.len() as u64,
+                crc: crc32fast::hash(&entry),
+            });
+            bytes.extend_from_slice(&entry);
+        }
+        let mut hash = crate::object::Hasher::new(format);
+        hash.update(&bytes);
+        let checksum = hash.finalize();
+        bytes.extend_from_slice(checksum.as_bytes());
+        entries.sort_unstable_by_key(|entry| entry.id);
+        let index = crate::pack::write::encode_index(&entries, checksum).unwrap();
+        let directory = repository.object_dir().join("pack");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(name).with_extension("idx");
+        fs::write(&path, index).unwrap();
+        fs::write(path.with_extension("pack"), bytes).unwrap();
+        path
+    }
+
+    fn encoded(header: &[u8], payload: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(header.to_vec(), flate2::Compression::fast());
+        encoder.write_all(payload).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn bare(root: &Path, format: ObjectFormat) -> Repository {
+        Repository::init(format, root.join("repo"), crate::InitKind::Bare).unwrap()
+    }
+
+    #[rstest]
+    #[case::ofs_sha1(ObjectFormat::Sha1, 6, false)]
+    #[case::ofs_sha256(ObjectFormat::Sha256, 6, false)]
+    #[case::ref_sha1(ObjectFormat::Sha1, 7, false)]
+    #[case::ref_sha256(ObjectFormat::Sha256, 7, false)]
+    #[case::forward_sha1(ObjectFormat::Sha1, 7, true)]
+    #[case::forward_sha256(ObjectFormat::Sha256, 7, true)]
+    fn preserves_existing_compressed_entries_verbatim(
+        #[case] format: ObjectFormat,
+        #[case] kind: u8,
+        #[case] forward: bool,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), format);
+        let (base, target, old) = blob_pack(&repository, "a", kind, forward, false);
+        let policy = RetentionPolicy {
+            heads: vec![base, target],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        let new = repository
+            .object_dir()
+            .join("pack")
+            .join(format!("pack-{}.pack", written.checksum));
+        assert_eq!(
+            fs::read(new).unwrap(),
+            fs::read(old.with_extension("pack")).unwrap()
+        );
+        assert_eq!(written.deltas.entries, 1);
+        assert_eq!(written.deltas.candidates, 0);
+        assert_eq!(written.deltas.max_depth, 1);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn first_representation_prevents_cycles_between_duplicate_bases(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), format);
+        let c_data = vec![b'a'; 128];
+        let mut b_data = c_data.clone();
+        b_data.push(b'b');
+        let mut a_data = b_data.clone();
+        a_data.push(b'c');
+        let c = ObjectId::for_blob(format, &c_data);
+        let b = ObjectId::for_blob(format, &b_data);
+        let a = ObjectId::for_blob(format, &a_data);
+        pack_entries(
+            &repository,
+            "first",
+            vec![
+                (c, encoded(&[0xb0, 8], &c_data)),
+                (b, ref_delta(c, &[0x80, 1, 0x81, 1, 0x90, 0x80, 1, b'b'])),
+                (a, ref_delta(b, &[0x81, 1, 0x82, 1, 0x90, 0x81, 1, b'c'])),
+            ],
+        );
+        pack_entries(
+            &repository,
+            "second",
+            vec![
+                (a, encoded(&[0xb2, 8], &a_data)),
+                (b, ref_delta(a, &[0x82, 1, 0x81, 1, 0x90, 0x81])),
+            ],
+        );
+        let policy = RetentionPolicy {
+            heads: vec![a, b],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        assert_eq!(written.objects, 2);
+        assert_eq!(written.deltas.entries, 1);
+        assert_eq!(written.deltas.max_depth, 1);
+        let relative = format!("objects/pack/pack-{}.idx", written.checksum);
+        let output = std::process::Command::new("git")
+            .current_dir(repository.git_dir())
+            .args(["verify-pack", &relative])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    fn ref_delta(base: ObjectId, program: &[u8]) -> Vec<u8> {
+        let mut header = vec![0x70 | program.len() as u8];
+        header.extend_from_slice(base.as_bytes());
+        encoded(&header, program)
+    }
+
+    fn legacy_index(
+        path: std::path::PathBuf,
+        format: ObjectFormat,
+    ) -> (std::path::PathBuf, ObjectId, Vec<u8>) {
+        let pack = fs::read(path.with_extension("pack")).unwrap();
+        let parsed = crate::pack::index::Index::parse(
+            format,
+            &fs::read(&path).unwrap(),
+            pack.len() - format.digest_len(),
+        )
+        .unwrap();
+        let canonical = path.with_file_name(format!("pack-{}.idx", parsed.pack_hash));
+        fs::rename(
+            path.with_extension("pack"),
+            canonical.with_extension("pack"),
+        )
+        .unwrap();
+        fs::remove_file(path).unwrap();
+        let mut legacy = Vec::new();
+        for bucket in 0..256u16 {
+            let count = parsed
+                .entries
+                .iter()
+                .filter(|entry| u16::from(entry.id.as_bytes()[0]) <= bucket)
+                .count() as u32;
+            legacy.extend_from_slice(&count.to_be_bytes());
+        }
+        for entry in parsed.entries {
+            legacy.extend_from_slice(&(entry.offset as u32).to_be_bytes());
+            legacy.extend_from_slice(entry.id.as_bytes());
+        }
+        legacy.extend_from_slice(parsed.pack_hash.as_bytes());
+        let mut hash = crate::object::Hasher::new(format);
+        hash.update(&legacy);
+        legacy.extend_from_slice(hash.finalize().as_bytes());
+        fs::write(&canonical, &legacy).unwrap();
+        (canonical, parsed.pack_hash, legacy)
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn reuses_a_legacy_index_for_an_identical_pack(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), format);
+        let (base, target, path) = blob_pack(&repository, "input", 7, false, false);
+        let (canonical, checksum, legacy) = legacy_index(path, format);
+        let policy = RetentionPolicy {
+            heads: vec![base, target],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        assert_eq!(written.checksum, checksum);
+        assert_eq!(written.index_bytes, legacy.len() as u64);
+        assert_eq!(fs::read(canonical).unwrap(), legacy);
+    }
+
+    #[rstest]
+    #[case::ofs(6)]
+    #[case::ref_delta(7)]
+    fn materializes_delta_when_base_is_not_retained(#[case] kind: u8) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), ObjectFormat::Sha1);
+        let (_, target, _) = blob_pack(&repository, "a", kind, false, false);
+        let policy = RetentionPolicy {
+            heads: vec![target],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        assert_eq!(written.objects, 1);
+        assert_eq!(written.deltas.entries, 0);
+        let objects = repository.objects(PackLimits::default()).unwrap();
+        assert_eq!(
+            objects
+                .read(target, ReadLimits::default())
+                .unwrap()
+                .unwrap()
+                .data()
+                .len(),
+            129
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn merges_packs_and_adjusts_ofs_distance(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), format);
+        let (base, target, old) = blob_pack(&repository, "b", 6, false, false);
+        let filler = b"extra ordinary object";
+        let base_data = vec![b'a'; 128];
+        let filler_id = ObjectId::for_blob(format, filler);
+        let inputs = [
+            PackObject {
+                id: base,
+                kind: crate::ObjectKind::Blob,
+                data: &base_data,
+            },
+            PackObject {
+                id: filler_id,
+                kind: crate::ObjectKind::Blob,
+                data: filler,
+            },
+        ];
+        let (mut pack, mut index) = (Vec::new(), Vec::new());
+        crate::write_pack(
+            format,
+            &inputs,
+            &mut pack,
+            &mut index,
+            PackWriteLimits::default(),
+        )
+        .unwrap();
+        let first = old.with_file_name("a.idx");
+        fs::write(&first, index).unwrap();
+        fs::write(first.with_extension("pack"), pack).unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![base, target, filler_id],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        assert_eq!(written.objects, 3);
+        assert_eq!(written.deltas.entries, 1);
+        let path =
+            std::path::PathBuf::from("objects/pack").join(format!("pack-{}.idx", written.checksum));
+        let output = std::process::Command::new("git")
+            .current_dir(repository.git_dir())
+            .args(["verify-pack", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let objects = repository.objects(PackLimits::default()).unwrap();
+        assert_eq!(
+            objects
+                .read(target, ReadLimits::default())
+                .unwrap()
+                .unwrap()
+                .data()
+                .len(),
+            129
+        );
+    }
+
+    #[test]
+    fn malformed_delta_never_publishes_a_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), ObjectFormat::Sha1);
+        let (base, target, old) = blob_pack(&repository, "a", 7, false, true);
+        let before = fs::read(old.with_extension("pack")).unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![base, target],
+            ..Default::default()
+        };
+        assert!(matches!(
+            repository.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false)),
+            Err(RepackError::Incomplete(_))
+        ));
+        assert_eq!(fs::read(old.with_extension("pack")).unwrap(), before);
+        assert_eq!(
+            fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            2
+        );
+    }
+
+    #[rstest]
+    #[case::object(PackWriteLimits { max_object_bytes: 128, ..Default::default() }, "object bytes")]
+    #[case::input(PackWriteLimits { max_input_bytes: 256, ..Default::default() }, "input bytes")]
+    #[case::count(PackWriteLimits { max_objects: 1, ..Default::default() }, "object count")]
+    #[case::pack(PackWriteLimits { max_pack_bytes: 16, ..Default::default() }, "pack bytes")]
+    #[case::index(PackWriteLimits { max_index_bytes: 1000, ..Default::default() }, "index bytes")]
+    fn reused_objects_still_obey_limits(#[case] write: PackWriteLimits, #[case] expected: &str) {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), ObjectFormat::Sha1);
+        let (base, target, _) = blob_pack(&repository, "a", 6, false, false);
+        let policy = RetentionPolicy {
+            heads: vec![base, target],
+            ..Default::default()
+        };
+        let limits = RepackLimits {
+            write,
+            ..Default::default()
+        };
+        assert!(matches!(
+            repository.repack_retained(&policy, limits, &AtomicBool::new(false)),
+            Err(RepackError::Write(PackWriteError::Limit(actual))) if actual == expected
+        ));
+        assert_eq!(
+            fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn new_loose_objects_use_delta_search() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), ObjectFormat::Sha1);
+        let data: Vec<u8> = (0..4096u32)
+            .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
+            .collect();
+        let a = repository.loose_objects().write_blob(&data).unwrap();
+        let mut similar = data;
+        similar[0] = b'b';
+        let b = repository.loose_objects().write_blob(&similar).unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![a, b],
+            ..Default::default()
+        };
+        let written = repository
+            .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap()
+            .written;
+        assert_eq!(written.deltas.entries, 1);
+        assert!(written.deltas.candidates > 0);
+    }
+
+    #[test]
+    fn output_depth_limit_refuses_publication_for_loose_delta_search() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = bare(root.path(), ObjectFormat::Sha1);
+        let data: Vec<u8> = (0..4096u32)
+            .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
+            .collect();
+        let a = repository.loose_objects().write_blob(&data).unwrap();
+        let mut similar = data;
+        similar[0] = b'b';
+        let b = repository.loose_objects().write_blob(&similar).unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![a, b],
+            read: ReadLimits {
+                max_delta_depth: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            repository.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false)),
+            Err(RepackError::Write(PackWriteError::Limit(
+                "output delta depth"
+            )))
+        ));
+        assert_eq!(
+            fs::read_dir(repository.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(
+            repository
+                .loose_objects()
+                .read_blob(a, 16_384)
+                .unwrap()
+                .len(),
+            16_384
+        );
+    }
 
     #[test]
     fn cancellation_between_publications_leaves_only_an_unindexed_pack() {
@@ -265,11 +814,18 @@ mod tests {
         pack.write_all(b"pack bytes").unwrap();
         index.write_all(b"index bytes").unwrap();
         let cancelled = AtomicBool::new(false);
-        let result = publish_pair(pack, index, &basename, &cancelled, || {
-            assert!(basename.with_extension("pack").exists());
-            assert!(!basename.with_extension("idx").exists());
-            cancelled.store(true, Ordering::Relaxed);
-        });
+        let result = publish_pair(
+            pack,
+            index,
+            &basename,
+            &cancelled,
+            || {
+                assert!(basename.with_extension("pack").exists());
+                assert!(!basename.with_extension("idx").exists());
+                cancelled.store(true, Ordering::Relaxed);
+            },
+            None,
+        );
         assert!(matches!(result, Err(RepackError::Cancelled)));
         assert_eq!(
             fs::read(basename.with_extension("pack")).unwrap(),

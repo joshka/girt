@@ -75,6 +75,7 @@ fn pack(error: &crate::PackWriteError) -> &'static str {
         ObjectFormat(_) => "unsupported",
         Identity { .. } => "corrupt",
         ConflictingDuplicate(_) => "conflict",
+        Read(error) => object(error),
         Limit(_) => "limit",
         Io(e) => io(e),
     }

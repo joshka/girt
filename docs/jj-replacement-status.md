@@ -79,6 +79,46 @@ construction still buffers its output.
 A repeat with the final release build took 19.57 s and peaked at 404 MiB. That clone received
 131,149 objects, produced a 199.65 MiB pack/index pair, and passed `git fsck --connectivity-only`.
 
+### Repacking with existing deltas
+
+Unreleased girt repacking streams verified compressed entries from pinned packs, preserving their
+delta programs. It adjusts OFS distances when entries move and materializes an object when its base
+is omitted. New delta searches apply only to loose objects. Retention planning and repacking share
+one pinned generation; identical root sets reuse their verified reachable closure.
+
+`run_maintenance` publishes and synchronizes the replacement before retiring old indexes and packs.
+An old pack is removed only when every object has a verified copy in the replacement, including
+unreachable objects. Fully covered recent packs can be removed; `.keep` packs, unsupported sidecars,
+and packs containing omitted objects remain. Pinned readers keep their open handles after unlinking
+on Unix. New readers rescan a pack directory once if a listed pair disappears during opening;
+persistent missing pairs remain errors. Directory durability and destructive maintenance remain
+unsupported on other platforms.
+
+[scripts/jj-e2e/jj-repack.patch](../scripts/jj-e2e/jj-repack.patch) switches the jj-on-girt adapter
+back to `run_maintenance` and restores `jj util gc` in the pack-files colocation test. Apply it to
+the `joshka/girt-backend` checkout with `patch -p1`, then build against unreleased girt as described
+below. The patch is also usable in a disposable copy for acceptance checks, without modifying the
+shared jj checkout.
+
+Build `cargo build --release --example repack_repository`, then use
+[scripts/jj-e2e/bench-repack.sh](../scripts/jj-e2e/bench-repack.sh) to compare girt and Git on
+copies of one cloned object store. Hold the shared timing lock while running it. The harness reports
+wall time, pack bytes and peak RSS, and runs full `git fsck` and `git verify-pack` on both results.
+Clone setup and copying happen before measurement, so these are warm filesystem measurements.
+
+The paired run on 2026-10-10 used 179,130 objects from the same mirror, on macOS arm64 with Git
+2.56.0. Existing deltas accounted for 135,897 entries. The original pack was 223,983,019 bytes; girt
+retained that size exactly, within the 10% acceptance target.
+
+| Repack | Wall time | Pack bytes  | Peak RSS   |
+| ------ | --------- | ----------- | ---------- |
+| girt   | 12.08 s   | 223,983,019 | 476.09 MiB |
+| Git    | 1.85 s    | 223,900,090 | 334.09 MiB |
+
+Both resulting stores passed full `git fsck` and `git verify-pack`. These measurements cover
+`repack_retained`; jj GC also expires reflogs, repeats retention checks, verifies the replacement,
+and retires old packs, so its total time is higher.
+
 ## Open work
 
 Tracked as [GitHub issues](https://github.com/joshka/girt/issues?q=is%3Aissue+is%3Aopen+label%3Ajj)

@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io;
 #[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,10 +90,11 @@ impl Repository {
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
     /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
     /// synchronizes the pack and object directories, verifies each retained ID through that pair,
-    /// and compares
-    /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
-    /// packs and packs with unsupported sidecars remain untouched. Optional `.rev` and `.bitmap`
-    /// sidecars are retired with their pair. Alternate stores are never
+    /// and compares old pack generations before deleting an old index followed by its pack.
+    /// Every object in an old pack must have a verified copy in the replacement, including
+    /// unreachable objects; otherwise that pair stays. Fully covered recent packs can be retired.
+    /// `.keep` packs and packs with unsupported sidecars remain untouched. Optional `.rev` and
+    /// `.bitmap` sidecars are retired with their pair. Alternate stores are never
     /// mutated. A replacement identical to an old pair is retained. On non-Unix platforms the
     /// operation refuses before publication because directory durability is not established.
     ///
@@ -233,7 +236,40 @@ impl Repository {
         if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
             return Err(failed(RetireCause::Changed, report));
         }
-        let retiring = old_indices(&before, &first, &replacement_pack);
+        let replacement_metadata = fs::metadata(&replacement_pack)
+            .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
+        let mut retiring = Vec::new();
+        for index in old_indices(&before, &replacement_pack) {
+            check(cancel, &report)?;
+            let metadata = fs::metadata(index.with_extension("pack"))
+                .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
+            // Different spellings can name the replacement on a case-insensitive filesystem.
+            // Conservatively retain hard-link aliases too; path equality alone is insufficient.
+            if metadata.dev() == replacement_metadata.dev()
+                && metadata.ino() == replacement_metadata.ino()
+            {
+                continue;
+            }
+            let mut old_budget = policy.packs;
+            let old = FilePack::open(self.object_format(), &index, &mut old_budget, cancel)
+                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            let mut covered = true;
+            for position in old.positions() {
+                check(cancel, &report)?;
+                let id = old
+                    .identity(position)
+                    .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+                if !first.required.contains(&id) {
+                    covered = false;
+                    break;
+                }
+            }
+            // Even an unreachable packed object keeps its last readable copy. Recent packs
+            // need no grace period once every entry has a verified durable replacement.
+            if covered {
+                retiring.push(index);
+            }
+        }
         if !retiring.is_empty() {
             // A multi-pack index (and its bitmaps) naming a retired pack would make the object
             // store unreadable to Git; Git rebuilds it when needed, as `git repack -d` does.
@@ -345,11 +381,7 @@ fn same_old_generation(
 }
 
 #[cfg(unix)]
-fn old_indices(
-    before: &BTreeMap<PathBuf, Stamp>,
-    plan: &RetentionPlan,
-    new_pack: &Path,
-) -> Vec<PathBuf> {
+fn old_indices(before: &BTreeMap<PathBuf, Stamp>, new_pack: &Path) -> Vec<PathBuf> {
     before
         .keys()
         .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
@@ -357,7 +389,6 @@ fn old_indices(
             let pack = index.with_extension("pack");
             pack != new_pack
                 && before.contains_key(&pack)
-                && !plan.protected_packs.contains(&pack)
                 && !before.keys().any(|path| {
                     path.file_stem() == pack.file_stem()
                         && !matches!(
@@ -470,7 +501,45 @@ mod tests {
             recent_cutoff: SystemTime::now() + Duration::from_secs(60),
             ..Default::default()
         };
+        let extra = repository
+            .loose_objects()
+            .write_blob(b"new retained blob")
+            .unwrap();
+        let policy = RetentionPolicy {
+            heads: vec![extra],
+            ..policy
+        };
         (root, repository, policy, old_index)
+    }
+
+    #[test]
+    fn replacement_alias_is_never_unlinked() {
+        let (root, repository, mut policy, old_index) = fixture();
+        policy.heads.clear();
+        let name = old_index
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_ascii_uppercase();
+        let alias = old_index.with_file_name(name).with_extension("idx");
+        fs::rename(&old_index, &alias).unwrap();
+        fs::rename(
+            old_index.with_extension("pack"),
+            alias.with_extension("pack"),
+        )
+        .unwrap();
+        if !old_index.exists() {
+            eprintln!("case-insensitive filename alias unavailable on this filesystem");
+            return;
+        }
+        let report = repository
+            .retire_old_packs_exclusive(&policy, RepackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
+        assert!(report.removed.is_empty());
+        assert!(old_index.exists());
+        assert!(old_index.with_extension("pack").exists());
+        git(root.path(), &["fsck", "--full"], b"");
     }
 
     #[test]

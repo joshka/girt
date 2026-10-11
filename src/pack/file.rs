@@ -78,6 +78,19 @@ pub(crate) struct FilePack {
     ranges: Vec<(usize, usize)>,
     offsets: Vec<usize>,
     base_cache: super::reader::BaseCache,
+    verified_sizes: Mutex<std::collections::HashMap<usize, usize>>,
+}
+
+/// Framing from a pinned pair; payload validity is established by the retention scan.
+pub(crate) struct StoredEntry {
+    pub id: ObjectId,
+    pub offset: usize,
+    pub end: usize,
+    pub header: Vec<u8>,
+    pub kind: u8,
+    pub base: Option<ObjectId>,
+    pub data_start: usize,
+    pub object_bytes: usize,
 }
 
 impl FilePack {
@@ -152,7 +165,74 @@ impl FilePack {
             ranges,
             offsets: index.offsets,
             base_cache: super::reader::BaseCache::new(),
+            verified_sizes: Mutex::new(std::collections::HashMap::new()),
         })
+    }
+
+    pub(crate) fn positions(&self) -> impl Iterator<Item = usize> + '_ {
+        self.offsets.iter().copied()
+    }
+
+    pub(crate) fn stored_entry(
+        &self,
+        position: usize,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<StoredEntry, Error> {
+        // An alternate pack can lose lookup precedence to a primary loose copy. Verify that
+        // candidate too rather than borrowing identity validation from another representation.
+        let verified = self
+            .verified_sizes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key(&position);
+        if !verified {
+            self.read(position, limits, cancelled)?;
+        }
+        let entry = self.entry(position)?;
+        let header = super::reader::header(self, &entry)?;
+        let base = header
+            .base
+            .map(|position| self.identity(position))
+            .transpose()?;
+        Ok(StoredEntry {
+            id: entry.id,
+            offset: entry.offset,
+            end: entry.end,
+            header: self
+                .pack
+                .bytes(entry.offset, entry.offset + header.size_bytes)?,
+            kind: header.kind,
+            base,
+            data_start: header.data_start,
+            object_bytes: *self
+                .verified_sizes
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(&position)
+                .ok_or(Error::Corrupt("entry reuse requires verified identity"))?,
+        })
+    }
+
+    pub(crate) fn copy_bytes(
+        &self,
+        start: usize,
+        end: usize,
+        output: &mut impl std::io::Write,
+        check: &mut impl FnMut() -> Result<(), super::PackWriteError>,
+    ) -> Result<(), super::PackWriteError> {
+        let mut buffer = [0; 64 * 1024];
+        let mut offset = start;
+        while offset < end {
+            check()?;
+            let count = buffer.len().min(end - offset);
+            self.pack.read_at(offset, &mut buffer[..count])?;
+            output
+                .write_all(&buffer[..count])
+                .map_err(super::write::output_error)?;
+            offset += count;
+        }
+        Ok(())
     }
 
     pub(crate) fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
@@ -174,7 +254,7 @@ impl FilePack {
         Ok(None)
     }
 
-    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+    pub(crate) fn identity(&self, position: usize) -> Result<ObjectId, Error> {
         let width = self.format.digest_len();
         let start = if self.legacy {
             1028 + position * (width + 4)
@@ -190,7 +270,12 @@ impl FilePack {
         limits: ReadLimits,
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
-        decode(self, position, limits, cancelled)
+        let object = decode(self, position, limits, cancelled)?;
+        self.verified_sizes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(position, object.data().len());
+        Ok(object)
     }
 }
 
@@ -232,6 +317,7 @@ impl Source for FilePack {
     }
 
     fn entry(&self, position: usize) -> Result<Entry, Error> {
+        self.index.check_not_truncated()?;
         let (offset, end) = self.ranges[position];
         Ok(Entry {
             id: self.identity(position)?,

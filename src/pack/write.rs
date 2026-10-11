@@ -107,6 +107,9 @@ pub enum PackWriteError {
     /// A configured resource bound or representable format limit was exceeded.
     #[error("pack writing limit exceeded: {0}")]
     Limit(&'static str),
+    /// A pinned compressed entry could not be read.
+    #[error(transparent)]
+    Read(#[from] crate::ObjectReadError),
     /// A destination or compression operation failed; partial artifacts must be discarded.
     #[error("pack artifact I/O failed")]
     Io(#[from] io::Error),
@@ -289,21 +292,7 @@ pub(crate) fn write_controlled_observed(
         };
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
-        if let Some(selected) = selected {
-            pack.put(&selected.bytes)?;
-            depths.push(selected.depth);
-            if selected.depth != 0 {
-                deltas.entries += 1;
-                deltas.max_depth = deltas.max_depth.max(selected.depth);
-            }
-        } else {
-            pack.put(&entry_header(object.kind, object.data.len() as u64))?;
-            // Finish explicitly so buffered-write failures are reported on the success path.
-            let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
-            encoder.write_all(object.data).map_err(output_error)?;
-            encoder.finish().map_err(output_error)?;
-            depths.push(0);
-        }
+        depths.push(write_entry(object, selected, &mut pack, &mut deltas)?);
         entries.push(Entry {
             id: object.id,
             offset,
@@ -326,9 +315,198 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
+/// Combines scan-validated compressed entries with newly encoded loose objects.
+/// Pack order preserves source order so OFS bases precede their users. When a duplicate base
+/// was chosen from another pack or a loose fallback, REF_DELTA permits a forward reference.
+pub(crate) struct RepackInput<'a> {
+    pub reused: &'a [(&'a super::FilePack, super::StoredEntry)],
+    pub ordinary: &'a [PackObject<'a>],
+    pub loose: &'a [PackObject<'a>],
+}
+
+pub(crate) fn write_reused(
+    format: crate::ObjectFormat,
+    input: RepackInput<'_>,
+    outputs: (&mut impl Write, &mut impl Write),
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<PackWritten, PackWriteError> {
+    let RepackInput {
+        reused,
+        ordinary,
+        loose,
+    } = input;
+    let ordinary = validate(format, ordinary, limits, check)?;
+    let loose = validate(format, loose, limits, check)?;
+    let count = reused
+        .len()
+        .checked_add(ordinary.len())
+        .and_then(|count| count.checked_add(loose.len()))
+        .ok_or(PackWriteError::Limit("object count"))?;
+    let count = u32::try_from(count).map_err(|_| PackWriteError::Limit("object count"))?;
+    if count > limits.max_objects {
+        return Err(PackWriteError::Limit("object count"));
+    }
+    let reused_depth = reused_depth(reused, check)?;
+    let (pack, index) = outputs;
+    let mut pack = Output::new(format, pack, limits.max_pack_bytes, "pack bytes");
+    pack.put(b"PACK")?;
+    pack.put(&2u32.to_be_bytes())?;
+    pack.put(&count.to_be_bytes())?;
+    let mut entries = Vec::with_capacity(count as usize);
+    let mut offsets = std::collections::HashMap::new();
+    let mut deltas = DeltaStats {
+        max_depth: reused_depth,
+        ..Default::default()
+    };
+    for (source, entry) in reused {
+        check()?;
+        let offset = pack.bytes;
+        pack.crc = crc32fast::Hasher::new();
+        if entry.kind == 6 {
+            let base = entry.base.expect("OFS_DELTA framing has a base");
+            if let Some(&base_offset) = offsets.get(&base) {
+                pack.put(&entry.header)?;
+                pack.put(&offset_distance(offset - base_offset))?;
+            } else {
+                let mut header = entry.header.clone();
+                header[0] = (header[0] & !0x70) | 0x70;
+                pack.put(&header)?;
+                pack.put(base.as_bytes())?;
+            }
+            source.copy_bytes(entry.data_start, entry.end, &mut pack, check)?;
+        } else {
+            source.copy_bytes(entry.offset, entry.end, &mut pack, check)?;
+        }
+        deltas.entries += u32::from(entry.base.is_some());
+        offsets.insert(entry.id, offset);
+        entries.push(Entry {
+            id: entry.id,
+            offset,
+            crc: pack.crc.clone().finalize(),
+        });
+    }
+    for object in ordinary {
+        check()?;
+        let offset = pack.bytes;
+        pack.crc = crc32fast::Hasher::new();
+        write_entry(&object, None, &mut pack, &mut deltas)?;
+        entries.push(Entry {
+            id: object.id,
+            offset,
+            crc: pack.crc.clone().finalize(),
+        });
+    }
+    let mut depths = Vec::with_capacity(loose.len());
+    for (position, object) in loose.iter().enumerate() {
+        check()?;
+        let selected = match compression {
+            PackCompression::Ordinary => None,
+            PackCompression::Delta(options) => {
+                select_entry(&loose, position, &depths, options, &mut deltas, check)?
+            }
+        };
+        let offset = pack.bytes;
+        pack.crc = crc32fast::Hasher::new();
+        depths.push(write_entry(object, selected, &mut pack, &mut deltas)?);
+        entries.push(Entry {
+            id: object.id,
+            offset,
+            crc: pack.crc.clone().finalize(),
+        });
+    }
+    let checksum = pack.finish()?;
+    let pack_bytes = pack.bytes;
+    entries.sort_unstable_by_key(|entry| entry.id);
+    let mut index = Output::new(format, index, limits.max_index_bytes, "index bytes");
+    write_index(&entries, checksum, &mut index)?;
+    index.finish()?;
+    Ok(PackWritten {
+        checksum,
+        objects: count,
+        pack_bytes,
+        index_bytes: index.bytes,
+        deltas,
+    })
+}
+
+fn reused_depth(
+    entries: &[(&super::FilePack, super::StoredEntry)],
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<usize, PackWriteError> {
+    let bases: std::collections::HashMap<_, _> = entries
+        .iter()
+        .map(|(_, entry)| (entry.id, entry.base))
+        .collect();
+    let mut depths = std::collections::HashMap::new();
+    let mut maximum = 0;
+    for (_, entry) in entries {
+        let mut id = entry.id;
+        let mut pending = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while !depths.contains_key(&id) {
+            check()?;
+            if !seen.insert(id) {
+                return Err(crate::ObjectReadError::DeltaCycle.into());
+            }
+            match bases.get(&id).copied().flatten() {
+                Some(base) => {
+                    pending.push(id);
+                    id = base;
+                }
+                None => {
+                    depths.insert(id, 0usize);
+                }
+            }
+        }
+        let mut depth = depths[&id];
+        while let Some(id) = pending.pop() {
+            depth += 1;
+            depths.insert(id, depth);
+        }
+        maximum = maximum.max(depth);
+    }
+    Ok(maximum)
+}
+
+// The format's offset encoding adds one at each continuation, unlike its size encoding.
+fn offset_distance(mut distance: u64) -> Vec<u8> {
+    let mut bytes = vec![(distance & 127) as u8];
+    while distance >= 128 {
+        distance = (distance >> 7) - 1;
+        bytes.push((distance as u8 & 127) | 128);
+    }
+    bytes.reverse();
+    bytes
+}
+
 struct SelectedEntry {
     bytes: Vec<u8>,
     depth: usize,
+}
+
+fn write_entry(
+    object: &PackObject<'_>,
+    selected: Option<SelectedEntry>,
+    pack: &mut Output<'_, impl Write>,
+    stats: &mut DeltaStats,
+) -> Result<usize, PackWriteError> {
+    if let Some(selected) = selected {
+        pack.put(&selected.bytes)?;
+        if selected.depth != 0 {
+            stats.entries += 1;
+            stats.max_depth = stats.max_depth.max(selected.depth);
+        }
+        Ok(selected.depth)
+    } else {
+        pack.put(&entry_header(object.kind, object.data.len() as u64))?;
+        // Finish explicitly so buffered-write failures are reported on the success path.
+        let mut encoder = ZlibEncoder::new(pack, Compression::new(6));
+        encoder.write_all(object.data).map_err(output_error)?;
+        encoder.finish().map_err(output_error)?;
+        Ok(0)
+    }
 }
 
 fn select_entry(
@@ -545,7 +723,7 @@ fn write_index(
 #[error("output limit: {0}")]
 struct OutputLimit(&'static str);
 
-fn output_error(error: io::Error) -> PackWriteError {
+pub(crate) fn output_error(error: io::Error) -> PackWriteError {
     if let Some(limit) = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<OutputLimit>())
@@ -609,6 +787,19 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case::one(1, vec![1])]
+    #[case::last_single(127, vec![127])]
+    #[case::first_double(128, vec![128, 0])]
+    #[case::last_double(16_511, vec![255, 127])]
+    #[case::first_triple(16_512, vec![128, 128, 0])]
+    fn encodes_ofs_distances_at_continuation_boundaries(
+        #[case] distance: u64,
+        #[case] expected: Vec<u8>,
+    ) {
+        assert_eq!(offset_distance(distance), expected);
+    }
 
     fn blob(data: &[u8]) -> PackObject<'_> {
         PackObject {
