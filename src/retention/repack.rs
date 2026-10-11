@@ -118,8 +118,9 @@ impl Repository {
     /// replacing an existing artifact. Failure after pack publication can leave an unindexed pack;
     /// readers ignore it and a retry may reuse it. Cancellation after index publication reports
     /// success. Temporary files are cleaned up on ordinary failure but can survive process death.
-    /// File contents are synchronized; directory entries are not, so power-loss durability is not
-    /// promised. Publication assumes a trusted local filesystem with no in-place artifact edits.
+    /// On Unix, the pack directory is synchronized before index publication. Additive
+    /// publication does not promise durability of the index name; retirement synchronizes both
+    /// names before removing old storage. Publication assumes a trusted local filesystem with no in-place artifact edits.
     pub fn repack_retained(
         &self,
         policy: &RetentionPolicy,
@@ -280,6 +281,9 @@ fn publish_pair(
 ) -> Result<(), RepackError> {
     check(cancel)?;
     publish(pack, &basename.with_extension("pack"), cancel)?;
+    // Persist the pack name before publishing its index visibility marker.
+    #[cfg(unix)]
+    File::open(basename.parent().expect("pack basename has a directory"))?.sync_all()?;
     after_pack();
     check(cancel)?;
     publish(index, &basename.with_extension("idx"), cancel)?;
