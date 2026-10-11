@@ -17,8 +17,7 @@ use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository
 /// remain decoded in memory until the pack is written.
 #[derive(Debug, Clone, Copy)]
 pub struct RepackLimits {
-    /// Bounds object count and both output artifacts. Object and input byte bounds apply to
-    /// decoded objects that are not copied from an existing pack.
+    /// Bounds object count, logical payload bytes (including copied objects), and output artifacts.
     pub write: PackWriteLimits,
     /// Selects delta search among objects not already packed (default: bounded deltas).
     pub compression: PackCompression,
@@ -144,7 +143,7 @@ impl Repository {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
-        self.publish_required(&plan.required, &plan.protected_packs, policy, limits, cancel)
+        self.publish_required(&plan, policy, limits, cancel)
             .map(|(published, _)| published)
     }
 
@@ -156,8 +155,7 @@ impl Repository {
     /// protected copy again before unlinking anything.
     pub(super) fn publish_required(
         &self,
-        required: &std::collections::BTreeSet<ObjectId>,
-        protected: &std::collections::BTreeSet<std::path::PathBuf>,
+        plan: &super::RetentionPlan,
         policy: &RetentionPolicy,
         limits: RepackLimits,
         cancel: &AtomicBool,
@@ -165,6 +163,8 @@ impl Repository {
         check(cancel)?;
         let objects =
             self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
+        let required = &plan.required;
+        let protected = &plan.protected_packs;
         let protected_names: std::collections::BTreeSet<_> = protected
             .iter()
             .filter_map(|path| path.file_name().map(std::ffi::OsStr::to_owned))
@@ -173,7 +173,6 @@ impl Repository {
         let mut held = std::collections::BTreeSet::new();
         let count =
             u32::try_from(required.len()).map_err(|_| PackWriteError::Limit("object count"))?;
-        let _ = count;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
@@ -202,6 +201,7 @@ impl Repository {
                         held.insert(id);
                         continue 'required;
                     }
+                    charge_input(plan.object_sizes[&id], &mut bytes, limits.write)?;
                     packed.push(Packed { id, pack, position });
                     continue 'required;
                 }
@@ -211,16 +211,7 @@ impl Repository {
                 .map_err(|source| RepackError::Read { id, source })?
                 .or_else(|| super::canonical_empty_tree(id))
                 .ok_or(RepackError::Missing(id))?;
-            let len = object.data().len() as u64;
-            if len > limits.write.max_object_bytes {
-                return Err(PackWriteError::Limit("object bytes").into());
-            }
-            bytes = bytes
-                .checked_add(len)
-                .ok_or(PackWriteError::Limit("input bytes"))?;
-            if bytes > limits.write.max_input_bytes {
-                return Err(PackWriteError::Limit("input bytes").into());
-            }
+            charge_input(object.data().len() as u64, &mut bytes, limits.write)?;
             decoded.push((id, object));
         }
         let fresh: Vec<_> = decoded
@@ -267,6 +258,17 @@ impl Repository {
         publish_pair(pack, index, &basename, cancel, || {})?;
         Ok((RepackPublished { written }, held))
     }
+}
+
+fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<(), PackWriteError> {
+    if len > limits.max_object_bytes {
+        return Err(PackWriteError::Limit("object bytes"));
+    }
+    *bytes = bytes.checked_add(len).ok_or(PackWriteError::Limit("input bytes"))?;
+    if *bytes > limits.max_input_bytes {
+        return Err(PackWriteError::Limit("input bytes"));
+    }
+    Ok(())
 }
 
 fn publish_pair(

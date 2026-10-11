@@ -175,6 +175,8 @@ pub struct RetentionPlan {
     /// One-based record positions eligible for expiry in each stored log.
     pub reflog_expiry_candidates: BTreeMap<ReflogSource, Vec<usize>>,
     observed_logs: Vec<ObservedLog>,
+    // Payload sizes from the full scan, including reconstructed delta results.
+    object_sizes: BTreeMap<ObjectId, u64>,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
     /// Packs protected by `.keep` or by a recent pack modification time.
@@ -243,6 +245,7 @@ impl Repository {
             required: BTreeSet::new(),
             reflog_expiry_candidates: BTreeMap::new(),
             observed_logs: Vec::new(),
+            object_sizes: BTreeMap::new(),
             reachable: BTreeSet::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
@@ -280,7 +283,7 @@ impl Repository {
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        match walk(self, &store, policy, cancel, &plan.roots) {
+        match walk(self, &store, policy, cancel, &plan.roots, &mut plan.object_sizes) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
@@ -291,7 +294,7 @@ impl Repository {
         let live = if plan.strong_roots == plan.roots {
             plan.reachable.clone()
         } else {
-            match walk(self, &store, policy, cancel, &plan.strong_roots) {
+            match walk(self, &store, policy, cancel, &plan.strong_roots, &mut plan.object_sizes) {
                 Ok(reachable) => reachable,
                 Err(reason) => {
                     plan.fail(reason);
@@ -325,7 +328,7 @@ impl Repository {
         } else if required_roots == plan.strong_roots {
             plan.required = live;
         } else {
-            match walk(self, &store, policy, cancel, &required_roots) {
+            match walk(self, &store, policy, cancel, &required_roots, &mut plan.object_sizes) {
                 Ok(required) => plan.required = required,
                 Err(reason) => plan.fail(reason),
             }
@@ -640,6 +643,7 @@ fn walk(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
+    object_sizes: &mut BTreeMap<ObjectId, u64>,
 ) -> Result<BTreeSet<ObjectId>, String> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
     let mut reachable = BTreeSet::new();
@@ -718,6 +722,7 @@ fn walk(
             }
         }
         kinds.insert(id, object.kind());
+        object_sizes.insert(id, object.data().len() as u64);
         reachable.insert(id);
     }
     Ok(reachable)

@@ -176,8 +176,7 @@ impl Repository {
         // The isolated first scan is still current; the post-publication scan rechecks it.
         let (published, held) = current
             .publish_required(
-                &first.required,
-                &first.protected_packs,
+                &first,
                 &keep_all_logs,
                 limits,
                 cancel,
