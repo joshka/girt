@@ -25,24 +25,23 @@ begins.
 
 1. **Failure-mode inventory.** Walk every class and state whether it applies and why. "Does not
    apply" needs a reason, such as "this phase deletes no objects".
-   - *Last readable copy:* the change could remove the only copy that decodes to the right object.
-     Index membership, CRCs, checksums and header-only checks show that a copy exists, not that it
-     reconstructs the object.
+   - *Last readable copy:* the change could remove the only copy that decodes to the right object
+     ([rule](storage-safety.md#last-readable-copy)).
    - *Identity of reused bytes:* copied or reused bytes carry a claimed identity that nothing
      verified, such as a delta base chosen by ID from another pack.
-   - *Resource and depth limits:* pieces valid in their own source combine past a reader limit, such
-     as delta chains exceeding `max_delta_depth`, and the result is published before the limit is
-     checked.
-   - *Snapshot consistency:* the plan and the action observe different stores, such as a store
-     reopened between scanning and copying.
+   - *Resource and depth limits:* pieces valid in their own source combine past a reader limit
+     ([rule](storage-safety.md#bound-combined-data)).
+   - *Snapshot consistency:* the plan and the action observe different stores
+     ([rule](storage-safety.md#one-pinned-snapshot)).
    - *Store precedence:* with alternates or duplicate copies, the copy taken differs from the one
-     object lookup would return.
-   - *Protected files:* `.keep` packs, recent packs and alternates are rewritten, duplicated into
-     new output on every run, or used as proof that an object is safe to omit.
+     object lookup would return ([rule](storage-safety.md#lookup-copy)).
+   - *Protected files:* `.keep` packs, recent packs and alternates are rewritten, duplicated or used
+     as proof ([rule](storage-safety.md#protected-data)).
    - *Crash ordering:* a failure between publishing and retiring, or an unlink persisted before the
-     sync that should precede it, leaves a repository that does not open cold.
+     sync that should precede it, leaves a repository that does not open cold
+     ([rule](storage-safety.md#publish-verify-retire)).
    - *Budgets and statistics:* copied or skipped data escapes the caller's limits or the reported
-     counts.
+     counts ([rule](storage-safety.md#fast-path-contracts)).
    - *Git fidelity:* Git cannot read the output, or the retained set differs from Git's equivalent
      operation.
    - *Concurrency with readers:* open readers, concurrent Git processes or a second maintenance run
@@ -55,11 +54,9 @@ begins.
    caller budgets. Commit the new tests before the design round; the mapping is the implementer's
    target and the reviewer's checklist.
 3. **Profile before choosing a design.** For performance work, time each phase of the current path
-   on the large-repository fixture while holding the shared timing lock
-   (`shlock -f /tmp/girt-timing.lock`), with Git's equivalent operation as the control, and report
-   peak RSS beside wall time. State the budget relative to Git and list the validations the fast
-   path must keep, such as decoding every retained object from the replacement before unlinking
-   anything. A repeated walk or scan inherited from the current code is the first thing to look for.
+   on the large-repository fixture, measured as [Performance Evidence](#performance-evidence)
+   requires. State the budget relative to Git and list the validations the fast path must keep, such
+   as decoding every retained object from the replacement before unlinking anything.
 4. **Cheap design round.** Write two or three candidate designs, about a page each, and judge them
    against the inventory: for each applicable class, say whether the design makes the failure
    impossible by construction, detects it with a check, or leaves it open. Prefer a structural
@@ -153,6 +150,21 @@ costs that the large-repository benchmark exposed, so changes touching fetch, ob
 packing or retention must also run the
 [large-repository benchmark](jj-replacement-status.md#large-repository-benchmark) and report the
 result against the previous one.
+
+- **Measure against Git under the shared timing lock.** Build and copy inputs first, then hold
+  `/tmp/girt-timing.lock` (`shlock`; macOS has no `flock`) for the whole block, run Git and each
+  build in ABBA order with Git as the control (G A B B A G), and record load averages. Concurrent
+  agent builds otherwise swamp the difference; treat results from a loaded machine as provisional.
+- **Report peak RSS beside wall time, for girt and Git.** Use `/usr/bin/time -l` (macOS) or `-v`
+  (Linux). Memory gaps to Git have been as large as time gaps.
+- **Find where the time goes before optimizing.** Time each phase or profile first, as step 3 of
+  [Specify Before Implementing](#specify-before-implementing) requires for scoped work; the obvious
+  algorithm is often a small share of the total.
+- **Don't repeat full walks or scans.** Compute a history walk or object scan once per snapshot and
+  pass the result on; each full walk of a large repository costs seconds. A repeated walk inherited
+  from the current code is the first thing to look for.
+- **Compare equivalent work.** State when girt and Git finish in different states, such as an
+  additive repack against one that also deletes the old packs.
 
 Add a reproducible Criterion benchmark when introducing a significant processing path, changing a
 known hot path, or making a performance claim. Hashing, compression, pack decoding, and graph
