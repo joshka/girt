@@ -27,7 +27,9 @@ impl Proxy {
             ))
             .arg(port)
             .arg(root.path().join("requests"))
-            .args(["--authorization", authorization]);
+            .args(["--authorization", authorization])
+            .arg("--owner")
+            .arg(std::process::id().to_string());
         let mut process = Process::spawn(&mut command, false);
         let port: u16 = process.ready(|line| line.trim().parse::<u16>().map_err(|e| e.to_string()));
         Self {

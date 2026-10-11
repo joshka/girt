@@ -47,6 +47,24 @@ deadline being tested: slow discovery can legitimately expire an overall deadlin
 Assert the specific structured error and retained effects, and include request observations in
 failure diagnostics. See [R14's HTTP repair](evidence/r14-http.md) for a controlled example.
 
+## Process Fixtures
+
+Tests often need their own programs, such as a stand-in SSH executable, an askpass helper or a Git
+hook. Do not write a new executable file for each test. macOS runs a policy check on the first
+launch of every new executable. The checks run one at a time and each takes seconds while builds
+create new binaries, so per-test executables spend transport deadlines waiting and fail only on busy
+machines. Link the program path to the checked-in `tests/fixtures/stand-in` launcher with
+`tests/support/stand_in.rs`, and pass the program text as data.
+
+A fixture that outlives a call, such as a loopback server, must stop when its test stops. That
+includes a test killed by a signal or a runner timeout, when no `Drop` runs. Pass the test's process
+ID to the fixture and check direct-parent identity on POSIX; a zombie owner still has a PID. Ignore
+further termination signals once cleanup has started, so a second signal cannot abandon it halfway.
+Freeze and rescan descendants before killing them, including separate sessions, and retain the
+leader PID until cleanup finishes. `fixture_process::Process` also kills the fixture's process group
+even after the leader exits on its own. The cleanup regressions exercise late forks and owner exit
+with delayed reaping on Linux and macOS; Windows retains its normal process teardown.
+
 ## Performance Evidence
 
 Performance is a primary goal alongside Git fidelity. Small fixtures hid the clone, fetch and GC

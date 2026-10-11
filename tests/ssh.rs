@@ -12,6 +12,8 @@ mod ssh_git;
 mod ssh_openssh;
 #[path = "support/ssh_transfer_observers.rs"]
 mod ssh_transfer_observers;
+#[path = "support/stand_in.rs"]
+mod stand_in;
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
@@ -30,6 +32,12 @@ use girt::{Config, ObjectId, PackCompression, PackLimits, ReadLimits, Repository
 use pack_git::{Fixture, git};
 use rstest::rstest;
 use ssh_git::Server;
+
+impl Server {
+    fn with_encrypted_key(repository: &std::path::Path, fault: &str) -> Self {
+        Self::start(repository, fault, true)
+    }
+}
 
 fn configured_remote(
     server: &Server,
@@ -514,13 +522,10 @@ fn configured_destination_fetches_from_real_git_over_ssh() {
 
 #[test]
 fn configured_askpass_unlocks_encrypted_key() {
-    use std::os::unix::fs::PermissionsExt;
-
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
-    let server = Server::new(f.root.path(), "none");
+    let server = Server::with_encrypted_key(f.root.path(), "none");
     let askpass = server.root.join("askpass");
-    std::fs::write(&askpass, "#!/bin/sh\nprintf 'fixture-passphrase\\n'\n").unwrap();
-    std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o700)).unwrap();
+    stand_in::shell(&askpass, "printf 'fixture-passphrase\\n'\n");
     let remote = configured_remote(&server, "encrypted_config", Some(askpass), None);
     let cancel = AtomicBool::new(false);
     let received = runtime()
@@ -851,13 +856,11 @@ fn literal_repository_path_round_trips(#[case] path: &str) {
 
 #[test]
 fn git_rejection_is_a_report_and_preserves_mixed_outcomes() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let hook = repo.git_dir().join("hooks/update");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\n[ \"$1\" != refs/heads/rejected ]\n").unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    stand_in::shell(&hook, "[ \"$1\" != refs/heads/rejected ]\n");
     let server = Server::new(repo.git_dir(), "none");
     let id = tip(&f.repo, "refs/heads/main");
     let prepared = prepared(
@@ -1152,13 +1155,11 @@ fn download_respects_wire_budgets(#[case] limits: FetchLimits) {
 
 #[test]
 fn cancellation_after_real_git_ref_commit_is_uncertain() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new(girt::ObjectFormat::Sha1, false, 2);
     let (_root, repo) = destination();
     let hook = repo.git_dir().join("hooks/post-receive");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\ntouch committed\nsleep 10\n").unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    stand_in::shell(&hook, "touch committed\nsleep 10\n");
     let server = Server::new(repo.git_dir(), "none");
     let id = tip(&f.repo, "refs/heads/main");
     let prepared = prepared(&f, vec![command("refs/heads/main", None, id)], &[]);
@@ -1404,4 +1405,16 @@ fn clone_malformed_transfer_leaves_destination_absent() {
         Err(girt::clone::CloneTransferError::Transfer(_))
     ));
     assert!(!path.exists());
+}
+
+#[test]
+fn python_cleanup_regressions() {
+    let status = std::process::Command::new("python3")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ssh/test_cleanup.py"
+        ))
+        .status()
+        .unwrap();
+    assert!(status.success());
 }

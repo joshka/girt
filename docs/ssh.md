@@ -312,7 +312,8 @@ It disables password and keyboard-interactive authentication and forwarding. A f
 validates service/path arguments before executing the original quoted command through a POSIX shell;
 this exercises the actual quoting. It does not change `~/.ssh`, account settings or system sshd
 configuration. Fault cases have finite watchdogs. Fixture teardown terminates its owned process tree
-and deletes temporary secrets.
+and deletes temporary secrets. The fixture also stops when its test process exits, even if the test
+was killed, and each forced command stops when its SSH session or the fixture ends.
 
 The native fixture worked without elevation on macOS arm64. Some systems restrict unprivileged sshd;
 startup diagnostics are fixture errors, never skipped interoperability evidence. Run in a disposable

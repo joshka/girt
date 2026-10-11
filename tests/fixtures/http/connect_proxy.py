@@ -2,6 +2,9 @@
 """Original disposable CONNECT relay; routes only to a fixed loopback TLS fixture."""
 import argparse
 import http.server
+import os
+import threading
+import time
 import select
 import socket
 
@@ -9,6 +12,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("port", type=int)
 parser.add_argument("requests")
 parser.add_argument("--authorization", default="")
+parser.add_argument("--owner", type=int, required=True)
 args = parser.parse_args()
 
 
@@ -42,5 +46,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+def watch_owner():
+    while os.getppid() == args.owner:
+        time.sleep(.05)
+    os._exit(1)
+
+
+if os.name == "posix":
+    threading.Thread(target=watch_owner, daemon=True).start()
 print(server.server_port, flush=True)
 server.serve_forever()

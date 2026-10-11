@@ -3,8 +3,10 @@
 import argparse
 import http.server
 import os
+import signal
 import ssl
 import subprocess
+import threading
 import time
 import urllib.parse
 
@@ -15,6 +17,7 @@ parser.add_argument("--authorization", default="")
 parser.add_argument("--certificate")
 parser.add_argument("--key")
 parser.add_argument("--requests")
+parser.add_argument("--owner", type=int, required=True, help="test process whose exit stops this server")
 args = parser.parse_args()
 # A controlled slow-discovery case proves that a deadline can expire before a POST fault.
 delayed_discovery = args.fault.startswith("delayed-discovery/")
@@ -149,5 +152,20 @@ if args.certificate:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(args.certificate, args.key)
     server.socket = context.wrap_socket(server.socket, server_side=True)
+
+
+def watch_owner():
+    # A killed test cannot stop this server; exit with the owner instead of serving forever.
+    while os.getppid() == args.owner:
+        time.sleep(0.05)
+    if os.getpgrp() == os.getpid():
+        # The test started this server as a group leader; include in-flight Git children.
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+    os._exit(1)
+
+
+# Parent reparenting on POSIX detects exit even while the owner remains a zombie.
+if os.name == "posix":
+    threading.Thread(target=watch_owner, daemon=True).start()
 print(server.server_port, flush=True)
 server.serve_forever()

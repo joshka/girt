@@ -1,6 +1,5 @@
 //! Original recording wrappers compare Git command selection with girt's public SSH API.
 //! No network connection, upstream source, or upstream fixture is used.
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -24,11 +23,10 @@ impl Commands {
             let path = root.path().join(name);
             // Advertise no refs, then drain the client flush before exiting to avoid a pipe race.
             let script = format!(
-                "#!/bin/sh\nprintf '%s\\n' '{name}' \"$@\" > '{}'/capture\nprintf '0000'\n/bin/cat > /dev/null\n",
+                "printf '%s\\n' '{name}' \"$@\" > '{}'/capture\nprintf '0000'\n/bin/cat > /dev/null\n",
                 root.path().display()
             );
-            std::fs::write(&path, script).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            super::stand_in::shell(&path, &script);
         }
         Self { root }
     }

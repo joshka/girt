@@ -1,5 +1,4 @@
 //! Independently written local processes exercise diagnostics without accounts or network access.
-use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -17,11 +16,12 @@ impl Fixture {
     fn new(body: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("ssh");
-        let script = format!(
-            "#!/usr/bin/env python3\nimport os,pathlib,sys,time\nroot=pathlib.Path(os.environ['FIXTURE_ROOT'])\n(root/'pid').write_text(str(os.getpid()))\n{body}\n"
+        super::stand_in::python(
+            &executable,
+            &format!(
+                "import os,pathlib,sys,time\nroot=pathlib.Path(os.environ['FIXTURE_ROOT'])\n(root/'pid').write_text(str(os.getpid()))\n{body}\n"
+            ),
         );
-        std::fs::write(&executable, script).unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
         let config = girt::Config::parse(b"[remote \"r\"]\nurl = host:repo\n").unwrap();
         let destination = Remote::find(&config, b"r")
             .unwrap()

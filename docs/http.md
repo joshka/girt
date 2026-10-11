@@ -202,7 +202,8 @@ This creates two private repositories, starts a loopback Python bridge to actual
 pushes a tag and fetches its object, then removes the fixtures. It never contacts a real remote. The
 bridge in `tests/fixtures/http/server.py` is an original test fixture, not a production server. It
 can also serve an explicitly disposable bare repository when invoked directly; it prints its
-loopback port. Enable that repository's `http.receivepack` setting for pushes.
+loopback port. Pass `--owner` with the ID of the process whose exit should stop the server, such as
+`--owner $$` for the invoking shell. Enable that repository's `http.receivepack` setting for pushes.
 
 Run the HTTP suite with Git, Python 3 and OpenSSL installed:
 

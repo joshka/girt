@@ -86,6 +86,55 @@ impl Process {
         let bytes = read_prefix(self.diagnostics.path(), 16384).unwrap_or_default();
         String::from_utf8_lossy(&bytes).into_owned()
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn kill_descendants(&self) {
+        let leader = self.child.id();
+        let pid = Pid::from_raw(leader as i32).unwrap();
+        // Freeze the parent before taking a process-tree snapshot. sshd sessions and Git
+        // services can start their own groups; killing only our original group misses them.
+        let _ = kill_process(pid, Signal::STOP);
+        let mut owned = vec![leader];
+        loop {
+            let Ok(listing) = Command::new("ps")
+                .args(["-axo", "pid=,ppid=,stat="])
+                .output()
+            else {
+                break;
+            };
+            let mut added = false;
+            let mut running = false;
+            for line in String::from_utf8_lossy(&listing.stdout).lines() {
+                let mut fields = line.split_whitespace();
+                let child = fields.next().and_then(|value| value.parse::<u32>().ok());
+                let parent = fields.next().and_then(|value| value.parse::<u32>().ok());
+                let state = fields.next().unwrap_or("");
+                if child.is_some_and(|pid| owned.contains(&pid)) && !state.starts_with(['T', 'Z']) {
+                    running = true;
+                }
+                if let (Some(child), Some(parent)) = (child, parent)
+                    && owned.contains(&parent)
+                    && !owned.contains(&child)
+                {
+                    if let Some(pid) = Pid::from_raw(child as i32) {
+                        let _ = kill_process(pid, Signal::STOP);
+                    }
+                    owned.push(child);
+                    added = true;
+                }
+            }
+            if !added && !running {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Stopped parents cannot reap/reuse their children's PIDs or create more children.
+        for child in owned[1..].iter().rev() {
+            if let Some(pid) = Pid::from_raw(*child as i32) {
+                let _ = kill_process(pid, Signal::KILL);
+            }
+        }
+        // Leave the leader stopped until Drop either requests graceful shutdown or kills it.
+    }
 }
 
 fn read_prefix(path: &std::path::Path, limit: u64) -> std::io::Result<Vec<u8>> {
@@ -96,22 +145,23 @@ fn read_prefix(path: &std::path::Path, limit: u64) -> std::io::Result<Vec<u8>> {
 
 impl Drop for Process {
     fn drop(&mut self) {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        self.kill_descendants();
         self.child.stdin.take();
         if self.graceful {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some(pid) = Pid::from_raw(self.child.id() as i32) {
                 let _ = kill_process(pid, Signal::TERM);
+                let _ = kill_process(pid, Signal::CONT);
             }
             let end = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < end {
-                match self.child.try_wait() {
-                    Ok(Some(_)) => return,
-                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-                    Err(_) => break,
-                }
+            while Instant::now() < end && matches!(self.exited(), Ok(false)) {
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
-        // The leader is still unreaped here; its group ID cannot have been reused.
+        // Kill the group even after a graceful exit: a fixture interrupted during its own cleanup
+        // can leave members such as a listener behind. On macOS and Linux the leader is still
+        // unreaped here, so its group ID cannot have been reused.
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(pid) = Pid::from_raw(self.child.id() as i32) {
             let _ = kill_process_group(pid, Signal::KILL);
@@ -123,6 +173,45 @@ impl Drop for Process {
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
+
+    #[rstest::rstest]
+    #[case::immediate(false, false)]
+    #[case::graceful(true, false)]
+    #[case::panic(true, true)]
+    fn teardown_kills_descendants_in_separate_sessions(
+        #[case] graceful: bool,
+        #[case] panic: bool,
+    ) {
+        use super::*;
+        let mut command = Command::new("python3");
+        command.args(["-c", "import subprocess,time\nchild=subprocess.Popen(['sleep','60'],start_new_session=True)\nprint(child.pid,flush=True)\ntime.sleep(60)"]);
+        let mut process = Process::spawn(&mut command, graceful);
+        let child = process.ready(|line| line.parse::<i32>().map_err(|e| e.to_string()));
+        let child = Pid::from_raw(child).unwrap();
+        let result = std::panic::catch_unwind(move || {
+            let _process = process;
+            assert!(!panic, "fixture owner panicked");
+        });
+        assert_eq!(result.is_err(), panic);
+        let end = Instant::now() + Duration::from_secs(5);
+        while rustix::process::test_kill_process(child).is_ok() && Instant::now() < end {
+            let output = Command::new("ps")
+                .args(["-o", "stat=", "-p", &child.as_raw_nonzero().to_string()])
+                .output()
+                .unwrap();
+            if String::from_utf8_lossy(&output.stdout)
+                .trim_start()
+                .starts_with('Z')
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            rustix::process::test_kill_process(child),
+            Err(rustix::io::Errno::SRCH)
+        );
+    }
 
     #[test]
     fn startup_failure_retains_diagnostics() {

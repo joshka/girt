@@ -5,6 +5,7 @@ import getpass
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import shutil
 import signal
@@ -14,6 +15,31 @@ import sys
 import tempfile
 import threading
 import time
+
+
+def alive(pid):
+    # Forced commands also watch a non-parent listener. Zombies are already dead.
+    result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                            capture_output=True, text=True, check=False)
+    state = result.stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+stopping = False
+
+
+def stop(_signal, _frame):
+    # The first termination signal raises SystemExit so `finally` cleanup runs. Later signals, or
+    # any signal once cleanup has begun, must not interrupt it and strand the processes it stops.
+    global stopping
+    if not stopping:
+        stopping = True
+        raise SystemExit(1)
+
+
+def begin_cleanup():
+    global stopping
+    stopping = True
 
 
 def faulty_upload_pack(original, env, fault):
@@ -60,6 +86,7 @@ def faulty_upload_pack(original, env, fault):
         write_all(response)
         return 0
     finally:
+        begin_cleanup()
         try:
             os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -118,6 +145,7 @@ def service(args):
     try:
         return child.wait(timeout=20)
     finally:
+        begin_cleanup()
         try:
             os.killpg(child.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -130,17 +158,19 @@ def main(args):
         root = Path(directory)
         for name in ("host", "client", "wrong"):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
-        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "fixture-passphrase",
-                        "-f", str(root / "encrypted")], check=True)
-        (root / "authorized_keys").write_text(
-            "restrict " + (root / "client.pub").read_text() +
-            "restrict " + (root / "encrypted.pub").read_text())
+        authorized = "restrict " + (root / "client.pub").read_text()
+        # Only the askpass case needs the expensive passphrase KDF.
+        if args.encrypted_key:
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "fixture-passphrase",
+                            "-f", str(root / "encrypted")], check=True)
+            authorized += "restrict " + (root / "encrypted.pub").read_text()
+        (root / "authorized_keys").write_text(authorized)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         command = shlex.join([sys.executable, str(Path(__file__).resolve()), args.repository,
                               "--serve", "--root", str(root), "--fault", args.fault,
-                              "--path", os.environ["PATH"]])
+                              "--path", os.environ["PATH"], "--owner", str(os.getpid())])
         config = f"""ListenAddress 127.0.0.1
 Port {port}
 HostKey {root}/host
@@ -173,10 +203,13 @@ LogLevel ERROR
             (root / name).write_text(f"IdentityFile {root}/{key}\nUserKnownHostsFile {root}/{trust}\nGlobalKnownHostsFile /dev/null\n")
         executable = shutil.which("sshd") or "/usr/sbin/sshd"
         log = (root / "diagnostics").open("w+")
-        child = subprocess.Popen([executable, "-D", "-e", "-f", str(root / "sshd_config")], stderr=log)
+        child = None
         try:
+            # sshd stays in this process group, so the test's group kill also stops the listener.
+            child = subprocess.Popen([executable, "-D", "-e", "-f", str(root / "sshd_config")],
+                                     stdin=subprocess.DEVNULL, stderr=log)
             for _ in range(100):
-                if child.poll() is not None:
+                if os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
                     log.seek(0)
                     raise RuntimeError(log.read())
                 try:
@@ -187,44 +220,75 @@ LogLevel ERROR
             else:
                 raise RuntimeError("sshd did not listen on loopback")
             print(json.dumps({"port": port, "user": getpass.getuser(), "root": str(root)}), flush=True)
-            sys.stdin.read()
-        finally:
-            # sshd session children may create separate groups. Terminate the full owned process
-            # tree before the leader, using a fresh parent map while its PID remains reserved.
-            listing = subprocess.check_output(["ps", "-axo", "pid=,ppid="], text=True)
-            pairs = [tuple(map(int, line.split())) for line in listing.splitlines()]
-            owned = {child.pid}
-            while True:
-                expanded = owned | {pid for pid, parent in pairs if parent in owned}
-                if expanded == owned:
+            # Stop when the test closes stdin or exits. A killed test cannot close stdin itself,
+            # and another process may still hold the pipe, so also watch the owner directly.
+            while os.getppid() == args.owner:
+                if select.select([sys.stdin], [], [], 0.05)[0] and not os.read(0, 4096):
                     break
-                owned = expanded
-            for pid in sorted(owned - {child.pid}, reverse=True):
+            begin_cleanup()
+        finally:
+            begin_cleanup()
+            if child is not None:
+                stop_sshd(child)
+
+
+def stop_sshd(child):
+    # Freeze parents before rescanning: descendants can fork into separate sessions.
+    # Keep the listener unreaped so its PID cannot be reused during discovery.
+    owned = {child.pid}
+    order = [child.pid]
+    try:
+        while True:
+            for pid in owned:
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    os.kill(pid, signal.SIGSTOP)
                 except ProcessLookupError:
                     pass
-            child.kill()
-            child.wait()
+            listing = subprocess.check_output(["ps", "-axo", "pid=,ppid=,stat="], text=True)
+            rows = [line.split() for line in listing.splitlines()]
+            added = {int(pid) for pid, parent, _ in rows if int(parent) in owned} - owned
+            order.extend(sorted(added))
+            owned.update(added)
+            # SIGSTOP delivery is asynchronous. Wait for every discovered parent to stop
+            # before accepting a scan with no new children.
+            running = any(int(pid) in owned and not state.startswith(("T", "Z"))
+                          for pid, _, state in rows)
+            if not added and not running:
+                break
+            time.sleep(0.001)
+    finally:
+        for pid in reversed(order):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        child.wait()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("repository")
     parser.add_argument("--fault", default="none")
+    parser.add_argument("--encrypted-key", action="store_true")
     parser.add_argument("--serve", action="store_true")
     parser.add_argument("--root")
     parser.add_argument("--path")
+    parser.add_argument("--owner", type=int, required=True,
+                        help="process whose exit stops this fixture: the test, or the listener")
     args = parser.parse_args()
     if args.serve:
         # Run subprocess cleanup even when SSH disconnects or the finite watchdog fires.
-        def terminate(_signal, _frame):
-            raise SystemExit(1)
         for signum in (signal.SIGHUP, signal.SIGTERM, signal.SIGALRM):
-            signal.signal(signum, terminate)
+            signal.signal(signum, stop)
         signal.alarm(25)
+        # sshd ends the session process when the client disconnects, but leaves this command
+        # running. Stop once that parent or the fixture listener is gone.
+        def watch(parent):
+            while os.getppid() == parent and alive(args.owner):
+                time.sleep(0.05)
+            os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=watch, args=(os.getppid(),), daemon=True).start()
         sys.exit(service(args))
-    def stop_fixture(_signal, _frame):
-        raise SystemExit(1)
-    signal.signal(signal.SIGTERM, stop_fixture)
+    for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, stop)
     main(args)

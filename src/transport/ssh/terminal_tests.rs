@@ -8,6 +8,10 @@ use rstest::rstest;
 use rustix::process::{getpgrp, getpid, getsid};
 use rustix::termios::{LocalModes, OptionalActions, Termios, tcgetattr, tcgetpgrp, tcsetattr};
 
+#[path = "../../../tests/support/stand_in.rs"]
+#[allow(dead_code)]
+mod stand_in;
+
 use super::*;
 use crate::transport::ssh::{ForegroundTerminal, TerminalEvents};
 
@@ -439,20 +443,15 @@ fn public_roundtrip(
     terminal: std::sync::Arc<ForegroundTerminal>,
     cancel: &AtomicBool,
 ) {
-    use std::os::unix::fs::PermissionsExt;
-
     use crate::remote::{ProtocolEnvironment, Remote};
     use crate::transport::ssh::{OpenSshOptions, SshRemote};
     let executable = std::path::Path::new(root).join("ssh");
-    let script = format!(
-        "#!/usr/bin/env python3\n{}",
-        PEER.replace(
-            "root,mode=sys.argv[1:]",
-            "root,mode=os.environ['FIXTURE_ROOT'],'normal'"
-        )
+    let script = PEER.replace(
+        "root,mode=sys.argv[1:]",
+        "root,mode=os.environ['FIXTURE_ROOT'],'normal'",
     );
-    std::fs::write(&executable, script).unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _ = std::fs::remove_file(&executable);
+    stand_in::python(&executable, &script);
     let config = crate::Config::parse(b"[remote \"r\"]\nurl = host:repo\n").unwrap();
     let destination = Remote::find(&config, b"r")
         .unwrap()

@@ -1,6 +1,5 @@
 //! Original byte-stream executable with callback-to-producer handshake; no network or accounts.
 use std::ops::ControlFlow;
-use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -27,10 +26,9 @@ impl Peer {
         let executable = root.path().join("ssh");
         // EOF on protocol stdin proves the entire attempted request has been consumed. The
         // callback must acknowledge the first notice before the producer releases the tail.
-        std::fs::write(
+        super::stand_in::python(
             &executable,
-            br#"#!/usr/bin/env python3
-import os,pathlib,sys,time
+            r#"import os,pathlib,sys,time
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
 (root/'pid').write_text(str(os.getpid()))
 def write(fd,data):
@@ -48,9 +46,7 @@ if mode == 'cancel': time.sleep(60)
 write(1,(root/'rest').read_bytes())
 if mode in ('exit', 'exit-direct'): sys.exit(42)
 "#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let config = girt::Config::parse(b"[remote \"r\"]\nurl = host:repo\n").unwrap();
         let destination = Remote::find(&config, b"r")
             .unwrap()

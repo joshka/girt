@@ -528,8 +528,10 @@ mod tests {
             command.args(["-c", "import os,time\nos.write(1,b'0000')\nwhile True: os.write(2,b'x'*8192); os.write(1,b'x'*8192)"]);
             let mut session = Session::spawn(&mut command).unwrap();
             let pid = session.process.pid();
+            // Interpreter startup is outside the short blocked-pipe deadline.
+            let startup = TransportControl { cancel: &cancel, deadline: Some(Instant::now()+Duration::from_secs(5)) };
+            session.advertise(4, startup).await.unwrap();
             let control = TransportControl { cancel: &cancel, deadline: Some(Instant::now()+Duration::from_millis(200)) };
-            session.advertise(4, control).await.unwrap();
             let (_, result, _) = session.exchange(b"0000", &[], usize::MAX, control).await;
             assert!(matches!(result, Err(SshError::Deadline)));
             pid
