@@ -136,10 +136,9 @@ pub(super) fn receive_depth(
             return Err(FetchError::Kind(id));
         }
         observed.insert(id, object_kind);
-        if depth.is_none()
-            && limits.max_haves > 0
-            && known.kind(id) == Some(object_kind)
-            && !known.shallow.contains(&id)
+        let available =
+            depth.is_none() && limits.max_haves > 0 && known.kind(id) == Some(object_kind);
+        if available && known.complete_kind(id) == Some(object_kind) && !known.shallow.contains(&id)
         {
             dependencies.push(id);
             continue;
@@ -185,10 +184,16 @@ pub(super) fn receive_depth(
             pending.push_back((target, Some(kind)));
             Ok(())
         })?;
-        selected.push(id);
-        observe(LocalFetchProgress::Reading {
-            objects: selected.len() as u64,
-        });
+        if available {
+            // An interrupted unpack can leave this object without its descendants. Walking its
+            // source edges above proves those descendants are either selected or complete.
+            dependencies.push(id);
+        } else {
+            selected.push(id);
+            observe(LocalFetchProgress::Reading {
+                objects: selected.len() as u64,
+            });
+        }
         check(control)?;
     }
     check(control)?;

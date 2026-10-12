@@ -174,7 +174,7 @@ impl ReceivedFetch {
         if depth.is_some()
             && !dependencies.is_empty()
             && !imported.objects.is_empty()
-            && !known.trusted_complete()
+            && known.store.is_none()
         {
             objects += dependencies.len();
             materialize_dependencies(&mut imported, known, &dependencies, cancel)?;

@@ -6,22 +6,24 @@ use std::sync::atomic::AtomicBool;
 use super::{FetchError as Error, FetchLimits, check_cancelled};
 use crate::{Object, ObjectId, ObjectKind, Objects};
 
-/// Verified local history offered to upload-pack, including declared shallow boundaries.
+/// Local object availability and complete-history evidence, including shallow boundaries.
 ///
-/// Construction reads and validates the reachable graph from explicit roots to any declared
-/// shallow boundaries, including trees and typed tag targets, skipping external gitlinks. Missing
-/// or corrupt local objects fail
-/// before any have is sent. Roots may be any supported kind; only commits become have lines.
+/// [`Self::new`] verifies the reachable graph from explicit roots, retaining its payloads.
+/// [`Self::from_store`] reads objects on demand and trusts only explicit destination reference
+/// roots and commits discovered from those roots as complete. A merely present object can be an
+/// external delta base or dependency without proving that its descendants exist.
+///
 /// Commit discovery is breadth-first in caller root and payload edge order, capped by
 /// [`FetchLimits::max_haves`]. A small cap can reduce negotiation effectiveness, never correctness.
-/// No local references are inferred. Retained payloads freeze the validation evidence; callers
-/// must still coordinate with GC until installation and any subsequent reference publication.
+/// No local references are inferred by these constructors. Callers must coordinate with GC until
+/// installation and any subsequent reference publication.
 #[derive(Debug, Default)]
 pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
-    /// Destination store whose objects are trusted to have complete history, as Git trusts
-    /// local objects. Consulted after `objects`.
+    /// Destination objects available as delta bases and dependencies, consulted after `objects`.
     pub(super) store: Option<Arc<Objects>>,
+    /// Explicit destination roots and commits discovered from them, never mere object presence.
+    pub(super) complete_roots: HashSet<ObjectId>,
     pub(super) haves: Vec<ObjectId>,
     pub(super) shallow: Vec<ObjectId>,
     pub(super) only_when_all_wants_known: bool,
@@ -34,7 +36,7 @@ pub(crate) trait KnownObjects {
 
     /// Whether a known object's history is trusted to be complete, so connectivity checks can
     /// stop at it rather than walking its history.
-    fn trusted_complete(&self) -> bool {
+    fn trusted_complete(&self, _id: ObjectId) -> bool {
         false
     }
 }
@@ -58,8 +60,8 @@ impl KnownObjects for KnownHistory {
             .map(Cow::Owned)
     }
 
-    fn trusted_complete(&self) -> bool {
-        self.store.is_some()
+    fn trusted_complete(&self, id: ObjectId) -> bool {
+        self.complete_roots.contains(&id) && !self.shallow.contains(&id)
     }
 }
 
@@ -75,17 +77,36 @@ impl KnownHistory {
         })
     }
 
+    pub(super) fn complete_kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        self.objects
+            .get(&id)
+            .map(Object::kind)
+            .or_else(|| self.trusted_complete(id).then(|| self.kind(id)).flatten())
+    }
+
+    /// Records explicit reference roots for native transfer without preparing wire have lines.
+    pub(crate) fn from_store_roots(store: Objects, roots: &[ObjectId]) -> Self {
+        Self {
+            shallow: store.shallow_roots().iter().collect(),
+            store: Some(Arc::new(store)),
+            complete_roots: roots.iter().copied().collect(),
+            ..Self::default()
+        }
+    }
+
     /// Describes a destination store for negotiation without reading its complete history.
     ///
     /// Up to [`FetchLimits::max_haves`] commits reachable from `tips` (breadth-first, peeling
-    /// tags) are offered as haves. The store's shallow roots are declared. Like Git, objects
-    /// already in the store are trusted to have complete history: received objects may depend on
-    /// any of them, and connectivity checks stop there. Callers must keep those objects
-    /// available (e.g. exclude pruning) until the fetch publishes its references.
+    /// tags) are offered as haves. The store's shallow roots are declared. Callers supply roots
+    /// established by destination references; these roots and commits discovered from them are
+    /// trusted complete up to declared shallow boundaries. Other stored objects can supply delta
+    /// bases and dependencies, but their presence alone does not stop connectivity validation.
+    /// Callers must keep the roots and their histories available (e.g. exclude pruning) until
+    /// the fetch publishes its references.
     ///
     /// # Errors
     ///
-    /// Fails on cancellation or when a tip can't be read. Unreadable ancestors end the walk.
+    /// Fails on cancellation. Unreadable tips are ignored; unreadable ancestors end their walk.
     pub fn from_store(
         store: Objects,
         tips: &[ObjectId],
@@ -95,6 +116,7 @@ impl KnownHistory {
         let shallow: Vec<_> = store.shallow_roots().iter().collect();
         let shallow_set: HashSet<_> = shallow.iter().copied().collect();
         let mut haves = Vec::new();
+        let mut complete_roots = HashSet::new();
         let mut seen = HashSet::new();
         let mut pending = VecDeque::new();
         for &tip in tips {
@@ -102,6 +124,8 @@ impl KnownHistory {
             let Ok(peeled) = store.peel(tip, crate::PeelLimits::default(), cancel) else {
                 continue;
             };
+            complete_roots.insert(tip);
+            complete_roots.insert(peeled.target);
             if peeled.kind == ObjectKind::Commit && seen.insert(peeled.target) {
                 pending.push_back(peeled.target);
             }
@@ -118,6 +142,7 @@ impl KnownHistory {
                 continue;
             }
             haves.push(id);
+            complete_roots.insert(id);
             if shallow_set.contains(&id) {
                 continue;
             }
@@ -130,9 +155,11 @@ impl KnownHistory {
                 }
             }
         }
+        check_cancelled(cancel)?;
         Ok(Self {
             objects: HashMap::new(),
             store: Some(Arc::new(store)),
+            complete_roots,
             haves,
             shallow,
             only_when_all_wants_known: false,
@@ -153,7 +180,7 @@ impl KnownHistory {
     }
 
     pub(super) fn applies_to(&self, wants: &[ObjectId]) -> bool {
-        !self.only_when_all_wants_known || wants.iter().all(|&id| self.kind(id).is_some())
+        !self.only_when_all_wants_known || wants.iter().all(|&id| self.complete_kind(id).is_some())
     }
 
     /// Keep the destination's shallow declarations without offering local objects as haves.
@@ -520,8 +547,31 @@ mod tests {
         .unwrap();
         assert_eq!(known.haves(), &[commit]);
         assert_eq!(known.object_count(), 0);
-        assert!(known.trusted_complete());
+        assert!(known.trusted_complete(commit));
+        assert!(!known.trusted_complete(blob));
         assert_eq!(known.get(blob).unwrap().kind(), ObjectKind::Blob);
+    }
+
+    #[test]
+    fn unanchored_store_object_does_not_stop_connectivity() {
+        let (root, objects, commit, blob) = graph();
+        damage(root.path(), blob, false);
+        let known = KnownHistory::from_store(
+            objects,
+            &[],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let result = super::super::connectivity::validate_with_boundaries(
+            &HashMap::new(),
+            &known,
+            &[commit],
+            &[],
+            FetchLimits::default(),
+            &AtomicBool::new(false),
+        );
+        assert!(matches!(result, Err(Error::Missing(missing)) if missing == blob));
     }
 
     #[test]

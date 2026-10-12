@@ -526,8 +526,247 @@ fn unreferenced_commit_does_not_prove_complete_history(
             known
         };
         let (received, _) = receive(source.path(), &known);
-        assert_eq!(received.object_count(), if retained { 3 } else { 2 });
+        assert_eq!(
+            received.object_count(),
+            if retained {
+                object_set(&source.path().join(".git")).len()
+            } else {
+                2
+            }
+        );
         publish(&received, &dest, new);
     }
     assert_eq!(object_set(&path), object_set(&source.path().join(".git")));
+}
+
+fn pack_path(source: &Path) -> std::path::PathBuf {
+    std::fs::read_dir(source.join(".git/objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pack")
+        })
+        .unwrap()
+}
+
+fn pack_rows(source: &Path, pack: &Path) -> Vec<Vec<String>> {
+    let index = pack.with_extension("idx");
+    String::from_utf8(git(source, &["verify-pack", "-v", index.to_str().unwrap()]))
+        .unwrap()
+        .lines()
+        .map(|line| line.split_whitespace().map(str::to_owned).collect())
+        .collect()
+}
+
+fn mislabel_index_entry(index: &Path, old: girt::ObjectId, replacement: girt::ObjectId) {
+    use sha1::Digest as _;
+    let mut bytes = std::fs::read(index).unwrap();
+    let width = old.format().digest_len();
+    let count = u32::from_be_bytes(bytes[1028..1032].try_into().unwrap()) as usize;
+    let crc_start = 1032 + count * width;
+    let offset_start = crc_start + count * 4;
+    let mut rows: Vec<_> = (0..count)
+        .map(|n| {
+            let mut id = bytes[1032 + n * width..1032 + (n + 1) * width].to_vec();
+            if id == old.as_bytes() {
+                id = replacement.as_bytes().to_vec();
+            }
+            (
+                id,
+                bytes[crc_start + n * 4..crc_start + (n + 1) * 4].to_vec(),
+                bytes[offset_start + n * 4..offset_start + (n + 1) * 4].to_vec(),
+            )
+        })
+        .collect();
+    rows.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut fanout = [0u32; 256];
+    for (id, _, _) in &rows {
+        fanout[usize::from(id[0])] += 1;
+    }
+    let mut sum = 0;
+    for (n, count) in fanout.into_iter().enumerate() {
+        sum += count;
+        bytes[8 + n * 4..12 + n * 4].copy_from_slice(&sum.to_be_bytes());
+    }
+    for (n, (id, crc, offset)) in rows.iter().enumerate() {
+        bytes[1032 + n * width..1032 + (n + 1) * width].copy_from_slice(id);
+        bytes[crc_start + n * 4..crc_start + (n + 1) * 4].copy_from_slice(crc);
+        bytes[offset_start + n * 4..offset_start + (n + 1) * 4].copy_from_slice(offset);
+    }
+    let end = bytes.len() - width;
+    let digest = match old.format() {
+        ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
+        ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+    };
+    bytes[end..].copy_from_slice(&digest);
+    make_fixture_file_writable(index);
+    std::fs::write(index, bytes).unwrap();
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn mislabelled_delta_base_cannot_publish_even_when_destination_has_that_id(
+    #[case] format: ObjectFormat,
+) {
+    let source = fixture(format);
+    let pack = pack_path(source.path());
+    let rows = pack_rows(source.path(), &pack);
+    let delta = rows
+        .iter()
+        .find(|row| row.len() == 7 && row[1] == "blob" && row[5] == "1")
+        .unwrap();
+    let target: girt::ObjectId = delta[0].parse().unwrap();
+    let base: girt::ObjectId = delta[6].parse().unwrap();
+    let mut unrelated = git(source.path(), &["cat-file", "blob", &base.to_string()]);
+    unrelated[0] ^= 0xff;
+    let root = tempfile::tempdir().unwrap();
+    let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
+    let false_base = dest.loose_objects().write_blob(&unrelated).unwrap();
+    let before = object_set(dest.git_dir());
+    git(
+        source.path(),
+        &["update-ref", "refs/for/delta", &target.to_string()],
+    );
+    mislabel_index_entry(&pack.with_extension("idx"), base, false_base);
+    std::fs::create_dir_all(source.path().join(".git/refs/for")).unwrap();
+    std::fs::write(
+        source.path().join(".git/refs/for/base"),
+        format!("{false_base}\n"),
+    )
+    .unwrap();
+    let known = KnownHistory::from_store(
+        dest.objects(PackLimits::trusted()).unwrap(),
+        &[],
+        FetchLimits::trusted(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let mut packed = 0;
+    let result = receive_local_with_known_and_progress(
+        source.path(),
+        |_| vec![false_base, target],
+        &known,
+        FetchLimits {
+            max_haves: 0,
+            ..FetchLimits::trusted()
+        },
+        TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+        |event| {
+            if let LocalFetchProgress::Packing { objects: (done, _) } = event {
+                packed = done;
+            }
+        },
+    );
+    assert_eq!(
+        packed, 2,
+        "both entries must reach the receiver's independent validation"
+    );
+    assert!(matches!(result, Err(girt::fetch::FetchError::Missing(missing)) if missing == target));
+    assert_eq!(object_set(dest.git_dir()), before);
+    assert!(dest.references().unwrap().list().unwrap().is_empty());
+    git(dest.git_dir(), &["fsck", "--strict"]);
+}
+
+#[rstest]
+#[case::fetch_sha1(ObjectFormat::Sha1, false)]
+#[case::fetch_sha256(ObjectFormat::Sha256, false)]
+#[case::push_sha1(ObjectFormat::Sha1, true)]
+#[case::push_sha256(ObjectFormat::Sha256, true)]
+fn damaged_source_entry_cannot_change_destination(
+    #[case] format: ObjectFormat,
+    #[case] push: bool,
+) {
+    use std::io::{Seek as _, Write as _};
+    let source = fixture(format);
+    let pack = pack_path(source.path());
+    let rows = pack_rows(source.path(), &pack);
+    let ordinary = rows
+        .iter()
+        .find(|row| row.len() == 5 && row[1] == "blob")
+        .unwrap();
+    let id: girt::ObjectId = ordinary[0].parse().unwrap();
+    git(
+        source.path(),
+        &["update-ref", "refs/for/blob", &id.to_string()],
+    );
+    let root = tempfile::tempdir().unwrap();
+    let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
+    let sentinel = dest
+        .loose_objects()
+        .write_blob(b"keep destination unchanged")
+        .unwrap();
+    let reference = RefName::new("refs/for/sentinel").unwrap();
+    dest.references()
+        .unwrap()
+        .update_without_reflog(&reference, Target::Direct(sentinel), Expected::Any)
+        .unwrap();
+    let before = object_set(dest.git_dir());
+    git(
+        source.path(),
+        &[
+            "config",
+            "remote.origin.url",
+            dest.git_dir().to_str().unwrap(),
+        ],
+    );
+    let offset = ordinary[4].parse::<u64>().unwrap() + ordinary[3].parse::<u64>().unwrap() - 1;
+    let bytes = std::fs::read(&pack).unwrap();
+    make_fixture_file_writable(&pack);
+    let mut file = std::fs::OpenOptions::new().write(true).open(&pack).unwrap();
+    file.seek(std::io::SeekFrom::Start(offset)).unwrap();
+    file.write_all(&[bytes[offset as usize] ^ 128]).unwrap();
+    drop(file);
+    if push {
+        let repo = Repository::open(source.path()).unwrap();
+        let command = girt::push::PushCommand {
+            name: RefName::new("refs/for/blob").unwrap(),
+            expected: None,
+            new: id,
+            force: girt::push::ForcePolicy::Allow,
+        };
+        let error = repo
+            .push(
+                "origin",
+                vec![command],
+                &girt::transfer::PushOptions::default(),
+                &girt::transfer::Environment::from_process(),
+                &mut girt::transfer::NoCallbacks,
+            )
+            .unwrap_err();
+        let girt::transfer::TransferError::Push(error) = error else {
+            panic!("{error:?}")
+        };
+        assert!(
+            matches!(*error, girt::push::PushError::NotSent(girt::push::PushFailure::Read {
+            id: damaged, source: girt::ObjectReadError::Corrupt("entry CRC")
+        }) if damaged == id)
+        );
+    } else {
+        let result = receive_local_with_known_and_progress(
+            source.path(),
+            |_| vec![id],
+            &KnownHistory::default(),
+            FetchLimits::trusted(),
+            TransportControl::new(&AtomicBool::new(false)),
+            |_| ControlFlow::Continue(()),
+            |_| {},
+        );
+        assert!(matches!(
+            result,
+            Err(girt::fetch::FetchError::LocalRead {
+                source: girt::ObjectReadError::Corrupt("entry CRC"),
+                ..
+            })
+        ));
+    }
+    assert_eq!(object_set(dest.git_dir()), before);
+    assert_eq!(dest.references().unwrap().list().unwrap().len(), 1);
+    assert_eq!(
+        dest.references().unwrap().read(&reference).unwrap(),
+        Some(Target::Direct(sentinel))
+    );
+    git(dest.git_dir(), &["fsck", "--strict"]);
 }

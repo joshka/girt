@@ -128,8 +128,9 @@ pub(super) fn validate_with_boundaries(
             check_cancelled(cancel)?;
             if !objects.contains_key(&id) {
                 dependencies.push(id);
-                if known.trusted_complete() {
-                    // Local history is trusted to be complete.
+                if known.trusted_complete(id) {
+                    // Only explicit complete boundaries stop the walk, never arbitrary stored
+                    // objects.
                     continue;
                 }
             }

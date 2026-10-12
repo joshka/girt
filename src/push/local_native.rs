@@ -205,8 +205,14 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
         let store = repository.objects(Default::default()).map_err(|error| {
             PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
         })?;
-        let known = KnownHistory::from_store(store, &[], limits, control.cancel)
-            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        let roots: Vec<_> = current
+            .iter()
+            .filter_map(|reference| match reference.target {
+                Target::Direct(id) => Some(id),
+                Target::Symbolic(_) => None,
+            })
+            .collect();
+        let known = KnownHistory::from_store_roots(store, &roots);
         let mut pack = crate::fetch::Bytes::temporary()
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         // Keep the prepared artifact reusable; import owns this independent temporary copy.
