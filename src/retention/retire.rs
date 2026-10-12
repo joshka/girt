@@ -225,6 +225,8 @@ impl Repository {
             cancel,
         )
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+        pack.verify(cancel)
+            .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
         // Objects left out because a protected pack holds them must still decode from one of the
         // protected packs that survive this retirement.
         let mut unverified = held.clone();

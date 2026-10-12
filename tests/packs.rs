@@ -695,6 +695,10 @@ fn corrupt_entry_is_detected_on_read_not_open(#[case] format: girt::ObjectFormat
     );
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
     assert!(matches!(
+        objects.verify_packs(&std::sync::atomic::AtomicBool::new(false)),
+        Err(ObjectReadError::Corrupt(_))
+    ));
+    assert!(matches!(
         objects.read(fixture.ordinary, ReadLimits::default()),
         Err(ObjectReadError::Corrupt(_))
     ));
@@ -726,7 +730,83 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     fs::write(&fixture.index_path, index).unwrap();
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
     assert!(matches!(
+        objects.read(fixture.delta, ReadLimits::default()),
+        Err(ObjectReadError::Corrupt("entry CRC"))
+    ));
+    assert!(matches!(
         objects.read(fixture.ordinary, ReadLimits::default()),
         Err(ObjectReadError::Corrupt("entry CRC"))
     ));
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn explicit_verification_agrees_with_git_and_is_cancellable(#[case] format: girt::ObjectFormat) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let fixture = Fixture::new(format, true, 4);
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(true);
+    assert!(matches!(
+        objects.verify_packs(&cancel),
+        Err(ObjectReadError::Cancelled)
+    ));
+    cancel.store(false, Ordering::Relaxed);
+    objects.verify_packs(&cancel).unwrap();
+    git(
+        fixture.root.path(),
+        &["verify-pack", fixture.index_path.to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        fixture.delta
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn matching_trailers_do_not_replace_whole_pack_verification(#[case] format: girt::ObjectFormat) {
+    use std::sync::atomic::AtomicBool;
+    let fixture = Fixture::new(format, true, 4);
+    let path = fixture.index_path.with_extension("pack");
+    let mut pack = fs::read(&path).unwrap();
+    let mut index = fs::read(&fixture.index_path).unwrap();
+    *pack.last_mut().unwrap() ^= 1;
+    let position = index.len() - format.digest_len() - 1;
+    index[position] ^= 1;
+    rehash_index(format, &mut index);
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, &pack).unwrap();
+    fs::remove_file(&fixture.index_path).unwrap();
+    fs::write(&fixture.index_path, &index).unwrap();
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        fixture.ordinary
+    );
+    assert!(matches!(
+        objects.verify_packs(&AtomicBool::new(false)),
+        Err(ObjectReadError::Corrupt("pack checksum"))
+    ));
+    assert!(
+        !pack_git::git_output(
+            fixture.root.path(),
+            &["verify-pack", fixture.index_path.to_str().unwrap()],
+            b""
+        )
+        .status
+        .success()
+    );
+    assert_eq!(fs::read(&path).unwrap(), pack);
+    assert_eq!(fs::read(&fixture.index_path).unwrap(), index);
 }

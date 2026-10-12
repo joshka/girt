@@ -68,8 +68,8 @@ pub(crate) trait Source {
     fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error>;
     fn inflate(
         &self,
+        entry: &super::index::Entry,
         start: usize,
-        end: usize,
         expected: usize,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error>;
@@ -189,12 +189,12 @@ impl Source for Pack {
     }
     fn inflate(
         &self,
+        entry: &super::index::Entry,
         start: usize,
-        end: usize,
         expected: usize,
         _: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
-        inflate(&self.data[start..end], expected)
+        inflate(&self.data[start..entry.end], expected)
     }
 }
 
@@ -274,7 +274,7 @@ pub(crate) fn decode_budgeted(
             return Err(Error::Limit("delta depth"));
         }
         charge(remaining, length)?;
-        let data = source.inflate(start, entry.end, length, cancelled)?;
+        let data = source.inflate(&entry, start, length, cancelled)?;
         if let Some(base) = base {
             pending.push((position, data));
             position = base;

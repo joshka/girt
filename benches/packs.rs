@@ -38,7 +38,7 @@ fn packs(c: &mut Criterion) {
                 .len(),
             std::fs::metadata(&fixture.index_path).unwrap().len()
         );
-        c.bench_function(&format!("packs/open-validate-warm-{count}"), |b| {
+        c.bench_function(&format!("packs/open-warm-{count}"), |b| {
             b.iter(|| {
                 fixture
                     .repo
@@ -98,7 +98,7 @@ fn large_storage(c: &mut Criterion) {
         .sampling_mode(criterion::SamplingMode::Flat)
         .sample_size(10)
         .measurement_time(Duration::from_secs(20));
-    group.bench_function("open-validate-warm", |b| {
+    group.bench_function("open-warm", |b| {
         b.iter(|| {
             repository
                 .objects(black_box(PackLimits::default()))
@@ -122,9 +122,44 @@ fn large_storage(c: &mut Criterion) {
     });
 }
 
+// Point this at a separately prepared fixture; construction stays outside Criterion sampling.
+fn store_open(c: &mut Criterion) {
+    let Ok(path) = std::env::var("GIRT_STORE_OPEN_REPO") else {
+        return;
+    };
+    let repository = girt::Repository::open(path).unwrap();
+    let head = repository
+        .references()
+        .unwrap()
+        .resolve(&girt::refs::RefName::new("HEAD").unwrap(), 10)
+        .unwrap()
+        .id
+        .unwrap();
+    let mut group = c.benchmark_group("store-open");
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    group.bench_function("open-head-warm", |b| {
+        b.iter(|| {
+            repository
+                .objects(PackLimits::trusted())
+                .unwrap()
+                .read(black_box(head), ReadLimits::trusted())
+                .unwrap()
+                .unwrap()
+        })
+    });
+    let mut objects = repository.objects(PackLimits::trusted()).unwrap();
+    group.bench_function("refresh-warm", |b| {
+        b.iter(|| {
+            objects
+                .refresh(PackLimits::trusted(), girt::AlternateLimits::default())
+                .unwrap()
+        })
+    });
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(2));
-    targets = packs, large_storage
+    targets = packs, large_storage, store_open
 }
 criterion_main!(benches);

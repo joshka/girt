@@ -1,4 +1,4 @@
-//! Pinned file pairs with bounded offset tables and streaming pack validation.
+//! Pinned file pairs with bounded offset tables and explicit streaming pack verification.
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -144,7 +144,11 @@ impl FilePack {
             return Err(Error::Corrupt("pack object count"));
         }
         let legacy = !index_bytes.starts_with(b"\xfftOc");
-        validate_pack(&pack, &index, cancelled)?;
+        let trailer = pack.bytes(end, pack.len)?;
+        if index.pack_hash.as_bytes() != trailer {
+            return Err(Error::Corrupt("index/pack checksum disagreement"));
+        }
+        check_cancelled(cancelled)?;
         let ranges = index
             .entries
             .iter()
@@ -160,6 +164,45 @@ impl FilePack {
             offsets: index.offsets,
             base_cache: super::reader::BaseCache::new(),
         })
+    }
+
+    /// Checks the entire pinned pack checksum and every v2 entry CRC without decoding objects.
+    pub(crate) fn verify(&self, cancelled: &AtomicBool) -> Result<(), Error> {
+        check_cancelled(cancelled)?;
+        self.index.check_not_truncated()?;
+        self.pack.check_not_truncated()?;
+        let pack = &self.pack;
+        let format = self.format;
+        let end = pack.len - format.digest_len();
+        let mut hash = Hasher::new(format);
+        hash.update(&pack.bytes(0, 12)?);
+        let mut buffer = [0; 64 * 1024];
+        for &position in &self.offsets {
+            let entry = self.entry(position)?;
+            let mut offset = entry.offset;
+            let mut crc = crc32fast::Hasher::new();
+            while offset < entry.end {
+                check_cancelled(cancelled)?;
+                let count = buffer.len().min(entry.end - offset);
+                pack.read_at(offset, &mut buffer[..count])?;
+                hash.update(&buffer[..count]);
+                crc.update(&buffer[..count]);
+                offset += count;
+            }
+            if entry.crc.is_some_and(|expected| crc.finalize() != expected) {
+                return Err(Error::Corrupt("entry CRC"));
+            }
+        }
+        let trailer = pack.bytes(end, pack.len)?;
+        if hash.finalize().as_bytes() != trailer {
+            return Err(Error::Corrupt("pack checksum"));
+        }
+        let pack_hash = &self.index_bytes[self.index_bytes.len() - 2 * format.digest_len()
+            ..self.index_bytes.len() - format.digest_len()];
+        if pack_hash != trailer {
+            return Err(Error::Corrupt("index/pack checksum disagreement"));
+        }
+        check_cancelled(cancelled)
     }
 
     pub(crate) fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
@@ -207,7 +250,7 @@ impl FilePack {
 }
 
 impl FilePack {
-    /// Streams the validated raw bytes `start..end` of the pinned pack into `output`.
+    /// Streams the indexed raw bytes `start..end` of the pinned pack into `output`.
     pub(crate) fn copy_raw(
         &self,
         start: usize,
@@ -218,41 +261,10 @@ impl FilePack {
             artifact: &self.pack,
             position: start,
             end: end.min(self.pack.len),
+            crc: None,
         };
         io::copy(&mut BufReader::with_capacity(64 * 1024, input), output).map(|_| ())
     }
-}
-
-fn validate_pack(pack: &Artifact, index: &Index, cancelled: &AtomicBool) -> Result<(), Error> {
-    let format = index.pack_hash.format();
-    let end = pack.len - format.digest_len();
-    let mut hash = Hasher::new(format);
-    hash.update(&pack.bytes(0, 12)?);
-    let mut buffer = [0; 64 * 1024];
-    for &position in &index.offsets {
-        let entry = &index.entries[position];
-        let mut offset = entry.offset;
-        let mut crc = crc32fast::Hasher::new();
-        while offset < entry.end {
-            check_cancelled(cancelled)?;
-            let count = buffer.len().min(entry.end - offset);
-            pack.read_at(offset, &mut buffer[..count])?;
-            hash.update(&buffer[..count]);
-            crc.update(&buffer[..count]);
-            offset += count;
-        }
-        if entry.crc.is_some_and(|expected| crc.finalize() != expected) {
-            return Err(Error::Corrupt("entry CRC"));
-        }
-    }
-    let trailer = pack.bytes(end, pack.len)?;
-    if hash.finalize().as_bytes() != trailer {
-        return Err(Error::Corrupt("pack checksum"));
-    }
-    if index.pack_hash.as_bytes() != trailer {
-        return Err(Error::Corrupt("index/pack checksum disagreement"));
-    }
-    check_cancelled(cancelled)
 }
 
 impl Source for FilePack {
@@ -266,7 +278,14 @@ impl Source for FilePack {
             id: self.identity(position)?,
             offset,
             end,
-            crc: None,
+            crc: if self.legacy {
+                None
+            } else {
+                Some(word(
+                    &self.index_bytes,
+                    1032 + self.ranges.len() * self.format.digest_len() + position * 4,
+                )?)
+            },
         })
     }
 
@@ -293,15 +312,24 @@ impl Source for FilePack {
 
     fn inflate(
         &self,
+        entry: &Entry,
         start: usize,
-        end: usize,
         expected: usize,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
+        let end = entry.end;
+        let crc = if entry.crc.is_some() {
+            let mut crc = crc32fast::Hasher::new();
+            crc.update(&self.pack.bytes(entry.offset, start)?);
+            Some(crc)
+        } else {
+            None
+        };
         let input = Range {
             artifact: &self.pack,
             position: start,
             end,
+            crc,
         };
         let mut input = BufReader::with_capacity(64 * 1024, input);
         let mut decoder = flate2::Decompress::new(true);
@@ -342,6 +370,18 @@ impl Source for FilePack {
                 return Err(Error::Corrupt("truncated packed zlib stream"));
             }
         }
+        if let Some(expected) = entry.crc {
+            let actual = input
+                .get_ref()
+                .crc
+                .as_ref()
+                .expect("v2 entry CRC")
+                .clone()
+                .finalize();
+            if actual != expected {
+                return Err(Error::Corrupt("entry CRC"));
+            }
+        }
         Ok(data)
     }
 }
@@ -351,6 +391,7 @@ struct Range<'a> {
     artifact: &'a Artifact,
     position: usize,
     end: usize,
+    crc: Option<crc32fast::Hasher>,
 }
 
 impl Read for Range<'_> {
@@ -366,6 +407,13 @@ impl Read for Range<'_> {
             .unwrap_or_else(|error| error.into_inner());
         file.seek(SeekFrom::Start(self.position as u64))?;
         file.read_exact(&mut output[..count])?;
+        #[cfg(test)]
+        self.artifact
+            .bytes_read
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        if let Some(crc) = &mut self.crc {
+            crc.update(&output[..count]);
+        }
         self.position += count;
         Ok(count)
     }
@@ -422,8 +470,10 @@ mod publication_tests {
         path
     }
 
-    #[test]
-    fn open_does_not_read_pack_body() {
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn open_does_not_read_pack_body(#[case] format: ObjectFormat) {
         let root = tempfile::tempdir().unwrap();
         let mut state = 123456789u64;
         let data: Vec<u8> = (0..2 * 1024 * 1024)
@@ -434,21 +484,27 @@ mod publication_tests {
                 state as u8
             })
             .collect();
-        let path = pair(root.path(), "large", ObjectFormat::Sha1, &data);
+        let path = pair(root.path(), "large", format, &data);
         let reader = FilePack::open(
-            ObjectFormat::Sha1,
+            format,
             &path,
             &mut PackLimits::default(),
             &AtomicBool::new(false),
         )
         .unwrap();
         assert!(reader.pack.len > 1024 * 1024);
-        assert!(
+        let opened_bytes = reader
+            .pack
+            .bytes_read
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(opened_bytes, 12 + format.digest_len());
+        reader.verify(&AtomicBool::new(false)).unwrap();
+        assert_eq!(
             reader
                 .pack
                 .bytes_read
-                .load(std::sync::atomic::Ordering::Relaxed)
-                < 1024 * 1024
+                .load(std::sync::atomic::Ordering::Relaxed),
+            opened_bytes + reader.pack.len
         );
     }
 
