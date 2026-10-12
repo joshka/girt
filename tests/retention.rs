@@ -1834,3 +1834,311 @@ fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
     assert_eq!(published.written.deltas.entries as usize, original_deltas);
     git(root.path(), &["fsck", "--strict"], b"");
 }
+
+fn gc_policy() -> RetentionPolicy {
+    RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expire_before: Some(1_800_000_000),
+        reflog_expire_unreachable_before: Some(1_800_000_000),
+        ..RetentionPolicy::default()
+    }
+}
+
+fn loose_path(root: &Path, id: ObjectId) -> std::path::PathBuf {
+    let hex = id.to_string();
+    root.join("objects").join(&hex[..2]).join(&hex[2..])
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1_ref("sha1", "ref")]
+#[case::sha256_ref("sha256", "ref")]
+#[case::sha1_pack("sha1", "pack")]
+#[case::sha256_pack("sha256", "pack")]
+#[case::sha1_log("sha1", "log")]
+#[case::sha256_log("sha256", "log")]
+fn input_changed_after_planning_refuses_before_mutation(
+    #[case] format: &str,
+    #[case] change: &str,
+) {
+    let (root, repo, first, _) = fixture_format(format);
+    let orphan: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan")
+        .parse()
+        .unwrap();
+    let log = root.path().join("logs/refs/heads/deleted");
+    let original = fs::read(&log).unwrap();
+    let error = repo
+        .collect_garbage_with_checkpoint(
+            &mut FixtureIsolation,
+            &gc_policy(),
+            &AtomicBool::new(false),
+            || match change {
+                "ref" => {
+                    git(
+                        root.path(),
+                        &["update-ref", "refs/tags/saved", &orphan.to_string()],
+                        b"",
+                    );
+                }
+                "pack" => {
+                    git(root.path(), &["repack", "-ad"], b"");
+                }
+                "log" => {
+                    git(
+                        root.path(),
+                        &[
+                            "update-ref",
+                            "--create-reflog",
+                            "refs/heads/another",
+                            &first.to_string(),
+                        ],
+                        b"",
+                    );
+                }
+                _ => unreachable!(),
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Changed
+    ));
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    assert_eq!(fs::read(log).unwrap(), original);
+    git(root.path(), &["cat-file", "-e", &orphan.to_string()], b"");
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1_tree("sha1", false)]
+#[case::sha256_tree("sha256", false)]
+#[case::sha1_tag("sha1", true)]
+#[case::sha256_tag("sha256", true)]
+fn loose_blob_reached_only_through_nested_tree_or_tag_survives(
+    #[case] format: &str,
+    #[case] tag: bool,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let blob: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"deep blob")
+        .parse()
+        .unwrap();
+    publish_blob_root(root.path(), blob, tag);
+    repo.collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap();
+    git(root.path(), &["cat-file", "-e", &blob.to_string()], b"");
+    git(root.path(), &["fsck", "--strict"], b"");
+}
+
+fn publish_blob_root(root: &Path, blob: ObjectId, tag: bool) {
+    if tag {
+        git(
+            root,
+            &["tag", "-a", "saved", "-m", "blob tag", &blob.to_string()],
+            b"",
+        );
+    } else {
+        let mut tree = git(
+            root,
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        for _ in 0..3 {
+            tree = git(
+                root,
+                &["mktree"],
+                format!("040000 tree {tree}\tnested\n").as_bytes(),
+            );
+        }
+        let commit = git(root, &["commit-tree", &tree], b"nested\n");
+        git(root, &["update-ref", "refs/heads/deep", &commit], b"");
+    }
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn missing_reachable_blob_refuses_both_phases(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let blob: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"missing")
+        .parse()
+        .unwrap();
+    publish_blob_root(root.path(), blob, false);
+    fs::remove_file(loose_path(root.path(), blob)).unwrap();
+    let log = root.path().join("logs/refs/heads/deleted");
+    let original = fs::read(&log).unwrap();
+    let error = repo
+        .collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Incomplete(_)
+    ));
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    assert_eq!(fs::read(log).unwrap(), original);
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn max_bytes_counts_decoded_graph_objects_only(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let blob: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        &vec![b'x'; 65536],
+    )
+    .parse()
+    .unwrap();
+    publish_blob_root(root.path(), blob, false);
+    let plan = repo.plan_retention(
+        &RetentionPolicy {
+            max_bytes: 4096,
+            ..gc_policy()
+        },
+        &AtomicBool::new(false),
+    );
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.required.contains(&blob));
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn composite_gc_refuses_limits_before_mutation(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let log = root.path().join("logs/refs/heads/deleted");
+    let original = fs::read(&log).unwrap();
+    let error = repo
+        .collect_garbage(
+            &mut FixtureIsolation,
+            &RetentionPolicy {
+                max_entries: 1,
+                ..gc_policy()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Incomplete(_)
+    ));
+    assert_eq!(fs::read(log).unwrap(), original);
+    assert!(error.report.expired.is_none());
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) {
+    let (a, repo, _, second) = fixture_format(format);
+    let (b, _, _, _) = fixture_format(format);
+    git(a.path(), &["hash-object", "-w", "--stdin"], b"orphan");
+    git(b.path(), &["hash-object", "-w", "--stdin"], b"orphan");
+    // Keep an unreachable endpoint solely through a recent reflog record.
+    let recent = format!("{second} {second} A <a@example.com> 1900000000 +0000\trecent\n");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(a.path().join("logs/refs/heads/deleted"))
+        .unwrap()
+        .write_all(recent.as_bytes())
+        .unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(b.path().join("logs/refs/heads/deleted"))
+        .unwrap()
+        .write_all(recent.as_bytes())
+        .unwrap();
+    repo.collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap();
+    git(
+        b.path(),
+        &[
+            "-c",
+            "gc.reflogExpire=@1800000000",
+            "-c",
+            "gc.reflogExpireUnreachable=@1800000000",
+            "gc",
+            "--prune=now",
+        ],
+        b"",
+    );
+    assert_eq!(
+        git(
+            a.path(),
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)"
+            ],
+            b""
+        ),
+        git(
+            b.path(),
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)"
+            ],
+            b""
+        )
+    );
+    assert_eq!(
+        fs::read(a.path().join("logs/refs/heads/deleted")).unwrap(),
+        fs::read(b.path().join("logs/refs/heads/deleted")).unwrap()
+    );
+    git(a.path(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+#[test]
+fn composite_gc_holds_one_isolation_guard() {
+    struct CountIsolation(usize);
+    impl MaintenanceIsolation for CountIsolation {
+        type Guard = ();
+        fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+            self.0 += 1;
+            Ok(())
+        }
+    }
+    let (_, repo, _, _) = fixture();
+    let mut isolation = CountIsolation(0);
+    repo.collect_garbage(&mut isolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(isolation.0, 1);
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn recent_pack_does_not_classify_unreachable_history_as_live(#[case] format: &str) {
+    let (root, repo, first, second) = fixture_format(format);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/temporary", &second.to_string()],
+        b"",
+    );
+    git(root.path(), &["repack", "-ad"], b"");
+    git(
+        root.path(),
+        &["update-ref", "-d", "refs/heads/temporary"],
+        b"",
+    );
+    let plan = repo.plan_retention(
+        &RetentionPolicy {
+            reflog_expire_before: Some(1_600_000_000),
+            reflog_expire_unreachable_before: Some(1_800_000_000),
+            ..RetentionPolicy::default()
+        },
+        &AtomicBool::new(false),
+    );
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert!(plan.required.contains(&first));
+    assert!(!plan.strong_roots.contains(&second));
+    assert!(!plan.required.contains(&second));
+    assert!(!plan.reflog_expiry_candidates.is_empty());
+}
