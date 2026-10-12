@@ -9,7 +9,7 @@ containing 131,152 packed objects.
 
 Run from the combined jj workspace with an empty `/tmp/23-combined-bench` output directory and the
 original fixture available. The scripts use the exact quiet driver supplied for the comparison.
-Comparison sources are exported read-only from the recorded remote bookmarks; builds happen before
+Comparison sources are exported read-only from the recorded commit IDs; builds happen before
 acquiring the shared timing lock.
 
 ```sh
@@ -22,12 +22,18 @@ for label in opus-low sol-medium combined; do
 done
 ```
 
-`stages.rs` is an additional binary in the combined driver package. Build it before timing, then
-copy `measure.py`, `run.sh`, `workloads.py`, and `workloads.sh` into `/tmp/23-combined-bench` and
-run the two shell scripts. Each takes `/tmp/girt-timing.lock` for its entire block and records
-uptime at both ends. Comparison runs use a fresh `cp -cR` clone for each command. The supplemental
-workloads use one fresh clone per three-run sequence, adding a new root before each run, to measure
-changing roots and protected-pack accumulation. Those sequences intentionally retain prior output.
+`export.py` installs the supplied driver, the additional `stages.rs` binary, and both timing scripts
+into the output directory. The builds above include both combined binaries. Then run:
+
+```sh
+zsh /tmp/23-combined-bench/run.sh
+zsh /tmp/23-combined-bench/workloads.sh
+```
+
+Both shell scripts take `/tmp/girt-timing.lock` for their entire block and record uptime at both
+ends. Comparison runs use a fresh `cp -cR` clone for each command. The supplemental workloads use
+one fresh clone per three-run sequence, adding a new root before each run, to measure changing roots
+and protected-pack accumulation. Those sequences intentionally retain prior output.
 
 The comparison rotates four candidates across three rounds. `/usr/bin/time -l` records elapsed
 seconds and maximum resident set size; process RSS is separate from logical payload limits. Git uses
