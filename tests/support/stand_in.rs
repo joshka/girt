@@ -15,6 +15,8 @@ pub fn shell(path: &Path, body: &str) {
 }
 
 /// Creates `path` as a program that runs `body` with the `python3` found on its `PATH`.
+// Shared by test crates; some only launch shell programs.
+#[allow(dead_code)]
 pub fn python(path: &Path, body: &str) {
     install(path, "py", body);
 }

@@ -1322,6 +1322,17 @@ pruning still requires coordination. Packs remain non-thin; ordinary entries rem
 bounded delta selection is now opt-in. No HTTP/SSH, credentials, pruning, shallow/partial support or
 new ref features are introduced.
 
+`Repository::push` reads the receiver's advertisement before preparing, as `git send-pack` does, and
+uses every advertised tip and `.have` as a receiver root, whatever the commands' expected values. A
+new branch therefore sends only the history the receiver lacks. Over HTTP the advertisement is the
+discovery response and the pack goes in the following POST; over SSH the session stays open while
+the pack is prepared. The native local transport reads the destination's references after checking
+its receive policy, excluding refs hidden by `receive.hideRefs` or `transfer.hideRefs`. It reads
+them again before installing; if a root the pack relies on is no longer a reference target, it
+prepares once more against the new references and reports a second change as `KnowledgeChanged`
+without sending. Over HTTP and SSH, preparation and the root check use the same advertisement.
+Alternates' references are not offered as `.have` lines by the native local transport.
+
 Disposable Git tests cover initial, no-op and incremental transfers, shared/divergent and merge
 histories, branch/tag selection, gitlinks, unavailable receiver roots, corrupt/missing local
 objects, ACK states and bounds, installation failures without ref publication, expected-ref races

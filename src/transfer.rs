@@ -38,7 +38,7 @@ use crate::fetch::{
     FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits, FetchWorkflowError,
     KnownHistory, RemoteHead,
 };
-use crate::push::{PreparedPush, PushCommand, PushLimits, PushReport};
+use crate::push::{PreparedPush, PushCommand, PushFailure, PushLimits, PushReport};
 use crate::refs::{RefName, Reflog};
 use crate::remote::{Destination, Direction, Protocol, ProtocolEnvironment, Refspecs, Remote};
 use crate::transport::TransportControl;
@@ -869,6 +869,11 @@ impl Repository {
     /// currently has the command's expected value. Commands succeed or fail independently; check
     /// each [`crate::push::RefStatus`] in the report.
     ///
+    /// Like `git push`, the pack omits history reachable from anything the remote advertises, so
+    /// creating a branch sends only the commits the remote lacks. The pack is prepared after the
+    /// advertisement is read, while the connection is open. If a local remote's references change
+    /// during preparation, the push is prepared again once against the new references.
+    ///
     /// # Errors
     ///
     /// Returns [`TransferError::Push`] when the push couldn't complete. Its
@@ -881,58 +886,72 @@ impl Repository {
         environment: &Environment,
         callbacks: &mut dyn TransferCallbacks,
     ) -> Result<PushReport, TransferError> {
+        self.push_observed(
+            remote_name,
+            commands,
+            options,
+            environment,
+            callbacks,
+            &|| {},
+        )
+    }
+
+    /// Runs [`Self::push`], calling `before_prepare` before each preparation attempt.
+    fn push_observed(
+        &self,
+        remote_name: &str,
+        commands: Vec<PushCommand>,
+        options: &PushOptions,
+        environment: &Environment,
+        callbacks: &mut dyn TransferCallbacks,
+        before_prepare: &dyn Fn(),
+    ) -> Result<PushReport, TransferError> {
         let (endpoint, _) = self.endpoint(remote_name, Direction::Push, environment)?;
         let objects = self
             .objects(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
+        let format = objects.object_format();
+        let limits = PushLimits::trusted();
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel);
-        // Objects the remote already has: the expected values of the commands, which the remote
-        // must have for the push to succeed.
-        let receiver_roots: Vec<ObjectId> = commands
-            .iter()
-            .filter_map(|command| command.expected)
-            .collect();
-        let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, TransferError> {
-            let prepared = PreparedPush::new_local(
-                &objects,
-                commands.clone(),
-                roots,
-                PushLimits::trusted(),
-                &cancel,
-            )
-            .map_err(|error| {
-                TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
-            })?;
+        // Each transport reads the receiver's advertisement before preparing. Like `git
+        // send-pack`, preparation excludes the history of every advertised object (`roots`), so
+        // the pack holds only what the receiver lacks.
+        let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, PushFailure> {
+            before_prepare();
+            let prepared =
+                PreparedPush::new_local(&objects, commands.clone(), roots, limits, &cancel)?;
             let prepared = if options.push_options.is_empty() {
                 prepared
             } else {
-                prepared
-                    .with_push_options(options.push_options.clone())
-                    .map_err(|error| {
-                        TransferError::Push(Box::new(crate::push::PushError::NotSent(error)))
-                    })?
+                prepared.with_push_options(options.push_options.clone())?
             };
             Ok(prepared.with_progress())
         };
+        #[cfg(any(
+            feature = "http",
+            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+        ))]
+        let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
             Endpoint::Local(path) => {
-                let send = |roots: &[ObjectId]| -> Result<_, TransferError> {
-                    let prepared = prepare(roots)?;
-                    Ok(crate::push::send_local_with_context(
+                let send = || {
+                    crate::push::send_local_preparing(
                         &path,
-                        &prepared,
+                        format,
                         control,
                         crate::push::LocalPushContext {
                             config_inputs: &crate::config::ConfigInputs::default(),
                             identity: options.identity.as_ref(),
                         },
-                    ))
+                        |advertisement| prepare(&advertisement.receiver_roots()?),
+                    )
                 };
-                let mut result = send(&receiver_roots)?;
-                // An expected value the remote doesn't have can't be excluded from the pack.
+                let mut result = send();
+                // The destination's references changed while preparing: prepare once more against
+                // the new ones. A second change is reported rather than retried.
                 if is_knowledge_changed(&result) {
-                    result = send(&[])?;
+                    result = send();
                 }
                 // Receive hook output arrives with the report rather than live.
                 if let Ok(report) = &result {
@@ -946,84 +965,53 @@ impl Repository {
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
                 let send = |remote: &crate::transport::http::HttpRemote,
-                            roots: &[ObjectId],
                             callbacks: &mut dyn TransferCallbacks| {
-                    let prepared = prepare(roots)?;
-                    let names: Vec<RefName> =
-                        prepared.commands().iter().map(|c| c.name.clone()).collect();
                     let advertised = std::cell::RefCell::new(BTreeMap::new());
-                    let result = runtime.block_on(crate::push::send_http_checked_with_progress(
+                    let result = runtime.block_on(crate::push::send_http_preparing(
                         remote,
-                        prepared,
+                        format,
+                        limits,
                         control,
                         |advertisement| {
                             record_targets(advertisement, &names, &advertised);
-                            true
+                            prepare(&advertisement.receiver_roots())
                         },
                         |message| callbacks.remote_message(message),
                     ));
-                    Ok::<_, TransferError>(result.map(|outcome| match outcome {
-                        crate::push::HttpPushOutcome::Sent(mut report) => {
-                            mark_up_to_date(&mut report, &advertised.into_inner());
-                            crate::push::HttpPushOutcome::Sent(report)
-                        }
-                        outcome => outcome,
-                    }))
+                    result.map(|mut report| {
+                        mark_up_to_date(&mut report, &advertised.into_inner());
+                        report
+                    })
                 };
                 let remote = http.remote(None)?;
-                let mut result = send(&remote, &receiver_roots, callbacks)?;
+                let mut result = send(&remote, callbacks);
                 if is_unauthorized_push(&result) {
                     let session = http.credentials(callbacks)?;
                     let remote = http.remote(Some(session))?;
-                    result = send(&remote, &receiver_roots, callbacks)?;
+                    result = send(&remote, callbacks);
                 }
-                if is_knowledge_changed(&result) {
-                    result = send(&remote, &[], callbacks)?;
-                }
-                result.map(|outcome| match outcome {
-                    crate::push::HttpPushOutcome::Sent(report) => report,
-                    crate::push::HttpPushOutcome::Declined => {
-                        unreachable!("push is never declined")
-                    }
-                })
+                result
             }
             #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Endpoint::Ssh(ssh) => {
                 let runtime = runtime()?;
-                let send = |roots: &[ObjectId], callbacks: &mut dyn TransferCallbacks| {
-                    let prepared = prepare(roots)?;
-                    let names: Vec<RefName> =
-                        prepared.commands().iter().map(|c| c.name.clone()).collect();
-                    let advertised = std::cell::RefCell::new(BTreeMap::new());
-                    let callbacks = std::cell::RefCell::new(callbacks);
-                    let result = runtime.block_on(crate::push::send_ssh_checked_with_progress(
-                        &ssh,
-                        &prepared,
-                        control,
-                        |advertisement| {
-                            record_targets(advertisement, &names, &advertised);
-                            true
-                        },
-                        |message| callbacks.borrow_mut().transport_message(message),
-                        |message| callbacks.borrow_mut().remote_message(message),
-                    ));
-                    Ok::<_, TransferError>(result.map(|outcome| match outcome {
-                        crate::push::SshPushOutcome::Sent(mut report) => {
-                            mark_up_to_date(&mut report, &advertised.into_inner());
-                            crate::push::SshPushOutcome::Sent(report)
-                        }
-                        outcome => outcome,
-                    }))
-                };
-                let mut result = send(&receiver_roots, callbacks)?;
-                if is_knowledge_changed(&result) {
-                    result = send(&[], callbacks)?;
-                }
-                result.map(|outcome| match outcome {
-                    crate::push::SshPushOutcome::Sent(report) => report,
-                    crate::push::SshPushOutcome::Declined => {
-                        unreachable!("push is never declined")
-                    }
+                let advertised = std::cell::RefCell::new(BTreeMap::new());
+                let callbacks = std::cell::RefCell::new(callbacks);
+                let result = runtime.block_on(crate::push::send_ssh_preparing(
+                    &ssh,
+                    format,
+                    limits,
+                    control,
+                    |advertisement| {
+                        record_targets(advertisement, &names, &advertised);
+                        prepare(&advertisement.receiver_roots())
+                    },
+                    |message| callbacks.borrow_mut().transport_message(message),
+                    |message| callbacks.borrow_mut().remote_message(message),
+                ));
+                result.map(|mut report| {
+                    mark_up_to_date(&mut report, &advertised.into_inner());
+                    report
                 })
             }
         };
@@ -1188,4 +1176,149 @@ fn runtime() -> Result<tokio::runtime::Runtime, TransferError> {
         .enable_all()
         .build()
         .map_err(TransferError::local)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use super::*;
+    use crate::push::{ForcePolicy, PushError};
+
+    fn git(directory: &Path, args: &[&str], date: usize) -> String {
+        let date = format!("@{} +0000", 1_700_000_000 + date * 60);
+        let output = Command::new("git")
+            .current_dir(directory)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Push Author")
+            .env("GIT_AUTHOR_EMAIL", "push@example.com")
+            .env("GIT_COMMITTER_NAME", "Push Author")
+            .env("GIT_COMMITTER_EMAIL", "push@example.com")
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .args(args)
+            .output()
+            .expect("Git required for push fixtures");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A worktree whose `main` has 30 commits, each adding a file, pushed to a bare `origin`, and
+    /// a `topic` branch one commit ahead of `main` that the destination lacks.
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf, ObjectId) {
+        let root = tempfile::tempdir().unwrap();
+        let work = root.path().join("work");
+        let dest = root.path().join("dest.git");
+        std::fs::create_dir(&work).unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        git(&work, &["init", "-q", "--initial-branch=main", "."], 0);
+        git(&dest, &["init", "-q", "--bare", "."], 0);
+        git(&dest, &["config", "receive.unpackLimit", "1"], 0);
+        for n in 0..=30 {
+            if n == 30 {
+                git(&work, &["push", "-q", &dest.to_string_lossy(), "main"], n);
+                git(&work, &["switch", "-q", "-c", "topic"], n);
+            }
+            std::fs::write(work.join(format!("file-{n}")), format!("{n}\n")).unwrap();
+            git(&work, &["add", "."], n);
+            git(&work, &["commit", "-q", "-m", &n.to_string()], n);
+        }
+        git(
+            &work,
+            &["remote", "add", "origin", &dest.to_string_lossy()],
+            0,
+        );
+        let topic = git(&work, &["rev-parse", "topic"], 0).parse().unwrap();
+        (root, work, dest, topic)
+    }
+
+    fn push(
+        work: &Path,
+        topic: ObjectId,
+        before_prepare: &dyn Fn(),
+    ) -> Result<PushReport, TransferError> {
+        Repository::open(work).unwrap().push_observed(
+            "origin",
+            vec![PushCommand {
+                name: RefName::new("refs/heads/topic").unwrap(),
+                expected: None,
+                new: topic,
+                force: ForcePolicy::FastForwardOnly,
+            }],
+            &PushOptions::default(),
+            &Environment::default(),
+            &mut NoCallbacks,
+            before_prepare,
+        )
+    }
+
+    /// Objects in the destination's packs.
+    fn packed(dest: &Path) -> usize {
+        std::fs::read_dir(dest.join("objects/pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "idx"))
+            .map(|index| {
+                let output = Command::new("git")
+                    .arg("show-index")
+                    .stdin(std::fs::File::open(index).unwrap())
+                    .output()
+                    .unwrap();
+                output.stdout.iter().filter(|b| **b == b'\n').count()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn push_retry_after_knowledge_change_reuses_advertisement() {
+        let (_root, work, dest, topic) = fixture();
+        let before = packed(&dest);
+        let attempts = Cell::new(0);
+        // The destination's only ref moves back one commit while the first pack is prepared, so
+        // the root that pack relies on is no longer advertised.
+        let report = push(&work, topic, &|| {
+            attempts.set(attempts.get() + 1);
+            if attempts.get() == 1 {
+                git(&dest, &["update-ref", "refs/heads/main", "main~1"], 0);
+            }
+        })
+        .unwrap();
+        assert!(report.all_succeeded(), "{report:?}");
+        assert_eq!(attempts.get(), 2);
+        // The retry excludes the new `main`: both missing commits with their trees and blobs.
+        assert_eq!(packed(&dest) - before, 6);
+        assert_eq!(git(&dest, &["rev-parse", "topic"], 0), topic.to_string());
+        git(&dest, &["fsck", "--strict", "--no-dangling"], 0);
+    }
+
+    #[test]
+    fn push_reports_a_second_knowledge_change_without_sending() {
+        let (_root, work, dest, topic) = fixture();
+        let before = packed(&dest);
+        let attempts = Cell::new(0);
+        let result = push(&work, topic, &|| {
+            attempts.set(attempts.get() + 1);
+            git(&dest, &["update-ref", "refs/heads/main", "main~1"], 0);
+        });
+        assert!(
+            matches!(
+                result,
+                Err(TransferError::Push(ref error))
+                    if matches!(**error, PushError::NotSent(PushFailure::KnowledgeChanged(_)))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(packed(&dest), before);
+        assert!(git(&dest, &["for-each-ref", "refs/heads/topic"], 0).is_empty());
+    }
 }

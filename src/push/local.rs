@@ -100,6 +100,29 @@ pub fn send_local_with_context(
     control: TransportControl<'_>,
     context: LocalPushContext<'_>,
 ) -> Result<PushReport, PushError> {
+    send_local_preparing(
+        destination.as_ref(),
+        prepared.format,
+        control,
+        context,
+        |_| Ok(prepared),
+    )
+}
+
+/// Prepares a native local push from the destination's advertisement, then sends it.
+///
+/// `prepare` runs after the destination's receive policy is checked and before installation; its
+/// preparation should exclude [`super::local_native::LocalAdvertisement::receiver_roots`].
+/// Uses [`send_local_with_context`]'s storage and partial-outcome contract. The destination's
+/// references are read again after preparation: a relied-on root that is no longer a reference
+/// target is [`super::PushFailure::KnowledgeChanged`], before installation.
+pub(crate) fn send_local_preparing<P: std::borrow::Borrow<PreparedPush>>(
+    destination: &Path,
+    format: crate::ObjectFormat,
+    control: TransportControl<'_>,
+    context: LocalPushContext<'_>,
+    prepare: impl FnOnce(&super::local_native::LocalAdvertisement<'_>) -> Result<P, super::PushFailure>,
+) -> Result<PushReport, PushError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -114,12 +137,13 @@ pub fn send_local_with_context(
     );
 
     let operation = || {
-        super::local_native::send(
-            destination.as_ref(),
-            prepared,
+        super::local_native::send_preparing(
+            destination,
+            format,
             control,
             context.identity,
             context.config_inputs,
+            prepare,
         )
     };
     #[cfg(feature = "tracing")]

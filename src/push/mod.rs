@@ -12,7 +12,9 @@
 //! Preparation validates every object it sends and buffers a non-thin pack before any commands
 //! can reach a server. With receiver roots, it reads only the history they do not cover plus a
 //! boundary; see [`PreparedPush::new_excluding`]. Preparation leaves local refs and reflogs
-//! untouched.
+//! untouched. These functions take an already prepared push, so its roots come from the caller's
+//! knowledge. [`crate::Repository::push`] instead prepares after reading the advertisement and
+//! excludes [`PushAdvertisement::receiver_roots`], as `git send-pack` does.
 //!
 //! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
 //! deletion requires the advertised `delete-refs` capability, and supplied push options require
@@ -33,6 +35,8 @@
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub(crate) use ssh::send_ssh_preparing;
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 pub use ssh::{
     SshPushOutcome, send_ssh, send_ssh_checked_with_progress, send_ssh_selected_with_progress,
 };
@@ -46,6 +50,8 @@ mod live_progress;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
+pub(crate) use http::send_http_preparing;
+#[cfg(feature = "http")]
 pub use http::{HttpPushOutcome, send_http, send_http_checked, send_http_checked_with_progress};
 
 mod graph;
@@ -57,6 +63,7 @@ mod progress;
 mod protocol;
 mod types;
 
+pub(crate) use local::send_local_preparing;
 pub use local::{
     LocalPushContext, send_local, send_local_with_context, send_local_with_control,
     send_local_with_identity,

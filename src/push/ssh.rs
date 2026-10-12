@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::sync::atomic::AtomicBool;
 
 use super::live_progress::LiveProgress;
@@ -85,12 +86,13 @@ pub async fn send_ssh_checked_with_progress(
 ) -> Result<SshPushOutcome, PushError> {
     send_selected(
         remote,
-        prepared,
+        prepared.format,
+        prepared.limits,
         control,
         |advertisement, offered| {
             // Retain the checked sender's all-command validation before its boolean callback.
             offered.validate(prepared, &prepared.commands, control.cancel)?;
-            Ok(should_send(advertisement).then(|| prepared.commands.clone()))
+            Ok(should_send(advertisement).then(|| (prepared, prepared.commands.clone())))
         },
         diagnostics,
         progress,
@@ -134,11 +136,13 @@ pub async fn send_ssh_selected_with_progress(
 ) -> Result<SshPushOutcome, PushError> {
     send_selected(
         remote,
-        prepared,
+        prepared.format,
+        prepared.limits,
         control,
         |advertisement, offered| {
             offered.validate_format(prepared.format)?;
-            prepared.selected_commands(select(advertisement)).map(Some)
+            let commands = prepared.selected_commands(select(advertisement))?;
+            Ok(Some((prepared, commands)))
         },
         diagnostics,
         progress,
@@ -146,14 +150,52 @@ pub async fn send_ssh_selected_with_progress(
     .await
 }
 
-async fn send_selected(
+/// Prepares a push from the live advertisement, then sends it in the same SSH session.
+///
+/// `prepare` runs synchronously on the executor while the session waits; its preparation should
+/// exclude [`PushAdvertisement::receiver_roots`]. `format` and `limits` bound advertisement
+/// parsing and must match the prepared push's. Uses [`send_ssh_checked_with_progress`]'s error
+/// contract.
+pub(crate) async fn send_ssh_preparing(
     remote: &SshRemote,
-    prepared: &PreparedPush,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
+    control: TransportControl<'_>,
+    prepare: impl FnOnce(&PushAdvertisement) -> Result<PreparedPush, PushFailure>,
+    diagnostics: impl FnMut(&[u8]),
+    progress: impl FnMut(&[u8]),
+) -> Result<PushReport, PushError> {
+    let outcome = send_selected(
+        remote,
+        format,
+        limits,
+        control,
+        |advertisement, _| {
+            let prepared = prepare(advertisement)?;
+            let commands = prepared.commands.clone();
+            Ok(Some((prepared, commands)))
+        },
+        diagnostics,
+        progress,
+    )
+    .await?;
+    match outcome {
+        SshPushOutcome::Sent(report) => Ok(report),
+        SshPushOutcome::Declined => unreachable!("preparing SSH push cannot decline"),
+    }
+}
+
+/// Reads the advertisement, lets `select` supply the push and its submitted commands (or
+/// decline), then sends them.
+async fn send_selected<P: Borrow<PreparedPush>>(
+    remote: &SshRemote,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
     control: TransportControl<'_>,
     select: impl FnOnce(
         &PushAdvertisement,
         &protocol::AdvertisedCapabilities,
-    ) -> Result<Option<Vec<super::PushCommand>>, PushFailure>,
+    ) -> Result<Option<(P, Vec<super::PushCommand>)>, PushFailure>,
     mut diagnostics: impl FnMut(&[u8]),
     mut progress: impl FnMut(&[u8]),
 ) -> Result<SshPushOutcome, PushError> {
@@ -177,7 +219,7 @@ async fn send_selected(
         let preflight = async {
             let bytes = session
                 .advertise_with_diagnostics(
-                    prepared.limits.max_advertisement_bytes,
+                    limits.max_advertisement_bytes,
                     control,
                     &mut diagnostics,
                 )
@@ -185,22 +227,23 @@ async fn send_selected(
             let mut reader = bytes.as_slice();
             let mut wire = Wire {
                 reader: &mut reader,
-                remaining: prepared.limits.max_advertisement_bytes,
+                remaining: limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            let (caps, advertisement) = protocol::advertise_for_selection(&mut wire, prepared)?;
+            let (caps, advertisement) =
+                protocol::advertise_for_selection(&mut wire, format, limits)?;
             wire.end()?;
             control.check()?;
             Ok::<_, PushFailure>((caps, advertisement))
         };
         let (offered, advertisement) = preflight.await.map_err(PushError::NotSent)?;
-        let commands = select(&advertisement, &offered).map_err(PushError::NotSent)?;
-        let Some(commands) = commands else {
+        let selected = select(&advertisement, &offered).map_err(PushError::NotSent)?;
+        let Some((prepared, commands)) = selected else {
             let (body, result, _) = session
                 .exchange_with_diagnostics(
                     b"0000",
                     &[],
-                    prepared.limits.max_status_bytes,
+                    limits.max_status_bytes,
                     control,
                     &mut diagnostics,
                 )
@@ -213,6 +256,7 @@ async fn send_selected(
             }
             return Ok(SshPushOutcome::Declined);
         };
+        let prepared: &PreparedPush = prepared.borrow();
         let caps = offered
             .validate(prepared, &commands, control.cancel)
             .map_err(PushError::NotSent)?;

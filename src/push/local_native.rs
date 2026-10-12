@@ -1,5 +1,6 @@
 //! Native local pack installation followed by conditional reference publication.
 
+use std::borrow::Borrow;
 use std::fs;
 use std::path::Path;
 
@@ -7,35 +8,65 @@ use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, S
 use crate::config::ConfigInputs;
 use crate::fetch::{Advertisement, FetchError, FetchLimits, NativeContents, ReceivedFetch};
 use crate::refs::{
-    Expected, RefEdit, RefName, RefOutcome, ReferenceError, Reflog, Target, TransactionError,
+    Expected, RefEdit, RefName, RefOutcome, ReferenceError, References, Reflog, Target,
+    TransactionError,
 };
 use crate::transport::TransportControl;
 use crate::{Repository, Signature};
 
-pub(super) fn send(
+/// The destination's references as `git receive-pack` would advertise them, read on request.
+pub(crate) struct LocalAdvertisement<'a> {
+    refs: &'a References<'a>,
+    hide: &'a HideRules,
+}
+
+impl LocalAdvertisement<'_> {
+    /// Targets of the visible direct references, sorted and deduplicated. Like receive-pack, refs
+    /// hidden by `receive.hideRefs` or `transfer.hideRefs` are not offered.
+    pub(crate) fn receiver_roots(&self) -> Result<Vec<crate::ObjectId>, PushFailure> {
+        let mut roots: Vec<_> = self
+            .refs
+            .list()
+            .map_err(PushFailure::reference)?
+            .into_iter()
+            .filter(|reference| !self.hide.matches(&reference.name))
+            .filter_map(|reference| match reference.target {
+                Target::Direct(id) => Some(id),
+                Target::Symbolic(_) => None,
+            })
+            .collect();
+        roots.sort_unstable();
+        roots.dedup();
+        Ok(roots)
+    }
+}
+
+/// Opens and checks the destination's receive policy, prepares the push from its advertisement,
+/// then installs and publishes it.
+///
+/// Policy refusals happen before `prepare` runs. Receiver roots the preparation relied on are
+/// checked against the references read after preparation; a change is
+/// [`PushFailure::KnowledgeChanged`].
+pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     destination: &Path,
-    prepared: &PreparedPush,
+    format: crate::ObjectFormat,
     control: TransportControl<'_>,
     identity: Option<&Signature>,
     config_inputs: &ConfigInputs,
+    prepare: impl FnOnce(&LocalAdvertisement<'_>) -> Result<P, PushFailure>,
 ) -> Result<PushReport, PushError> {
     control
         .check()
         .map_err(|error| PushError::NotSent(error.into()))?;
     let repository = Repository::open_with_config(destination, config_inputs)
         .map_err(|error| PushError::NotSent(PushFailure::destination(error)))?;
-    if repository.object_format() != prepared.format {
+    if repository.object_format() != format {
         return Err(PushError::NotSent(PushFailure::Unsupported(
             "destination object format",
         )));
     }
     let advertises_push_options =
         configured_boolean(&repository, "receive", "advertisepushoptions")?.unwrap_or(false);
-    if prepared.has_options && !advertises_push_options {
-        return Err(PushError::NotSent(PushFailure::Unsupported(
-            "the receiving end does not support push options",
-        )));
-    }
     if identity.is_some_and(|person| person.validate().is_err() || person.seconds < 0) {
         return Err(PushError::NotSent(PushFailure::Identity));
     }
@@ -64,6 +95,25 @@ pub(super) fn send(
     let refs = repository
         .references()
         .map_err(|error| PushError::NotSent(PushFailure::reference(error)))?;
+    let prepared = prepare(&LocalAdvertisement {
+        refs: &refs,
+        hide: &hide,
+    })
+    .map_err(PushError::NotSent)?;
+    let prepared: &PreparedPush = prepared.borrow();
+    if prepared.format != format {
+        return Err(PushError::NotSent(PushFailure::Unsupported(
+            "destination object format",
+        )));
+    }
+    if prepared.has_options && !advertises_push_options {
+        return Err(PushError::NotSent(PushFailure::Unsupported(
+            "the receiving end does not support push options",
+        )));
+    }
+    control
+        .check()
+        .map_err(|error| PushError::NotSent(error.into()))?;
     let mut report = PushReport::pending(&prepared.commands);
     for reference in &mut report.refs {
         reference.rewrite_complete = true;
