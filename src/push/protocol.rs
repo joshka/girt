@@ -160,6 +160,7 @@ pub(super) struct Capabilities {
 #[derive(Debug)]
 pub struct PushAdvertisement {
     refs: HashMap<RefName, ObjectId>,
+    haves: Vec<ObjectId>,
 }
 
 impl PushAdvertisement {
@@ -170,22 +171,25 @@ impl PushAdvertisement {
     pub fn target(&self, name: &RefName) -> Option<ObjectId> {
         self.refs.get(name).copied()
     }
+
+    /// Returns every advertised tip and `.have` ID, sorted and deduplicated.
+    ///
+    /// The receiver claims each one's closure, so these are the receiver roots that
+    /// [`PreparedPush::new_excluding`] can exclude, as `git send-pack` excludes advertised history.
+    pub fn receiver_roots(&self) -> Vec<ObjectId> {
+        let mut roots: Vec<_> = self.refs.values().chain(&self.haves).copied().collect();
+        roots.sort_unstable();
+        roots.dedup();
+        roots
+    }
 }
 
 pub(super) fn advertise(
     wire: &mut Wire<'_, impl Read>,
     prepared: &PreparedPush,
 ) -> Result<Capabilities, Error> {
-    advertise_with_refs(wire, prepared).map(|(capabilities, _)| capabilities)
-}
-
-pub(super) fn advertise_with_refs(
-    wire: &mut Wire<'_, impl Read>,
-    prepared: &PreparedPush,
-) -> Result<(Capabilities, PushAdvertisement), Error> {
-    let (offered, advertisement) = advertise_for_selection(wire, prepared)?;
-    let caps = offered.validate(prepared, &prepared.commands, wire.cancel)?;
-    Ok((caps, advertisement))
+    let (offered, _) = advertise_for_selection(wire, prepared.format, prepared.limits)?;
+    offered.validate(prepared, &prepared.commands, wire.cancel)
 }
 
 pub(super) struct AdvertisedCapabilities {
@@ -241,9 +245,11 @@ impl AdvertisedCapabilities {
 
 pub(super) fn advertise_for_selection(
     wire: &mut Wire<'_, impl Read>,
-    prepared: &PreparedPush,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
 ) -> Result<(AdvertisedCapabilities, PushAdvertisement), Error> {
     let mut refs = HashMap::new();
+    let mut haves = Vec::new();
     let mut roots = HashSet::new();
     let mut count = 0usize;
     let mut report_status = false;
@@ -282,7 +288,7 @@ pub(super) fn advertise_for_selection(
         };
         let (id, name) =
             split(reference, b' ').ok_or(Error::Protocol("reference advertisement"))?;
-        let id = parse_id(id, prepared.format)?;
+        let id = parse_id(id, format)?;
         if id.is_null() {
             if count != 0 || name != b"capabilities^{}" {
                 return Err(Error::Protocol("zero advertised ID"));
@@ -292,11 +298,13 @@ pub(super) fn advertise_for_selection(
             if empty {
                 return Err(Error::Protocol("refs after empty marker"));
             }
-            if count >= prepared.limits.max_refs {
+            if count >= limits.max_refs {
                 return Err(Error::Limit("advertised refs"));
             }
             roots.insert(id);
-            if name != b".have" {
+            if name == b".have" {
+                haves.push(id);
+            } else {
                 let name =
                     RefName::new(name).map_err(|_| Error::Protocol("advertised ref name"))?;
                 if refs.insert(name, id).is_some() {
@@ -321,7 +329,7 @@ pub(super) fn advertise_for_selection(
             push_options,
             roots,
         },
-        PushAdvertisement { refs },
+        PushAdvertisement { refs, haves },
     ))
 }
 

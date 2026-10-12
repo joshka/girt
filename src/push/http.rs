@@ -100,9 +100,65 @@ pub async fn send_http_checked(
 /// uncertain push.
 pub async fn send_http_checked_with_progress(
     remote: &HttpRemote,
-    mut prepared: PreparedPush,
+    prepared: PreparedPush,
     control: TransportControl<'_>,
     should_send: impl FnOnce(&PushAdvertisement) -> bool,
+    progress: impl FnMut(&[u8]),
+) -> Result<HttpPushOutcome, PushError> {
+    let (format, limits) = (prepared.format, prepared.limits);
+    send_advertised(
+        remote,
+        format,
+        limits,
+        control,
+        |advertisement, offered| {
+            // Retain the checked sender's capability validation before its boolean callback.
+            offered.validate(&prepared, &prepared.commands, control.cancel)?;
+            Ok(should_send(advertisement).then_some(prepared))
+        },
+        progress,
+    )
+    .await
+}
+
+/// Prepares a push from the live advertisement, then sends it in the same discovery's RPC.
+///
+/// `prepare` receives the validated advertisement before any POST; its preparation should exclude
+/// [`PushAdvertisement::receiver_roots`]. `format` and `limits` bound advertisement parsing and
+/// must match the prepared push's. Uses [`send_http_checked_with_progress`]'s error contract.
+pub(crate) async fn send_http_preparing(
+    remote: &HttpRemote,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
+    control: TransportControl<'_>,
+    prepare: impl FnOnce(&PushAdvertisement) -> Result<PreparedPush, PushFailure>,
+    progress: impl FnMut(&[u8]),
+) -> Result<PushReport, PushError> {
+    let outcome = send_advertised(
+        remote,
+        format,
+        limits,
+        control,
+        |advertisement, _| prepare(advertisement).map(Some),
+        progress,
+    )
+    .await?;
+    match outcome {
+        HttpPushOutcome::Sent(report) => Ok(report),
+        HttpPushOutcome::Declined => unreachable!("preparing HTTP push cannot decline"),
+    }
+}
+
+/// Discovers, lets `prepare` supply the push (or decline), validates capabilities and posts.
+async fn send_advertised(
+    remote: &HttpRemote,
+    format: crate::ObjectFormat,
+    limits: super::PushLimits,
+    control: TransportControl<'_>,
+    prepare: impl FnOnce(
+        &PushAdvertisement,
+        &protocol::AdvertisedCapabilities,
+    ) -> Result<Option<PreparedPush>, PushFailure>,
     mut progress: impl FnMut(&[u8]),
 ) -> Result<HttpPushOutcome, PushError> {
     #[cfg(feature = "tracing")]
@@ -122,27 +178,28 @@ pub async fn send_http_checked_with_progress(
         let preflight = async {
             control.check()?;
             let (bytes, _) = remote
-                .discover(
-                    "git-receive-pack",
-                    prepared.limits.max_advertisement_bytes,
-                    control,
-                )
+                .discover("git-receive-pack", limits.max_advertisement_bytes, control)
                 .await?;
             let mut reader = bytes.as_slice();
             let mut wire = Wire {
                 reader: &mut reader,
-                remaining: prepared.limits.max_advertisement_bytes,
+                remaining: limits.max_advertisement_bytes,
                 cancel: control.cancel,
             };
-            let (caps, advertisement) = protocol::advertise_with_refs(&mut wire, &prepared)?;
+            let (offered, advertisement) =
+                protocol::advertise_for_selection(&mut wire, format, limits)?;
             wire.end()?;
             control.check()?;
-            Ok::<_, PushFailure>((caps, advertisement))
+            Ok::<_, PushFailure>((offered, advertisement))
         };
-        let (caps, advertisement) = preflight.await.map_err(PushError::NotSent)?;
-        if !should_send(&advertisement) {
+        let (offered, advertisement) = preflight.await.map_err(PushError::NotSent)?;
+        let Some(mut prepared) = prepare(&advertisement, &offered).map_err(PushError::NotSent)?
+        else {
             return Ok(HttpPushOutcome::Declined);
-        }
+        };
+        let caps = offered
+            .validate(&prepared, &prepared.commands, control.cancel)
+            .map_err(PushError::NotSent)?;
         if caps.report_v2 || caps.sideband {
             prepared.request = prepared
                 .request_for(caps.report_v2, caps.sideband)
