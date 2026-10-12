@@ -770,3 +770,40 @@ fn damaged_source_entry_cannot_change_destination(
     );
     git(dest.git_dir(), &["fsck", "--strict"]);
 }
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn tree_reference_does_not_prove_its_missing_blob_exists(#[case] format: ObjectFormat) {
+    let source = fixture(format);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dest.git");
+    let dest = Repository::init(format, &path, InitKind::Bare).unwrap();
+    let tree = String::from_utf8(git(source.path(), &["rev-parse", "HEAD^{tree}"])).unwrap();
+    let tree: girt::ObjectId = tree.trim().parse().unwrap();
+    let payload = git(source.path(), &["cat-file", "tree", &tree.to_string()]);
+    let tree_path = root.path().join("tree");
+    std::fs::write(&tree_path, payload).unwrap();
+    git(
+        &path,
+        &[
+            "hash-object",
+            "-w",
+            "-t",
+            "tree",
+            "--literally",
+            tree_path.to_str().unwrap(),
+        ],
+    );
+    git(&path, &["update-ref", "refs/for/tree", &tree.to_string()]);
+    let known = KnownHistory::from_store(
+        dest.objects(PackLimits::trusted()).unwrap(),
+        &[tree],
+        FetchLimits::trusted(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let (received, _) = receive(source.path(), &known);
+    publish(&received, &dest, tip(source.path()));
+    assert_eq!(object_set(&path), object_set(&source.path().join(".git")));
+}
