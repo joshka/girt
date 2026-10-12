@@ -79,7 +79,10 @@ fn assert_no_wrong_content(fixture: &Fixture, objects: &Objects) -> usize {
     for (id, kind, data) in &fixture.records {
         match objects.read(*id, ReadLimits::default()) {
             Ok(Some(object)) => {
-                assert_eq!((object.id(), object.kind(), object.data()), (*id, *kind, &data[..]));
+                assert_eq!(
+                    (object.id(), object.kind(), object.data()),
+                    (*id, *kind, &data[..])
+                );
             }
             Ok(None) | Err(_) => failed += 1,
         }
@@ -93,11 +96,26 @@ fn assert_no_wrong_content(fixture: &Fixture, objects: &Objects) -> usize {
 fn damaged_index_checksum_reads_like_git_and_fails_verification(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
     damage(&fixture, false, |_, index| *index.last_mut().unwrap() ^= 1);
-    let (id, _, data) = &fixture.records[0];
-    let id = id.to_string();
+    // Git reads both a whole and a delta entry through the damaged index.
+    for id in [fixture.ordinary, fixture.delta] {
+        let (_, _, data) = fixture
+            .records
+            .iter()
+            .find(|record| record.0 == id)
+            .unwrap();
+        let shown = git(
+            fixture.root.path(),
+            &["cat-file", "-p", &id.to_string()],
+            b"",
+        );
+        assert_eq!(shown, *data);
+    }
     let path = fixture.index_path.to_str().unwrap();
-    assert_eq!(git(fixture.root.path(), &["cat-file", "-p", &id], b""), *data);
-    assert!(!git_output(fixture.root.path(), &["verify-pack", path], b"").status.success());
+    assert!(
+        !git_output(fixture.root.path(), &["verify-pack", path], b"")
+            .status
+            .success()
+    );
 
     let objects = open(&fixture).unwrap();
     assert_eq!(assert_no_wrong_content(&fixture, &objects), 0);
@@ -135,7 +153,10 @@ fn offset_outside_pack_fails_open(#[case] format: ObjectFormat, #[case] rehash: 
         let at = layout.offset(0);
         index[at..at + 4].copy_from_slice(&0x7fff_0000u32.to_be_bytes());
     });
-    assert_eq!(corrupt_artifacts(open(&fixture)), "offset outside pack entries");
+    assert_eq!(
+        corrupt_artifacts(open(&fixture)),
+        "offset outside pack entries"
+    );
 }
 
 #[rstest]

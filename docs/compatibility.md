@@ -2362,9 +2362,10 @@ recovery or durability guarantee is added. Independent fixtures and limitations 
 
 R14 extends SHA-1/SHA-256 local pack reads to pack v3 and index v1. Writers still emit pack v2 and
 index v2; transport import version support is unchanged. Legacy indexes have no CRC table, so
-whole-pack/index checksums and read-time object identity verification supply integrity checks. See
-[R14 evidence](evidence/r14.md) for the independent Git/jj matrix and remaining capability owners.
-Historical pack records above describe their original revisions, not current limitations.
+explicit whole-pack/index checksum verification and read-time object identity verification supply
+integrity checks. See [R14 evidence](evidence/r14.md) for the independent Git/jj matrix and
+remaining capability owners. Historical pack records above describe their original revisions, not
+current limitations.
 
 ## R15 File-Backed Storage
 

@@ -83,6 +83,24 @@ that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack
 `git fsck`. Repack and retirement fail at the blob because copying checks its CRC and retirement
 decodes it.
 
+## Index checksums at open
+
+Opening a pack checks the index structure but not its trailing checksum, as Git does
+([#80](https://github.com/joshka/girt/issues/80)). Hashing a 131k-entry index cost about a fifth of
+every open, and so of every jj command. The structural checks run in linear time: exact table sizes,
+strictly increasing identities, a fanout that matches them, each large offset used once, offsets
+that tile the pack from byte 12, and the index's pack checksum against the pack trailer. Damage to
+any of those fails the open.
+
+Damage the structure cannot see stays harmless because content reads are identity-checked (see
+[Identity checks in walks](#identity-checks-in-walks)). Swapped offsets fail the entry CRC, or the
+identity hash for v1. A changed name makes its object read as absent, and the changed name fails its
+identity check. A read therefore fails rather than returning the wrong content. The index checksum
+moves to the paths that trust names without hashing objects: `Objects::verify_packs`, retention
+planning (which checks every pinned index before it can authorize a deletion), verification of a
+replacement pack before retirement, and entry reuse when writing a pack, which checks each source
+index once before copying bytes under its names.
+
 ## Fast path contracts
 
 Copied or reused data still counts against caller limits and statistics; skipping them silently
