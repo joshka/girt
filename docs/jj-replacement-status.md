@@ -37,6 +37,9 @@ Explicitly excluded; recorded as limitations, not counted as parity:
 - Partial clone and filters.
 - Submodule recursion.
 - `git-remote-*` helpers.
+- The `cache` and `osxkeychain` credential helpers. girt answers `credential.helper = store` itself,
+  but `cache`, `osxkeychain` and other named helpers still run Git's `git-credential-<name>`
+  programs ([#29](https://github.com/joshka/girt/issues/29)).
 - Attribute filters during copy detection.
 - Byte-identical `git gc` packing.
 

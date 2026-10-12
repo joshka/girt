@@ -2636,3 +2636,86 @@ fn http_fetch_progress_respects_cancellation_and_wire_budget(
     assert_eq!(notices, [b"receiving\xff\r".to_vec()]);
     assert_eq!(error.to_string(), expected.to_string());
 }
+
+/// Fetches over authenticated HTTP with `credential.helper = store` while every `git` and
+/// `git-credential-*` program on `PATH` and `GIT_EXEC_PATH` is a tripwire. The username and
+/// password need percent-encoding in the credential file.
+#[cfg(unix)]
+#[test]
+fn http_fetch_authenticates_from_native_store_without_running_git() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source = Fixture::new(girt::ObjectFormat::Sha1, true, 2);
+    // Base64 of `u s@r/%:p:w/d%+#?é`.
+    let server = Server::new(
+        source.root.path(),
+        "",
+        "Basic dSBzQHIvJTpwOncvZCUrIz/DqQ==",
+        None,
+    );
+    let host = server.url.split('/').nth(2).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let tripwires = root.path().join("bin");
+    let log = root.path().join("tripwire.log");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&tripwires).unwrap();
+    for name in ["git", "git-credential-store", "git-credential-cache"] {
+        let path = tripwires.join(name);
+        let script = format!("#!/bin/sh\necho {name} >> '{}'\nexit 1\n", log.display());
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let file = home.join(".git-credentials");
+    let file_arg = file.to_str().unwrap();
+    let entry = format!("protocol=http\nhost={host}\nusername=u s@r/%\npassword=p:w/d%+#?é\n\n");
+    git(
+        root.path(),
+        &["credential-store", "--file", file_arg, "store"],
+        entry.as_bytes(),
+    );
+
+    let destination = root.path().join("destination");
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            destination.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let mut config = std::fs::read(destination.join("config")).unwrap();
+    config.extend_from_slice(
+        format!(
+            "[remote \"origin\"]\n\turl = {}\n[credential]\n\thelper = store\n",
+            server.url
+        )
+        .as_bytes(),
+    );
+    std::fs::write(destination.join("config"), config).unwrap();
+
+    let environment = girt::transfer::Environment::default()
+        .with("HOME", &home)
+        .with("PATH", &tripwires)
+        .with("GIT_EXEC_PATH", &tripwires);
+    let outcome = Repository::open(&destination)
+        .unwrap()
+        .fetch(
+            "origin",
+            &girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
+            &environment,
+            &mut girt::transfer::NoCallbacks,
+        )
+        .unwrap();
+    assert!(!outcome.updated.is_empty());
+    assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap());
+    // Approval rewrote the entry, and Git still reads it back.
+    let answer = git(
+        root.path(),
+        &["credential-store", "--file", file_arg, "get"],
+        format!("protocol=http\nhost={host}\n\n").as_bytes(),
+    );
+    assert_eq!(answer, "username=u s@r/%\npassword=p:w/d%+#?é\n".as_bytes());
+}

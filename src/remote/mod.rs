@@ -17,7 +17,8 @@
 //! - [`parse_configured_url`] returns interpreted host/path components without filesystem access;
 //!   scheme paths are decoded while local, file and scp paths remain literal.
 //! - [`RemoteConfig`] edits named remote configuration. [`CredentialSession`] discovers credentials
-//!   only through an application-approved helper lifecycle.
+//!   only through an application-approved helper lifecycle; [`CredentialStore`] answers Git's
+//!   `store` helper natively.
 //!
 //! Transport choice, URL rewriting, implicit branch selection, tag following, pruning, mirror
 //! policy and other remote options remain the caller's responsibility.
@@ -31,6 +32,7 @@ mod configured_refspec;
 mod configured_remote;
 mod configured_url;
 mod credential;
+mod credential_store;
 mod edit;
 mod endpoint;
 pub use edit::{RemoteConfig, RemoteEditError, RemoteKey};
@@ -48,9 +50,10 @@ pub use configured_url::{
     ConfiguredUrlError, ConfiguredUrlParts, normalize_configured_url, parse_configured_url,
 };
 pub use credential::{
-    Credential, CredentialContext, CredentialError, CredentialHelper, CredentialProgram,
-    CredentialSession, Prompt, askpass,
+    Credential, CredentialBackend, CredentialContext, CredentialError, CredentialHelper,
+    CredentialProgram, CredentialSession, Prompt, askpass,
 };
+pub use credential_store::CredentialStore;
 pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment};
 pub use name::{InvalidRemoteName, RemoteNameError, validate_name};
 pub use refspec::{
