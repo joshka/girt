@@ -350,6 +350,38 @@ mod tests {
     }
 
     #[test]
+    fn transfer_writer_copies_compressed_entries_verbatim() {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let (_written, bytes, index) = rewrite(&[&source], &packed(&source, &ids), &[]).unwrap();
+        let output = open(root.path(), "verbatim", &bytes, &index);
+        let first = source.entry(source.at_offset(12).unwrap()).unwrap();
+        let next = output.entry(output.at_offset(12).unwrap()).unwrap();
+        let mut original = Vec::new();
+        let mut copied = Vec::new();
+        source.copy_raw(first.offset, first.end, &mut original).unwrap();
+        output.copy_raw(next.offset, next.end, &mut copied).unwrap();
+        assert_eq!(copied, original);
+        assert_eq!(next.crc, Some(crc32fast::hash(&original)));
+    }
+
+    #[rstest::rstest]
+    #[case::bytes(PackWriteLimits { max_input_bytes: 1, ..PackWriteLimits::default() })]
+    #[case::object(PackWriteLimits { max_object_bytes: 1, ..PackWriteLimits::default() })]
+    fn copied_entries_obey_payload_limits(#[case] limits: PackWriteLimits) {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let result = write_reusing(
+            ObjectFormat::Sha1, &[&source], &packed(&source, &ids), &[],
+            (&mut Vec::new(), &mut Vec::new()), limits, PackCompression::Ordinary,
+            (ReadLimits::default(), &AtomicBool::new(false)), &mut || Ok(()),
+        );
+        assert!(matches!(result, Err(ReuseError::Write(PackWriteError::Limit(_)))));
+    }
+
+    #[test]
     fn copies_every_entry_and_keeps_deltas_when_bases_are_kept() {
         let root = tempfile::tempdir().unwrap();
         let data = versions();

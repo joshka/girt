@@ -638,3 +638,10 @@ mod shallow_tests {
         );
     }
 }
+
+#[cfg(test)]
+impl ReceivedFetch {
+    pub(crate) fn temporary_pack_path(&self) -> Option<&Path> {
+        self.pack.path()
+    }
+}

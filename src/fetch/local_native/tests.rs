@@ -243,3 +243,16 @@ fn local_progress_missing_source_has_no_completion() {
     assert!(matches!(result, Err(FetchError::Missing(_))));
     assert!(!events.contains(&LocalFetchProgress::Complete));
 }
+
+#[test]
+fn local_clone_pack_is_spooled_and_removed_on_drop() {
+    let (_root, repo, id) = source(ObjectFormat::Sha1);
+    let received = receive(
+        &repo, |_| vec![id], &KnownHistory::default(), FetchLimits::default(),
+        TransportControl::new(&AtomicBool::new(false)), |_| ControlFlow::Continue(()), |_| {},
+    ).unwrap();
+    let path = received.temporary_pack_path().expect("local transfer must spool").to_owned();
+    assert_eq!(std::fs::metadata(&path).unwrap().len() as usize, received.pack_bytes());
+    drop(received);
+    assert!(!path.exists());
+}
