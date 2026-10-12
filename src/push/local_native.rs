@@ -212,7 +212,8 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 Target::Symbolic(_) => None,
             })
             .collect();
-        let known = KnownHistory::from_store_roots(store, &roots);
+        let known = KnownHistory::from_store_roots(store, &roots, control.cancel)
+            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         let mut pack = crate::fetch::Bytes::temporary()
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         // Keep the prepared artifact reusable; import owns this independent temporary copy.

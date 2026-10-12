@@ -60,8 +60,9 @@ fn git(path: &Path, args: &[&str]) -> Vec<u8> {
         .unwrap();
     assert!(
         output.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "{args:?}: stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
     );
     output.stdout
 }
@@ -772,9 +773,14 @@ fn damaged_source_entry_cannot_change_destination(
 }
 
 #[rstest]
-#[case::sha1(ObjectFormat::Sha1)]
-#[case::sha256(ObjectFormat::Sha256)]
-fn tree_reference_does_not_prove_its_missing_blob_exists(#[case] format: ObjectFormat) {
+#[case::sha1(ObjectFormat::Sha1, false)]
+#[case::sha256(ObjectFormat::Sha256, false)]
+#[case::configured_sha1(ObjectFormat::Sha1, true)]
+#[case::configured_sha256(ObjectFormat::Sha256, true)]
+fn tree_reference_does_not_prove_its_missing_blob_exists(
+    #[case] format: ObjectFormat,
+    #[case] configured: bool,
+) {
     let source = fixture(format);
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("dest.git");
@@ -796,14 +802,104 @@ fn tree_reference_does_not_prove_its_missing_blob_exists(#[case] format: ObjectF
         ],
     );
     git(&path, &["update-ref", "refs/for/tree", &tree.to_string()]);
-    let known = KnownHistory::from_store(
-        dest.objects(PackLimits::trusted()).unwrap(),
-        &[tree],
-        FetchLimits::trusted(),
-        &AtomicBool::new(false),
-    )
-    .unwrap();
-    let (received, _) = receive(source.path(), &known);
-    publish(&received, &dest, tip(source.path()));
+    if configured {
+        git(
+            &path,
+            &[
+                "config",
+                "remote.origin.url",
+                source.path().to_str().unwrap(),
+            ],
+        );
+        let dest = Repository::open(&path).unwrap();
+        dest.fetch(
+            "origin",
+            &girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
+            &girt::transfer::Environment::from_process(),
+            &mut girt::transfer::NoCallbacks,
+        )
+        .unwrap();
+        git(&path, &["fsck", "--strict"]);
+    } else {
+        let known = KnownHistory::from_store(
+            dest.objects(PackLimits::trusted()).unwrap(),
+            &[tree],
+            FetchLimits::trusted(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let (received, _) = receive(source.path(), &known);
+        publish(&received, &dest, tip(source.path()));
+    }
     assert_eq!(object_set(&path), object_set(&source.path().join(".git")));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1, false)]
+#[case::sha256(ObjectFormat::Sha256, false)]
+#[case::verified_sha1(ObjectFormat::Sha1, true)]
+#[case::verified_sha256(ObjectFormat::Sha256, true)]
+fn store_assisted_fetch_materializes_the_canonical_empty_tree(
+    #[case] format: ObjectFormat,
+    #[case] verified: bool,
+) {
+    let source = tempfile::tempdir().unwrap();
+    git(
+        source.path(),
+        &["init", "-b", "main", &format!("--object-format={format}")],
+    );
+    git(
+        source.path(),
+        &["commit", "--allow-empty", "-qm", "empty tree"],
+    );
+    let empty = format.hash_object(girt::ObjectKind::Tree, b"").to_string();
+    let loose = source
+        .path()
+        .join(".git/objects")
+        .join(&empty[..2])
+        .join(&empty[2..]);
+    make_fixture_file_writable(&loose);
+    std::fs::remove_file(loose).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
+    let known = if verified {
+        let commit_path = root.path().join("commit");
+        std::fs::write(
+            &commit_path,
+            git(
+                source.path(),
+                &["cat-file", "commit", &tip(source.path()).to_string()],
+            ),
+        )
+        .unwrap();
+        git(
+            dest.git_dir(),
+            &[
+                "hash-object",
+                "-w",
+                "-t",
+                "commit",
+                "--literally",
+                commit_path.to_str().unwrap(),
+            ],
+        );
+        KnownHistory::new_local(
+            &dest.objects(PackLimits::trusted()).unwrap(),
+            &[tip(source.path())],
+            FetchLimits::trusted(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    } else {
+        KnownHistory::from_store(
+            dest.objects(PackLimits::trusted()).unwrap(),
+            &[],
+            FetchLimits::trusted(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    };
+    let (received, _) = receive(source.path(), &known);
+    assert_eq!(received.object_count(), if verified { 1 } else { 2 });
+    publish(&received, &dest, tip(source.path()));
 }

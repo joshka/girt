@@ -9,21 +9,24 @@ use crate::{Object, ObjectId, ObjectKind, Objects};
 /// Local object availability and complete-history evidence, including shallow boundaries.
 ///
 /// [`Self::new`] verifies the reachable graph from explicit roots, retaining its payloads.
-/// [`Self::from_store`] reads objects on demand and trusts only explicit destination reference
-/// roots and commits discovered from those roots as complete. A merely present object can be an
-/// external delta base or dependency without proving that its descendants exist.
+/// [`Self::from_store`] reads objects on demand and trusts only commit targets of explicit
+/// destination reference roots and commits discovered from them as complete. A merely present
+/// object can be an external delta base or dependency without proving that its descendants exist.
 ///
 /// Commit discovery is breadth-first in caller root and payload edge order, capped by
 /// [`FetchLimits::max_haves`]. A small cap can reduce negotiation effectiveness, never correctness.
 /// No local references are inferred by these constructors. Callers must coordinate with GC until
-/// installation and any subsequent reference publication.
+/// installation and any subsequent reference publication. The reader's implicit empty tree is
+/// not physical availability: fetch must materialize it before relying on it for publication.
 #[derive(Debug, Default)]
 pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
     /// Destination objects available as delta bases and dependencies, consulted after `objects`.
     pub(super) store: Option<Arc<Objects>>,
-    /// Explicit destination roots and commits discovered from them, never mere object presence.
+    /// Commit targets of explicit destination roots and commits discovered from them.
     pub(super) complete_roots: HashSet<ObjectId>,
+    /// A synthetic reader value is not a physical object that can support publication.
+    pub(super) missing_empty_tree: Option<ObjectId>,
     pub(super) haves: Vec<ObjectId>,
     pub(super) shallow: Vec<ObjectId>,
     pub(super) only_when_all_wants_known: bool,
@@ -49,6 +52,9 @@ impl KnownObjects for HashMap<ObjectId, Object> {
 
 impl KnownObjects for KnownHistory {
     fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>> {
+        if self.missing_empty_tree == Some(id) {
+            return None;
+        }
         if let Some(object) = self.objects.get(&id) {
             return Some(Cow::Borrowed(object));
         }
@@ -80,29 +86,46 @@ impl KnownHistory {
     pub(super) fn complete_kind(&self, id: ObjectId) -> Option<ObjectKind> {
         self.objects
             .get(&id)
+            .filter(|_| self.missing_empty_tree.is_none())
             .map(Object::kind)
             .or_else(|| self.trusted_complete(id).then(|| self.kind(id)).flatten())
     }
 
-    /// Records explicit reference roots for native transfer without preparing wire have lines.
-    pub(crate) fn from_store_roots(store: Objects, roots: &[ObjectId]) -> Self {
-        Self {
+    /// Peels reference roots to complete commits, without walking a wire have batch.
+    pub(crate) fn from_store_roots(
+        store: Objects,
+        roots: &[ObjectId],
+        cancel: &AtomicBool,
+    ) -> Result<Self, Error> {
+        let missing_empty_tree = missing_empty_tree(&store, cancel)?;
+        let mut complete_roots = HashSet::new();
+        for &root in roots {
+            check_cancelled(cancel)?;
+            if let Ok(peeled) = store.peel(root, crate::PeelLimits::default(), cancel)
+                && peeled.kind == ObjectKind::Commit
+            {
+                complete_roots.insert(peeled.target);
+            }
+        }
+        check_cancelled(cancel)?;
+        Ok(Self {
             shallow: store.shallow_roots().iter().collect(),
             store: Some(Arc::new(store)),
-            complete_roots: roots.iter().copied().collect(),
+            complete_roots,
+            missing_empty_tree,
             ..Self::default()
-        }
+        })
     }
 
     /// Describes a destination store for negotiation without reading its complete history.
     ///
     /// Up to [`FetchLimits::max_haves`] commits reachable from `tips` (breadth-first, peeling
     /// tags) are offered as haves. The store's shallow roots are declared. Callers supply roots
-    /// established by destination references; these roots and commits discovered from them are
-    /// trusted complete up to declared shallow boundaries. Other stored objects can supply delta
-    /// bases and dependencies, but their presence alone does not stop connectivity validation.
-    /// Callers must keep the roots and their histories available (e.g. exclude pruning) until
-    /// the fetch publishes its references.
+    /// established by destination references; their peeled commit targets and commits discovered
+    /// from them are trusted complete up to declared shallow boundaries. Other stored objects can
+    /// supply delta bases and dependencies, but their presence alone does not stop connectivity
+    /// validation. Callers must keep the roots and their histories available (e.g. exclude
+    /// pruning) until the fetch publishes its references.
     ///
     /// # Errors
     ///
@@ -113,6 +136,7 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
+        let missing_empty_tree = missing_empty_tree(&store, cancel)?;
         let shallow: Vec<_> = store.shallow_roots().iter().collect();
         let shallow_set: HashSet<_> = shallow.iter().copied().collect();
         let mut haves = Vec::new();
@@ -124,10 +148,11 @@ impl KnownHistory {
             let Ok(peeled) = store.peel(tip, crate::PeelLimits::default(), cancel) else {
                 continue;
             };
-            complete_roots.insert(tip);
-            complete_roots.insert(peeled.target);
-            if peeled.kind == ObjectKind::Commit && seen.insert(peeled.target) {
-                pending.push_back(peeled.target);
+            if peeled.kind == ObjectKind::Commit {
+                complete_roots.insert(peeled.target);
+                if seen.insert(peeled.target) {
+                    pending.push_back(peeled.target);
+                }
             }
         }
         while let Some(id) = pending.pop_front() {
@@ -160,6 +185,7 @@ impl KnownHistory {
             objects: HashMap::new(),
             store: Some(Arc::new(store)),
             complete_roots,
+            missing_empty_tree,
             haves,
             shallow,
             only_when_all_wants_known: false,
@@ -190,6 +216,7 @@ impl KnownHistory {
         Self {
             shallow: self.shallow.clone(),
             store: self.store.clone(),
+            missing_empty_tree: self.missing_empty_tree,
             ..Self::default()
         }
     }
@@ -270,6 +297,13 @@ impl KnownHistory {
                 result.objects.insert(id, object);
             },
         )?;
+        let empty = store.object_format().hash_object(ObjectKind::Tree, b"");
+        if result.objects.contains_key(&empty) {
+            result.missing_empty_tree = missing_empty_tree(store, cancel)?;
+            if result.missing_empty_tree.is_some() {
+                result.haves.clear();
+            }
+        }
         result.shallow.retain(|id| result.objects.contains_key(id));
         Ok(result)
     }
@@ -299,6 +333,15 @@ impl KnownHistory {
     pub fn haves(&self) -> &[ObjectId] {
         &self.haves
     }
+}
+
+fn missing_empty_tree(store: &Objects, cancel: &AtomicBool) -> Result<Option<ObjectId>, Error> {
+    let id = store.object_format().hash_object(ObjectKind::Tree, b"");
+    check_cancelled(cancel)?;
+    let present = store.has_stored_empty_tree(cancel);
+    check_cancelled(cancel)?;
+    let present = present.map_err(|source| Error::LocalRead { id, source })?;
+    Ok((!present).then_some(id))
 }
 
 /// Walks history reachable from `roots`, handing each verified object to `visit`.

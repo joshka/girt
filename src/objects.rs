@@ -489,6 +489,33 @@ impl Objects {
 }
 
 impl Objects {
+    /// Checks physical empty-tree availability, excluding the reader's synthetic fallback.
+    pub(crate) fn has_stored_empty_tree(
+        &self,
+        cancel: &AtomicBool,
+    ) -> Result<bool, ObjectReadError> {
+        let id = self.format.hash_object(ObjectKind::Tree, b"");
+        let hex = id.to_string();
+        for store in &self.stores {
+            check_cancelled(cancel)?;
+            for pack in &store.packs {
+                check_cancelled(cancel)?;
+                if pack.find(id)?.is_some() {
+                    return Ok(true);
+                }
+            }
+            let path = store.directory.join(&hex[..2]).join(&hex[2..]);
+            if path
+                .try_exists()
+                .map_err(|source| ObjectReadError::Path { path, source })?
+            {
+                return Ok(true);
+            }
+        }
+        check_cancelled(cancel)?;
+        Ok(false)
+    }
+
     /// All pinned packs in the same primary/alternate lookup order as `read`.
     pub(crate) fn transfer_packs(&self) -> Vec<&FilePack> {
         self.stores

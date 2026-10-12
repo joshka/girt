@@ -14,12 +14,12 @@ fast path omitted the missing descendants. Six Git-generated SHA-1/SHA-256 cases
 ordinary, retained and configured fetch before the correction.
 
 Available destination objects now remain separate from complete boundaries. Native configured fetch
-records explicit destination reference tips without enumerating a wire have batch. Public
-store-assisted history also records commits reached from the supplied reference roots during its
-bounded have walk. Fully verified snapshots can supply boundary evidence. Mere presence records a
-dependency but does not stop source edge traversal or receiver connectivity; retained selection also
-requires boundary evidence. Other shared tree data is conservatively walked. The six recovery cases
-now supply missing descendants, match source object sets and pass strict Git fsck. Retained
+peels explicit destination reference tips to commit targets without enumerating a wire have batch.
+Public store-assisted history also records commits reached from the supplied reference roots during
+its bounded have walk. Fully verified snapshots can supply boundary evidence. Mere presence records
+a dependency but does not stop source edge traversal or receiver connectivity; retained selection
+also requires boundary evidence. Other shared tree data is conservatively walked. The six recovery
+cases now supply missing descendants, match source object sets and pass strict Git fsck. Retained
 selection of an unreferenced tip supplies a self-contained pack.
 
 Two additional cases mislabel a Git-generated delta base in a correctly checksummed index while the
@@ -30,16 +30,22 @@ separate design and measurements, and are not necessary for the integrity correc
 
 | Operation                         | Main: median (range), RSS      | Corrected: median (range), RSS | Git: median (range), RSS   |
 | --------------------------------- | ------------------------------ | ------------------------------ | -------------------------- |
-| Configured no-op local fetch      | 16.38 s (16.01–18.09), 687 MiB | 0.07 s (0.06–0.46), 28 MiB     | 0.12 s (0.12–0.14), 14 MiB |
-| Configured one-commit local fetch | 18.02 s (17.39–18.52), 666 MiB | 0.32 s (0.32–0.36), 93 MiB     | 0.16 s (0.15–0.16), 15 MiB |
+| Configured no-op local fetch      | 16.38 s (16.01–18.09), 687 MiB | 0.07 s (0.06–0.45), 27 MiB     | 0.12 s (0.12–0.14), 14 MiB |
+| Configured one-commit local fetch | 18.02 s (17.39–18.52), 666 MiB | 0.32 s (0.31–0.32), 91 MiB     | 0.16 s (0.15–0.16), 15 MiB |
 
-These corrected fetch samples use three fresh copies under the same lock and environment. Main/Git
-samples are retained from the rebased rotation below. Raw results are in
-[review-workflow.json](transfer-reuse/review-workflow.json) and the exact
-[review timing script](transfer-reuse/review-run.py). Only affected configured fetch paths were
+These final commit-only/synthetic-tree correction samples use three fresh copies under the same lock
+and environment. Main/Git samples are retained from the rebased rotation below. Raw results are in
+[final-workflow.json](transfer-reuse/final-workflow.json) and the exact
+[final timing script](transfer-reuse/final-run.py). Only affected configured fetch paths were
 remeasured; clone without known history and transfer preparation use the unchanged measured paths.
 The conservative boundary proof adds work for incremental fetch and remains above the ≤0.2 s latency
 target. The no-op median/RSS passes, but one latency sample exceeds the target.
+
+Tree/blob refs alone do not establish complete boundaries. Four additional cases cover partial tree
+refs through explicit and configured fetch; four require the synthetic canonical empty tree to be
+materialized for store-assisted or explicitly verified snapshots. The missing physical empty-tree
+value supplies neither a dependency nor complete-history/have evidence. All use both formats and
+strict Git fsck.
 
 ## Measurements After Rebase, Before Review
 

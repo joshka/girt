@@ -136,8 +136,12 @@ pub(super) fn receive_depth(
             return Err(FetchError::Kind(id));
         }
         observed.insert(id, object_kind);
-        let available =
-            depth.is_none() && limits.max_haves > 0 && known.kind(id) == Some(object_kind);
+        // Readers synthesize the empty tree even without a Git object file. Materialize it
+        // whenever this walk reaches it, rather than treating it as stored destination data.
+        let available = depth.is_none()
+            && limits.max_haves > 0
+            && known.kind(id) == Some(object_kind)
+            && !(object_kind == ObjectKind::Tree && length == 0);
         if available && known.complete_kind(id) == Some(object_kind) && !known.shallow.contains(&id)
         {
             dependencies.push(id);
