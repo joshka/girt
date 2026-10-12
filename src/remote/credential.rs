@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use super::CredentialStore;
 use crate::Config;
 use crate::config::boolean;
 
@@ -72,13 +73,22 @@ impl std::fmt::Debug for CredentialProgram {
     }
 }
 
-/// A configured helper that the application explicitly mapped to a trusted program.
+/// A configured helper that the application explicitly mapped to a trusted implementation.
 #[derive(Clone)]
 pub struct CredentialHelper {
     /// Exact configuration value; used only to match the selected helper order.
     pub configured_name: Vec<u8>,
-    /// Approved process invocation.
-    pub program: CredentialProgram,
+    /// What answers the helper's `get`, `store` and `erase` requests.
+    pub backend: CredentialBackend,
+}
+
+/// How a credential helper runs.
+#[derive(Clone, Debug)]
+pub enum CredentialBackend {
+    /// An approved external process speaking Git's credential helper protocol.
+    Program(CredentialProgram),
+    /// girt's native implementation of Git's `store` helper; no process is started.
+    Store(CredentialStore),
 }
 
 impl std::fmt::Debug for CredentialHelper {
@@ -148,7 +158,7 @@ pub enum CredentialError {
 /// ```
 pub struct CredentialSession {
     context: CredentialContext,
-    helpers: Vec<CredentialProgram>,
+    helpers: Vec<CredentialBackend>,
     credential: Credential,
     helper_failures: Vec<(usize, CredentialError)>,
 }
@@ -211,7 +221,7 @@ impl CredentialSession {
                 .iter()
                 .find(|program| program.configured_name == name)
                 .ok_or(CredentialError::UnapprovedHelper)?;
-            helpers.push(selected.program.clone());
+            helpers.push(selected.backend.clone());
         }
         let mut credential = Credential {
             username,
@@ -219,8 +229,19 @@ impl CredentialSession {
         };
         let mut helper_failures = Vec::new();
         for (position, helper) in helpers.iter().enumerate() {
+            let program = match helper {
+                CredentialBackend::Program(program) => program,
+                CredentialBackend::Store(store) => {
+                    check(cancel, deadline)?;
+                    store.get(&context, &mut credential)?;
+                    if credential.complete() {
+                        break;
+                    }
+                    continue;
+                }
+            };
             let input = encode(&context, &credential)?;
-            let output = match run(helper, Some("get"), &input, cancel, deadline) {
+            let output = match run(program, Some("get"), &input, cancel, deadline) {
                 Ok(output) => output,
                 Err(error @ CredentialError::Exit(_)) => {
                     helper_failures.push((position, error));
@@ -298,7 +319,19 @@ impl CredentialSession {
     ) -> Result<(), CredentialError> {
         let input = encode(&self.context, &self.credential)?;
         for helper in &self.helpers {
-            run(helper, Some(action), &input, cancel, deadline)?;
+            match helper {
+                CredentialBackend::Program(program) => {
+                    run(program, Some(action), &input, cancel, deadline)?;
+                }
+                CredentialBackend::Store(store) => {
+                    check(cancel, deadline)?;
+                    if action == "store" {
+                        store.store(&self.context, &self.credential)?;
+                    } else {
+                        store.erase(&self.context, &self.credential)?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -597,14 +630,22 @@ mod tests {
         std::fs::write(&path, script).unwrap();
         let helper = CredentialHelper {
             configured_name: b"synthetic".to_vec(),
-            program: CredentialProgram {
+            backend: CredentialBackend::Program(CredentialProgram {
                 executable: PathBuf::from("sh"),
                 arguments: vec![path.into_os_string()],
                 inherit_environment: false,
                 environment: Vec::new(),
-            },
+            }),
         };
         (directory, helper)
+    }
+
+    #[cfg(unix)]
+    fn process(helper: &CredentialHelper) -> &CredentialProgram {
+        match &helper.backend {
+            CredentialBackend::Program(program) => program,
+            CredentialBackend::Store(_) => unreachable!("test helpers are programs"),
+        }
     }
 
     #[cfg(unix)]
@@ -714,12 +755,12 @@ mod tests {
         let (_directory, program) = helper("printf 'synthetic-secret\\n'");
         let cancel = AtomicBool::new(false);
         assert_eq!(
-            askpass(&program.program, "Password:", &cancel, None).unwrap(),
+            askpass(process(&program), "Password:", &cancel, None).unwrap(),
             Some(b"synthetic-secret".to_vec())
         );
         let (_directory, empty) = helper("printf '\\n'");
         assert_eq!(
-            askpass(&empty.program, "Password:", &cancel, None).unwrap(),
+            askpass(process(&empty), "Password:", &cancel, None).unwrap(),
             None
         );
     }
@@ -850,15 +891,15 @@ mod tests {
     fn configured_program_debug_hides_sensitive_values() {
         let helper = CredentialHelper {
             configured_name: b"synthetic-secret".to_vec(),
-            program: CredentialProgram {
+            backend: CredentialBackend::Program(CredentialProgram {
                 executable: PathBuf::from("synthetic-secret"),
                 arguments: vec!["synthetic-secret".into()],
                 inherit_environment: false,
                 environment: vec![("TOKEN".into(), "synthetic-secret".into())],
-            },
+            }),
         };
         assert!(!format!("{helper:?}").contains("synthetic-secret"));
-        assert!(!format!("{:?}", helper.program).contains("synthetic-secret"));
+        assert!(!format!("{:?}", helper.backend).contains("synthetic-secret"));
     }
     #[cfg(windows)]
     #[test]
@@ -871,12 +912,12 @@ mod tests {
         ).unwrap();
         let helper = CredentialHelper {
             configured_name: b"synthetic".to_vec(),
-            program: CredentialProgram {
+            backend: CredentialBackend::Program(CredentialProgram {
                 executable: PathBuf::from("cmd.exe"),
                 arguments: vec!["/D".into(), "/C".into(), path.into_os_string()],
                 inherit_environment: false,
                 environment: Vec::new(),
-            },
+            }),
         };
         let config = Config::parse(b"[credential]\nhelper = synthetic\n").unwrap();
         let cancel = AtomicBool::new(false);

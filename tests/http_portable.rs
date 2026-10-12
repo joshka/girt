@@ -15,8 +15,8 @@ use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
 use girt::push::{self, ForcePolicy, PreparedPush, PushCommand, PushLimits, Status};
 use girt::refs::RefName;
 use girt::remote::{
-    CredentialContext, CredentialHelper, CredentialProgram, CredentialSession, Prompt,
-    ProtocolEnvironment, Remote,
+    CredentialBackend, CredentialContext, CredentialHelper, CredentialProgram, CredentialSession,
+    Prompt, ProtocolEnvironment, Remote,
 };
 use girt::transport::TransportControl;
 use girt::transport::http::{HttpEnvironment, HttpError, HttpRemote, HttpSettings};
@@ -117,7 +117,7 @@ fn helper_notification_follows_http_authentication_outcome(
     let log = tempfile::NamedTempFile::new().unwrap();
     let helper = CredentialHelper {
         configured_name: b"fixture".to_vec(),
-        program: CredentialProgram {
+        backend: CredentialBackend::Program(CredentialProgram {
             executable: if cfg!(windows) { "python" } else { "python3" }.into(),
             arguments: vec![
                 concat!(
@@ -129,7 +129,7 @@ fn helper_notification_follows_http_authentication_outcome(
             ],
             inherit_environment: true,
             environment: Vec::new(),
-        },
+        }),
     };
     let context = CredentialContext {
         protocol: b"http".to_vec(),

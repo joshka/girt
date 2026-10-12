@@ -133,17 +133,18 @@ host/domain, IP/CIDR and `*` syntax). Empty exclusions mean no bypass. Girt disa
 discovery.
 
 For origin authentication, fill a `remote::CredentialSession` using application-approved helper
-programs or prompting, then call `HttpRemote::with_credentials`. The session must match the exact
-scheme, authority and repository path. Discovery first tries without the credential; a 401 response
-advertising Basic retries that GET once at the same origin. Other challenges receive no credential.
-An authenticated 200 approves the session; a 401 rejects it. Subsequent RPCs send the credential to
-the bound origin. Helper notification is synchronous, including process startup and callbacks; place
-configured network operations on an application worker when executor responsiveness matters. The
-operation's deadline and cancellation bounds apply, but synchronous callback and process-start
-phases cannot be interrupted. Passwords are never displayed or traced. Plain HTTP transmits
-credentials without encryption; use HTTPS across untrusted networks. A push POST is never retried
-after an authentication challenge or transport failure because remote application may already have
-occurred. Inspect the remote before another push attempt.
+programs, the native `remote::CredentialStore` or prompting, then call
+`HttpRemote::with_credentials`. The session must match the exact scheme, authority and repository
+path. Discovery first tries without the credential; a 401 response advertising Basic retries that
+GET once at the same origin. Other challenges receive no credential. An authenticated 200 approves
+the session; a 401 rejects it. Subsequent RPCs send the credential to the bound origin. Helper
+notification is synchronous, including process startup and callbacks; place configured network
+operations on an application worker when executor responsiveness matters. The operation's deadline
+and cancellation bounds apply, but synchronous callback and process-start phases cannot be
+interrupted. Passwords are never displayed or traced. Plain HTTP transmits credentials without
+encryption; use HTTPS across untrusted networks. A push POST is never retried after an
+authentication challenge or transport failure because remote application may already have occurred.
+Inspect the remote before another push attempt.
 
 Configured connections accept one same-origin initial discovery redirect, retaining its repository
 base for the RPC. Cross-origin redirects and redirects with a credential session are refused before

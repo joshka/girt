@@ -346,7 +346,7 @@ impl Http {
             protocol: url.scheme.into_bytes(),
             host: url.authority.into_bytes(),
             path: Some(url.path.trim_matches('/').as_bytes().to_vec()),
-            use_http_path: true,
+            use_http_path: false,
         };
         let display_url = self.display_url.clone();
         let mut prompt = |prompt: crate::remote::Prompt| {
@@ -421,9 +421,9 @@ fn find_program(environment: &Environment, program: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Maps configured `credential.helper` values to programs, following Git's rules: `!cmd` is a
+/// Maps configured `credential.helper` values to helpers, following Git's rules: `!cmd` is a
 /// shell snippet, an absolute path is a shell command, and anything else names
-/// `git-credential-<name>` (with any arguments).
+/// `git-credential-<name>` (with any arguments). `store`, optionally with `--file`, runs natively.
 #[cfg(feature = "http")]
 fn credential_helpers(
     config: &crate::Config,
@@ -456,6 +456,12 @@ fn credential_helpers(
         .filter(|value| !value.is_empty())
         .filter_map(|value| {
             let text = std::str::from_utf8(value).ok()?;
+            if let Some(store) = native_store(text, environment) {
+                return Some(crate::remote::CredentialHelper {
+                    configured_name: value.to_vec(),
+                    backend: crate::remote::CredentialBackend::Store(store),
+                });
+            }
             let command = if let Some(snippet) = text.strip_prefix('!') {
                 snippet.to_owned()
             } else if Path::new(text.split_whitespace().next()?).is_absolute() {
@@ -473,23 +479,65 @@ fn credential_helpers(
             };
             Some(crate::remote::CredentialHelper {
                 configured_name: value.to_vec(),
-                program: crate::remote::CredentialProgram {
-                    executable: PathBuf::from("/bin/sh"),
-                    arguments: vec![
-                        "-c".into(),
-                        format!("{command} \"$@\"").into(),
-                        command.into(),
-                    ],
-                    inherit_environment: false,
-                    environment: environment
-                        .vars
-                        .iter()
-                        .map(|(name, value)| (name.clone(), value.clone()))
-                        .collect(),
-                },
+                backend: crate::remote::CredentialBackend::Program(
+                    crate::remote::CredentialProgram {
+                        executable: PathBuf::from("/bin/sh"),
+                        arguments: vec![
+                            "-c".into(),
+                            format!("{command} \"$@\"").into(),
+                            command.into(),
+                        ],
+                        inherit_environment: false,
+                        environment: environment
+                            .vars
+                            .iter()
+                            .map(|(name, value)| (name.clone(), value.clone()))
+                            .collect(),
+                    },
+                ),
             })
         })
         .collect()
+}
+
+/// Recognizes `store`, `store --file <path>` and `store --file=<path>`, which girt answers itself.
+/// Other arguments, and paths that would need shell quoting, keep using Git's program.
+#[cfg(feature = "http")]
+fn native_store(text: &str, environment: &Environment) -> Option<crate::remote::CredentialStore> {
+    let mut words = text.split_whitespace();
+    if words.next()? != "store" {
+        return None;
+    }
+    let home = environment.get("HOME").map(PathBuf::from);
+    let file = match (words.next(), words.next()) {
+        (None, _) => None,
+        (Some("--file"), Some(path)) => Some(path),
+        (Some(option), None) => Some(option.strip_prefix("--file=")?),
+        _ => return None,
+    };
+    if words.next().is_some() {
+        return None;
+    }
+    let Some(file) = file else {
+        let xdg = environment.get("XDG_CONFIG_HOME").map(PathBuf::from);
+        return Some(crate::remote::CredentialStore::user_files(
+            home.as_deref(),
+            xdg.as_deref(),
+        ));
+    };
+    if file.contains(['\'', '"', '\\', '$', '`', '*', '?', '[']) {
+        return None;
+    }
+    let path = match file.strip_prefix("~/") {
+        Some(rest) => home?.join(rest),
+        None if file.starts_with('~') => return None,
+        None => PathBuf::from(file),
+    };
+    let path = match &environment.current_dir {
+        Some(directory) if path.is_relative() => directory.join(path),
+        _ => path,
+    };
+    Some(crate::remote::CredentialStore::file(path))
 }
 
 #[cfg(feature = "http")]
