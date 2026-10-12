@@ -42,6 +42,33 @@ that copy decodes to the right object.
 When several packs or stores hold an object, copy the representation object lookup reads; another
 copy may be corrupt where the scanned one was not.
 
+## Identity checks in walks
+
+Every read that returns object content to a caller hashes the payload against the requested
+identity: `Objects::read`, checkout, diff inputs, push and anything jj receives. CRCs, zlib
+checksums and framing catch damaged bytes, but only the hash catches an index entry that names
+another object's intact bytes, as a buggy writer could produce. Returning that content would hand jj
+a wrong object instead of an error.
+
+A walk that consumes only structure (identities, kinds and edges) and never returns content may read
+through `Objects::read_unverified`, which skips that one hash and keeps every other check. Its
+`UnverifiedObject` cannot become an `Object`. The walk still fails on malformed commit, tree or tag
+syntax, on a kind that differs from the parent's assertion, and on framing, CRC, zlib or delta
+errors. Today only the native local fetch server's selection walk uses it; the destination hashes
+every object it imports.
+
+A walk whose result authorizes deleting or rewriting data keeps the hash, because a mislabelled tree
+that drops an edge would make that edge's objects look unreachable. Retention planning,
+`repack_retained`, retirement, prune and gc therefore read graph objects with the hash. Retirement
+then decodes every retained object from the replacement or protected copy before unlinking, as
+[Last readable copy](#last-readable-copy) requires. Measured on a 131k-object history, these hashes
+were under 3 % of the plan walk; reading entries was the cost.
+
+A walk locates blobs without decoding them, so it does not see a damaged blob. A content read of
+that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack checksums) and
+`git fsck`. Repack and retirement fail at the blob because copying checks its CRC and retirement
+decodes it.
+
 ## Fast path contracts
 
 Copied or reused data still counts against caller limits and statistics; skipping them silently

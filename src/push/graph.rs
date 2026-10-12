@@ -805,7 +805,7 @@ fn parse_commit(id: ObjectId, object: &Object) -> Result<CommitNode, Error> {
 /// Typed edges of a tree or tag in payload order, skipping gitlinks.
 fn edges(id: ObjectId, object: &Object) -> Result<Vec<(ObjectId, ObjectKind)>, Error> {
     let mut edges = Vec::new();
-    crate::edges::visit(id, object, |target, kind| {
+    crate::edges::visit(id, object.kind(), object.data(), |target, kind| {
         edges.push((target, kind));
         Ok::<_, Error>(())
     })?;

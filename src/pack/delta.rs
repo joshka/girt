@@ -2,9 +2,10 @@ use crate::ObjectReadError as Error;
 
 /// Advances a borrowed byte cursor; all pack/delta integers use checked arithmetic.
 pub(crate) fn byte(input: &mut &[u8]) -> Result<u8, Error> {
-    let (&value, tail) = input
-        .split_first()
-        .ok_or(Error::Corrupt("truncated delta or entry"))?;
+    // Hot in delta decoding: build the error only on failure.
+    let Some((&value, tail)) = input.split_first() else {
+        return Err(Error::Corrupt("truncated delta or entry"));
+    };
     *input = tail;
     Ok(value)
 }
@@ -43,7 +44,9 @@ pub(crate) fn apply(
         return Err(Error::Limit("object bytes"));
     }
     charge(remaining, result_size)?;
-    let mut result = Vec::new();
+    // The declared size is unproven until the program produces it; reserve at most 1 MiB up
+    // front and let larger results grow with the bytes actually copied.
+    let mut result = Vec::with_capacity(result_size.min(INITIAL_RESERVATION));
     while !program.is_empty() {
         let instruction = byte(&mut program)?;
         let source = if instruction & 0x80 == 0 {
@@ -51,9 +54,9 @@ pub(crate) fn apply(
                 return Err(Error::Corrupt("reserved delta instruction"));
             }
             let length = instruction as usize;
-            let data = program
-                .get(..length)
-                .ok_or(Error::Corrupt("truncated delta insertion"))?;
+            let Some(data) = program.get(..length) else {
+                return Err(Error::Corrupt("truncated delta insertion"));
+            };
             program = &program[length..];
             data
         } else {
@@ -72,11 +75,13 @@ pub(crate) fn apply(
             if length == 0 {
                 length = 65536;
             }
-            let end = offset
-                .checked_add(length)
-                .ok_or(Error::Corrupt("delta copy overflow"))?;
-            base.get(offset..end)
-                .ok_or(Error::Corrupt("delta copy outside base"))?
+            let Some(end) = offset.checked_add(length) else {
+                return Err(Error::Corrupt("delta copy overflow"));
+            };
+            let Some(copied) = base.get(offset..end) else {
+                return Err(Error::Corrupt("delta copy outside base"));
+            };
+            copied
         };
         if source.len() > result_size.saturating_sub(result.len()) {
             return Err(Error::Corrupt("delta exceeds result size"));
@@ -88,6 +93,9 @@ pub(crate) fn apply(
     }
     Ok(result)
 }
+
+/// Largest buffer reserved from a declared, not yet produced, size.
+pub(crate) const INITIAL_RESERVATION: usize = 1024 * 1024;
 
 pub(crate) fn charge(remaining: &mut usize, size: usize) -> Result<(), Error> {
     *remaining = remaining

@@ -21,7 +21,9 @@ mod reuse;
 pub(crate) mod write;
 
 pub use compression::{DeltaOptions, DeltaStats, PackCompression};
-pub(crate) use file::FilePack;
+#[cfg(test)]
+pub(crate) use file::counters;
+pub(crate) use file::{BaseKinds, FilePack};
 #[cfg(test)]
 pub(crate) use reader::Pack;
 pub(crate) use reuse::{Packed, ReuseError, write_reusing, write_transfer};

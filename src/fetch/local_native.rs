@@ -10,7 +10,7 @@ use super::{
 };
 use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
-use crate::{Object, ObjectId, ObjectKind, PackWriteLimits, Repository};
+use crate::{ObjectId, ObjectKind, PackWriteLimits, Repository, UnverifiedObject};
 
 #[cfg(test)]
 pub(super) fn receive(
@@ -159,19 +159,20 @@ pub(super) fn receive_depth(
             return Err(FetchError::Limit("local bytes"));
         }
         // Blobs have no edges. Their framing is checked now and their identity during import.
+        // Selection only follows edges: every selected object's identity is checked when the
+        // destination imports it, so this walk does not hash payloads it never returns.
         let object = if object_kind == ObjectKind::Blob {
-            Object {
+            UnverifiedObject {
                 kind: object_kind,
-                format: id.format(),
                 data: Vec::new(),
             }
         } else {
             store
-                .read_controlled(id, read, control.cancel)
+                .read_unverified(id, read, control.cancel)
                 .map_err(|source| FetchError::LocalRead { id, source })?
                 .ok_or(FetchError::Missing(id))?
         };
-        crate::edges::visit(id, &object, |target, kind| {
+        crate::edges::visit(id, object.kind(), object.data(), |target, kind| {
             check(control)?;
             if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
                 // Depth one cuts only the selected commit's parent edges. Its tree and all

@@ -1,28 +1,31 @@
 //! Typed edges in supported Git payloads; traversal and budgets belong to callers.
 
-use crate::{Commit, EntryMode, Object, ObjectId, ObjectKind, Tag, Tree};
+use crate::{Commit, EntryMode, ObjectId, ObjectKind, Tag, Tree};
 
 /// Visits edges in payload order, preserving duplicates and skipping external gitlinks.
 /// Parsing validates readable commit/tag syntax and tree entry constraints, without
 /// canonicalizing the payload or imposing construction-only signature rules.
+///
+/// `data` is the payload of `id`, in `id`'s format, read as `kind`.
 pub(crate) fn visit<E: From<Error>>(
     id: ObjectId,
-    object: &Object,
+    kind: ObjectKind,
+    data: &[u8],
     mut edge: impl FnMut(ObjectId, ObjectKind) -> Result<(), E>,
 ) -> Result<(), E> {
-    match object.kind() {
+    let format = id.format();
+    match kind {
         ObjectKind::Blob => {}
         ObjectKind::Commit => {
-            let commit = Commit::parse(object.object_format(), object.data())
-                .map_err(|source| Error::Commit { id, source })?;
+            let commit =
+                Commit::parse(format, data).map_err(|source| Error::Commit { id, source })?;
             edge(commit.tree(), ObjectKind::Tree)?;
             for &parent in commit.parents() {
                 edge(parent, ObjectKind::Commit)?;
             }
         }
         ObjectKind::Tree => {
-            let tree = Tree::parse(object.object_format(), object.data())
-                .map_err(|source| Error::Tree { id, source })?;
+            let tree = Tree::parse(format, data).map_err(|source| Error::Tree { id, source })?;
             for entry in tree.entries() {
                 match entry.mode {
                     EntryMode::Gitlink => {}
@@ -32,8 +35,7 @@ pub(crate) fn visit<E: From<Error>>(
             }
         }
         ObjectKind::Tag => {
-            let tag = Tag::parse(object.object_format(), object.data())
-                .map_err(|source| Error::Tag { id, source })?;
+            let tag = Tag::parse(format, data).map_err(|source| Error::Tag { id, source })?;
             edge(tag.target(), tag.target_kind())?;
         }
     }

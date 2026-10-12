@@ -131,7 +131,18 @@ impl BaseCache {
 
     /// Indexing can transfer a decoded payload into the cache instead of copying it.
     pub(crate) fn insert_owned(&self, position: usize, object: Object, verified: bool) {
-        let size = object.data.len();
+        self.insert_shared(position, object.kind, &Arc::new(object.data), verified);
+    }
+
+    /// Shares a decoded payload with the cache without copying it.
+    pub(crate) fn insert_shared(
+        &self,
+        position: usize,
+        kind: ObjectKind,
+        data: &Arc<Vec<u8>>,
+        verified: bool,
+    ) {
+        let size = data.len();
         // One large object shouldn't evict every shared base.
         if size > Self::LIMIT / 8 {
             return;
@@ -154,8 +165,8 @@ impl BaseCache {
         inner.entries.insert(
             position,
             Cached {
-                kind: object.kind,
-                data: Arc::new(object.data),
+                kind,
+                data: Arc::clone(data),
                 verified,
             },
         );
@@ -216,35 +227,60 @@ pub(crate) fn decode(
 
 pub(crate) fn decode_budgeted(
     source: &impl Source,
-    mut position: usize,
+    position: usize,
     limits: ReadLimits,
     cancelled: &AtomicBool,
     remaining: &mut usize,
 ) -> Result<Object, Error> {
+    decode_checked(
+        source,
+        position,
+        limits,
+        cancelled,
+        remaining,
+        Identity::Verify,
+    )
+}
+
+/// Whether a decode hashes the requested object to check the identity its index entry claims.
+///
+/// Every other check is unconditional: entry framing, v2 CRCs, zlib termination, declared sizes,
+/// delta programs and [`ReadLimits`]. Only [`crate::UnverifiedObject`] reads pass `Skip`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Identity {
+    Verify,
+    Skip,
+}
+
+pub(crate) fn decode_checked(
+    source: &impl Source,
+    mut position: usize,
+    limits: ReadLimits,
+    cancelled: &AtomicBool,
+    remaining: &mut usize,
+    identity: Identity,
+) -> Result<Object, Error> {
+    let verify = identity == Identity::Verify;
     let format = source.format();
     let mut input_remaining = limits.max_input_bytes;
     let mut pending = Vec::new();
     let mut seen = HashSet::new();
     let cache = source.base_cache();
     let requested = position;
-    let mut object = loop {
+    // Bases stay shared with the cache; only the returned payload is copied out of it.
+    let (kind, mut data) = loop {
         if !seen.insert(position) {
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
         if let Some(hit) = cache.and_then(|cache| cache.get(position)) {
-            let object = Object {
-                kind: hit.kind,
-                data: hit.data.as_ref().clone(),
-                format,
-            };
-            if position == requested && !hit.verified {
-                verify_identity(&object, source.entry(position)?.id)?;
+            if verify && position == requested && !hit.verified {
+                verify_identity(format, hit.kind, &hit.data, source.entry(position)?.id)?;
                 cache
                     .expect("hit came from the cache")
                     .mark_verified(position);
             }
-            break object;
+            break (hit.kind, hit.data);
         }
         let entry = source.entry(position)?;
         input_remaining = input_remaining
@@ -282,31 +318,32 @@ pub(crate) fn decode_budgeted(
                 4 => ObjectKind::Tag,
                 _ => unreachable!("non-delta kinds validated above"),
             };
-            let object = Object { kind, data, format };
             // Only the requested object's identity is checked: a corrupt base changes every
             // object reconstructed from it, so the final check still catches it.
-            let verified = position == requested;
+            let verified = verify && position == requested;
             if verified {
-                verify_identity(&object, entry.id)?;
+                verify_identity(format, kind, &data, entry.id)?;
             }
+            let data = Arc::new(data);
             if let Some(cache) = cache {
-                cache.insert(position, &object, verified);
+                cache.insert_shared(position, kind, &data, verified);
             }
-            break object;
+            break (kind, data);
         }
     };
     while let Some((position, program)) = pending.pop() {
         check_cancelled(cancelled)?;
-        object.data = apply(&object.data, &program, limits.max_object_bytes, remaining)?;
-        let verified = position == requested;
+        data = Arc::new(apply(&data, &program, limits.max_object_bytes, remaining)?);
+        let verified = verify && position == requested;
         if verified {
-            verify_identity(&object, source.entry(position)?.id)?;
+            verify_identity(format, kind, &data, source.entry(position)?.id)?;
         }
         if let Some(cache) = cache {
-            cache.insert(position, &object, verified);
+            cache.insert_shared(position, kind, &data, verified);
         }
     }
-    Ok(object)
+    let data = Arc::try_unwrap(data).unwrap_or_else(|shared| shared.as_ref().clone());
+    Ok(Object { kind, data, format })
 }
 
 /// A pack entry's parsed header: type code, declared size, resolved base and payload offset.
@@ -321,6 +358,8 @@ pub(crate) struct EntryHeader {
     pub data_start: usize,
     /// Original encoded header and base reference, used to seed the entry CRC without rereading.
     pub encoded: Vec<u8>,
+    /// Entry bytes from `data_start` that the source returned with the header, if any.
+    pub ahead: Vec<u8>,
 }
 
 /// Parses an entry header and resolves a delta base to a position in the same pack.
@@ -367,18 +406,24 @@ pub(crate) fn entry_header(
         other => return Err(Error::ObjectType(other)),
     };
     let header_len = prefix.len() - input.len();
-    prefix.truncate(header_len);
+    let ahead = prefix.split_off(header_len);
     Ok(EntryHeader {
         kind,
         length,
         base,
         data_start: entry.offset + header_len,
         encoded: prefix,
+        ahead,
     })
 }
 
-fn verify_identity(object: &Object, expected: ObjectId) -> Result<(), Error> {
-    if object.id() != expected {
+fn verify_identity(
+    format: crate::ObjectFormat,
+    kind: ObjectKind,
+    data: &[u8],
+    expected: ObjectId,
+) -> Result<(), Error> {
+    if format.hash_object(kind, data) != expected {
         return Err(Error::Corrupt("object identity"));
     }
     Ok(())

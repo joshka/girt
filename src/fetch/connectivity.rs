@@ -159,7 +159,7 @@ pub(super) fn validate_with_boundaries(
                 }
                 Ok(())
             };
-            crate::edges::visit(id, &object, edge)?;
+            crate::edges::visit(id, object.kind(), object.data(), edge)?;
         }
         #[cfg(feature = "tracing")]
         span.record("visited", seen.len())
