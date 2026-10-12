@@ -998,24 +998,24 @@ interruption.
 
 Native local fetch can separately report typed source-reading and pack-construction events through
 `receive_local_with_known_and_progress` or `FetchRequest::receive_local_with_progress`. Source reads
-count unique reachable objects, including verified history omitted from the outgoing pack; their
-total is unknown during traversal. Packing counts only selected outgoing entries. Completing those
-counts does not establish a finished index. The terminal `Complete` event follows construction and
-the final cancellation/deadline check, before installation or reference publication. Observers run
-synchronously, must return promptly, and can request cancellation through `TransportControl`.
-Cancellation from the terminal event cannot undo completed construction.
+count unique selected objects, using decoded structured payloads and packed blob framing; known
+complete-history boundaries are excluded. Their total is unknown during traversal. Packing counts
+only selected outgoing entries. Completing those counts does not establish a finished index. The
+terminal `Complete` event follows construction and the final cancellation/deadline check, before
+installation or reference publication. Observers run synchronously, must return promptly, and can
+request cancellation through `TransportControl`. Cancellation from the terminal event cannot undo
+completed construction.
 
 ### Installation and Reference Policy
 
-The received result owns a validated temporary pack file and index bytes; native local transfers may
-retain pack bytes in memory. Drop removes temporary files without changing repository files.
-Explicit `install` writes and syncs private temporary files in the destination pack directory, then
-publishes the pack first and index last without replacing either path. Identical existing files are
-reused; different bytes fail. Readers discover indexes, so an unindexed pack is invisible and an
-index must have its complete pack. Existing readers retain open pack/index handles; new readers see
-the old object set or the new pair. Concurrent deletion or repacking by other tools can still
-require an opening retry. Paths must be trusted, and callers must coordinate pruning/GC until
-references protect the objects.
+The received result owns a validated temporary pack file and index bytes, including native local
+transfers. Drop removes temporary files without changing repository files. Explicit `install` writes
+and syncs private temporary files in the destination pack directory, then publishes the pack first
+and index last without replacing either path. Identical existing files are reused; different bytes
+fail. Readers discover indexes, so an unindexed pack is invisible and an index must have its
+complete pack. Existing readers retain open pack/index handles; new readers see the old object set
+or the new pair. Concurrent deletion or repacking by other tools can still require an opening retry.
+Paths must be trusted, and callers must coordinate pruning/GC until references protect the objects.
 
 Failure never removes or overwrites preexisting objects. Failure between publications may leave a
 complete unindexed pack; retrying the same received result can finish it. Ordinary failures clean
@@ -1114,25 +1114,29 @@ never change. The server controls its own ref/reflog and object-storage effects.
 
 Selection follows all commit parents and trees, typed tree children and annotated-tag targets,
 including nested tags. Gitlinks are external submodule commits and are not followed. Every selected
-object must exist locally and pass identity and supported payload validation, even if the
-destination already has it. Each distinct object is read once through existing loose/packed readers,
-although a packed read can decode shared bases again. All typed edges are checked. A missing or
-invalid object fails preparation before any remote command. This is not a claim of full Git fsck
-equivalence.
+object must exist locally. Structured objects pass identity and supported payload validation; packed
+blobs are located without retaining decoded payloads. Copied identities come from the source index
+and remain hints until the receiver independently imports the pack. Source CRCs are checked while
+copying. A packed fallback read can decode shared bases again. All typed edges are checked. A
+missing or invalid object fails preparation before any remote command. This is not a claim of full
+Git fsck equivalence.
 
-The default writer emits ordinary zlib entries. `PushLimits::compression` can enable bounded
-internal REF_DELTA entries; both policies produce complete packs without external bases. Its
-companion index is generated into a sink, not sent or installed. Repeated and incremental pushes
-using `new` retransmit full selected histories; `new_excluding` can reduce them as described below.
+Both writer policies reuse stored zlib streams, including deltas whose same-pack base has already
+been written within the output depth limit. Other deltas are reconstructed and written whole. The
+default writes loose objects as ordinary entries; `PushLimits::compression` can enable bounded
+internal REF_DELTA search for fresh objects. Both policies produce complete packs without external
+bases. Transfer deltas use REF_DELTA framing, requiring no optional OFS capability. Its companion
+index is generated into a sink, not sent or installed. Repeated and incremental pushes using `new`
+retransmit full selected histories; `new_excluding` can reduce them as described below.
 `PreparedPush::new_local_with_progress` reports unique source reads and successfully encoded pack
 entries through `PreparationProgress`. Reads include receiver history later excluded from the pack;
-packing totals describe only selected outgoing objects. Its terminal `Complete` event follows buffer
+packing totals describe only selected outgoing objects. Its terminal `Complete` event follows pack
 construction and the final cancellation check. It does not report upload, server receipt, acceptance
 or publication. Observers run synchronously and must return promptly; setting the cancellation flag
 from an intermediate event stops preparation at the next cooperative check. Cancellation from the
 terminal event cannot undo completed preparation.
 
-Preparation releases selected payloads after buffering the pack; the caller can drop its object
+Preparation releases selected payloads after spooling the pack; the caller can drop its object
 reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent
 edges, individual reads, pack/index output, command bytes, advertisement bytes/entries and status
 bytes have explicit bounds. These bounds exclude allocator overhead, the caller's preexisting

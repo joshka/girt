@@ -123,13 +123,17 @@ mod protocol;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub(crate) use bytes::Bytes;
+pub(crate) use install::NativeContents;
+#[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+pub(crate) use install::PackInput;
 pub use install::{FetchInstalled, ReceivedFetch};
-pub(crate) use install::{NativeContents, PackInput};
 pub use known::KnownHistory;
 pub use local::{
     receive_local, receive_local_with_control, receive_local_with_known,
     receive_local_with_known_and_progress,
 };
+pub(crate) use progress::ValidationObserver;
 pub use protocol::{
     AdvertisedRef, Advertisement, receive, receive_with_known, receive_with_known_depth,
 };
@@ -156,8 +160,9 @@ pub struct FetchOptions {
 /// metadata is
 /// O(`max_objects` + `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads
 /// bounded by `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs
-/// at most 44 bytes per object plus 1072 bytes. Native local pack construction still buffers
-/// output. Graph parsing can temporarily copy a structured payload and its fields. These input/work
+/// at most 44 bytes per object plus 1072 bytes. Native local construction spools pack bytes and
+/// retains graph/index metadata. Graph parsing can temporarily copy a structured payload and its
+/// fields. These input/work
 /// bounds exclude allocator overhead, stream-owned buffers, fixed zlib scratch space, and server
 /// memory; they are not a hard process heap or wall-clock limit. Zero bounds allow only the
 /// corresponding empty operation. Counters include duplicate input occurrences where applicable.
@@ -188,7 +193,8 @@ pub struct FetchLimits {
     pub known_read: crate::ReadLimits,
     /// Received pack bytes, including header and trailer (default 256 MiB).
     pub max_pack_bytes: usize,
-    /// Objects in the pack (default one million).
+    /// Objects in the pack (default one million). Native selection also bounds distinct examined
+    /// source IDs, including known boundaries; their descendants are skipped.
     pub max_objects: usize,
     /// Bytes in each decoded object (default 64 MiB).
     pub max_object_bytes: usize,
@@ -196,6 +202,9 @@ pub struct FetchLimits {
     pub max_delta_bytes: usize,
     /// Aggregate inflated programs, ordinary payloads, delta results and appended external bases
     /// (default 512 MiB). Includes repeated decoding after cache eviction and connectivity reads.
+    /// Native source selection and writing each apply a separate allowance of this size to the
+    /// sum of selected logical payload lengths, including copied entries. Known boundaries are
+    /// excluded; avoiding blob inflation does not exempt their declared result sizes.
     pub max_decode_bytes: usize,
     /// Delta edges from any object to an ordinary base (default 64).
     pub max_delta_depth: usize,

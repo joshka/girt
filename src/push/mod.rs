@@ -3,18 +3,20 @@
 //! # Push lifecycle
 //!
 //! Build [`PushCommand`] values with exact expected old targets, then use [`PreparedPush::new`]
-//! or [`PreparedPush::new_local`] to validate objects and buffer the pack. Choose [`send_local`]
+//! or [`PreparedPush::new_local`] to select objects and spool the pack. Choose [`send_local`]
 //! for a native local destination or [`send`] for caller-owned protocol streams. A successful
 //! exchange can contain rejected refs: inspect [`PushReport`] per command. [`PushError`] retains
 //! known acknowledgements when the final outcome is uncertain; read destination refs before
 //! retrying.
 //!
-//! Preparation validates every object it sends and buffers a non-thin pack before any commands
-//! can reach a server. With receiver roots, it reads only the history they do not cover plus a
-//! boundary; see [`PreparedPush::new_excluding`]. Preparation leaves local refs and reflogs
-//! untouched. These functions take an already prepared push, so its roots come from the caller's
-//! knowledge. [`crate::Repository::push`] instead prepares after reading the advertisement and
-//! excludes [`PushAdvertisement::receiver_roots`], as `git send-pack` does.
+//! Preparation validates structured objects, locates blobs and spools a non-thin pack before any
+//! commands can reach a server. Reused compressed entries are CRC-checked; the receiver derives
+//! their identities and checks connectivity before publishing refs. With receiver roots, it reads
+//! only the history they do not cover plus a boundary; see [`PreparedPush::new_excluding`].
+//! Preparation leaves local refs and reflogs untouched. These functions take an already prepared
+//! push, so its roots come from the caller's knowledge. [`crate::Repository::push`] instead
+//! prepares after reading the advertisement and excludes [`PushAdvertisement::receiver_roots`],
+//! as `git send-pack` does.
 //!
 //! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
 //! deletion requires the advertised `delete-refs` capability, and supplied push options require

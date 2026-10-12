@@ -489,6 +489,56 @@ impl Objects {
 }
 
 impl Objects {
+    /// All pinned packs in the same primary/alternate lookup order as `read`.
+    pub(crate) fn transfer_packs(&self) -> Vec<&FilePack> {
+        self.stores
+            .iter()
+            .flat_map(|s| s.packs.iter().map(AsRef::as_ref))
+            .collect()
+    }
+
+    /// Locates the representation normal lookup uses; loose data is checked and then released.
+    pub(crate) fn transfer_object(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Option<(ObjectKind, usize, Option<crate::pack::Packed>)>, ObjectReadError> {
+        id.require_format(self.format).map_err(crate::Error::from)?;
+        let mut pack_index = 0;
+        for store in &self.stores {
+            check_cancelled(cancel)?;
+            for pack in &store.packs {
+                check_cancelled(cancel)?;
+                if let Some(position) = pack.find(id)? {
+                    let (kind, length) = pack.object_header(position, limits)?;
+                    return Ok(Some((
+                        kind,
+                        length,
+                        Some(crate::pack::Packed {
+                            id,
+                            pack: pack_index,
+                            position,
+                        }),
+                    )));
+                }
+                pack_index += 1;
+            }
+            match store
+                .loose
+                .read_raw(id, limits.max_object_bytes.min(limits.max_decode_bytes))
+            {
+                Ok(object) => return Ok(Some((object.kind(), object.data().len(), None))),
+                Err(crate::Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if id == self.format.hash_object(ObjectKind::Tree, b"") {
+            return Ok(Some((ObjectKind::Tree, 0, None)));
+        }
+        Ok(None)
+    }
+
     /// Primary-store packs with their `.pack` paths, in search order.
     pub(crate) fn primary_packs_with_paths(&self) -> Vec<(&Path, &FilePack)> {
         self.stores

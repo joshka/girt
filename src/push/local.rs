@@ -227,7 +227,7 @@ fn send_server(
                 reader,
                 writer,
                 &request,
-                &prepared.pack,
+                &prepared.pack.to_vec(),
                 prepared.limits.max_status_bytes,
             );
             (body, exchange, written, caps, request)

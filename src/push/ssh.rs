@@ -23,7 +23,7 @@ pub enum SshPushOutcome {
 /// Requires a caller-owned Tokio runtime with I/O/time enabled. [`SshRemote`] defines endpoint,
 /// authentication, host trust and noninteractive process policy. Uses [`super::send`]'s exact
 /// per-command old values, history exclusion, bounded report-status and non-atomic update
-/// semantics. Borrows existing prepared buffers without copying packs or doing compression on the
+/// semantics. Streams the borrowed prepared pack without copying it or doing compression on the
 /// executor. Preparation and remote inspection before retry remain caller-owned synchronous work.
 ///
 /// Advertisement/status retention is bounded by the prepared limits. Valid acknowledgement
@@ -274,9 +274,9 @@ async fn send_selected<P: Borrow<PreparedPush>>(
             .exchange_observed(
                 request,
                 if commands.iter().all(super::PushCommand::deletes) {
-                    &[]
+                    crate::fetch::PackInput::Slice(&[])
                 } else {
-                    &prepared.pack
+                    crate::fetch::PackInput::Stored(&prepared.pack)
                 },
                 prepared.limits.max_status_bytes,
                 control,

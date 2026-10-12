@@ -1,0 +1,3 @@
+round 0: 131152 identical objects; git fsck --strict passed
+round 1: 131152 identical objects; git fsck --strict passed
+round 2: 131152 identical objects; git fsck --strict passed

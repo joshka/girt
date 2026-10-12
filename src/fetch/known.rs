@@ -64,6 +64,17 @@ impl KnownObjects for KnownHistory {
 }
 
 impl KnownHistory {
+    pub(super) fn kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        self.objects.get(&id).map(Object::kind).or_else(|| {
+            self.store
+                .as_ref()?
+                .transfer_object(id, crate::ReadLimits::trusted(), &AtomicBool::new(false))
+                .ok()
+                .flatten()
+                .map(|(kind, _, _)| kind)
+        })
+    }
+
     /// Describes a destination store for negotiation without reading its complete history.
     ///
     /// Up to [`FetchLimits::max_haves`] commits reachable from `tips` (breadth-first, peeling
@@ -142,7 +153,7 @@ impl KnownHistory {
     }
 
     pub(super) fn applies_to(&self, wants: &[ObjectId]) -> bool {
-        !self.only_when_all_wants_known || wants.iter().all(|id| self.objects.contains_key(id))
+        !self.only_when_all_wants_known || wants.iter().all(|&id| self.kind(id).is_some())
     }
 
     /// Keep the destination's shallow declarations without offering local objects as haves.

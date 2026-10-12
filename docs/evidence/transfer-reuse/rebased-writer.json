@@ -1,0 +1,92 @@
+[
+  {
+    "round": 0,
+    "implementation": "main",
+    "seconds": 38.73,
+    "rss": 5553520640,
+    "phases": {
+      "select-locate": 6.26527,
+      "write": 32.380378
+    },
+    "log": "rebased-writer-0-main.log"
+  },
+  {
+    "round": 0,
+    "implementation": "after",
+    "seconds": 7.76,
+    "rss": 242778112,
+    "phases": {
+      "select-locate": 5.248643,
+      "write": 2.486249
+    },
+    "log": "rebased-writer-0-after.log"
+  },
+  {
+    "round": 0,
+    "implementation": "git",
+    "seconds": 1.13,
+    "rss": 280231936,
+    "phases": {},
+    "log": "rebased-writer-0-git.log"
+  },
+  {
+    "round": 1,
+    "implementation": "git",
+    "seconds": 1.19,
+    "rss": 280281088,
+    "phases": {},
+    "log": "rebased-writer-1-git.log"
+  },
+  {
+    "round": 1,
+    "implementation": "after",
+    "seconds": 10.47,
+    "rss": 241958912,
+    "phases": {
+      "select-locate": 7.213742,
+      "write": 3.231719
+    },
+    "log": "rebased-writer-1-after.log"
+  },
+  {
+    "round": 1,
+    "implementation": "main",
+    "seconds": 41.92,
+    "rss": 5516967936,
+    "phases": {
+      "select-locate": 8.493783,
+      "write": 33.328126
+    },
+    "log": "rebased-writer-1-main.log"
+  },
+  {
+    "round": 2,
+    "implementation": "main",
+    "seconds": 38.84,
+    "rss": 5421711360,
+    "phases": {
+      "select-locate": 6.286385,
+      "write": 32.471208
+    },
+    "log": "rebased-writer-2-main.log"
+  },
+  {
+    "round": 2,
+    "implementation": "after",
+    "seconds": 7.78,
+    "rss": 244105216,
+    "phases": {
+      "select-locate": 5.21063,
+      "write": 2.540502
+    },
+    "log": "rebased-writer-2-after.log"
+  },
+  {
+    "round": 2,
+    "implementation": "git",
+    "seconds": 1.1,
+    "rss": 279265280,
+    "phases": {},
+    "log": "rebased-writer-2-git.log"
+  }
+]

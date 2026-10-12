@@ -13,7 +13,7 @@ use crate::{ObjectId, Repository};
 /// A validated protocol response with resolved delta bases and selected-tip connectivity.
 ///
 /// Owns a temporary pack file and generated index, but no repository files. Drop it to discard a
-/// transfer and remove the temporary file. Native local transfers may retain pack bytes in memory.
+/// transfer and remove the temporary file. Native local transfers also spool their packs.
 /// Payloads used during validation are released before this result is returned. Incremental results
 /// retain IDs of known-local dependencies; installation rechecks them.
 #[derive(Debug)]
@@ -32,24 +32,38 @@ pub struct ReceivedFetch {
 
 pub(crate) enum PackInput<'a> {
     Stored(&'a Bytes),
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
     Slice(&'a [u8]),
 }
 impl PackInput<'_> {
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn async_reader(
+        &self,
+    ) -> std::io::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + '_>> {
+        match self {
+            Self::Stored(bytes) => bytes.async_reader(),
+            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+            Self::Slice(bytes) => Ok(Box::new(std::io::Cursor::new(*bytes))),
+        }
+    }
     fn len(&self) -> usize {
         match self {
             Self::Stored(b) => b.len(),
+            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Self::Slice(b) => b.len(),
         }
     }
     fn reader(&self) -> Result<Box<dyn Read + Send + '_>, FetchError> {
         match self {
             Self::Stored(b) => b.reader(),
+            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Self::Slice(b) => Ok(Box::new(*b)),
         }
     }
     fn copy_to(&self, output: &mut impl Write, cancel: &AtomicBool) -> Result<(), FetchError> {
         match self {
             Self::Stored(b) => b.copy_to(output, cancel),
+            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Self::Slice(b) => {
                 check_cancelled(cancel)?;
                 output.write_all(b)?;
@@ -61,7 +75,7 @@ impl PackInput<'_> {
 
 pub(crate) struct NativeContents {
     pub format: crate::ObjectFormat,
-    pub pack: Vec<u8>,
+    pub pack: Bytes,
     pub index: Vec<u8>,
     pub checksum: Option<ObjectId>,
     pub objects: usize,
@@ -95,7 +109,7 @@ impl ReceivedFetch {
             format: contents.format,
             advertisement,
             wants,
-            pack: contents.pack.into(),
+            pack: contents.pack,
             index: contents.index,
             checksum: contents.checksum,
             objects: contents.objects,
@@ -130,7 +144,7 @@ impl ReceivedFetch {
         Ok(result)
     }
 
-    pub(super) fn validate_known(
+    pub(crate) fn validate_known(
         advertisement: Advertisement,
         wants: Vec<ObjectId>,
         pack: impl Into<Bytes>,
@@ -522,6 +536,13 @@ fn publish(
 }
 
 #[cfg(test)]
+impl ReceivedFetch {
+    pub(crate) fn temporary_pack_path(&self) -> Option<&Path> {
+        self.pack.path()
+    }
+}
+
+#[cfg(test)]
 mod shallow_tests {
     use super::*;
 
@@ -636,12 +657,5 @@ mod shallow_tests {
                 .count(),
             0
         );
-    }
-}
-
-#[cfg(test)]
-impl ReceivedFetch {
-    pub(crate) fn temporary_pack_path(&self) -> Option<&Path> {
-        self.pack.path()
     }
 }

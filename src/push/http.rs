@@ -25,9 +25,9 @@ pub enum HttpPushOutcome {
 /// Requires a Tokio runtime; [`HttpRemote`] defines TLS, explicit authentication and network
 /// controls.
 ///
-/// Consumes the prepared push, moving its command and pack buffers into the POST without copying
-/// the pack. Prepare a new push for another attempt after inspecting uncertain outcomes. Response
-/// retention is bounded by `max_status_bytes`; advertisement retention by
+/// Consumes the prepared push, moving command bytes and streaming its owned temporary pack into
+/// the POST in bounded chunks. Prepare a new push for another attempt after inspecting uncertain
+/// outcomes. Response retention is bounded by `max_status_bytes`; advertisement retention by
 /// `max_advertisement_bytes`. Complete valid status packets received before a body interruption
 /// remain report evidence. No automatic retries occur, including HTTP authentication challenges or
 /// redirects.
@@ -211,7 +211,8 @@ async fn send_advertised(
             return Ok(HttpPushOutcome::Sent(report));
         }
         report.mark_attempted(&prepared.request, prepared.request.len());
-        let body = RequestBody::new(prepared.request, prepared.pack);
+        let body = RequestBody::new(prepared.request, prepared.pack)
+            .map_err(|error| PushError::NotSent(error.into()))?;
         control.check().map_err(|e| PushError::NotSent(e.into()))?;
         let mut sideband = LiveProgress::default();
         let response = remote

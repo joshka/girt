@@ -3,7 +3,8 @@ use super::write::PackWriteError;
 /// Outgoing pack compression policy. All entries use zlib level 6.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum PackCompression {
-    /// Stream ordinary entries with fixed compression scratch space (the default).
+    /// Stream fresh ordinary entries with fixed compression scratch space (the default).
+    /// Store-backed transfer writers can preserve existing compressed delta entries.
     #[default]
     Ordinary,
     /// Try bounded byte-oriented matching against earlier internal bases.
@@ -76,7 +77,7 @@ impl DeltaOptions {
 /// Search accounting for a completed pack; excludes ordinary hashing and zlib work.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DeltaStats {
-    /// Number of emitted REF_DELTA entries.
+    /// Number of emitted delta entries.
     pub entries: u32,
     /// Suitable candidate attempts, including work-exhausted attempts.
     pub candidates: u64,

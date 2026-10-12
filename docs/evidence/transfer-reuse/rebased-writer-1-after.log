@@ -1,0 +1,21 @@
+phase select-locate=7.213742
+phase write=3.231719
+objects=131152 bytes=207416310
+       10.47 real         5.35 user         2.87 sys
+           241958912  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15985  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                7568  voluntary context switches
+               22677  involuntary context switches
+         73278141001  instructions retired
+         26796387208  cycles elapsed
+           230900288  peak memory footprint

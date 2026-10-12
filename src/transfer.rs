@@ -731,7 +731,14 @@ impl Repository {
             .collect();
         let cancel = AtomicBool::new(false);
         let limits = FetchLimits::trusted();
-        let known = KnownHistory::from_store(objects, &tips, limits, &cancel)
+        // Native local selection probes destination possession directly; only wire negotiation
+        // needs a commit have batch. Avoid enumerating that batch for a path remote.
+        let have_tips = if matches!(endpoint, Endpoint::Local(_)) {
+            &[][..]
+        } else {
+            &tips[..]
+        };
+        let known = KnownHistory::from_store(objects, have_tips, limits, &cancel)
             .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))?;
         let request = || self.fetch_request(options);
         let control = TransportControl::new(&cancel);

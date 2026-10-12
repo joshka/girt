@@ -4,14 +4,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
-use super::known::KnownObjects as _;
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
     NativeContents, ReceivedFetch,
 };
 use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
-use crate::{Object, ObjectId, ObjectKind, PackObject, PackWriteLimits, Repository};
+use crate::{Object, ObjectId, ObjectKind, PackWriteLimits, Repository};
 
 #[cfg(test)]
 pub(super) fn receive(
@@ -52,10 +51,10 @@ pub(super) fn receive_depth(
     if !source.shallow_roots().is_empty() {
         return Err(FetchError::Unsupported("shallow local source"));
     }
-    let advertisement = advertise(source, limits, control)?;
     let store = source
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
+    let advertisement = advertise_store(source, &store, limits, control)?;
     let wants = select(&advertisement);
     if depth.is_some() && wants.iter().copied().collect::<HashSet<_>>().len() != 1 {
         return Err(FetchError::Unsupported("native local depth selection"));
@@ -91,7 +90,7 @@ pub(super) fn receive_depth(
             wants,
             NativeContents {
                 format: source.object_format(),
-                pack: Vec::new(),
+                pack: Vec::new().into(),
                 index: Vec::new(),
                 checksum: None,
                 objects: 0,
@@ -104,7 +103,7 @@ pub(super) fn receive_depth(
     let mut pending: VecDeque<_> = wants.iter().copied().map(|id| (id, None)).collect();
     let mut expected = HashMap::<ObjectId, Option<ObjectKind>>::new();
     let mut observed = HashMap::<ObjectId, ObjectKind>::new();
-    let mut selected = Vec::<(ObjectId, Object)>::new();
+    let mut selected = Vec::<ObjectId>::new();
     let mut dependencies = Vec::new();
     let mut shallow = Vec::new();
     let mut bytes = 0_usize;
@@ -129,35 +128,46 @@ pub(super) fn receive_depth(
         expected.insert(id, kind);
         let mut read = limits.known_read;
         read.max_object_bytes = read.max_object_bytes.min(limits.max_object_bytes);
-        let object = store
-            .read(id, read)
+        let (object_kind, length, _) = store
+            .transfer_object(id, read, control.cancel)
             .map_err(|source| FetchError::LocalRead { id, source })?
-            .or_else(|| {
-                // Git can name the canonical empty tree without storing its loose or packed
-                // object. Its bytes and identity are fixed in either object format.
-                let empty = Object {
-                    kind: ObjectKind::Tree,
-                    format: id.format(),
-                    data: Vec::new(),
-                };
-                (id == empty.id()).then_some(empty)
-            })
             .ok_or(FetchError::Missing(id))?;
-        if kind.is_some_and(|kind| kind != object.kind()) {
+        if kind.is_some_and(|kind| kind != object_kind) {
             return Err(FetchError::Kind(id));
         }
-        if depth.is_some() && id == wants[0] && object.kind() != ObjectKind::Commit {
+        observed.insert(id, object_kind);
+        if depth.is_none()
+            && limits.max_haves > 0
+            && known.kind(id) == Some(object_kind)
+            && !known.shallow.contains(&id)
+        {
+            dependencies.push(id);
+            continue;
+        }
+        if depth.is_some() && id == wants[0] && object_kind != ObjectKind::Commit {
             return Err(FetchError::Unsupported(
                 "native local depth requires commit tip",
             ));
         }
-        observed.insert(id, object.kind());
         bytes = bytes
-            .checked_add(object.data().len())
+            .checked_add(length)
             .ok_or(FetchError::Limit("local bytes"))?;
         if bytes > limits.max_decode_bytes {
             return Err(FetchError::Limit("local bytes"));
         }
+        // Blobs have no edges. Their framing is checked now and their identity during import.
+        let object = if object_kind == ObjectKind::Blob {
+            Object {
+                kind: object_kind,
+                format: id.format(),
+                data: Vec::new(),
+            }
+        } else {
+            store
+                .read_controlled(id, read, control.cancel)
+                .map_err(|source| FetchError::LocalRead { id, source })?
+                .ok_or(FetchError::Missing(id))?
+        };
         crate::edges::visit(id, &object, |target, kind| {
             check(control)?;
             if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
@@ -175,13 +185,9 @@ pub(super) fn receive_depth(
             pending.push_back((target, Some(kind)));
             Ok(())
         })?;
-        if limits.max_haves > 0 && known.get(id).is_some_and(|known| *known == object) {
-            dependencies.push(id);
-        } else {
-            selected.push((id, object));
-        }
+        selected.push(id);
         observe(LocalFetchProgress::Reading {
-            objects: observed.len() as u64,
+            objects: selected.len() as u64,
         });
         check(control)?;
     }
@@ -197,7 +203,7 @@ pub(super) fn receive_depth(
             wants,
             NativeContents {
                 format: source.object_format(),
-                pack: Vec::new(),
+                pack: Vec::new().into(),
                 index: Vec::new(),
                 checksum: None,
                 objects: 0,
@@ -207,57 +213,65 @@ pub(super) fn receive_depth(
             },
         ));
     }
-    let inputs: Vec<_> = selected
-        .iter()
-        .map(|(id, object)| PackObject {
-            id: *id,
-            kind: object.kind(),
-            data: object.data(),
-        })
-        .collect();
-    let mut pack = Vec::new();
+    let mut temporary = tempfile::NamedTempFile::new()?;
     let mut index = Vec::new();
-    let written = crate::pack::write_controlled_observed(
-        source.object_format(),
-        &inputs,
-        (&mut pack, &mut index),
-        PackWriteLimits {
-            max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
-            max_object_bytes: limits.max_object_bytes as u64,
-            max_input_bytes: limits.max_decode_bytes as u64,
-            max_pack_bytes: limits.max_pack_bytes as u64,
-            ..Default::default()
-        },
-        crate::PackCompression::Ordinary,
-        &mut || control.check().map_err(crate::PackWriteError::Io),
-        &mut |done, total| {
-            observe(LocalFetchProgress::Packing {
-                objects: (done, total),
-            })
-        },
-    );
-    let written = written.map_err(|error| match error {
-        crate::PackWriteError::Io(error) if crate::transport::interruption(&error).is_some() => {
-            FetchError::from(error)
-        }
-        error => FetchError::PackWrite(error),
-    })?;
+    let written = {
+        let mut sink = std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file_mut());
+        let written = crate::pack::write_transfer(
+            &store,
+            &selected,
+            (&mut sink, &mut index),
+            PackWriteLimits {
+                max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),
+                max_object_bytes: limits.max_object_bytes as u64,
+                max_input_bytes: limits.max_decode_bytes as u64,
+                max_pack_bytes: limits.max_pack_bytes as u64,
+                ..Default::default()
+            },
+            crate::PackCompression::Ordinary,
+            (
+                crate::ReadLimits {
+                    max_object_bytes: limits.max_object_bytes,
+                    max_delta_bytes: limits.max_delta_bytes,
+                    ..limits.known_read
+                },
+                control.cancel,
+            ),
+            limits.max_delta_depth,
+            &mut || control.check().map_err(crate::PackWriteError::Io),
+            &mut |done, total| {
+                observe(LocalFetchProgress::Packing {
+                    objects: (done, total),
+                })
+            },
+        )
+        .map_err(|error| match error {
+            crate::pack::ReuseError::Read { id, source } => FetchError::LocalRead { id, source },
+            crate::pack::ReuseError::Write(crate::PackWriteError::Io(error))
+                if crate::transport::interruption(&error).is_some() =>
+            {
+                FetchError::from(error)
+            }
+            crate::pack::ReuseError::Write(error) => FetchError::PackWrite(error),
+        })?;
+        std::io::Write::flush(&mut sink)?;
+        written
+    };
     check(control)?;
-    observe(LocalFetchProgress::Complete);
-    Ok(ReceivedFetch::native(
+    // Never trust source index identities for reused bytes. Import derives a new index and checks
+    // delta depth, identity, framing and connectivity before any destination mutation.
+    let received = ReceivedFetch::validate_known(
         advertisement,
         wants,
-        NativeContents {
-            format: source.object_format(),
-            pack,
-            index,
-            checksum: Some(written.checksum),
-            objects: selected.len(),
-            dependencies,
-            shallow,
-            limits,
-        },
-    ))
+        super::bytes::Bytes::File(temporary, written.pack_bytes as usize),
+        known,
+        shallow,
+        super::FetchOptions { limits, depth },
+        &mut super::progress::ValidationObserver::new(control.cancel, &mut |_| {}),
+    )?;
+    check(control)?;
+    observe(LocalFetchProgress::Complete);
+    Ok(received)
 }
 
 pub(super) fn advertise(
@@ -269,6 +283,15 @@ pub(super) fn advertise(
     let store = source
         .objects(Default::default())
         .map_err(FetchError::Destination)?;
+    advertise_store(source, &store, limits, control)
+}
+
+fn advertise_store(
+    source: &Repository,
+    store: &crate::Objects,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<Advertisement, FetchError> {
     let refs = source
         .references()
         .map_err(|_| FetchError::Protocol("local references"))?;

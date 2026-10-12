@@ -193,7 +193,7 @@ pub async fn receive_http_with_depth_and_progress(
         let result = remote
             .transfer(
                 "git-upload-pack",
-                Some(RequestBody::new(request, Vec::new())),
+                Some(RequestBody::new(request, Vec::new())?),
                 control,
                 |chunk| {
                     if chunk.len() > remaining.saturating_sub(body.len()) {

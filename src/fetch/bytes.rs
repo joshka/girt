@@ -35,6 +35,20 @@ impl Bytes {
         }
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn async_reader(
+        &self,
+    ) -> std::io::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + '_>> {
+        match self {
+            Self::Memory(bytes) => Ok(Box::new(std::io::Cursor::new(bytes.as_slice()))),
+            Self::File(file, _) => Ok(Box::new(tokio::fs::File::from_std(file.reopen()?))),
+        }
+    }
+
     pub(crate) fn copy_to(
         &self,
         output: &mut impl Write,

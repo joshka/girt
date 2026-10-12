@@ -209,15 +209,22 @@ impl Session {
         control: TransportControl<'_>,
         diagnostics: &mut impl FnMut(&[u8]),
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
-        self.exchange_observed(request, pack, limit, control, diagnostics, &mut |_| {})
-            .await
+        self.exchange_observed(
+            request,
+            crate::fetch::PackInput::Slice(pack),
+            limit,
+            control,
+            diagnostics,
+            &mut |_| {},
+        )
+        .await
     }
 
     // Observes the retained prefix after each bounded read; observers neither own nor copy it.
     pub(crate) async fn exchange_observed(
         &mut self,
         request: &[u8],
-        pack: &[u8],
+        pack: crate::fetch::PackInput<'_>,
         limit: usize,
         control: TransportControl<'_>,
         diagnostics: &mut impl FnMut(&[u8]),
@@ -225,7 +232,7 @@ impl Session {
     ) -> (Vec<u8>, Result<(), SshError>, usize) {
         let mut body = Vec::new();
         let (result, written) = self
-            .exchange_streaming(request, pack, limit, control, diagnostics, &mut |chunk| {
+            .exchange_streaming_pack(request, pack, limit, control, diagnostics, &mut |chunk| {
                 body.extend_from_slice(chunk);
                 observe(&body);
                 Ok(())
@@ -238,6 +245,26 @@ impl Session {
         &mut self,
         request: &[u8],
         pack: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+        receive: &mut impl FnMut(&[u8]) -> Result<(), SshError>,
+    ) -> (Result<(), SshError>, usize) {
+        self.exchange_streaming_pack(
+            request,
+            crate::fetch::PackInput::Slice(pack),
+            limit,
+            control,
+            diagnostics,
+            receive,
+        )
+        .await
+    }
+
+    async fn exchange_streaming_pack(
+        &mut self,
+        request: &[u8],
+        pack: crate::fetch::PackInput<'_>,
         limit: usize,
         control: TransportControl<'_>,
         diagnostics: &mut impl FnMut(&[u8]),
@@ -378,24 +405,41 @@ async fn advertisement(
 async fn write_request(
     mut input: AsyncFd<ChildStdin>,
     request: &[u8],
-    pack: &[u8],
+    pack: crate::fetch::PackInput<'_>,
     written: &mut usize,
 ) -> Result<(), SshError> {
-    for mut bytes in [request, pack] {
-        while !bytes.is_empty() {
-            let mut ready = input.writable_mut().await?;
-            if let Ok(result) = ready.try_io(|fd| fd.get_mut().write(bytes)) {
-                let count = result?;
-                if count == 0 {
-                    return Err(SshError::Io(std::io::ErrorKind::WriteZero));
-                }
-                *written += count;
-                bytes = &bytes[count..];
-                tokio::task::yield_now().await;
+    use tokio::io::AsyncReadExt as _;
+    // Open before sending commands so an unreadable spool cannot cause a partial upload.
+    let mut reader = pack.async_reader()?;
+    write_bytes(&mut input, request, written).await?;
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        write_bytes(&mut input, &buffer[..n], written).await?;
+    }
+    Ok(())
+}
+
+async fn write_bytes(
+    input: &mut AsyncFd<ChildStdin>,
+    mut bytes: &[u8],
+    written: &mut usize,
+) -> Result<(), SshError> {
+    while !bytes.is_empty() {
+        let mut ready = input.writable_mut().await?;
+        if let Ok(result) = ready.try_io(|fd| fd.get_mut().write(bytes)) {
+            let count = result?;
+            if count == 0 {
+                return Err(SshError::Io(std::io::ErrorKind::WriteZero));
             }
+            *written += count;
+            bytes = &bytes[count..];
+            tokio::task::yield_now().await;
         }
     }
-    // Closing stdin sends EOF after the entire prepared request, including a no-op flush.
     Ok(())
 }
 async fn read_body(

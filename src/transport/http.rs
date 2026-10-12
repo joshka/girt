@@ -640,13 +640,42 @@ pub(crate) struct RequestBody {
     length: u64,
 }
 impl RequestBody {
-    pub(crate) fn new(request: Vec<u8>, pack: Vec<u8>) -> Self {
+    pub(crate) fn new(
+        request: Vec<u8>,
+        pack: impl Into<crate::fetch::Bytes>,
+    ) -> std::io::Result<Self> {
+        use tokio::io::AsyncReadExt as _;
+        let pack = pack.into();
         let length = request.len() as u64 + pack.len() as u64;
-        let chunks = [Ok::<_, std::io::Error>(request), Ok(pack)];
-        Self {
-            body: reqwest::Body::wrap_stream(futures_util::stream::iter(chunks)),
-            length,
-        }
+        let body = match pack {
+            crate::fetch::Bytes::Memory(pack) => {
+                let chunks = [Ok::<_, std::io::Error>(request), Ok(pack)];
+                reqwest::Body::wrap_stream(futures_util::stream::iter(chunks))
+            }
+            crate::fetch::Bytes::File(temporary, _) => {
+                let file = tokio::fs::File::from_std(temporary.reopen()?);
+                let stream = futures_util::stream::try_unfold(
+                    (Some(request), temporary, file),
+                    |(request, temporary, mut file)| async move {
+                        if let Some(request) = request {
+                            return Ok::<_, std::io::Error>(Some((
+                                request,
+                                (None, temporary, file),
+                            )));
+                        }
+                        let mut bytes = vec![0; 64 * 1024];
+                        let n = file.read(&mut bytes).await?;
+                        if n == 0 {
+                            return Ok(None);
+                        }
+                        bytes.truncate(n);
+                        Ok(Some((bytes, (None, temporary, file))))
+                    },
+                );
+                reqwest::Body::wrap_stream(stream)
+            }
+        };
+        Ok(Self { body, length })
     }
 }
 

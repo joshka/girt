@@ -1,0 +1,218 @@
+[
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 16.38,
+    "rss": 720781312,
+    "log": "rebased-workflow-noop-0-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 0.36,
+    "rss": 27918336,
+    "log": "rebased-workflow-noop-0-after.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 0.12,
+    "rss": 14106624,
+    "log": "rebased-workflow-noop-0-git.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 0.12,
+    "rss": 14172160,
+    "log": "rebased-workflow-noop-1-git.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 0.06,
+    "rss": 28033024,
+    "log": "rebased-workflow-noop-1-after.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 16.01,
+    "rss": 670154752,
+    "log": "rebased-workflow-noop-1-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 18.09,
+    "rss": 718651392,
+    "log": "rebased-workflow-noop-2-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 0.07,
+    "rss": 29097984,
+    "log": "rebased-workflow-noop-2-after.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 0.14,
+    "rss": 14221312,
+    "log": "rebased-workflow-noop-2-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 18.52,
+    "rss": 698580992,
+    "log": "rebased-workflow-increment-0-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 0.24,
+    "rss": 70123520,
+    "log": "rebased-workflow-increment-0-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 0.16,
+    "rss": 15646720,
+    "log": "rebased-workflow-increment-0-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 0.15,
+    "rss": 15515648,
+    "log": "rebased-workflow-increment-1-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 0.25,
+    "rss": 68780032,
+    "log": "rebased-workflow-increment-1-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 17.39,
+    "rss": 696483840,
+    "log": "rebased-workflow-increment-1-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 18.02,
+    "rss": 690012160,
+    "log": "rebased-workflow-increment-2-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 0.25,
+    "rss": 68255744,
+    "log": "rebased-workflow-increment-2-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 0.16,
+    "rss": 15450112,
+    "log": "rebased-workflow-increment-2-git.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 49.07,
+    "rss": 5668044800,
+    "log": "rebased-workflow-clone-0-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 17.76,
+    "rss": 737755136,
+    "log": "rebased-workflow-clone-0-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 3.63,
+    "rss": 279052288,
+    "log": "rebased-workflow-clone-0-git.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 3.65,
+    "rss": 280870912,
+    "log": "rebased-workflow-clone-1-git.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 17.73,
+    "rss": 707985408,
+    "log": "rebased-workflow-clone-1-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 47.82,
+    "rss": 5720276992,
+    "log": "rebased-workflow-clone-1-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 48.12,
+    "rss": 5691424768,
+    "log": "rebased-workflow-clone-2-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 17.84,
+    "rss": 720420864,
+    "log": "rebased-workflow-clone-2-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 3.68,
+    "rss": 280084480,
+    "log": "rebased-workflow-clone-2-git.log"
+  }
+]

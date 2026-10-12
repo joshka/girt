@@ -1,0 +1,21 @@
+phase receive=12.277134
+phase finish=6.579048
+true
+       18.86 real        14.82 user         3.86 sys
+           706691072  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               49055  page reclaims
+                 127  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  75  voluntary context switches
+                9343  involuntary context switches
+        149729749370  instructions retired
+         62631757894  cycles elapsed
+           545260456  peak memory footprint

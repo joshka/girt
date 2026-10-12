@@ -24,7 +24,7 @@ all-features = true
 tracing = { version = "0.1.40", optional = true, default-features = false, features = ["std"] }
 futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 reqwest = { version = "0.13.5", optional = true, default-features = false, features = ["rustls", "stream"] }
-tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros"] }
+tokio = { version = "1.4", optional = true, features = ["rt", "time", "macros", "fs", "io-util"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 crc32fast = "1"
 sha1 = "0.10"

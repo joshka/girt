@@ -87,7 +87,7 @@ fn local_progress_no_wants_has_no_pack() {
 }
 
 #[test]
-fn local_progress_known_objects_are_read_but_not_packed() {
+fn local_progress_known_objects_are_not_read_or_packed() {
     let (_root, repo, id) = source(ObjectFormat::Sha1);
     let cancel = AtomicBool::new(false);
     let objects = repo.objects(Default::default()).unwrap();
@@ -107,8 +107,6 @@ fn local_progress_known_objects_are_read_but_not_packed() {
         events,
         [
             LocalFetchProgress::Reading { objects: 0 },
-            LocalFetchProgress::Reading { objects: 1 },
-            LocalFetchProgress::Reading { objects: 2 },
             LocalFetchProgress::Complete
         ]
     );
@@ -248,11 +246,23 @@ fn local_progress_missing_source_has_no_completion() {
 fn local_clone_pack_is_spooled_and_removed_on_drop() {
     let (_root, repo, id) = source(ObjectFormat::Sha1);
     let received = receive(
-        &repo, |_| vec![id], &KnownHistory::default(), FetchLimits::default(),
-        TransportControl::new(&AtomicBool::new(false)), |_| ControlFlow::Continue(()), |_| {},
-    ).unwrap();
-    let path = received.temporary_pack_path().expect("local transfer must spool").to_owned();
-    assert_eq!(std::fs::metadata(&path).unwrap().len() as usize, received.pack_bytes());
+        &repo,
+        |_| vec![id],
+        &KnownHistory::default(),
+        FetchLimits::default(),
+        TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+        |_| {},
+    )
+    .unwrap();
+    let path = received
+        .temporary_pack_path()
+        .expect("local transfer must spool")
+        .to_owned();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().len() as usize,
+        received.pack_bytes()
+    );
     drop(received);
     assert!(!path.exists());
 }

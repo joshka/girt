@@ -6,7 +6,7 @@ use std::path::Path;
 
 use super::{PreparedPush, PushError, PushFailure, PushReport, RejectionOrigin, Status};
 use crate::config::ConfigInputs;
-use crate::fetch::{Advertisement, FetchError, FetchLimits, NativeContents, ReceivedFetch};
+use crate::fetch::{Advertisement, FetchError, FetchLimits, KnownHistory, ReceivedFetch};
 use crate::refs::{
     Expected, RefEdit, RefName, RefOutcome, ReferenceError, References, Reflog, Target,
     TransactionError,
@@ -185,13 +185,52 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             .try_into()
             .unwrap_or(usize::MAX),
         max_objects: prepared.limits.pack.max_objects as usize,
-        ..FetchLimits::default()
+        max_object_bytes: prepared
+            .limits
+            .pack
+            .max_object_bytes
+            .try_into()
+            .unwrap_or(usize::MAX),
+        max_decode_bytes: prepared
+            .limits
+            .pack
+            .max_input_bytes
+            .try_into()
+            .unwrap_or(usize::MAX),
+        max_delta_depth: prepared.limits.read.max_delta_depth,
+        max_delta_bytes: prepared.limits.read.max_delta_bytes,
+        ..FetchLimits::trusted()
     };
     if !prepared.pack.is_empty() {
-        let received = ReceivedFetch::native(
+        let store = repository.objects(Default::default()).map_err(|error| {
+            PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
+        })?;
+        let known = KnownHistory::from_store(store, &[], limits, control.cancel)
+            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        let mut pack = crate::fetch::Bytes::temporary()
+            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        // Keep the prepared artifact reusable; import owns this independent temporary copy.
+        let mut reader = prepared
+            .pack
+            .reader()
+            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            control
+                .check()
+                .map_err(|error| PushError::NotSent(error.into()))?;
+            let count = std::io::Read::read(&mut reader, &mut buffer)
+                .map_err(|e| PushError::NotSent(e.into()))?;
+            if count == 0 {
+                break;
+            }
+            pack.append(&buffer[..count])
+                .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        }
+        let received = ReceivedFetch::validate_known(
             Advertisement {
                 refs: Vec::new(),
-                capabilities: Vec::new(),
+                capabilities: vec![format!("object-format={}", prepared.format).into_bytes()],
             },
             prepared
                 .commands
@@ -199,26 +238,18 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 .filter(|command| !command.deletes())
                 .map(|command| command.new)
                 .collect(),
-            NativeContents {
-                format: prepared.format,
-                pack: Vec::new(),
-                index: Vec::new(),
-                checksum: prepared.checksum,
-                objects: prepared.object_count() as usize,
-                dependencies: Vec::new(),
-                shallow: Vec::new(),
+            pack,
+            &known,
+            vec![],
+            crate::fetch::FetchOptions {
                 limits,
+                depth: None,
             },
-        );
+            &mut crate::fetch::ValidationObserver::new(control.cancel, &mut |_| {}),
+        )
+        .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         received
-            .install_bytes(
-                &repository,
-                Default::default(),
-                control.cancel,
-                crate::fetch::PackInput::Slice(&prepared.pack),
-                &prepared.index,
-                false,
-            )
+            .install(&repository, Default::default(), control.cancel)
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
     }
     report.unpack = Some(Status::Ok);

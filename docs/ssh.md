@@ -209,7 +209,7 @@ a caller-owned bounded worker. Bound waiting downloads and temporary disk use an
 bytes as well as active workers. The [runnable example](../examples/ssh_local.rs) submits one worker
 request, holds its permit through validation, observes completion explicitly and installs outside
 the executor. Dropping a started worker's handle does not stop it; retain completion ownership after
-requesting cancellation. `send_ssh` borrows `PreparedPush` without copying its buffers. Network
+requesting cancellation. `send_ssh` streams the borrowed temporary pack in 64-KiB chunks. Network
 futures are `Send` when selection callbacks are `Send`; borrowed inputs must live through the
 operation. Advertisement parsing, request encoding and status parsing are synchronous work bounded
 by the configured counts/bytes. Callbacks must return promptly. There is no executor latency promise
