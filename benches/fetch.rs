@@ -85,6 +85,18 @@ fn fetch(c: &mut Criterion) {
         )
         .unwrap();
         assert_eq!(received.object_count(), fixture.records.len());
+        group.bench_function(format!("native-copy-import-{count}"), |b| {
+            b.iter(|| {
+                girt::fetch::receive_local(
+                    fixture.root.path(),
+                    |_| vec![tag],
+                    FetchLimits::default(),
+                    &cancel,
+                    |_| ControlFlow::Continue(()),
+                )
+                .unwrap()
+            })
+        });
         let known =
             girt::fetch::KnownHistory::new(&objects, &[tag], FetchLimits::default(), &cancel)
                 .unwrap();

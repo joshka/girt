@@ -192,7 +192,7 @@ pub async fn receive_ssh_with_progress(
             return Err(error);
         }
         result?;
-        if !negotiation.needs_pack && body.len() != 0 {
+        if !negotiation.needs_pack && !body.is_empty() {
             return Err(FetchError::Protocol("trailing response bytes"));
         }
         Ok(DownloadedFetch {

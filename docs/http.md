@@ -58,11 +58,12 @@ also synchronous. The [runnable example](../examples/http_local.rs) shows full a
 downloads, bounded worker admission, explicit completion handling and installation outside the
 executor. It submits only one worker request; it does not provide a service queue or reusable pool.
 
-`PreparedPush` validates the objects it sends, proves force policy, applies receiver-history
-exclusion and generates the ordinary or delta-compressed pack synchronously. Prepare it before
-calling `push::send_http`; sending consumes it and moves both existing byte buffers into the HTTP
-upload. There is no full-pack copy during the async call. Reprepare after inspecting remote state
-when an attempt has an uncertain outcome.
+`PreparedPush` validates structured objects, locates packed blobs, proves force policy, applies
+receiver-history exclusion and spools a pack synchronously. It copies eligible stored compressed
+entries; the receiver independently verifies their identities before publishing refs. Prepare it
+before calling `push::send_http`; sending consumes it and streams the owned temporary pack into the
+HTTP upload in 64-KiB chunks. There is no full-pack copy during the async call. Reprepare after
+inspecting remote state when an attempt has an uncertain outcome.
 
 Use `push::send_http_checked` when the application needs to compare its commands with the actual
 receive-pack advertisement before sending. Its synchronous callback sees validated reference tips
@@ -166,7 +167,7 @@ explicitly unsupported; existing SHA-1 and non-thin-pack constraints apply.
 Fetch advertisement and aggregate wire budgets include the smart service prelude. A fetch request
 uses at most 96 bytes per want plus 2048 bytes of have/framing overhead. The bounded response is
 retained on disk until validation finishes, adding at most `max_wire_bytes` of temporary disk use.
-Push owns the already bounded command/pack buffers; status retention uses `max_status_bytes`.
+Push owns bounded command bytes and a temporary pack file; status retention uses `max_status_bytes`.
 Request/response memory is proportional to configured bounds, not a fixed heap cap. Response headers
 are capped at 64 fields and 16 KiB of names/values after parsing. Hyper's independent parser buffer
 is currently bounded at approximately 400 KiB before that stricter byte check. TLS/socket buffers,

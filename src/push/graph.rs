@@ -29,7 +29,7 @@ const SKEW_SLOP: usize = 5;
 
 /// Objects to send, and the receiver roots that omitted objects rely on.
 pub(super) struct Selection {
-    pub objects: HashMap<ObjectId, Object>,
+    pub objects: Vec<ObjectId>,
     pub receiver_roots: Vec<ObjectId>,
 }
 
@@ -110,6 +110,7 @@ struct Walk<'a, F> {
     commits: HashMap<ObjectId, CommitNode>,
     /// Objects read for sending; entries later found in `known` are dropped by `finish`.
     selected: HashMap<ObjectId, Object>,
+    blobs: HashSet<ObjectId>,
     /// Kinds required by typed edges to discovered objects that may be sent.
     expected: HashMap<ObjectId, Option<ObjectKind>>,
     /// Non-commit objects from tips and tags, walked after tree marking.
@@ -139,6 +140,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             known: HashMap::new(),
             commits: HashMap::new(),
             selected: HashMap::new(),
+            blobs: HashSet::new(),
             expected: HashMap::new(),
             later: Vec::new(),
             visits: HashMap::new(),
@@ -194,7 +196,9 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             }
             return Ok(false);
         }
-        if self.selected.get(&id).is_some_and(|o| o.kind() != kind) {
+        if (self.blobs.contains(&id) && kind != ObjectKind::Blob)
+            || self.selected.get(&id).is_some_and(|o| o.kind() != kind)
+        {
             return Err(Error::Kind(id));
         }
         self.known.insert(id, Mark { kind, root });
@@ -312,6 +316,9 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             self.rely_on(id);
             return Ok(false);
         }
+        if self.blobs.contains(&id) && kind.is_some_and(|kind| kind != ObjectKind::Blob) {
+            return Err(Error::Kind(id));
+        }
         // An unconstrained root may already have been read before a typed edge reaches it.
         if self
             .selected
@@ -339,6 +346,9 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
     /// Reads a candidate for sending, charging the aggregate payload budget once.
     /// Returns `None` when the object is absent.
     fn read_candidate(&mut self, id: ObjectId) -> Result<Option<ObjectKind>, Error> {
+        if self.blobs.contains(&id) {
+            return Ok(Some(ObjectKind::Blob));
+        }
         if let Some(object) = self.selected.get(&id) {
             return Ok(Some(object.kind()));
         }
@@ -347,18 +357,28 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             usize::try_from(self.bytes.min(self.limits.pack.max_object_bytes))
                 .unwrap_or(usize::MAX),
         );
-        let Some(object) = self.read(id, read)? else {
+        let Some((kind, length, _)) = self
+            .store
+            .transfer_object(id, read, self.cancel)
+            .map_err(|source| Error::Read { id, source })?
+        else {
             return Ok(None);
         };
-        if self.expected[&id].is_some_and(|kind| kind != object.kind()) {
+        if self.expected[&id].is_some_and(|expected| expected != kind) {
             return Err(Error::Kind(id));
         }
         self.bytes = self
             .bytes
-            .checked_sub(object.data().len() as u64)
+            .checked_sub(length as u64)
             .ok_or(Error::Limit("selected bytes"))?;
-        let kind = object.kind();
-        self.selected.insert(id, object);
+        if kind == ObjectKind::Blob {
+            self.blobs.insert(id);
+            self.reads += 1;
+            (self.observe)(self.reads);
+        } else {
+            let object = self.read(id, read)?.ok_or(Error::Missing(id))?;
+            self.selected.insert(id, object);
+        }
         Ok(Some(kind))
     }
 
@@ -602,8 +622,25 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             self.rely_on(id);
             self.selected.remove(&id);
         }
+        let omitted_blobs: Vec<_> = self
+            .blobs
+            .iter()
+            .copied()
+            .filter(|id| self.known.contains_key(id))
+            .collect();
+        for id in omitted_blobs {
+            self.rely_on(id);
+        }
         Selection {
-            objects: self.selected,
+            objects: self
+                .selected
+                .into_keys()
+                .chain(
+                    self.blobs
+                        .into_iter()
+                        .filter(|id| !self.known.contains_key(id)),
+                )
+                .collect(),
             receiver_roots: self
                 .roots
                 .into_iter()

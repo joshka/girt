@@ -1031,7 +1031,9 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         ..PushLimits::default()
     };
     let prepared = PreparedPush::new(&objects, commands, limits, &cancel).unwrap();
-    assert!(prepared.pack_bytes() < ordinary.pack_bytes());
+    // Git has already deltified every packed input; both policies preserve those streams.
+    // The incremental loose-object transfer below still exercises fresh delta search.
+    assert_eq!(prepared.pack_bytes(), ordinary.pack_bytes());
     assert!(
         send_local(dest.git_dir(), &prepared, &cancel)
             .unwrap()

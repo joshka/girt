@@ -76,8 +76,11 @@ pub fn receive_local_with_control(
 
 /// Reads a local source while excluding explicitly verified destination history.
 ///
-/// Source history is fully checked even for objects present in `known`. Excluded objects become
-/// dependencies rechecked during installation. Knowledge preparation remains caller-owned.
+/// Stops at destination-known objects with complete history; declared shallow roots are expanded.
+/// Selected blobs are located by framing rather than retained as decoded payloads. The outgoing
+/// pack is spooled, then independently imported to check identities, delta depth and connectivity.
+/// Excluded boundaries become dependencies rechecked during installation. Knowledge preparation
+/// and protection against concurrent destination collection remain caller-owned.
 ///
 /// # Errors
 ///

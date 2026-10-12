@@ -507,7 +507,10 @@ fn advertised_stale_value_keeps_exact_lease_on_wire() {
         report.refs[0].rejection_origin,
         Some(RejectionOrigin::Receiver)
     );
-    assert_eq!(written, [p.request.as_slice(), p.pack.as_slice()].concat());
+    assert_eq!(
+        written,
+        [p.request.as_slice(), p.pack.to_vec().as_slice()].concat()
+    );
 }
 #[rstest]
 #[case::missing_unpack(&[])]
@@ -892,7 +895,10 @@ fn short_writes_preserve_full_request_and_pack() {
         .unwrap()
         .all_succeeded()
     );
-    assert_eq!(writer.0, [p.request.as_slice(), p.pack.as_slice()].concat());
+    assert_eq!(
+        writer.0,
+        [p.request.as_slice(), p.pack.to_vec().as_slice()].concat()
+    );
 }
 struct FailingWriter {
     bytes: usize,
@@ -1394,7 +1400,7 @@ fn ref_delta_push_needs_only_report_status() {
     .unwrap();
     assert!(report.all_succeeded());
     assert!(!p.request.windows(9).any(|w| w == b"ofs-delta"));
-    assert_eq!(&sent[p.request.len()..], p.pack);
+    assert_eq!(&sent[p.request.len()..], p.pack.to_vec());
 }
 
 #[rstest]
@@ -1643,6 +1649,73 @@ fn preparation_progress_preserves_prepared_bytes() {
     )
     .unwrap();
     assert_eq!(observed.request, original.request);
-    assert_eq!(observed.pack, original.pack);
-    assert_eq!(observed.index, original.index);
+    assert_eq!(observed.pack.to_vec(), original.pack.to_vec());
+}
+
+#[test]
+fn prepared_pack_is_spooled_and_removed_on_drop() {
+    let f = Fixture::new();
+    let id = f.blob();
+    let prepared = f
+        .prepare(
+            vec![command("refs/tags/test", None, id)],
+            PushLimits::default(),
+        )
+        .unwrap();
+    let path = prepared.pack.path().expect("push must spool").to_owned();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().len() as usize,
+        prepared.pack_bytes()
+    );
+    drop(prepared);
+    assert!(!path.exists());
+}
+
+#[test]
+fn fresh_transfer_deltas_obey_the_receiver_depth_limit() {
+    let f = Fixture::new();
+    let first = f
+        .repo
+        .loose_objects()
+        .write_blob(&b"abcdef\n".repeat(4096))
+        .unwrap();
+    let mut next = b"abcdef\n".repeat(4096);
+    next.extend_from_slice(b"changed\n");
+    let second = f.repo.loose_objects().write_blob(&next).unwrap();
+    let prepared = f
+        .prepare(
+            vec![
+                command("refs/tags/first", None, first),
+                command("refs/tags/second", None, second),
+            ],
+            PushLimits {
+                read: crate::ReadLimits {
+                    max_delta_depth: 0,
+                    ..crate::ReadLimits::default()
+                },
+                compression: crate::PackCompression::Delta(crate::DeltaOptions::default()),
+                ..PushLimits::default()
+            },
+        )
+        .unwrap();
+    let imported = crate::fetch::ReceivedFetch::validate_known(
+        crate::fetch::Advertisement {
+            refs: vec![],
+            capabilities: vec![],
+        },
+        vec![first, second],
+        prepared.pack,
+        &crate::fetch::KnownHistory::default(),
+        vec![],
+        crate::fetch::FetchOptions {
+            limits: crate::fetch::FetchLimits {
+                max_delta_depth: 0,
+                ..crate::fetch::FetchLimits::default()
+            },
+            depth: None,
+        },
+        &mut crate::fetch::ValidationObserver::new(&AtomicBool::new(false), &mut |_| {}),
+    )
+    .unwrap();
+    assert_eq!(imported.object_count(), 2);
 }

@@ -36,9 +36,11 @@ impl PushCommand {
 
 /// Input, work and output bounds for preparation and a single receive-pack session.
 ///
-/// Retained memory is proportional to selected payloads, pack bytes, object/edge counts and
-/// protocol bytes, plus the caller's object snapshot. Structured parsing temporarily copies
-/// payloads. Per-read decoding work is bounded separately and may recur for each selected object.
+/// Packs are spooled to temporary files. Retained memory includes selected structured payloads,
+/// object/edge metadata, protocol bytes and the caller's object snapshot. Packed blob payloads
+/// are not retained by selection; writing holds one reconstructed object and, for fresh delta
+/// search, up to `window * max_object_bytes` candidate bytes. Structured parsing copies payloads.
+/// Per-read decoding work is bounded separately and may recur for each selected object.
 /// These are not hard heap or wall-clock limits; allocator overhead and server memory are excluded.
 #[derive(Debug, Clone, Copy)]
 pub struct PushLimits {
@@ -65,8 +67,9 @@ pub struct PushLimits {
     /// its bound still applies. Count/payload bounds cover every object read as a candidate for
     /// sending, including commits later found in receiver history.
     pub pack: PackWriteLimits,
-    /// Explicit pack compression policy; ordinary entries by default. Delta bases stay internal
-    /// after receiver-history exclusion and need no receive-pack capability negotiation.
+    /// Compression policy for fresh objects; ordinary entries by default. Existing compressed
+    /// entries and eligible deltas are reused under either policy. Transfer deltas use REF_DELTA
+    /// framing with internal bases, requiring no optional OFS capability.
     pub compression: PackCompression,
 }
 impl Default for PushLimits {
@@ -92,7 +95,7 @@ impl PushLimits {
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
     /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
     ///
-    /// The prepared pack is held in memory before sending, so memory use grows with the pack.
+    /// The prepared pack is held in a temporary file before sending.
     pub const fn trusted() -> Self {
         const UNBOUNDED: usize = usize::MAX / 4;
         Self {

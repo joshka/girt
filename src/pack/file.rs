@@ -259,11 +259,75 @@ pub(crate) enum CopyError {
 }
 
 impl FilePack {
-    /// Copies a whole entry or a delta's zlib stream, verifying the source CRC when available.
-    ///
-    /// Delta CRCs include the original header/base reference, even though the caller rewrites that
-    /// framing in the output. A v1 index has no CRC; replacement decoding remains required before
-    /// retirement. Output may contain partial entry bytes on error; no index is published here.
+    /// Reads only framing and delta size prefixes, never a reconstructed blob payload.
+    pub(crate) fn object_header(
+        &self,
+        position: usize,
+        limits: ReadLimits,
+    ) -> Result<(crate::ObjectKind, usize), Error> {
+        let mut current = position;
+        let mut length = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if !seen.insert(current) {
+                return Err(Error::Corrupt("delta cycle"));
+            }
+            let entry = self.entry(current)?;
+            let header = super::reader::entry_header(self, &entry)?;
+            if let Some(base) = header.base {
+                if seen.len() > limits.max_delta_depth {
+                    return Err(Error::Limit("delta depth"));
+                }
+                if header.length > limits.max_delta_bytes {
+                    return Err(Error::Limit("delta bytes"));
+                }
+                let range = Range {
+                    artifact: &self.pack,
+                    position: header.data_start,
+                    end: entry.end,
+                    crc: None,
+                };
+                let mut decoder = flate2::read::ZlibDecoder::new(BufReader::new(range));
+                let mut prefix = Vec::new();
+                // Two size varints, each at most ten bytes on a 64-bit host.
+                for _ in 0..2 {
+                    loop {
+                        if prefix.len() == 20 {
+                            return Err(Error::Corrupt("delta size overflow"));
+                        }
+                        let mut byte = [0];
+                        decoder
+                            .read_exact(&mut byte)
+                            .map_err(|e| path_error(&self.pack.path, e))?;
+                        prefix.push(byte[0]);
+                        if byte[0] & 128 == 0 {
+                            break;
+                        }
+                    }
+                }
+                let mut input = prefix.as_slice();
+                super::delta::size(&mut input, 0, 0, true)?;
+                let result = super::delta::size(&mut input, 0, 0, true)?;
+                length.get_or_insert(result);
+                current = base;
+            } else {
+                let kind = match header.kind {
+                    1 => crate::ObjectKind::Commit,
+                    2 => crate::ObjectKind::Tree,
+                    3 => crate::ObjectKind::Blob,
+                    4 => crate::ObjectKind::Tag,
+                    _ => unreachable!("entry header checks kind"),
+                };
+                let length = length.unwrap_or(header.length);
+                if length > limits.max_object_bytes {
+                    return Err(Error::Limit("object bytes"));
+                }
+                return Ok((kind, length));
+            }
+        }
+    }
+
+    /// Copies an entry's bytes while checking the original framing and stream CRC.
     pub(crate) fn copy_raw(
         &self,
         entry: &Entry,
@@ -317,14 +381,14 @@ impl Source for FilePack {
             id: self.identity(position)?,
             offset,
             end,
-            crc: if self.legacy {
-                None
-            } else {
-                Some(word(
-                    &self.index_bytes,
-                    1032 + self.ranges.len() * self.format.digest_len() + position * 4,
-                )?)
-            },
+            crc: (!self.legacy)
+                .then(|| {
+                    word(
+                        &self.index_bytes,
+                        1032 + self.ranges.len() * self.format.digest_len() + position * 4,
+                    )
+                })
+                .transpose()?,
         })
     }
 

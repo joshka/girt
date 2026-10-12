@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits, graph};
 use crate::packet::{check_cancelled, packet, put};
-use crate::{ObjectId, Objects, PackObject};
+use crate::{ObjectId, Objects};
 
 /// An immutable command list and non-thin pack ready for one push.
 ///
@@ -26,9 +26,7 @@ pub struct PreparedPush {
     pub(super) format: crate::ObjectFormat,
     pub(super) commands: Vec<PushCommand>,
     pub(super) request: Vec<u8>,
-    pub(super) pack: Vec<u8>,
-    pub(super) index: Vec<u8>,
-    pub(super) checksum: Option<ObjectId>,
+    pub(super) pack: crate::fetch::Bytes,
     pub(super) limits: PushLimits,
     objects: u32,
     pub(super) receiver_roots: Vec<ObjectId>,
@@ -38,7 +36,7 @@ pub struct PreparedPush {
 }
 impl PreparedPush {
     /// Validates commands, selects all reachable objects, proves permitted branch ancestry, and
-    /// builds a pack without modifying either repository or invoking Git.
+    /// builds a spooled pack without modifying either repository or invoking Git.
     ///
     /// Follows commit parents/trees, tree entries and typed tag targets; gitlinks name external
     /// submodule commits and are not followed. Branch tips must be commits. No reachable object
@@ -52,14 +50,21 @@ impl PreparedPush {
     /// candidates and every 4096 search units. A single storage read, hash, parse, sort or
     /// compression call cannot be interrupted. Read
     /// limits bound decoding per object, not aggregate decoding across objects. Sources must
-    /// meet [`Objects`]'s storage assumptions.
+    /// meet [`Objects`]'s storage assumptions. Packed blobs are located without retaining their
+    /// payloads; commits, trees and tags are decoded for graph selection. Existing zlib streams
+    /// are copied after a source CRC check. Deltas reuse only earlier bases from the same pack,
+    /// within `limits.read.max_delta_depth`; other deltas and entries from legacy v1 indexes are
+    /// reconstructed and encoded whole.
+    /// Loose objects are read one at a time. Fresh delta search retains only its bounded window.
     ///
     /// # Errors
     ///
     /// Rejects duplicate destinations, zero expected IDs, destinations outside `refs/`, missing or
     /// mistyped edges, invalid payloads, implicit force, shallow snapshots, exhausted bounds,
     /// cancellation and storage/pack errors. Shallow push negotiation is not implemented.
-    /// No remote commands or local filesystem writes occur on either success or failure.
+    /// No remote commands or repository files are changed. The temporary pack is removed on drop
+    /// or preparation failure. A receiver must independently import it before publishing refs;
+    /// copied blob identities are source-index hints until that verification.
     pub fn new(
         objects: &Objects,
         commands: Vec<PushCommand>,
@@ -131,7 +136,7 @@ impl PreparedPush {
     ///
     /// Uses [`Self::new_local`]'s source, force and exclusion contracts. `observe` receives
     /// [`PreparationProgress`] synchronously and must return promptly. It cannot fail; set
-    /// `cancel` to stop at the next cooperative check. Completion means prepared buffers only,
+    /// `cancel` to stop at the next cooperative check. Completion means a prepared artifact only,
     /// before sending or publication. Empty and deletion-only batches have no packing events.
     ///
     /// # Errors
@@ -192,9 +197,7 @@ impl PreparedPush {
                     format: objects.object_format(),
                     commands,
                     request,
-                    pack: vec![],
-                    index: vec![],
-                    checksum: None,
+                    pack: vec![].into(),
                     limits,
                     objects: 0,
                     receiver_roots: vec![],
@@ -211,26 +214,20 @@ impl PreparedPush {
                 cancel,
                 |objects| observe(PreparationProgress::Reading { objects }),
             )?;
-            let inputs: Vec<_> = selection
-                .objects
-                .iter()
-                .map(|(&id, object)| PackObject {
-                    id,
-                    kind: object.kind(),
-                    data: object.data(),
-                })
-                .collect();
-            let mut pack = CancelBuffer {
-                bytes: vec![],
+            let mut temporary = tempfile::NamedTempFile::new()?;
+            let mut pack = CancelWriter {
+                output: std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file_mut()),
                 cancel,
             };
-            let mut index = Vec::new();
-            let result = crate::pack::write_controlled_observed(
-                objects.object_format(),
-                &inputs,
+            let mut index = std::io::sink();
+            let result = crate::pack::write_transfer(
+                objects,
+                &selection.objects,
                 (&mut pack, &mut index),
                 limits.pack,
                 limits.compression,
+                (limits.read, cancel),
+                limits.read.max_delta_depth,
                 &mut || {
                     if cancel.load(Ordering::Relaxed) {
                         Err(io::Error::other("push cancelled").into())
@@ -245,14 +242,17 @@ impl PreparedPush {
                 },
             );
             check_cancelled(cancel)?;
-            let written = result?;
+            pack.flush()?;
+            drop(pack);
+            let written = result.map_err(|error| match error {
+                crate::pack::ReuseError::Read { id, source } => Error::Read { id, source },
+                crate::pack::ReuseError::Write(error) => Error::Pack(error),
+            })?;
             Ok(Self {
                 format: objects.object_format(),
                 commands,
                 request,
-                pack: pack.bytes,
-                index,
-                checksum: Some(written.checksum),
+                pack: crate::fetch::Bytes::File(temporary, written.pack_bytes as usize),
                 limits,
                 objects: written.objects,
                 receiver_roots: selection.receiver_roots,
@@ -281,7 +281,7 @@ impl PreparedPush {
         result
     }
 
-    /// Number of objects in the buffered pack after any receiver-history exclusion.
+    /// Number of objects in the spooled pack after any receiver-history exclusion.
     pub fn object_count(&self) -> u32 {
         self.objects
     }
@@ -498,20 +498,19 @@ fn encode_commands(
     Ok(request)
 }
 
-struct CancelBuffer<'a> {
-    bytes: Vec<u8>,
+struct CancelWriter<'a, W> {
+    output: W,
     cancel: &'a AtomicBool,
 }
-impl Write for CancelBuffer<'_> {
+impl<W: Write> Write for CancelWriter<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         // Do not return Interrupted: write_all retries it, which would spin after cancellation.
         if self.cancel.load(Ordering::Relaxed) {
             return Err(io::Error::other("push cancelled"));
         }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
+        self.output.write(bytes)
     }
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self.output.flush()
     }
 }

@@ -1,0 +1,92 @@
+[
+  {
+    "round": 0,
+    "implementation": "main",
+    "seconds": 40.38,
+    "rss": 5539119104,
+    "phases": {
+      "select-locate": 5.937988,
+      "write": 33.856349
+    },
+    "log": "writer-0-main.log"
+  },
+  {
+    "round": 0,
+    "implementation": "after",
+    "seconds": 7.85,
+    "rss": 243826688,
+    "phases": {
+      "select-locate": 4.892326,
+      "write": 2.42506
+    },
+    "log": "writer-0-after.log"
+  },
+  {
+    "round": 0,
+    "implementation": "git",
+    "seconds": 1.11,
+    "rss": 279150592,
+    "phases": {},
+    "log": "writer-0-git.log"
+  },
+  {
+    "round": 1,
+    "implementation": "git",
+    "seconds": 1.12,
+    "rss": 279396352,
+    "phases": {},
+    "log": "writer-1-git.log"
+  },
+  {
+    "round": 1,
+    "implementation": "after",
+    "seconds": 7.59,
+    "rss": 240435200,
+    "phases": {
+      "select-locate": 4.950956,
+      "write": 2.389659
+    },
+    "log": "writer-1-after.log"
+  },
+  {
+    "round": 1,
+    "implementation": "main",
+    "seconds": 39.68,
+    "rss": 5526061056,
+    "phases": {
+      "select-locate": 5.744056,
+      "write": 33.643563
+    },
+    "log": "writer-1-main.log"
+  },
+  {
+    "round": 2,
+    "implementation": "main",
+    "seconds": 39.13,
+    "rss": 5555077120,
+    "phases": {
+      "select-locate": 5.728716,
+      "write": 33.118166
+    },
+    "log": "writer-2-main.log"
+  },
+  {
+    "round": 2,
+    "implementation": "after",
+    "seconds": 7.47,
+    "rss": 243679232,
+    "phases": {
+      "select-locate": 4.816697,
+      "write": 2.416408
+    },
+    "log": "writer-2-after.log"
+  },
+  {
+    "round": 2,
+    "implementation": "git",
+    "seconds": 2.06,
+    "rss": 279330816,
+    "phases": {},
+    "log": "writer-2-git.log"
+  }
+]

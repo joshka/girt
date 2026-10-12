@@ -134,9 +134,15 @@ fn transmit(
     caps: Capabilities,
 ) -> Result<(), Error> {
     put(writer, request, cancel)?;
-    // Chunk large writes so cancellation can be observed without relying on a short-writing sink.
-    for chunk in prepared.pack.chunks(65536) {
-        put(writer, chunk, cancel)?;
+    let mut reader = prepared.pack.reader().map_err(Error::install)?;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        check_cancelled(cancel)?;
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        put(writer, &buffer[..count], cancel)?;
     }
     check_cancelled(cancel)?;
     writer.flush()?;

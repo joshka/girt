@@ -1,0 +1,19 @@
+Cloning into bare repository '/tmp/girt-63-65-final-measurements/clone-0-git/dest.git'...
+        3.75 real        10.62 user         0.97 sys
+           282738688  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               14147  page reclaims
+               12824  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+               10412  voluntary context switches
+               66873  involuntary context switches
+           282267962  instructions retired
+           141000948  cycles elapsed
+             3473816  peak memory footprint

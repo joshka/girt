@@ -1,0 +1,20 @@
+From /tmp/girt-63-65-rebased-measurements/increment-0-git/source
+   987c084b8..03d1cad4e  main       -> origin/main
+        0.16 real         0.03 user         0.10 sys
+            15646720  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                7466  page reclaims
+                 413  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  32  voluntary context switches
+                 262  involuntary context switches
+           226008477  instructions retired
+            80851027  cycles elapsed
+             3703240  peak memory footprint

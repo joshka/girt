@@ -7,8 +7,9 @@ use std::sync::atomic::AtomicBool;
 /// [`crate::transport::TransportControl`]; callbacks cannot undo a completed operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalFetchProgress {
-    /// Unique reachable source objects read and checked so far. The total is not yet known.
-    /// Includes objects excluded from the outgoing pack by verified known history.
+    /// Unique selected source objects examined so far. The total is not yet known.
+    /// Structured objects are decoded; packed blobs use framing and delta-size prefixes. Known
+    /// complete-history boundaries are excluded. Identity verification follows during pack import.
     Reading {
         /// Completed source objects; begins at zero and never decreases.
         objects: u64,
@@ -48,7 +49,7 @@ pub struct ValidationProgress {
     pub complete: bool,
 }
 
-pub(super) struct ValidationObserver<'a> {
+pub(crate) struct ValidationObserver<'a> {
     pub cancel: &'a AtomicBool,
     value: ValidationProgress,
     notify: &'a mut dyn FnMut(ValidationProgress),

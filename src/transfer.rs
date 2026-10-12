@@ -731,8 +731,16 @@ impl Repository {
             .collect();
         let cancel = AtomicBool::new(false);
         let limits = FetchLimits::trusted();
-        let known = KnownHistory::from_store(objects, &tips, limits, &cancel)
-            .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))?;
+        let known = if matches!(endpoint, Endpoint::Local(_)) {
+            // Keep explicit reference roots as boundary evidence without a wire have-batch walk.
+            KnownHistory::from_store_roots(objects, &tips, &cancel).map_err(|error| {
+                TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error)))
+            })?
+        } else {
+            KnownHistory::from_store(objects, &tips, limits, &cancel).map_err(|error| {
+                TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error)))
+            })?
+        };
         let request = || self.fetch_request(options);
         let control = TransportControl::new(&cancel);
         let mut on_message = |message: &[u8]| {

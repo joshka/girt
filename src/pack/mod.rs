@@ -24,8 +24,7 @@ pub use compression::{DeltaOptions, DeltaStats, PackCompression};
 pub(crate) use file::FilePack;
 #[cfg(test)]
 pub(crate) use reader::Pack;
-pub(crate) use reuse::{Packed, ReuseError, write_reusing};
-pub(crate) use write::write_controlled_observed;
+pub(crate) use reuse::{Packed, ReuseError, write_reusing, write_transfer};
 pub use write::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, write_pack,
     write_pack_with_compression,

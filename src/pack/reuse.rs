@@ -38,10 +38,10 @@ pub(crate) enum ReuseError {
 /// Packed entries keep their source order. A whole-object entry is copied byte for byte. A delta
 /// entry is copied with its zlib stream unchanged when its base entry was written earlier from the
 /// same source pack; its header is rewritten as an OFS_DELTA with the new distance. Any other delta
-/// is reconstructed, identity-checked, and written whole. Raw copies check available source CRCs
-/// over the bytes streamed, including original delta framing, without re-inflating. Legacy v1
-/// indexes have no entry CRCs; retirement must still decode the replacement. Fresh objects are
-/// identity-checked and may become
+/// is reconstructed, identity-checked, and written whole. Legacy v1 indexes also use this
+/// reconstruction path because they contain no entry CRC. Raw copies check source CRCs over
+/// the bytes streamed, including original delta framing, without re-inflating. Fresh objects
+/// are identity-checked and may become
 /// OFS_DELTA entries against earlier fresh objects under `compression`. Identities in `fresh`
 /// must not repeat identities in `packed`.
 #[allow(clippy::too_many_arguments)]
@@ -55,6 +55,85 @@ pub(crate) fn write_reusing(
     compression: PackCompression,
     read: (ReadLimits, &AtomicBool),
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
+) -> Result<PackWritten, ReuseError> {
+    write_reusing_impl(
+        format,
+        packs,
+        packed,
+        fresh,
+        None,
+        outputs,
+        limits,
+        compression,
+        read,
+        read.0.max_delta_depth,
+        check,
+        &mut |_, _| {},
+    )
+}
+
+/// Transfer identities are hints from the source index. The receiver must derive them independently
+/// by importing the finished pack before publishing references. No selected payloads are retained.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_transfer(
+    store: &crate::Objects,
+    ids: &[ObjectId],
+    outputs: (&mut impl Write, &mut impl Write),
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    read: (ReadLimits, &AtomicBool),
+    max_depth: usize,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    observe: &mut impl FnMut(u64, u64),
+) -> Result<PackWritten, ReuseError> {
+    let packs = store.transfer_packs();
+    let mut packed = Vec::new();
+    let mut fresh = Vec::new();
+    for &id in ids {
+        check()?;
+        let (_, _, location) = store
+            .transfer_object(id, read.0, read.1)
+            .map_err(|source| ReuseError::Read { id, source })?
+            .ok_or(ReuseError::Read {
+                id,
+                source: ObjectReadError::Corrupt("missing transfer object"),
+            })?;
+        match location {
+            Some(location) => packed.push(location),
+            None => fresh.push(id),
+        }
+    }
+    fresh.sort_unstable();
+    write_reusing_impl(
+        store.object_format(),
+        &packs,
+        &packed,
+        &[],
+        Some((store, &fresh)),
+        outputs,
+        limits,
+        compression,
+        read,
+        max_depth,
+        check,
+        observe,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_reusing_impl(
+    format: crate::ObjectFormat,
+    packs: &[&FilePack],
+    packed: &[Packed],
+    fresh: &[PackObject<'_>],
+    stored: Option<(&crate::Objects, &[ObjectId])>,
+    outputs: (&mut impl Write, &mut impl Write),
+    limits: PackWriteLimits,
+    compression: PackCompression,
+    read: (ReadLimits, &AtomicBool),
+    max_depth: usize,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    observe: &mut impl FnMut(u64, u64),
 ) -> Result<PackWritten, ReuseError> {
     let (pack_sink, index_sink) = outputs;
     let (read_limits, cancelled) = read;
@@ -81,7 +160,8 @@ pub(crate) fn write_reusing(
             return Err(PackWriteError::ConflictingDuplicate(object.id).into());
         }
     }
-    let count = u32::try_from(order.len() + fresh.len())
+    let fresh_count = stored.map_or(fresh.len(), |(_, ids)| ids.len());
+    let count = u32::try_from(order.len() + fresh_count)
         .ok()
         .filter(|&count| count <= limits.max_objects)
         .ok_or(PackWriteError::Limit("object count"))?;
@@ -95,6 +175,8 @@ pub(crate) fn write_reusing(
     let mut entries = Vec::with_capacity(count as usize);
     let mut written: HashMap<(usize, usize), (u64, usize)> = HashMap::with_capacity(order.len());
     let mut deltas = DeltaStats::default();
+    let mut input_bytes = fresh.iter().map(|o| o.data.len() as u64).sum::<u64>();
+    observe(0, u64::from(count));
     for &(source_index, _, item) in &order {
         check()?;
         let source = packs[source_index];
@@ -108,33 +190,52 @@ pub(crate) fn write_reusing(
         };
         let entry = source.entry(item.position).map_err(read_error)?;
         let header = entry_header(source, &entry).map_err(read_error)?;
+        let (_, length) = source
+            .object_header(item.position, read_limits)
+            .map_err(read_error)?;
+        charge_input(&mut input_bytes, length, limits)?;
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
         let mut depth = 0;
-        match header.base {
-            None => source
-                .copy_raw(&entry, &header, &mut pack)
-                .map_err(copy_error)?,
-            Some(base) => match written.get(&(source_index, base)) {
-                Some(&(base_offset, base_depth)) => {
-                    depth = base_depth + 1;
-                    pack.put(&entry_header_code(6, header.length as u64))?;
-                    pack.put(&offset_distance(offset - base_offset))?;
-                    source
-                        .copy_raw(&entry, &header, &mut pack)
-                        .map_err(copy_error)?;
-                    deltas.entries += 1;
-                }
-                None => {
-                    let object = source
-                        .read(item.position, read_limits, cancelled)
-                        .map_err(read_error)?;
-                    if object.data().len() as u64 > limits.max_object_bytes {
-                        return Err(PackWriteError::Limit("object bytes").into());
+        if entry.crc.is_none() {
+            // Legacy v1 indexes have no entry CRC. Decode and verify instead of copying bytes
+            // whose identity cannot be checked against the pinned source index while copying.
+            let object = source
+                .read(item.position, read_limits, cancelled)
+                .map_err(read_error)?;
+            write_ordinary(&mut pack, object.kind(), object.data())?;
+        } else {
+            match header.base {
+                None => source
+                    .copy_raw(&entry, &header, &mut pack)
+                    .map_err(copy_error)?,
+                Some(base) => match written.get(&(source_index, base)) {
+                    Some(&(base_offset, base_depth)) if base_depth < max_depth => {
+                        depth = base_depth + 1;
+                        if stored.is_some() {
+                            // REF framing needs no optional OFS capability on receive-pack.
+                            pack.put(&entry_header_code(7, header.length as u64))?;
+                            pack.put(source.entry(base).map_err(read_error)?.id.as_bytes())?;
+                        } else {
+                            pack.put(&entry_header_code(6, header.length as u64))?;
+                            pack.put(&offset_distance(offset - base_offset))?;
+                        }
+                        source
+                            .copy_raw(&entry, &header, &mut pack)
+                            .map_err(copy_error)?;
+                        deltas.entries += 1;
                     }
-                    write_ordinary(&mut pack, object.kind(), object.data())?;
-                }
-            },
+                    _ => {
+                        let object = source
+                            .read(item.position, read_limits, cancelled)
+                            .map_err(read_error)?;
+                        if object.data().len() as u64 > limits.max_object_bytes {
+                            return Err(PackWriteError::Limit("object bytes").into());
+                        }
+                        write_ordinary(&mut pack, object.kind(), object.data())?;
+                    }
+                },
+            }
         }
         deltas.max_depth = deltas.max_depth.max(depth);
         written.insert((source_index, item.position), (offset, depth));
@@ -143,23 +244,70 @@ pub(crate) fn write_reusing(
             offset,
             crc: pack.crc.clone().finalize(),
         });
+        observe(entries.len() as u64, u64::from(count));
     }
 
     let mut depths = Vec::with_capacity(fresh.len());
     let mut fresh_offsets = Vec::with_capacity(fresh.len());
-    for position in 0..fresh.len() {
+    let mut window = Vec::<(ObjectId, crate::Object, usize)>::new();
+    for position in 0..fresh_count {
         check()?;
-        let object = fresh[position];
+        let owned = if let Some((store, ids)) = stored {
+            let id = ids[position];
+            let object = store
+                .read_controlled(id, read_limits, cancelled)
+                .map_err(|source| ReuseError::Read { id, source })?
+                .ok_or(ReuseError::Read {
+                    id,
+                    source: ObjectReadError::Corrupt("missing transfer object"),
+                })?;
+            charge_input(&mut input_bytes, object.data().len(), limits)?;
+            Some((id, object))
+        } else {
+            None
+        };
+        let object = match &owned {
+            Some((id, object)) => PackObject {
+                id: *id,
+                kind: object.kind(),
+                data: object.data(),
+            },
+            None => fresh[position],
+        };
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
         let selected = match compression {
             PackCompression::Ordinary => None,
-            PackCompression::Delta(options) => {
-                select_entry(&fresh, position, &depths, options, &mut deltas, check)?
+            PackCompression::Delta(mut options) => {
+                if stored.is_some() {
+                    options.max_depth = options.max_depth.min(max_depth);
+                    let mut inputs: Vec<_> = window
+                        .iter()
+                        .map(|(id, object, _)| PackObject {
+                            id: *id,
+                            kind: object.kind(),
+                            data: object.data(),
+                        })
+                        .collect();
+                    inputs.push(object);
+                    let depths: Vec<_> = window.iter().map(|(_, _, depth)| *depth).collect();
+                    select_entry(
+                        &inputs,
+                        inputs.len() - 1,
+                        &depths,
+                        options,
+                        &mut deltas,
+                        check,
+                    )?
+                } else {
+                    select_entry(&fresh, position, &depths, options, &mut deltas, check)?
+                }
             }
         };
         if let Some(selected) = selected {
-            if let Some(base) = selected.base {
+            if stored.is_some() {
+                pack.put(&selected.bytes)?;
+            } else if let Some(base) = selected.base {
                 // Fresh deltas use the OFS framing that later repacks preserve verbatim.
                 let header_end = selected.data_start - format.digest_len();
                 let mut header = selected.bytes[..header_end].to_vec();
@@ -179,12 +327,24 @@ pub(crate) fn write_reusing(
             write_ordinary(&mut pack, object.kind, object.data)?;
             depths.push(0);
         }
+        let id = object.id;
+        if let (Some((id, object)), PackCompression::Delta(options)) = (owned, compression) {
+            if object.data().len() <= options.max_object_bytes && options.window > 0 {
+                window.push((id, object, *depths.last().unwrap()));
+                if window.len() > options.window {
+                    window.remove(0);
+                }
+            } else {
+                window.clear();
+            }
+        }
         fresh_offsets.push(offset);
         entries.push(Entry {
-            id: object.id,
+            id,
             offset,
             crc: pack.crc.clone().finalize(),
         });
+        observe(entries.len() as u64, u64::from(count));
     }
     check()?;
     let checksum = pack.finish()?;
@@ -200,6 +360,21 @@ pub(crate) fn write_reusing(
         index_bytes: index.bytes,
         deltas,
     })
+}
+
+fn charge_input(
+    bytes: &mut u64,
+    length: usize,
+    limits: PackWriteLimits,
+) -> Result<(), PackWriteError> {
+    if length as u64 > limits.max_object_bytes {
+        return Err(PackWriteError::Limit("object bytes"));
+    }
+    *bytes = bytes
+        .checked_add(length as u64)
+        .filter(|&n| n <= limits.max_input_bytes)
+        .ok_or(PackWriteError::Limit("input bytes"))?;
+    Ok(())
 }
 
 /// Encodes an OFS_DELTA base distance: big-endian 7-bit groups, each continuation biased by one.
@@ -350,6 +525,55 @@ mod tests {
     }
 
     #[test]
+    fn transfer_writer_copies_compressed_entries_verbatim() {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let (_written, bytes, index) = rewrite(&[&source], &packed(&source, &ids), &[]).unwrap();
+        let output = open(root.path(), "verbatim", &bytes, &index);
+        let first = source.entry(source.at_offset(12).unwrap()).unwrap();
+        let next = output.entry(output.at_offset(12).unwrap()).unwrap();
+        let mut original = Vec::new();
+        let mut copied = Vec::new();
+        source
+            .copy_raw(
+                &first,
+                &entry_header(&source, &first).unwrap(),
+                &mut original,
+            )
+            .unwrap();
+        output
+            .copy_raw(&next, &entry_header(&output, &next).unwrap(), &mut copied)
+            .unwrap();
+        assert_eq!(copied, original);
+        assert_eq!(next.crc, Some(crc32fast::hash(&original)));
+    }
+
+    #[rstest::rstest]
+    #[case::bytes(PackWriteLimits { max_input_bytes: 1, ..PackWriteLimits::default() })]
+    #[case::object(PackWriteLimits { max_object_bytes: 1, ..PackWriteLimits::default() })]
+    fn copied_entries_obey_payload_limits(#[case] limits: PackWriteLimits) {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let result = write_reusing(
+            ObjectFormat::Sha1,
+            &[&source],
+            &packed(&source, &ids),
+            &[],
+            (&mut Vec::new(), &mut Vec::new()),
+            limits,
+            PackCompression::Ordinary,
+            (ReadLimits::default(), &AtomicBool::new(false)),
+            &mut || Ok(()),
+        );
+        assert!(matches!(
+            result,
+            Err(ReuseError::Write(PackWriteError::Limit(_)))
+        ));
+    }
+
+    #[test]
     fn copies_every_entry_and_keeps_deltas_when_bases_are_kept() {
         let root = tempfile::tempdir().unwrap();
         let data = versions();
@@ -486,6 +710,23 @@ mod tests {
         assert_eq!(actual, distance);
         assert!(input.is_empty());
     }
+    #[test]
+    fn pinned_source_crc_is_checked_during_copy() {
+        use std::io::{Seek as _, SeekFrom};
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (source, ids) = source(root.path(), &data);
+        let first = source.entry(source.at_offset(12).unwrap()).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.path().join("source.pack"))
+            .unwrap();
+        file.seek(SeekFrom::Start((first.end - 1) as u64)).unwrap();
+        let bytes = std::fs::read(root.path().join("source.pack")).unwrap();
+        file.write_all(&[bytes[first.end - 1] ^ 128]).unwrap();
+        assert!(rewrite(&[&source], &packed(&source, &ids), &[]).is_err());
+    }
+
     #[test]
     fn truncation_of_pinned_source_is_rejected_during_copy() {
         let root = tempfile::tempdir().unwrap();

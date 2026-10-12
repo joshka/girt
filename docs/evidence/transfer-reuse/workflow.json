@@ -1,0 +1,218 @@
+[
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 17.17,
+    "rss": 673693696,
+    "log": "workflow-noop-0-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 0.14,
+    "rss": 14090240,
+    "log": "workflow-noop-0-git.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 0.14,
+    "rss": 14188544,
+    "log": "workflow-noop-1-git.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 16.9,
+    "rss": 664862720,
+    "log": "workflow-noop-1-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 17.14,
+    "rss": 668942336,
+    "log": "workflow-noop-2-main.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 0.14,
+    "rss": 14172160,
+    "log": "workflow-noop-2-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 17.09,
+    "rss": 634306560,
+    "log": "workflow-increment-0-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 0.16,
+    "rss": 15581184,
+    "log": "workflow-increment-0-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 0.15,
+    "rss": 15548416,
+    "log": "workflow-increment-1-git.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 17.34,
+    "rss": 633667584,
+    "log": "workflow-increment-1-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 17.0,
+    "rss": 667795456,
+    "log": "workflow-increment-2-main.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 0.16,
+    "rss": 15597568,
+    "log": "workflow-increment-2-git.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 1.29,
+    "rss": 28196864,
+    "log": "workflow-noop-0-after.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 0.91,
+    "rss": 28196864,
+    "log": "workflow-noop-1-after.log"
+  },
+  {
+    "operation": "noop",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 0.93,
+    "rss": 28327936,
+    "log": "workflow-noop-2-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 2.08,
+    "rss": 68272128,
+    "log": "workflow-increment-0-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 1.67,
+    "rss": 69992448,
+    "log": "workflow-increment-1-after.log"
+  },
+  {
+    "operation": "increment",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 1.13,
+    "rss": 69304320,
+    "log": "workflow-increment-2-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 0,
+    "seconds": 50.58,
+    "rss": 5752274944,
+    "log": "workflow-clone-0-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 0,
+    "seconds": 18.3,
+    "rss": 650756096,
+    "log": "workflow-clone-0-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 0,
+    "seconds": 3.75,
+    "rss": 282738688,
+    "log": "workflow-clone-0-git.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 1,
+    "seconds": 3.68,
+    "rss": 279101440,
+    "log": "workflow-clone-1-git.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 1,
+    "seconds": 18.37,
+    "rss": 765575168,
+    "log": "workflow-clone-1-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 1,
+    "seconds": 50.1,
+    "rss": 5719326720,
+    "log": "workflow-clone-1-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "main",
+    "round": 2,
+    "seconds": 51.25,
+    "rss": 5712084992,
+    "log": "workflow-clone-2-main.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "after",
+    "round": 2,
+    "seconds": 18.86,
+    "rss": 706691072,
+    "log": "workflow-clone-2-after.log"
+  },
+  {
+    "operation": "clone",
+    "implementation": "git",
+    "round": 2,
+    "seconds": 3.74,
+    "rss": 279134208,
+    "log": "workflow-clone-2-git.log"
+  }
+]
