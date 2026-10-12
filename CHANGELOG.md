@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.4](https://github.com/joshka/girt/compare/v0.3.3...v0.3.4) - 2026-10-12
+
+### Other
+
+- Reuse compressed entries in native transfers ([#72](https://github.com/joshka/girt/pull/72))
+- Prepare pushes against the receiver's advertisement ([#69](https://github.com/joshka/girt/pull/69))
+- Defer whole-pack validation until requested ([#67](https://github.com/joshka/girt/pull/67))
+
 ## [0.3.3](https://github.com/joshka/girt/compare/v0.3.2...v0.3.3) - 2026-10-12
 
 ### Other
