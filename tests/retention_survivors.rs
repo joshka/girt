@@ -209,9 +209,11 @@ fn assert_repack_safe(root: &Path, policy: &RetentionPolicy, target: ObjectId, e
             Ok(expected.to_vec()),
             "new pack must preserve target bytes for a cold reader"
         );
+        // Source packs can deliberately contain mislabelled identities. Verify the replacement
+        // independently so Git does not compare it against those damaged duplicate copies.
         git(
-            root,
-            &["verify-pack", path.with_extension("idx").to_str().unwrap()],
+            isolated.path(),
+            &["verify-pack", "objects/pack/pack-copy.idx"],
             b"",
         );
     }
