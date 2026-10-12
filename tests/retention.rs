@@ -627,6 +627,7 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
     );
 }
 
+#[cfg(unix)]
 fn pack_files(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
     fs::read_dir(root.join("objects/pack"))
         .unwrap()
