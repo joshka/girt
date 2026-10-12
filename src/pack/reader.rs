@@ -72,6 +72,13 @@ pub(crate) trait Source {
         header: &EntryHeader,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error>;
+    /// Receive-owned sources can retain identity proof after evicting the decoded payload.
+    /// Such sources must keep their representation private and check its recorded entry bytes
+    /// on re-read. Ordinary storage/content sources always use the default mandatory hash.
+    fn identity_verified(&self, _position: usize) -> bool {
+        false
+    }
+
     /// Decoded objects kept to avoid re-inflating shared delta bases, if this source has one.
     fn base_cache(&self) -> Option<&BaseCache> {
         None
@@ -260,7 +267,7 @@ pub(crate) fn decode_checked(
     remaining: &mut usize,
     identity: Identity,
 ) -> Result<Object, Error> {
-    let verify = identity == Identity::Verify;
+    let verify = identity == Identity::Verify && !source.identity_verified(position);
     let format = source.format();
     let mut input_remaining = limits.max_input_bytes;
     let mut pending = Vec::new();
@@ -320,8 +327,9 @@ pub(crate) fn decode_checked(
             };
             // Only the requested object's identity is checked: a corrupt base changes every
             // object reconstructed from it, so the final check still catches it.
-            let verified = verify && position == requested;
-            if verified {
+            let check_identity = verify && position == requested;
+            let verified = check_identity || source.identity_verified(position);
+            if check_identity {
                 verify_identity(format, kind, &data, entry.id)?;
             }
             let data = Arc::new(data);
@@ -334,8 +342,9 @@ pub(crate) fn decode_checked(
     while let Some((position, program)) = pending.pop() {
         check_cancelled(cancelled)?;
         data = Arc::new(apply(&data, &program, limits.max_object_bytes, remaining)?);
-        let verified = verify && position == requested;
-        if verified {
+        let check_identity = verify && position == requested;
+        let verified = check_identity || source.identity_verified(position);
+        if check_identity {
             verify_identity(format, kind, &data, source.entry(position)?.id)?;
         }
         if let Some(cache) = cache {

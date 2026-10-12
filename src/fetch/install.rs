@@ -21,13 +21,14 @@ pub struct ReceivedFetch {
     format: crate::ObjectFormat,
     advertisement: Advertisement,
     wants: Vec<ObjectId>,
-    pack: Bytes,
-    index: Vec<u8>,
+    pub(super) pack: Bytes,
+    pub(super) index: Vec<u8>,
     checksum: Option<ObjectId>,
     objects: usize,
     dependencies: Vec<ObjectId>,
     shallow: Vec<ObjectId>,
     limits: FetchLimits,
+    pub(super) verified: super::verified::VerifiedObjects,
 }
 
 pub(crate) enum PackInput<'a> {
@@ -97,6 +98,7 @@ impl ReceivedFetch {
             dependencies: vec![],
             shallow: vec![],
             limits: FetchLimits::default(),
+            verified: Default::default(),
         }
     }
 
@@ -116,6 +118,7 @@ impl ReceivedFetch {
             dependencies: contents.dependencies,
             shallow: contents.shallow,
             limits: contents.limits,
+            verified: Default::default(),
         }
     }
 
@@ -178,6 +181,7 @@ impl ReceivedFetch {
         {
             objects += dependencies.len();
             materialize_dependencies(&mut imported, known, &dependencies, cancel)?;
+            imported.objects.record_read_costs()?;
             dependencies.clear();
         }
         check_cancelled(cancel)?;
@@ -190,6 +194,7 @@ impl ReceivedFetch {
             } else {
                 imported.objects.pack
             },
+            verified: imported.objects.verified,
             index: imported.index,
             checksum: (objects != 0).then_some(imported.checksum),
             objects,

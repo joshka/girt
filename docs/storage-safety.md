@@ -57,12 +57,23 @@ syntax, on a kind that differs from the parent's assertion, and on framing, CRC,
 errors. Today only the native local fetch server's selection walk uses it; the destination hashes
 every object it imports.
 
-A walk whose result authorizes deleting or rewriting data keeps the hash, because a mislabelled tree
-that drops an edge would make that edge's objects look unreachable. Retention planning,
-`repack_retained`, retirement, prune and gc therefore read graph objects with the hash. Retirement
-then decodes every retained object from the replacement or protected copy before unlinking, as
-[Last readable copy](#last-readable-copy) requires. Measured on a 131k-object history, these hashes
-were under 3 % of the plan walk; reading entries was the cost.
+A walk whose result authorizes a reference update, deleting or rewriting data keeps the hash,
+because a mislabelled tree that drops an edge would make that edge's objects look unreachable.
+Retention planning, `repack_retained`, retirement, prune and gc therefore read graph objects with
+the hash. Retirement then decodes every retained object from the replacement or protected copy
+before unlinking, as [Last readable copy](#last-readable-copy) requires. Measured on a 131k-object
+history, these hashes were under 3 % of the plan walk; reading entries was the cost.
+
+Fetch may reuse kind, size and typed-edge evidence recorded from identity-checked received objects.
+This evidence is owned by that receive result and never supplies object content. Before a
+destination walk uses it, the pinned installed pack must match the receive artifact and recorded
+pack checksum, and its retained index must match the generated receive index. Normal lookup must
+select that exact pack; a different primary, alternate or duplicate copy receives the ordinary
+checked read. Independent walk object, payload-byte and edge budgets still apply. Recorded uncached
+representation costs must satisfy the caller's per-read limits; otherwise the ordinary reader checks
+those limits. Full ancestry and cycle validation remain unchanged. This is no process-wide or
+persistent trust cache, and the caller's existing trusted-directory and GC coordination obligations
+still apply.
 
 A walk locates blobs without decoding them, so it does not see a damaged blob. A content read of
 that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack checksums) and

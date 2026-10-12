@@ -284,7 +284,7 @@ impl KnownHistory {
             ..Self::default()
         };
         walk(
-            store,
+            WalkSource::Store(store),
             roots,
             shallow,
             published,
@@ -311,16 +311,26 @@ impl KnownHistory {
     /// Checks that history reachable from `roots` is complete, without retaining payloads.
     ///
     /// Applies [`Self::new_stopping_at`]'s graph, resource and cancellation contract, and returns
-    /// the verified object IDs. Memory is proportional to the number of objects, not their size.
+    /// the verified object IDs. Byte-bound receive evidence can supply structure without another
+    /// decode; other representations use ordinary checked reads. Memory is proportional to the
+    /// number of objects, not their size.
     pub(super) fn verify_stopping_at(
-        store: &Objects,
+        source: &super::verified::InstalledObjects<'_>,
         roots: &[ObjectId],
         shallow: &[ObjectId],
         published: &HashSet<ObjectId>,
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<HashSet<ObjectId>, Error> {
-        let kinds = walk(store, roots, shallow, published, limits, cancel, |_, _| {})?;
+        let kinds = walk(
+            WalkSource::Installed(source),
+            roots,
+            shallow,
+            published,
+            limits,
+            cancel,
+            |_, _| {},
+        )?;
         Ok(kinds.into_keys().collect())
     }
 
@@ -344,12 +354,27 @@ fn missing_empty_tree(store: &Objects, cancel: &AtomicBool) -> Result<Option<Obj
     Ok((!present).then_some(id))
 }
 
+/// Installed evidence carries its own store, so the walk cannot pair it with another snapshot.
+enum WalkSource<'a> {
+    Store(&'a Objects),
+    Installed(&'a super::verified::InstalledObjects<'a>),
+}
+
+impl WalkSource<'_> {
+    fn store(&self) -> &Objects {
+        match self {
+            Self::Store(store) => store,
+            Self::Installed(installed) => installed.store(),
+        }
+    }
+}
+
 /// Walks history reachable from `roots`, handing each verified object to `visit`.
 ///
 /// Stops at `published` objects without reading them, and at the parents of `shallow` commits.
 /// Returns the kind of every visited object.
 fn walk(
-    store: &Objects,
+    source: WalkSource<'_>,
     roots: &[ObjectId],
     shallow: &[ObjectId],
     published: &HashSet<ObjectId>,
@@ -357,6 +382,7 @@ fn walk(
     cancel: &AtomicBool,
     mut visit: impl FnMut(ObjectId, Object),
 ) -> Result<HashMap<ObjectId, ObjectKind>, Error> {
+    let store = source.store();
     check_cancelled(cancel)?;
     if roots.len() > limits.max_wants {
         return Err(Error::Limit("known roots"));
@@ -377,21 +403,37 @@ fn walk(
         check_cancelled(cancel)?;
         let mut read = limits.known_read;
         read.max_object_bytes = read.max_object_bytes.min(bytes);
-        let object = store
-            .read(id, read)
-            .map_err(|source| Error::LocalRead { id, source })?
-            .ok_or(Error::Missing(id))?;
-        if shallow_set.contains(&id) && object.kind() != ObjectKind::Commit {
+        let proof = match &source {
+            WalkSource::Store(_) => None,
+            WalkSource::Installed(installed) => installed
+                .get(id, read, cancel)
+                .map_err(|source| Error::LocalRead { id, source })?,
+        };
+        let object = if proof.is_none() {
+            Some(
+                store
+                    .read(id, read)
+                    .map_err(|source| Error::LocalRead { id, source })?
+                    .ok_or(Error::Missing(id))?,
+            )
+        } else {
+            None
+        };
+        let (kind, length) = proof.map(|o| (o.kind, o.bytes)).unwrap_or_else(|| {
+            let object = object.as_ref().unwrap();
+            (object.kind(), object.data().len())
+        });
+        if shallow_set.contains(&id) && kind != ObjectKind::Commit {
             return Err(Error::Kind(id));
         }
-        if expected[&id].is_some_and(|kind| kind != object.kind()) {
+        if expected[&id].is_some_and(|expected| expected != kind) {
             return Err(Error::Kind(id));
         }
         bytes = bytes
-            .checked_sub(object.data().len())
+            .checked_sub(length)
             .ok_or(Error::Limit("known bytes"))?;
-        let shallow_commit = object.kind() == ObjectKind::Commit && shallow_set.contains(&id);
-        let edge = |target, kind| {
+        let shallow_commit = kind == ObjectKind::Commit && shallow_set.contains(&id);
+        let mut edge = |target, kind| {
             if (shallow_commit && kind == ObjectKind::Commit) || published.contains(&target) {
                 return Ok(());
             }
@@ -402,9 +444,20 @@ fn walk(
             }
             enqueue(target, Some(kind), &mut expected, &mut pending, limits)
         };
-        crate::edges::visit(id, object.kind(), object.data(), edge)?;
-        kinds.insert(id, object.kind());
-        visit(id, object);
+        if let Some(proof) = proof {
+            let edges = proof
+                .edges
+                .as_ref()
+                .expect("InstalledObjects::get requires parsed edges");
+            for &(target, expected) in edges {
+                edge(target, expected)?;
+            }
+        } else {
+            let object = object.unwrap();
+            crate::edges::visit(id, kind, object.data(), edge)?;
+            visit(id, object);
+        }
+        kinds.insert(id, kind);
     }
     Ok(kinds)
 }

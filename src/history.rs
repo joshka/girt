@@ -119,6 +119,20 @@ impl Objects {
         result
     }
 
+    /// Fetch can reuse byte-bound, identity-checked parent records without weakening the
+    /// full-ancestry, budget or cycle checks. Missing evidence uses the ordinary content reader.
+    pub(crate) fn is_ancestor_verified(
+        &self,
+        ancestor: ObjectId,
+        descendant: ObjectId,
+        limits: HistoryLimits,
+        parents: impl FnMut(ObjectId, ReadLimits) -> Result<Option<Vec<ObjectId>>, HistoryError>,
+    ) -> Result<bool, HistoryError> {
+        let graph = Graph::read_with(self, &[descendant, ancestor], limits, parents)?;
+        let marks = graph.reachable(0);
+        Ok(marks[graph.positions[&ancestor]])
+    }
+
     /// Returns all best common ancestors of two commits, sorted by raw object ID.
     ///
     /// A best common ancestor has no distinct common descendant. Criss-cross histories can return
@@ -195,6 +209,15 @@ impl Graph {
         roots: &[ObjectId],
         limits: HistoryLimits,
     ) -> Result<Self, HistoryError> {
+        Self::read_with(objects, roots, limits, |_, _| Ok(None))
+    }
+
+    fn read_with(
+        objects: &Objects,
+        roots: &[ObjectId],
+        limits: HistoryLimits,
+        mut verified: impl FnMut(ObjectId, ReadLimits) -> Result<Option<Vec<ObjectId>>, HistoryError>,
+    ) -> Result<Self, HistoryError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -219,19 +242,25 @@ impl Graph {
             let mut index = 0;
             while index < graph.ids.len() {
                 let id = graph.ids[index];
-                let object = objects
-                    .read(id, limits.read)
-                    .map_err(|source| HistoryError::Read { id, source })?
-                    .ok_or(HistoryError::Missing(id))?;
-                if object.kind() != ObjectKind::Commit {
-                    return Err(HistoryError::NotCommit(id));
-                }
-                let commit = Commit::parse(object.object_format(), object.data())
-                    .map_err(|source| HistoryError::Parse { id, source })?;
+                let parents = match verified(id, limits.read)? {
+                    Some(parents) => parents,
+                    None => {
+                        let object = objects
+                            .read(id, limits.read)
+                            .map_err(|source| HistoryError::Read { id, source })?
+                            .ok_or(HistoryError::Missing(id))?;
+                        if object.kind() != ObjectKind::Commit {
+                            return Err(HistoryError::NotCommit(id));
+                        }
+                        let commit = Commit::parse(object.object_format(), object.data())
+                            .map_err(|source| HistoryError::Parse { id, source })?;
+                        commit.parents().to_vec()
+                    }
+                };
                 let parents = if objects.shallow_roots().contains(id) {
                     &[]
                 } else {
-                    commit.parents()
+                    parents.as_slice()
                 };
                 remaining = remaining
                     .checked_sub(parents.len())

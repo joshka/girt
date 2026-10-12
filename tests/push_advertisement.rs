@@ -154,32 +154,39 @@ struct Remote {
 /// Points `origin` at the destination over `transport`. SSH goes through a stand-in client that
 /// runs the requested Git command locally, so the session carries a real `git-receive-pack`
 /// without a server.
-fn connect(pair: &Pair, transport: Transport) -> Remote {
-    let mut remote = Remote {
+fn connect(_pair: &Pair, transport: Transport) -> Remote {
+    let remote = Remote {
         environment: Environment::default(),
         #[cfg(feature = "http")]
         server: None,
     };
     match transport {
-        Transport::Local => {}
+        Transport::Local => remote,
         #[cfg(feature = "http")]
         Transport::Http => {
-            let server = http_git::Server::new(&pair.dest, "", "", None);
-            git(&pair.work, &["remote", "set-url", "origin", &server.url]);
-            remote.server = Some(server);
+            let server = http_git::Server::new(&_pair.dest, "", "", None);
+            git(&_pair.work, &["remote", "set-url", "origin", &server.url]);
+            Remote {
+                server: Some(server),
+                ..remote
+            }
         }
         #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
         Transport::Ssh => {
-            let client = pair.dest.with_file_name("ssh");
+            let client = _pair.dest.with_file_name("ssh");
             stand_in::shell(&client, "for last; do :; done\nexec /bin/sh -c \"$last\"\n");
-            let url = format!("ssh://localhost{}", pair.dest.display());
-            git(&pair.work, &["remote", "set-url", "origin", &url]);
-            remote.environment = Environment::default()
+            let url = format!("ssh://localhost{}", _pair.dest.display());
+            git(&_pair.work, &["remote", "set-url", "origin", &url]);
+            let environment = Environment::default()
                 .with("PATH", std::env::var_os("PATH").unwrap())
                 .with("GIT_SSH_COMMAND", client);
+            Remote {
+                environment,
+                #[cfg(feature = "http")]
+                server: remote.server,
+            }
         }
     }
-    remote
 }
 
 fn try_push(

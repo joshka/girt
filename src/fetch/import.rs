@@ -133,6 +133,7 @@ impl Imported {
                 format,
                 entries: Vec::with_capacity(count),
                 identities: HashMap::new(),
+                verified: super::verified::VerifiedObjects::default(),
                 cache: BaseCache::new(),
                 count,
                 limits,
@@ -172,6 +173,10 @@ impl Imported {
                     if objects.identities.insert(id, position).is_some() {
                         return Err(Error::Corrupt("duplicate received identity").into());
                     }
+                    objects
+                        .verified
+                        .objects
+                        .insert(id, super::verified::VerifiedObject::new(id, &object));
                     objects.cache.insert_owned(position, object, true);
                     Some((id, 0, kind))
                 } else {
@@ -204,6 +209,7 @@ impl Imported {
             } else {
                 checksum
             };
+            objects.record_read_costs()?;
             let index = objects.index(checksum)?;
             objects.remaining = Mutex::new(remaining);
             #[cfg(feature = "tracing")]
@@ -249,6 +255,7 @@ pub(crate) struct IndexedObjects {
     format: crate::ObjectFormat,
     entries: Vec<ReceivedEntry>,
     identities: HashMap<ObjectId, usize>,
+    pub verified: super::verified::VerifiedObjects,
     cache: BaseCache,
     count: usize,
     limits: FetchLimits,
@@ -256,6 +263,48 @@ pub(crate) struct IndexedObjects {
 }
 
 impl IndexedObjects {
+    pub(super) fn record_read_costs(&mut self) -> Result<(), FetchError> {
+        let mut positions: Vec<_> = (0..self.entries.len()).collect();
+        positions.sort_unstable_by_key(|&p| self.entries[p].resolved.unwrap().1);
+        for position in positions {
+            let entry = &self.entries[position];
+            let (id, depth, _) = entry.resolved.unwrap();
+            let base = match entry.base {
+                Base::Kind(_) => None,
+                Base::Offset(offset) => Some(
+                    self.entries
+                        .binary_search_by_key(&offset, |e| e.offset)
+                        .unwrap(),
+                ),
+                Base::Id(id) => Some(self.identities[&id]),
+            };
+            let mut read = crate::ReadLimits {
+                max_object_bytes: self.verified.objects[&id].bytes,
+                max_delta_bytes: 0,
+                max_delta_depth: depth,
+                max_decode_bytes: self.verified.objects[&id].bytes,
+                max_input_bytes: 0,
+            };
+            read.max_input_bytes = entry.end - entry.offset;
+            if let Some(base) = base {
+                let base = self.verified.objects[&self.entries[base].resolved.unwrap().0].read;
+                read.max_object_bytes = read.max_object_bytes.max(base.max_object_bytes);
+                read.max_delta_bytes = entry.length.max(base.max_delta_bytes);
+                read.max_decode_bytes = read
+                    .max_decode_bytes
+                    .checked_add(entry.length)
+                    .and_then(|n| n.checked_add(base.max_decode_bytes))
+                    .ok_or(FetchError::Limit("decoded bytes"))?;
+                read.max_input_bytes = read
+                    .max_input_bytes
+                    .checked_add(base.max_input_bytes)
+                    .ok_or(FetchError::Limit("pack bytes"))?;
+            }
+            self.verified.objects.get_mut(&id).unwrap().read = read;
+        }
+        Ok(())
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.count
     }
@@ -361,7 +410,7 @@ impl IndexedObjects {
                     let entry = &self.entries[child];
                     charge(remaining, entry.length)?;
                     let program = self
-                        .inflate_range(entry.start, entry.end, entry.length, observer.cancel)
+                        .inflate_entry(entry, observer.cancel)
                         .map_err(fetch_read_error)?;
                     let data = apply(
                         base.data(),
@@ -379,6 +428,9 @@ impl IndexedObjects {
                         return Err(Error::Corrupt("duplicate received identity").into());
                     }
                     self.entries[child].resolved = Some((id, depth + 1, kind));
+                    self.verified
+                        .objects
+                        .insert(id, super::verified::VerifiedObject::new(id, &object));
                     self.cache.insert_owned(child, object, true);
                     resolved += 1;
                     observer.resolved_delta();
@@ -507,6 +559,9 @@ impl IndexedObjects {
             resolved: Some((id, 0, object.kind())),
         });
         self.identities.insert(id, position);
+        self.verified
+            .objects
+            .insert(id, super::verified::VerifiedObject::new(id, object));
         self.cache.insert(position, object, true);
         Ok(position)
     }
@@ -581,23 +636,24 @@ impl Source for IndexedObjects {
     fn inflate(
         &self,
         entry: &crate::pack::index::Entry,
-        header: &crate::pack::reader::EntryHeader,
+        _header: &crate::pack::reader::EntryHeader,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
-        self.inflate_range(header.data_start, entry.end, header.length, cancel)
+        let position = self.at_offset(entry.offset)?;
+        self.inflate_entry(&self.entries[position], cancel)
+    }
+    fn identity_verified(&self, position: usize) -> bool {
+        self.entries[position].resolved.is_some()
     }
     fn base_cache(&self) -> Option<&BaseCache> {
         Some(&self.cache)
     }
 }
 impl IndexedObjects {
-    fn inflate_range(
-        &self,
-        start: usize,
-        end: usize,
-        expected: usize,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<u8>, Error> {
+    fn inflate_entry(&self, entry: &ReceivedEntry, cancel: &AtomicBool) -> Result<Vec<u8>, Error> {
+        let (start, end, expected) = (entry.start, entry.end, entry.length);
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(&self.bytes(entry.offset, start)?);
         let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
         file.seek(SeekFrom::Start(start as u64))
             .map_err(|source| self.io(source))?;
@@ -606,12 +662,15 @@ impl IndexedObjects {
         let (data, consumed) = inflate_stream(
             &mut reader,
             expected,
-            &mut crc32fast::Hasher::new(),
+            &mut crc,
             cancel,
             self.pack.path().expect("indexed packs are file backed"),
         )?;
         if consumed != end - start {
             return Err(Error::Corrupt("packed entry length or trailing data"));
+        }
+        if crc.finalize() != entry.crc {
+            return Err(Error::Corrupt("entry CRC"));
         }
         Ok(data)
     }
@@ -792,6 +851,38 @@ mod tests {
 
     use super::*;
     use crate::ObjectFormat;
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn evicted_import_payload_keeps_its_verified_identity(#[case] format: ObjectFormat) {
+        let mut imported = read(format, &forward_ref_pack(format), FetchLimits::default()).unwrap();
+        imported.objects.cache = BaseCache::new();
+        let id = ObjectId::for_blob(format, b"two");
+        crate::object::HASHES.with(|hashes| hashes.set(0));
+        let object = imported
+            .objects
+            .get(&id, &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        assert_eq!(object.data(), b"two");
+        assert_eq!(crate::object::HASHES.with(std::cell::Cell::get), 0);
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn evicted_verified_import_still_checks_entry_crc(#[case] format: ObjectFormat) {
+        let mut imported = read(format, &forward_ref_pack(format), FetchLimits::default()).unwrap();
+        imported.objects.cache = BaseCache::new();
+        let id = ObjectId::for_blob(format, b"two");
+        let position = imported.objects.identities[&id];
+        imported.objects.entries[position].crc ^= 1;
+        assert!(matches!(
+            imported.objects.get(&id, &AtomicBool::new(false)),
+            Err(FetchError::Pack(Error::Corrupt("entry CRC")))
+        ));
+    }
 
     #[rstest]
     #[case::sha1(ObjectFormat::Sha1)]

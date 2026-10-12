@@ -315,3 +315,114 @@ fn local_progress_plan_failure_has_no_completion() {
     assert!(!events.contains(&LocalFetchProgress::Complete));
     assert_eq!(events, [LocalFetchProgress::Reading { objects: 0 }]);
 }
+
+fn git_fixture(repository: &Repository, args: &[&str]) -> std::process::Output {
+    let mut command = std::process::Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .arg("-C")
+        .arg(repository.git_dir())
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            repository.git_dir().join("absent-config"),
+        )
+        .env("GIT_AUTHOR_NAME", "Fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
+        .env("GIT_COMMITTER_NAME", "Fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// Independently generate a complete history with Git before receiving through the public API.
+fn received_git_history() -> (tempfile::TempDir, FetchReady) {
+    let source_root = tempfile::tempdir().unwrap();
+    let source = Repository::init(
+        crate::ObjectFormat::Sha1,
+        source_root.path().join("source"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let tree = git_fixture(&source, &["mktree"]);
+    let tree = std::str::from_utf8(&tree.stdout).unwrap().trim();
+    let commit = git_fixture(&source, &["commit-tree", tree, "-m", "receive proof"]);
+    let commit: ObjectId = std::str::from_utf8(&commit.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    source
+        .references()
+        .unwrap()
+        .update_without_reflog(
+            &name("refs/heads/main"),
+            Target::Direct(commit),
+            Expected::Absent,
+        )
+        .unwrap();
+    let (_root, request) = request(&["refs/heads/main:refs/remotes/origin/main"]);
+    let cancel = AtomicBool::new(false);
+    let ready = request
+        .receive_local(
+            source.git_dir(),
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| std::ops::ControlFlow::Continue(()),
+        )
+        .unwrap();
+    (_root, ready)
+}
+
+/// Git creates the history; finish must reuse receive evidence without another inflate pass.
+#[test]
+fn publication_reuses_received_identity_checks() {
+    let (_root, ready) = received_git_history();
+    let cancel = AtomicBool::new(false);
+    crate::pack::counters::reset();
+    ready.finish(FetchUpdateLimits::default(), &cancel).unwrap();
+    let inflations =
+        crate::pack::counters::INFLATIONS.with(|counts| counts.borrow().values().sum::<usize>());
+    assert_eq!(
+        inflations, 0,
+        "finish redundantly decoded the identity-checked received graph"
+    );
+}
+
+/// Both the spool and installed copy could contain the same damage. Equality alone is not proof.
+#[test]
+fn damaged_receive_spool_cannot_publish_refs() {
+    let (_root, ready) = received_git_history();
+    let path = ready.received.pack.path().unwrap();
+    let mut bytes = std::fs::read(path).unwrap();
+    bytes[15] ^= 1;
+    std::fs::write(path, bytes).unwrap();
+    let repository = Repository::open(ready.request.repository.git_dir()).unwrap();
+    let error = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::BeforePublication(_)
+    ));
+    assert!(
+        repository
+            .references()
+            .unwrap()
+            .read(&name("refs/remotes/origin/main"))
+            .unwrap()
+            .is_none()
+    );
+}

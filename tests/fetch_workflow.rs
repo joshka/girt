@@ -1438,3 +1438,256 @@ fn retained_workflow_rejects_empty_transfer_without_effects() {
         0
     );
 }
+
+/// Damage the already received pack after installation but before reference publication.
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn damaged_received_pack_is_rejected_before_refs(#[case] format: &str) {
+    let source = Source::with_format(format);
+    let (_root, repository) = destination_with_format(source.first.format());
+    let ready = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &KnownHistory::default(),
+    );
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let pack = fs::read_dir(repository.object_dir().join("pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
+        .unwrap();
+    let mut bytes = fs::read(&pack).unwrap();
+    bytes[15] ^= 1;
+    fs::write(&pack, bytes).unwrap();
+    let error = installed.finish(&cancel).unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::BeforePublication(_)
+    ));
+    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+    assert!(
+        !command(repository.git_dir(), &["fsck", "--full"], b"")
+            .status
+            .success()
+    );
+    error.retention.unwrap().release().unwrap();
+}
+
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn received_history_matches_git_fetch_exactly(#[case] format: &str) {
+    let source = Source::with_format(format);
+    let (_root, repository) = destination_with_format(source.first.format());
+    let oracle = tempfile::tempdir().unwrap();
+    git(
+        oracle.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    git(
+        oracle.path(),
+        &[
+            "fetch",
+            "--no-tags",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        b"",
+    );
+    fetch(
+        &repository,
+        &source,
+        &["refs/heads/main:refs/remotes/origin/main"],
+    );
+    let known = KnownHistory::from_store(
+        repository.objects(PackLimits::default()).unwrap(),
+        &[source.first],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    source.set("refs/heads/main", source.second);
+    let report = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &known,
+    )
+    .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+    .unwrap();
+    git(
+        oracle.path(),
+        &[
+            "fetch",
+            "--no-tags",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        b"",
+    );
+    assert_eq!(report.updates[0].kind, FetchUpdateKind::FastForward);
+    assert_eq!(
+        git(
+            repository.git_dir(),
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+            b""
+        ),
+        git(
+            oracle.path(),
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+            b""
+        )
+    );
+    assert_eq!(
+        git(
+            repository.git_dir(),
+            &["cat-file", "commit", &source.second.to_string()],
+            b""
+        ),
+        git(
+            oracle.path(),
+            &["cat-file", "commit", &source.second.to_string()],
+            b""
+        )
+    );
+    git(repository.git_dir(), &["fsck", "--full"], b"");
+}
+
+#[rstest]
+#[case::objects(FetchLimits { max_known_objects: 0, ..FetchLimits::default() })]
+#[case::bytes(FetchLimits { max_known_bytes: 0, ..FetchLimits::default() })]
+#[case::edges(FetchLimits { max_known_edges: 0, ..FetchLimits::default() })]
+#[case::roots(FetchLimits { max_wants: 0, ..FetchLimits::default() })]
+#[case::object_read(FetchLimits { known_read: ReadLimits { max_object_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
+#[case::decode_read(FetchLimits { known_read: ReadLimits { max_decode_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
+#[case::input_read(FetchLimits { known_read: ReadLimits { max_input_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
+fn received_evidence_keeps_independent_finish_limits(#[case] verification: FetchLimits) {
+    let source = Source::new();
+    let (_root, repository) = destination();
+    let ready = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &KnownHistory::default(),
+    );
+    let error = ready
+        .finish(
+            FetchUpdateLimits {
+                verification,
+                ..FetchUpdateLimits::default()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::BeforePublication(_)
+    ));
+    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+}
+
+/// One Git-generated packed commit is relabelled as another while preserving index validity.
+fn install_mislabelled_commit(source: &Source, repository: &Repository) {
+    use std::os::unix::fs::PermissionsExt;
+
+    use sha1::Digest;
+
+    let bytes = git(
+        source.root.path(),
+        &["pack-objects", "--stdout"],
+        format!("{}\n", source.second).as_bytes(),
+    );
+    let directory = repository.object_dir().join("pack");
+    fs::create_dir_all(&directory).unwrap();
+    let pack = directory.join("pack-000000.pack");
+    let index = directory.join("pack-000000.idx");
+    fs::write(&pack, bytes).unwrap();
+    git(
+        repository.git_dir(),
+        &[
+            "index-pack",
+            "-o",
+            index.to_str().unwrap(),
+            pack.to_str().unwrap(),
+        ],
+        b"",
+    );
+    let mut bytes = fs::read(&index).unwrap();
+    let width = source.first.as_bytes().len();
+    bytes[1032..1032 + width].copy_from_slice(source.first.as_bytes());
+    for byte in 0..256 {
+        let count = u32::from(byte >= usize::from(source.first.as_bytes()[0]));
+        bytes[8 + byte * 4..12 + byte * 4].copy_from_slice(&count.to_be_bytes());
+    }
+    let end = bytes.len() - width;
+    let checksum = match source.first.format() {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+    };
+    bytes[end..].copy_from_slice(&checksum);
+    fs::set_permissions(&index, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(index, bytes).unwrap();
+}
+
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn received_proof_does_not_trust_an_earlier_mislabelled_pack(#[case] format: &str) {
+    let source = Source::with_format(format);
+    let (_root, repository) = destination_with_format(source.first.format());
+    let ready = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &KnownHistory::default(),
+    );
+    install_mislabelled_commit(&source, &repository);
+    assert!(
+        repository
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(source.first, ReadLimits::default())
+            .is_err()
+    );
+    let error = ready
+        .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::BeforePublication(_)
+    ));
+    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+    assert!(
+        !command(repository.git_dir(), &["fsck", "--full"], b"")
+            .status
+            .success()
+    );
+}
