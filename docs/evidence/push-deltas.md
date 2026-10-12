@@ -64,38 +64,68 @@ runs compare exact blob bytes. This does not claim cold-storage behavior.
 | http fast-forward  | 0.29 s (0.29–0.96), 26.5 MiB | 0.25 s (0.18–0.32), 26.8 MiB | 0.26 s (0.20–0.32), 11.7 MiB |
 | http 512 KiB edit  | 0.32 s (0.22–0.58), 27.6 MiB | 0.26 s (0.22–0.28), 28.8 MiB | 0.19 s (0.18–0.32), 15.9 MiB |
 
-[Raw samples](push-deltas/measurements.json), per-run logs, fixture IDs and the
-[measurement script](push-deltas/accepted-measure.py) retain reproduction details. The
-[initial baseline](push-deltas/baseline.json) was taken before acceptance implementation.
-[Intermediate samples](push-deltas/intermediate-measurements.json) describe the blob-only version,
-not the final behavior: it sent 1,568 bytes and regressed median latency by trying further
-candidates.
+The initial baseline was taken before acceptance implementation. An intermediate blob-only version
+sent 1,568 bytes and regressed median latency by trying further candidates. The earlier tree-search
+repeat precedes the per-target counter and one-level thin-output corrections. Final samples include
+substantial system/runtime variation; no outliers are discarded. Raw per-run files are local
+measurement outputs and are not checked into the repository.
 
-The [earlier tree-search repeat](push-deltas/tree-search-measurements.json) precedes the per-target
-counter and one-level thin-output corrections. Its narrower ranges remain retained, not substituted
-for the final repeat. Final samples include substantial system/runtime variation; no outliers are
-discarded.
+## Reproduction
+
+The [driver](push-deltas/driver.rs) and [measurement script](push-deltas/measure.py) retain the
+measurement procedure. The script targets this macOS fixture environment and writes raw logs and
+JSON to `/tmp/girt-25-evidence`, outside the checkout. It creates the deterministic edit fixture,
+runs all three implementations over fresh APFS copies, verifies receiver connectivity and exact edit
+bytes, and records preparation phases and Git pack bytes. It requires these retained fixtures:
+
+- `/tmp/opus-med-23/source.git`: the bare large fixture described above.
+- `/tmp/perf-audit/pushsrc.git`: the original push overlay containing commits
+  `987c084b8f3ff28e8246d8b38c55c323c85611d5` and `812a3cdbfb334543bbd5858335e21fc5c941287b`.
+
+Create a temporary Cargo binary project at `/tmp/girt-25-driver`, copy `driver.rs` to its
+`src/main.rs`, and depend on `girt` with `features = ["http"]` and a path to the checkout being
+measured. Set `[profile.release] debug = 1`. Build against main `608f4dd0` first and save the binary
+as `/tmp/girt-25-evidence/main-driver`; then rebuild against this change, leaving the changed binary
+at `/tmp/girt-25-driver/target/release/perfdrv`. Build before acquiring the timing lock. The
+script's HTTP server path assumes `/Users/joshka/local/girt/work/25-push-deltas`; adjust it for
+another checkout. Use a new empty output directory for each complete repeat.
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+unset RUSTUP_TOOLCHAIN
+export GIT_CONFIG_GLOBAL=/dev/null
+mkdir -p /tmp/girt-25-evidence
+until shlock -f /tmp/girt-timing.lock -p $$; do sleep 15; done
+release_lock() {
+    python3 -c 'from pathlib import Path; Path("/tmp/girt-timing.lock").unlink(missing_ok=True)'
+}
+trap release_lock EXIT
+python3 docs/evidence/push-deltas/measure.py
+```
+
+Run `cargo bench --bench push -- push-blob-edit` under the same lock to reproduce the smaller
+Criterion comparison. The retained fixture paths are prerequisites; the script does not download or
+modify an upstream repository.
 
 ## Profile and Criterion
 
 Main preparation on the large edit spent 8.66 ms opening the store, 6.34 ms selecting and 8.39 ms
 writing, before receiver work. A 200-preparation repeat sampled at 1 ms shows 172 deflate-medium and
 58 longest-match self samples, versus 36 SHA-1, eight write and six read samples. Loader samples are
-excluded. The [profile](push-deltas/main-edit-sample.txt) and phase logs retain the observations;
-instrumented wall time is not a benchmark sample. Final phase samples report main selection/writing
-7.97/8.16 ms and changed selection/writing 2.11/35.67 ms. Smaller transfer size adds search and
-receiver thin-pack repair work, so pack bytes alone do not establish a latency improvement.
+excluded. These are profiler self-sample counts; instrumented wall time is not a benchmark sample.
+Final phase samples report main selection/writing 7.97/8.16 ms and changed selection/writing
+2.11/35.67 ms. Smaller transfer size adds search and receiver thin-pack repair work, so pack bytes
+alone do not establish a latency improvement.
 
 `benches/push.rs` adds a reproducible Criterion group over a 512 KiB original deterministic blob,
 one eight-byte edit and an explicitly advertised blob root. Setup is outside the measured operation.
 Under the same shared lock, 30 samples, one-second warmup and five-second requested measurement:
 ordinary preparation has a Criterion time estimate of 9.764 ms (95% interval 9.729–9.815 ms);
-advertised-base preparation is 11.575 ms (11.076–12.267 ms). The
-[final Criterion output](push-deltas/accepted-criterion.log) retains throughput, comparison with the
-previous run and a sampling warning: the requested five-second window expanded to 5.275 seconds for
-30 linear samples. This is a benchmark sampling warning, not a compiler/check warning. The
-large-fixture phase also enumerates boundary metadata; this small group isolates base search rather
-than claiming to represent every preparation cost.
+advertised-base preparation is 11.575 ms (11.076–12.267 ms). Criterion reported a sampling warning:
+the requested five-second window expanded to 5.275 seconds for 30 linear samples. This is a
+benchmark sampling warning, not a compiler/check warning. The large-fixture phase also enumerates
+boundary metadata; this small group isolates base search rather than claiming to represent every
+preparation cost.
 
 ## Validation and Limits
 
