@@ -315,3 +315,73 @@ fn local_progress_plan_failure_has_no_completion() {
     assert!(!events.contains(&LocalFetchProgress::Complete));
     assert_eq!(events, [LocalFetchProgress::Reading { objects: 0 }]);
 }
+
+/// Git creates the history; finish must reuse receive evidence without another inflate pass.
+#[test]
+fn publication_reuses_received_identity_checks() {
+    use std::process::Command;
+
+    let source_root = tempfile::tempdir().unwrap();
+    let source = Repository::init(
+        crate::ObjectFormat::Sha1,
+        source_root.path().join("source"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let tree = Command::new("git")
+        .arg("-C")
+        .arg(source.git_dir())
+        .args(["mktree"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(tree.status.success());
+    let tree = std::str::from_utf8(&tree.stdout).unwrap().trim();
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(source.git_dir())
+        .args(["commit-tree", tree, "-m", "receive proof"])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Fixture")
+        .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
+        .env("GIT_COMMITTER_NAME", "Fixture")
+        .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+    let commit: ObjectId = std::str::from_utf8(&commit.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    source
+        .references()
+        .unwrap()
+        .update_without_reflog(
+            &name("refs/heads/main"),
+            Target::Direct(commit),
+            Expected::Absent,
+        )
+        .unwrap();
+    let (_root, request) = request(&["refs/heads/main:refs/remotes/origin/main"]);
+    let cancel = AtomicBool::new(false);
+    let ready = request
+        .receive_local(
+            source.git_dir(),
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| std::ops::ControlFlow::Continue(()),
+        )
+        .unwrap();
+    crate::pack::counters::reset();
+    ready.finish(FetchUpdateLimits::default(), &cancel).unwrap();
+    let inflations =
+        crate::pack::counters::INFLATIONS.with(|counts| counts.borrow().values().sum::<usize>());
+    assert_eq!(
+        inflations, 0,
+        "finish redundantly decoded the identity-checked received graph"
+    );
+}

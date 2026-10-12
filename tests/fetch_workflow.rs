@@ -1438,3 +1438,137 @@ fn retained_workflow_rejects_empty_transfer_without_effects() {
         0
     );
 }
+
+/// Damage the already received pack after installation but before reference publication.
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn damaged_received_pack_is_rejected_before_refs(#[case] format: &str) {
+    let source = Source::with_format(format);
+    let (_root, repository) = destination_with_format(source.first.format());
+    let ready = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &KnownHistory::default(),
+    );
+    let cancel = AtomicBool::new(false);
+    let installed = ready
+        .install_retained(FetchUpdateLimits::default(), &cancel)
+        .unwrap();
+    let pack = fs::read_dir(repository.object_dir().join("pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
+        .unwrap();
+    let mut bytes = fs::read(&pack).unwrap();
+    bytes[15] ^= 1;
+    fs::write(&pack, bytes).unwrap();
+    let error = installed.finish(&cancel).unwrap_err();
+    assert!(matches!(
+        *error.source,
+        FetchFinishFailure::BeforePublication(_)
+    ));
+    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+    assert!(
+        !command(repository.git_dir(), &["fsck", "--full"], b"")
+            .status
+            .success()
+    );
+    error.retention.unwrap().release().unwrap();
+}
+
+#[rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn received_history_matches_git_fetch_exactly(#[case] format: &str) {
+    let source = Source::with_format(format);
+    let (_root, repository) = destination_with_format(source.first.format());
+    let oracle = tempfile::tempdir().unwrap();
+    git(
+        oracle.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    git(
+        oracle.path(),
+        &[
+            "fetch",
+            "--no-tags",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        b"",
+    );
+    fetch(
+        &repository,
+        &source,
+        &["refs/heads/main:refs/remotes/origin/main"],
+    );
+    let known = KnownHistory::from_store(
+        repository.objects(PackLimits::default()).unwrap(),
+        &[source.first],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    source.set("refs/heads/main", source.second);
+    let report = receive(
+        request(
+            &repository,
+            &["refs/heads/main:refs/remotes/origin/main"],
+            &[],
+            Reflog::Preserve,
+        ),
+        &source,
+        &known,
+    )
+    .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
+    .unwrap();
+    git(
+        oracle.path(),
+        &[
+            "fetch",
+            "--no-tags",
+            source.root.path().to_str().unwrap(),
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        b"",
+    );
+    assert_eq!(report.updates[0].kind, FetchUpdateKind::FastForward);
+    assert_eq!(
+        git(
+            repository.git_dir(),
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+            b""
+        ),
+        git(
+            oracle.path(),
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
+            b""
+        )
+    );
+    assert_eq!(
+        git(
+            repository.git_dir(),
+            &["cat-file", "commit", &source.second.to_string()],
+            b""
+        ),
+        git(
+            oracle.path(),
+            &["cat-file", "commit", &source.second.to_string()],
+            b""
+        )
+    );
+    git(repository.git_dir(), &["fsck", "--full"], b"");
+}
