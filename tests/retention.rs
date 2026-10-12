@@ -2079,8 +2079,14 @@ fn composite_gc_refuses_limits_before_mutation(#[case] format: &str) {
 fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) {
     let (a, repo, _, second) = fixture_format(format);
     let (b, _, _, _) = fixture_format(format);
-    gc_fidelity_cutoffs(a.path());
-    gc_fidelity_cutoffs(b.path());
+    let old_orphan = gc_fidelity_cutoffs(a.path());
+    assert_eq!(old_orphan, gc_fidelity_cutoffs(b.path()));
+    let live_log = a.path().join("logs/refs/heads/live");
+    assert!(
+        fs::read_to_string(&live_log)
+            .unwrap()
+            .contains("1500000000")
+    );
     // Keep an unreachable endpoint solely through a recent reflog record.
     let recent = format!("{second} {second} A <a@example.com> 1900000000 +0000\trecent\n");
     fs::OpenOptions::new()
@@ -2117,6 +2123,21 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
         ],
         b"",
     );
+    for root in [a.path(), b.path()] {
+        let remaining = git(
+            root,
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname)",
+            ],
+            b"",
+        );
+        assert!(!remaining.lines().any(|id| id == old_orphan.to_string()));
+        let retained_log = fs::read_to_string(root.join("logs/refs/heads/live")).unwrap();
+        assert!(!retained_log.contains("1500000000"));
+        assert!(retained_log.contains("1700000000"));
+    }
     assert_eq!(
         git(
             a.path(),
@@ -2149,8 +2170,10 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
 }
 
 #[cfg(unix)]
-fn gc_fidelity_cutoffs(root: &Path) {
-    git(root, &["hash-object", "-w", "--stdin"], b"old orphan");
+fn gc_fidelity_cutoffs(root: &Path) -> ObjectId {
+    let old_orphan = git(root, &["hash-object", "-w", "--stdin"], b"old orphan")
+        .parse()
+        .unwrap();
     let recent: ObjectId = git(root, &["hash-object", "-w", "--stdin"], b"recent orphan")
         .parse()
         .unwrap();
@@ -2186,6 +2209,7 @@ fn gc_fidelity_cutoffs(root: &Path) {
         b"",
         1_700_000_000,
     );
+    old_orphan
 }
 
 #[cfg(unix)]

@@ -21,7 +21,9 @@ exception is recorded in an
 `RetentionPolicy::max_bytes` counts commit/tree/tag payloads only, including when a blob root must
 be decoded. Blob edges are located without payload, complete-zlib, CRC or identity validation.
 Normal reads retain those validations, and retirement verifies every retained survivor before
-unlinking an old pair.
+unlinking an old pair. Header-only locations in both loose and packed storage enforce
+`max_object_bytes`, rather than charging `max_decode_bytes` for payloads they do not decode.
+Ordinary reads, including blob-shaped untyped roots, retain their cumulative decode limit.
 
 Recent loose objects remain strong roots. Recent and `.keep` packs survive unchanged but do not make
 disconnected reflogs live. When deletable storage exists, a separate protection closure keeps their
@@ -51,7 +53,10 @@ mislabelled packed blob that hides a healthy commit now refuses before expiry or
 regression first demonstrated actual descendant deletion in both formats; the
 [spec correction](https://github.com/joshka/girt/issues/24#issuecomment-6121437368) records the
 missing kind-consistency boundary. Blob edges remain uninflated. Duplicate-copy inventories can add
-metadata work in stores with multiple packs or many loose copies.
+metadata work in stores with multiple packs or many loose copies. Each phase revalidation also stats
+the loose inventory in the primary store and alternates. Together with the two prune candidate
+inventories and kind checks, this costs O(loose objects × phases); the pack-heavy fixture does not
+establish a loose-heavy or alternate-heavy latency bound.
 
 ## Acceptance Evidence
 
@@ -99,8 +104,10 @@ protected-only maintenance also meets the 10-second budget. These are fixture re
 guarantees for repositories that require replacement/survivor decoding.
 
 The [source manifest](../benchmarks/issue-24/source.sha256) identifies the measured implementation,
-Cargo inputs, benchmark and fixture builder. Verify it from the repository root with
-`shasum -a 256 -c docs/benchmarks/issue-24/source.sha256`.
+Cargo inputs, benchmark and fixture builder at `651ce4114907bcacb45d21d976c0451f189d8598`. Verify it
+from that revision with `shasum -a 256 -c docs/benchmarks/issue-24/source.sha256`. The review
+follow-up strengthens test assertions, documents limits and normalizes imports without changing
+runtime behavior; the manifest intentionally retains the exact measured sources.
 
 A fresh large rewritten fixture also passes `git fsck --strict`. The timed copies pass Git's
 connectivity check after each operation. Complete local and native validation is recorded on the

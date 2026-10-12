@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use super::index::{Entry, Index, word};
 use super::reader::{EntryHeader, Source, check_cancelled, decode};
 use crate::object::Hasher;
-use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
+use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
 
 /// Serializes short seek/read operations without cloning descriptors or sharing cursor state.
 #[derive(Debug)]
@@ -245,7 +245,7 @@ impl FilePack {
         mut position: usize,
         limits: ReadLimits,
         cancel: &AtomicBool,
-    ) -> Result<(crate::ObjectKind, u64), Error> {
+    ) -> Result<(ObjectKind, u64), Error> {
         let mut seen = std::collections::BTreeSet::new();
         let mut result_size = None;
         loop {
@@ -288,10 +288,10 @@ impl FilePack {
                 position = base;
             } else {
                 let kind = match header.kind {
-                    1 => crate::ObjectKind::Commit,
-                    2 => crate::ObjectKind::Tree,
-                    3 => crate::ObjectKind::Blob,
-                    4 => crate::ObjectKind::Tag,
+                    1 => ObjectKind::Commit,
+                    2 => ObjectKind::Tree,
+                    3 => ObjectKind::Blob,
+                    4 => ObjectKind::Tag,
                     _ => return Err(Error::Corrupt("pack entry kind")),
                 };
                 let size = result_size.unwrap_or(header.length as u64);
