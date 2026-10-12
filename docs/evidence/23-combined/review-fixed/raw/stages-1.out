@@ -1,0 +1,2 @@
+scan_seconds=6.317271 required=131152 complete=true
+repack_seconds=7.170806 RepackPublished { written: PackWritten { checksum: Sha1([209, 235, 92, 100, 82, 190, 1, 106, 203, 242, 165, 175, 49, 158, 240, 172, 212, 163, 100, 132]), objects: 131152, pack_bytes: 205698770, index_bytes: 3673328, deltas: DeltaStats { entries: 98715, candidates: 0, work: 0, max_depth: 50 } } }

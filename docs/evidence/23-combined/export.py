@@ -19,6 +19,7 @@ driver=root/'combined-driver';(driver/'src').mkdir(parents=True,exist_ok=True)
 (driver/'Cargo.lock').write_bytes(Path('Cargo.lock').read_bytes())
 
 (driver/'src/bin').mkdir(exist_ok=True)
-(driver/'src/bin/stages.rs').write_bytes((resources/'stages.rs').read_bytes())
-for name in ['measure.py','run.sh','workloads.py','workloads.sh']:
+for name in ['stages.rs', 'recent.rs']:
+ (driver/'src/bin'/name).write_bytes((resources/name).read_bytes())
+for name in ['measure.py','run.sh','workloads.py','workloads.sh','verify.py']:
  (root/name).write_bytes((resources/name).read_bytes())

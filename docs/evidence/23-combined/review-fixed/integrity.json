@@ -1,0 +1,82 @@
+[
+  {
+    "path": "/tmp/23-combined-bench-fixed/repack-1-0-combined",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 1,
+    "packed_entries": 131152,
+    "unique_packed_objects": 131152,
+    "deltas": 98715,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/maint-1-0-combined",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 1,
+    "packed_entries": 131152,
+    "unique_packed_objects": 131152,
+    "deltas": 98715,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/changing-roots-repack",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 4,
+    "packed_entries": 524614,
+    "unique_packed_objects": 131155,
+    "deltas": 394860,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/changing-roots-maint",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 1,
+    "packed_entries": 131155,
+    "unique_packed_objects": 131155,
+    "deltas": 98715,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/protected-repack",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 4,
+    "packed_entries": 524614,
+    "unique_packed_objects": 131155,
+    "deltas": 394860,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/protected-maint",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 2,
+    "packed_entries": 131155,
+    "unique_packed_objects": 131155,
+    "deltas": 98715,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/recent-repack",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 4,
+    "packed_entries": 524614,
+    "unique_packed_objects": 131155,
+    "deltas": 394860,
+    "max_depth": 50
+  },
+  {
+    "path": "/tmp/23-combined-bench-fixed/recent-maint",
+    "fsck": "pass",
+    "verify_pack": "pass",
+    "pack_count": 4,
+    "packed_entries": 131155,
+    "unique_packed_objects": 131155,
+    "deltas": 98715,
+    "max_depth": 50
+  }
+]
