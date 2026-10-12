@@ -1,0 +1,158 @@
+[
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.58,
+    "rss": 297189376
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 52.34,
+    "rss": 493355008
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.92,
+    "rss": 151306240
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.58,
+    "rss": 151207936
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 51.32,
+    "rss": 492601344
+  },
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.52,
+    "rss": 297451520
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.58,
+    "rss": 153665536
+  },
+  {
+    "variant": "before",
+    "mode": "repack-old",
+    "wall": 7.46,
+    "rss": 424886272
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 3.32,
+    "rss": 190693376
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.41,
+    "rss": 297254912
+  },
+  {
+    "variant": "before",
+    "mode": "repack-old",
+    "wall": 7.39,
+    "rss": 420200448
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 3.31,
+    "rss": 190644224
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.4,
+    "rss": 297893888
+  },
+  {
+    "variant": "before",
+    "mode": "repack-old",
+    "wall": 7.31,
+    "rss": 428343296
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 3.33,
+    "rss": 192462848
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.41,
+    "rss": 297058304
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.27,
+    "rss": 188563456
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.59,
+    "rss": 156549120
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.53,
+    "rss": 151207936
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.31,
+    "rss": 193511424
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.6,
+    "rss": 153354240
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.6,
+    "rss": 151339008
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.31,
+    "rss": 190644224
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.62,
+    "rss": 154304512
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.55,
+    "rss": 151306240
+  },
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.5,
+    "rss": 297189376
+  }
+]

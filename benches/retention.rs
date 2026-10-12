@@ -73,6 +73,12 @@ fn retention(c: &mut Criterion) {
         })
     });
     #[cfg(unix)]
+    c.bench_function("gc/idempotent-packed-linear-256", |bench| {
+        bench.iter(|| {
+            repository.collect_garbage(&mut IsolatedFixture, black_box(&policy), black_box(&cancel))
+        })
+    });
+    #[cfg(unix)]
     {
         repository
             .retire_old_packs(

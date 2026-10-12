@@ -1,0 +1,146 @@
+[
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.81,
+    "rss": 153157632
+  },
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.61,
+    "rss": 297385984
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 56.7,
+    "rss": 525484032
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.62,
+    "rss": 153206784
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.62,
+    "rss": 151207936
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 51.5,
+    "rss": 492290048
+  },
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.62,
+    "rss": 298139648
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 52.29,
+    "rss": 489652224
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.81,
+    "rss": 153223168
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.68,
+    "rss": 153452544
+  },
+  {
+    "variant": "before",
+    "mode": "gc",
+    "wall": 51.7,
+    "rss": 495321088
+  },
+  {
+    "variant": "git",
+    "mode": "gc",
+    "wall": 1.6,
+    "rss": 299204608
+  },
+  {
+    "variant": "before",
+    "mode": "repack",
+    "wall": 14.88,
+    "rss": 444547072
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.5,
+    "rss": 193003520
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.47,
+    "rss": 297222144
+  },
+  {
+    "variant": "before",
+    "mode": "repack",
+    "wall": 14.8,
+    "rss": 447528960
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 4.68,
+    "rss": 190300160
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.45,
+    "rss": 297861120
+  },
+  {
+    "variant": "before",
+    "mode": "repack",
+    "wall": 15.11,
+    "rss": 441073664
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.44,
+    "rss": 193232896
+  },
+  {
+    "variant": "git",
+    "mode": "repack",
+    "wall": 1.45,
+    "rss": 297385984
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 28.1,
+    "rss": 443662336
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 27.68,
+    "rss": 442712064
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 27.62,
+    "rss": 436060160
+  }
+]

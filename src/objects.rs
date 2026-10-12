@@ -372,6 +372,69 @@ impl Objects {
         Ok(())
     }
 
+    pub(crate) fn retention_directories(directory: &Path) -> Result<Vec<PathBuf>, ObjectReadError> {
+        alternates::discover(directory, AlternateLimits::default())
+    }
+
+    /// Retention-only lookup with the same store and pack precedence as `read_controlled`.
+    /// A located blob is not an identity-verified `Object`.
+    pub(crate) fn locate(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Option<(ObjectKind, u64)>, ObjectReadError> {
+        id.require_format(self.format).map_err(crate::Error::from)?;
+        for store in &self.stores {
+            check_cancelled(cancel)?;
+            for pack in &store.packs {
+                if let Some(position) = pack.find(id)? {
+                    return pack.locate(position, limits, cancel).map(Some);
+                }
+            }
+            match store.loose.locate(id) {
+                Ok(located) => {
+                    if located.1 > limits.max_object_bytes as u64 {
+                        return Err(ObjectReadError::Limit("object bytes"));
+                    }
+                    return Ok(Some(located));
+                }
+                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok((id == self.format.hash_object(ObjectKind::Tree, b"")).then_some((ObjectKind::Tree, 0)))
+    }
+
+    /// A located blob must not hide a readable graph copy at the same identity. Such a conflict
+    /// could otherwise erase edges and let pruning delete that graph's only loose descendants.
+    pub(crate) fn check_retention_blob_kinds(
+        &self,
+        limits: ReadLimits,
+        max_entries: usize,
+        cancel: &AtomicBool,
+        is_blob: impl Fn(ObjectId) -> bool,
+    ) -> Result<(), ObjectReadError> {
+        if is_blob(self.format.hash_object(ObjectKind::Tree, b"")) {
+            return Err(ObjectReadError::Corrupt("blob claims canonical empty tree"));
+        }
+        let check_packs = self.stores.len() > 1 || self.stores[0].packs.len() > 1;
+        let mut entries = 0;
+        for store in &self.stores {
+            if check_packs {
+                store.check_packed_blob_kinds(
+                    limits,
+                    max_entries,
+                    cancel,
+                    &is_blob,
+                    &mut entries,
+                )?;
+            }
+            store.check_loose_blob_kinds(max_entries, cancel, &is_blob, &mut entries)?;
+        }
+        Ok(())
+    }
+
     /// Verifies whole-pack checksums and v2 entry CRCs in every pinned store, including alternates.
     ///
     /// Opening checks index integrity, pack framing and trailer agreement without reading pack
@@ -506,6 +569,82 @@ impl Objects {
 }
 
 impl Store {
+    fn check_packed_blob_kinds(
+        &self,
+        limits: ReadLimits,
+        max_entries: usize,
+        cancel: &AtomicBool,
+        is_blob: &impl Fn(ObjectId) -> bool,
+        entries: &mut usize,
+    ) -> Result<(), ObjectReadError> {
+        for pack in &self.packs {
+            for id in pack.identities() {
+                check_cancelled(cancel)?;
+                charge_copy_entry(entries, max_entries)?;
+                let id = id?;
+                if is_blob(id) {
+                    let position = pack
+                        .find(id)?
+                        .ok_or(ObjectReadError::Corrupt("copy vanished"))?;
+                    if pack.locate(position, limits, cancel)?.0 != ObjectKind::Blob {
+                        return Err(ObjectReadError::Corrupt(
+                            "reachable blob has a graph-bearing copy",
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_loose_blob_kinds(
+        &self,
+        max_entries: usize,
+        cancel: &AtomicBool,
+        is_blob: &impl Fn(ObjectId) -> bool,
+        entries: &mut usize,
+    ) -> Result<(), ObjectReadError> {
+        let at = |source| ObjectReadError::Path {
+            path: self.directory.clone(),
+            source,
+        };
+        for entry in fs::read_dir(&self.directory).map_err(at)? {
+            check_cancelled(cancel)?;
+            charge_copy_entry(entries, max_entries)?;
+            let entry = entry.map_err(at)?;
+            let name = entry.file_name();
+            let Some(prefix) = name.to_str() else {
+                continue;
+            };
+            if prefix.len() != 2 || !prefix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                continue;
+            }
+            if !fs::symlink_metadata(entry.path()).map_err(at)?.is_dir() {
+                return Err(ObjectReadError::Corrupt("non-directory loose fanout"));
+            }
+            for file in fs::read_dir(entry.path()).map_err(at)? {
+                check_cancelled(cancel)?;
+                charge_copy_entry(entries, max_entries)?;
+                let file = file.map_err(at)?;
+                let name = file.file_name();
+                let Some(suffix) = name.to_str() else {
+                    continue;
+                };
+                let Ok(id) =
+                    ObjectId::from_hex(self.loose.object_format(), &format!("{prefix}{suffix}"))
+                else {
+                    continue;
+                };
+                if is_blob(id) && self.loose.locate(id)?.0 != ObjectKind::Blob {
+                    return Err(ObjectReadError::Corrupt(
+                        "reachable blob has a graph-bearing copy",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn open(
         format: ObjectFormat,
         directory: &Path,
@@ -645,4 +784,14 @@ pub enum ObjectReadError {
     /// A delta refers back to an object already in its reconstruction chain.
     #[error("cyclic delta chain")]
     DeltaCycle,
+}
+
+fn charge_copy_entry(entries: &mut usize, max: usize) -> Result<(), ObjectReadError> {
+    *entries = entries
+        .checked_add(1)
+        .ok_or(ObjectReadError::Limit("retention copy entries"))?;
+    if *entries > max {
+        return Err(ObjectReadError::Limit("retention copy entries"));
+    }
+    Ok(())
 }

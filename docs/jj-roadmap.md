@@ -521,6 +521,11 @@ refuse before mutation on Windows. [B08](#b08--nonadmin-windows-destructive-main
 ordinary nonadmin Windows durability and retirement before Windows jj parity can be claimed. The
 additive R32 API and complete R31 plans do not independently authorize deletion.
 
+The [shared-plan follow-up](evidence/issue-24-retention.md) records `collect_garbage`, input
+fingerprints and retention-only blob location. Composed maintenance plans once; separate methods
+remain available. The planner's byte limit now counts decoded commits, trees and tags. Recent packs
+protect storage and dependencies without classifying every packed object as a live root.
+
 ## R40 Completion
 
 [R40 evidence](evidence/r40.md) records bounded files/reftable history, exact raw data, wide numeric

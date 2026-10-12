@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 use std::{fs, io};
 
-use super::{RetentionOutcome, RetentionPlan, RetentionPolicy};
+use super::RetentionPolicy;
 use crate::{ObjectId, Repository};
 
 /// Acquires caller-owned exclusion of every writer and dependent reader.
@@ -62,7 +62,7 @@ pub struct PruneFailure {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct Candidate {
+pub(super) struct Candidate {
     id: ObjectId,
     path: PathBuf,
     len: u64,
@@ -73,12 +73,13 @@ impl Repository {
     /// Removes old unreachable loose objects from this repository's primary store.
     ///
     /// The caller supplies a repository-wide isolation boundary through `isolation`. Inside that
-    /// boundary this operation scans all roots and reachable objects twice, inventories loose
-    /// entries twice, and refuses mutation if the observations differ. All reflog candidates are
-    /// retained regardless of the policy's expiry cutoffs; this operation does not expire reflogs,
-    /// repack, or remove packs or alternate storage. It removes only regular primary loose files
-    /// older than `recent_cutoff` whose identities are outside the complete reachable closure.
-    /// This does not depend on R32's additive publication for object availability.
+    /// boundary this operation builds one complete plan, inventories loose entries twice, and
+    /// revalidates root-bearing metadata and storage fingerprints before the first deletion. All
+    /// reflog candidates are retained regardless of the policy's expiry cutoffs; this operation
+    /// does not expire reflogs, repack, or remove packs or alternate storage. It removes only
+    /// regular primary loose files older than `recent_cutoff` whose identities are outside the
+    /// complete reachable closure. This does not depend on R32's additive publication for
+    /// object availability.
     ///
     /// A complete scan or matching generations cannot exclude an external Git process. The
     /// isolation implementation must exclude those processes and old readers until the returned
@@ -116,6 +117,10 @@ impl Repository {
             || {},
             |path| fs::remove_file(path),
         )?;
+        self.finish_prune(report)
+    }
+
+    fn finish_prune(&self, report: PruneReport) -> Result<PruneReport, PruneFailure> {
         if !report.deleted.is_empty() {
             // A commit-graph can name pruned commits; Git rebuilds it when needed, as `git gc`
             // does.
@@ -138,6 +143,36 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
         after_inventory: impl FnOnce(),
+        after_delete: impl FnMut(),
+        remove: impl FnMut(&std::path::Path) -> io::Result<()>,
+    ) -> Result<PruneReport, PruneFailure> {
+        self.prune_planned_at(policy, cancel, None, after_inventory, after_delete, remove)
+    }
+
+    #[cfg(unix)]
+    pub(super) fn prune_planned(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        session: &super::inputs::Session,
+    ) -> Result<PruneReport, PruneFailure> {
+        let report = self.prune_planned_at(
+            policy,
+            cancel,
+            Some(session),
+            || {},
+            || {},
+            |path| fs::remove_file(path),
+        )?;
+        self.finish_prune(report)
+    }
+
+    fn prune_planned_at(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        session: Option<&super::inputs::Session>,
+        after_inventory: impl FnOnce(),
         mut after_delete: impl FnMut(),
         mut remove: impl FnMut(&std::path::Path) -> io::Result<()>,
     ) -> Result<PruneReport, PruneFailure> {
@@ -152,11 +187,28 @@ impl Repository {
         {
             return Err(failure(PruneCause::Changed, report));
         }
-        let first = complete_plan(&current, policy, cancel)
-            .map_err(|cause| failure(cause, report.clone()))?;
+        let owned = if session.is_none() {
+            Some(
+                super::inputs::Session::new(&current, policy, cancel).map_err(|reason| {
+                    failure(
+                        if cancel.load(Ordering::Relaxed) {
+                            PruneCause::Cancelled
+                        } else {
+                            PruneCause::Incomplete(reason)
+                        },
+                        report.clone(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        let session = session.or(owned.as_ref()).expect("retention session");
+        let first = &session.plan;
         let observed = candidates(&current, policy, cancel)
             .map_err(|cause| failure(cause, PruneReport::default()))?;
         after_inventory();
+        check(cancel, &report)?;
         let refreshed = Repository::open(self.git_dir())
             .map_err(|error| failure(PruneCause::Incomplete(error.to_string()), report.clone()))?;
         if refreshed.object_dir() != current.object_dir()
@@ -168,21 +220,26 @@ impl Repository {
         {
             return Err(failure(PruneCause::Changed, report));
         }
-        let second = complete_plan(&refreshed, policy, cancel)
-            .map_err(|cause| failure(cause, report.clone()))?;
+        session.validate(&refreshed, policy, cancel).map_err(|_| {
+            failure(
+                if cancel.load(Ordering::Relaxed) {
+                    PruneCause::Cancelled
+                } else {
+                    PruneCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
         let repeated = candidates(&refreshed, policy, cancel)
             .map_err(|cause| failure(cause, report.clone()))?;
-        if first.roots != second.roots
-            || first.reachable != second.reachable
-            || first.protected_packs != second.protected_packs
-            || first.alternate_stores != second.alternate_stores
-            || observed != repeated
-        {
+        if observed != repeated {
             return Err(failure(PruneCause::Changed, report));
         }
         for candidate in observed {
             check(cancel, &report)?;
-            if first.reachable.contains(&candidate.id) {
+            if first.reachable.contains(&candidate.id)
+                || first.protected_objects.contains(&candidate.id)
+            {
                 continue;
             }
             let metadata = fs::symlink_metadata(&candidate.path)
@@ -208,20 +265,7 @@ impl Repository {
     }
 }
 
-fn complete_plan(
-    repository: &Repository,
-    policy: &RetentionPolicy,
-    cancel: &AtomicBool,
-) -> Result<RetentionPlan, PruneCause> {
-    let plan = repository.plan_retention(policy, cancel);
-    check_cancel(cancel)?;
-    match &plan.outcome {
-        RetentionOutcome::Complete => Ok(plan),
-        RetentionOutcome::Incomplete(reason) => Err(PruneCause::Incomplete(reason.clone())),
-    }
-}
-
-fn candidates(
+pub(super) fn candidates(
     repository: &Repository,
     policy: &RetentionPolicy,
     cancel: &AtomicBool,

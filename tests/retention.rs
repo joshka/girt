@@ -13,6 +13,10 @@ use girt::retention::{
 use girt::{ObjectId, ObjectKind, PackLimits, ReadLimits, Repository};
 
 fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
+    git_at(root, args, input, 1_700_000_000)
+}
+
+fn git_at(root: &Path, args: &[&str], input: &[u8], seconds: u64) -> String {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -28,7 +32,7 @@ fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
         .env("GIT_AUTHOR_DATE", "@1700000000 +0000")
         .env("GIT_COMMITTER_NAME", "A")
         .env("GIT_COMMITTER_EMAIL", "a@example.com")
-        .env("GIT_COMMITTER_DATE", "@1700000000 +0000")
+        .env("GIT_COMMITTER_DATE", format!("@{seconds} +0000"))
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .stdin(Stdio::piped())
@@ -777,7 +781,10 @@ fn failed_replacement_keeps_old_pack() {
     let error = repo
         .retire_old_packs(
             &mut FixtureIsolation,
-            &RetentionPolicy::default(),
+            &RetentionPolicy {
+                recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+                ..Default::default()
+            },
             limits,
             &AtomicBool::new(false),
         )
@@ -1844,6 +1851,7 @@ fn gc_policy() -> RetentionPolicy {
     }
 }
 
+#[cfg(unix)]
 fn loose_path(root: &Path, id: ObjectId) -> std::path::PathBuf {
     let hex = id.to_string();
     root.join("objects").join(&hex[..2]).join(&hex[2..])
@@ -1857,14 +1865,32 @@ fn loose_path(root: &Path, id: ObjectId) -> std::path::PathBuf {
 #[case::sha256_pack("sha256", "pack")]
 #[case::sha1_log("sha1", "log")]
 #[case::sha256_log("sha256", "log")]
+#[case::sha1_index("sha1", "index")]
+#[case::sha256_index("sha256", "index")]
+#[case::sha1_shallow("sha1", "shallow")]
+#[case::sha256_shallow("sha256", "shallow")]
+#[case::sha1_alternates("sha1", "alternates")]
+#[case::sha256_alternates("sha256", "alternates")]
+#[case::sha1_loose("sha1", "loose")]
+#[case::sha256_loose("sha256", "loose")]
 fn input_changed_after_planning_refuses_before_mutation(
     #[case] format: &str,
     #[case] change: &str,
 ) {
-    let (root, repo, first, _) = fixture_format(format);
+    let (root, repo, first, second) = fixture_format(format);
     let orphan: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan")
         .parse()
         .unwrap();
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "refs/heads/logged",
+            &first.to_string(),
+        ],
+        b"",
+    );
     let log = root.path().join("logs/refs/heads/deleted");
     let original = fs::read(&log).unwrap();
     let error = repo
@@ -1872,31 +1898,7 @@ fn input_changed_after_planning_refuses_before_mutation(
             &mut FixtureIsolation,
             &gc_policy(),
             &AtomicBool::new(false),
-            || match change {
-                "ref" => {
-                    git(
-                        root.path(),
-                        &["update-ref", "refs/tags/saved", &orphan.to_string()],
-                        b"",
-                    );
-                }
-                "pack" => {
-                    git(root.path(), &["repack", "-ad"], b"");
-                }
-                "log" => {
-                    git(
-                        root.path(),
-                        &[
-                            "update-ref",
-                            "--create-reflog",
-                            "refs/heads/another",
-                            &first.to_string(),
-                        ],
-                        b"",
-                    );
-                }
-                _ => unreachable!(),
-            },
+            || mutate_gc_input(root.path(), first, second, orphan, change),
         )
         .unwrap_err();
     assert!(matches!(
@@ -1907,6 +1909,46 @@ fn input_changed_after_planning_refuses_before_mutation(
     assert!(error.report.pruned.is_none());
     assert_eq!(fs::read(log).unwrap(), original);
     git(root.path(), &["cat-file", "-e", &orphan.to_string()], b"");
+}
+
+#[cfg(unix)]
+fn mutate_gc_input(root: &Path, first: ObjectId, second: ObjectId, orphan: ObjectId, change: &str) {
+    match change {
+        "ref" => {
+            git(
+                root,
+                &["update-ref", "refs/tags/saved", &orphan.to_string()],
+                b"",
+            );
+        }
+        "pack" => {
+            git(root, &["repack", "-ad"], b"");
+        }
+        "log" => {
+            git(
+                root,
+                &["update-ref", "refs/heads/logged", &second.to_string()],
+                b"",
+            );
+        }
+        "index" => {
+            git(root, &["read-tree", &first.to_string()], b"");
+        }
+        "shallow" => {
+            fs::write(root.join("shallow"), format!("{second}\n")).unwrap();
+        }
+        "alternates" => {
+            fs::write(
+                root.join("objects/info/alternates"),
+                b"# changed topology metadata\n",
+            )
+            .unwrap();
+        }
+        "loose" => {
+            git(root, &["hash-object", "-w", "--stdin"], b"new generation");
+        }
+        _ => unreachable!(),
+    }
 }
 
 #[cfg(unix)]
@@ -2037,8 +2079,8 @@ fn composite_gc_refuses_limits_before_mutation(#[case] format: &str) {
 fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) {
     let (a, repo, _, second) = fixture_format(format);
     let (b, _, _, _) = fixture_format(format);
-    git(a.path(), &["hash-object", "-w", "--stdin"], b"orphan");
-    git(b.path(), &["hash-object", "-w", "--stdin"], b"orphan");
+    gc_fidelity_cutoffs(a.path());
+    gc_fidelity_cutoffs(b.path());
     // Keep an unreachable endpoint solely through a recent reflog record.
     let recent = format!("{second} {second} A <a@example.com> 1900000000 +0000\trecent\n");
     fs::OpenOptions::new()
@@ -2053,17 +2095,25 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
         .unwrap()
         .write_all(recent.as_bytes())
         .unwrap();
-    repo.collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
-        .unwrap();
+    repo.collect_garbage(
+        &mut FixtureIsolation,
+        &RetentionPolicy {
+            recent_cutoff: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+            reflog_expire_before: Some(1_600_000_000),
+            ..gc_policy()
+        },
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     git(
         b.path(),
         &[
             "-c",
-            "gc.reflogExpire=@1800000000",
+            "gc.reflogExpire=@1600000000",
             "-c",
             "gc.reflogExpireUnreachable=@1800000000",
             "gc",
-            "--prune=now",
+            "--prune=@1800000000",
         ],
         b"",
     );
@@ -2091,7 +2141,51 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
         fs::read(a.path().join("logs/refs/heads/deleted")).unwrap(),
         fs::read(b.path().join("logs/refs/heads/deleted")).unwrap()
     );
+    assert_eq!(
+        fs::read(a.path().join("logs/refs/heads/live")).unwrap(),
+        fs::read(b.path().join("logs/refs/heads/live")).unwrap()
+    );
     git(a.path(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+fn gc_fidelity_cutoffs(root: &Path) {
+    git(root, &["hash-object", "-w", "--stdin"], b"old orphan");
+    let recent: ObjectId = git(root, &["hash-object", "-w", "--stdin"], b"recent orphan")
+        .parse()
+        .unwrap();
+    fs::File::open(loose_path(root, recent))
+        .unwrap()
+        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_900_000_000))
+        .unwrap();
+    let first = git(root, &["rev-parse", "refs/heads/main"], b"");
+    let tree = git(root, &["mktree"], b"");
+    let live = git(root, &["commit-tree", &tree, "-p", &first], b"live branch");
+    git_at(
+        root,
+        &[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            "live old",
+            "refs/heads/live",
+            &first,
+        ],
+        b"",
+        1_500_000_000,
+    );
+    git_at(
+        root,
+        &[
+            "update-ref",
+            "-m",
+            "live retained",
+            "refs/heads/live",
+            &live,
+        ],
+        b"",
+        1_700_000_000,
+    );
 }
 
 #[cfg(unix)]
@@ -2105,7 +2199,7 @@ fn composite_gc_holds_one_isolation_guard() {
             Ok(())
         }
     }
-    let (_, repo, _, _) = fixture();
+    let (_root, repo, _, _) = fixture();
     let mut isolation = CountIsolation(0);
     repo.collect_garbage(&mut isolation, &gc_policy(), &AtomicBool::new(false))
         .unwrap();
@@ -2141,4 +2235,369 @@ fn recent_pack_does_not_classify_unreachable_history_as_live(#[case] format: &st
     assert!(!plan.strong_roots.contains(&second));
     assert!(!plan.required.contains(&second));
     assert!(!plan.reflog_expiry_candidates.is_empty());
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1_recent("sha1", false, false)]
+#[case::sha256_recent("sha256", false, false)]
+#[case::sha1_keep("sha1", true, false)]
+#[case::sha256_keep("sha256", true, false)]
+#[case::sha1_retire("sha1", false, true)]
+#[case::sha256_retire("sha256", false, true)]
+fn protected_pack_keeps_old_loose_descendants(
+    #[case] format: &str,
+    #[case] keep: bool,
+    #[case] repack: bool,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let blob = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"protected descendant",
+    );
+    let tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
+    let commit = git(
+        root.path(),
+        &["commit-tree", &tree],
+        b"unreachable packed commit\n",
+    );
+    let checksum = git(
+        root.path(),
+        &["pack-objects", "objects/pack/pack"],
+        format!("{commit}\n").as_bytes(),
+    );
+    fs::remove_file(loose_path(root.path(), commit.parse().unwrap())).unwrap();
+    protect_and_backdate(root.path(), &checksum, keep);
+    collect_with_optional_repack(
+        &repo,
+        &RetentionPolicy {
+            recent_cutoff: SystemTime::now() - Duration::from_secs(86400),
+            ..gc_policy()
+        },
+        repack,
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-p", &tree], b""),
+        format!("100644 blob {blob}\tfile")
+    );
+    git(root.path(), &["cat-file", "-e", &blob], b"");
+    git(root.path(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+fn protect_and_backdate(root: &Path, checksum: &str, keep: bool) {
+    for fanout in fs::read_dir(root.join("objects")).unwrap() {
+        let fanout = fanout.unwrap();
+        if fanout.file_name().to_string_lossy().len() == 2 {
+            for file in fs::read_dir(fanout.path()).unwrap() {
+                fs::File::open(file.unwrap().path())
+                    .unwrap()
+                    .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+                    .unwrap();
+            }
+        }
+    }
+    if keep {
+        fs::write(root.join(format!("objects/pack/pack-{checksum}.keep")), b"").unwrap();
+        fs::File::open(root.join(format!("objects/pack/pack-{checksum}.pack")))
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+            .unwrap();
+    }
+}
+
+#[cfg(unix)]
+fn collect_with_optional_repack(repo: &Repository, policy: &RetentionPolicy, repack: bool) {
+    if repack {
+        repo.run_maintenance(
+            &mut FixtureIsolation,
+            policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    } else {
+        repo.collect_garbage(&mut FixtureIsolation, policy, &AtomicBool::new(false))
+            .unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn composite_fingerprints_configuration_symlink_target(#[case] format: &str) {
+    let (root, repo, _, second) = fixture_format(format);
+    let config = root.path().join("config");
+    let target = root.path().join("external-config");
+    fs::rename(&config, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &config).unwrap();
+    let error = repo
+        .collect_garbage_with_checkpoint(
+            &mut FixtureIsolation,
+            &gc_policy(),
+            &AtomicBool::new(false),
+            || {
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&target)
+                    .unwrap()
+                    .write_all(b"\n[gc]\npruneExpire = never\n")
+                    .unwrap();
+            },
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error.cause, girt::retention::MaintenanceCause::Changed),
+        "{:?}",
+        error.cause
+    );
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    git(root.path(), &["cat-file", "-e", &second.to_string()], b"");
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn recent_unindexed_pack_refuses_before_loose_deletion(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let blob: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"unindexed protection",
+    )
+    .parse()
+    .unwrap();
+    let checksum = git(
+        root.path(),
+        &["pack-objects", "objects/pack/pack"],
+        format!("{blob}\n").as_bytes(),
+    );
+    fs::remove_file(
+        root.path()
+            .join(format!("objects/pack/pack-{checksum}.idx")),
+    )
+    .unwrap();
+    fs::File::open(loose_path(root.path(), blob))
+        .unwrap()
+        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .unwrap();
+    let error = repo
+        .collect_garbage(
+            &mut FixtureIsolation,
+            &RetentionPolicy {
+                recent_cutoff: SystemTime::now() - Duration::from_secs(86400),
+                ..gc_policy()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Incomplete(_)
+    ));
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    git(root.path(), &["cat-file", "-e", &blob.to_string()], b"");
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1_loose(girt::ObjectFormat::Sha1, "sha1", "loose")]
+#[case::sha256_loose(girt::ObjectFormat::Sha256, "sha256", "loose")]
+#[case::sha1_pack(girt::ObjectFormat::Sha1, "sha1", "pack")]
+#[case::sha256_pack(girt::ObjectFormat::Sha256, "sha256", "pack")]
+#[case::sha1_alternate(girt::ObjectFormat::Sha1, "sha1", "alternate")]
+#[case::sha256_alternate(girt::ObjectFormat::Sha256, "sha256", "alternate")]
+fn packed_blob_cannot_hide_a_readable_loose_commit_before_pruning(
+    #[case] format: girt::ObjectFormat,
+    #[case] name: &str,
+    #[case] copy: &str,
+) {
+    let (root, repo, _, _) = fixture_format(name);
+    let blob = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"required descendant",
+    );
+    let tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
+    let commit: ObjectId = git(root.path(), &["commit-tree", &tree], b"readable commit")
+        .parse()
+        .unwrap();
+    let tag = git(root.path(), &["hash-object", "-t", "tag", "--literally", "-w", "--stdin"],
+        format!("object {commit}\ntype blob\ntag disguised\ntagger A <a@example.com> 1700000000 +0000\n\nkind assertion\n").as_bytes());
+    git(
+        root.path(),
+        &["update-ref", "refs/tags/disguised", &tag],
+        b"",
+    );
+    move_graph_copy(root.path(), name, commit, copy);
+    let shadow: ObjectId = git(root.path(), &["hash-object", "-w", "--stdin"], b"shadow")
+        .parse()
+        .unwrap();
+    let checksum = git(
+        root.path(),
+        &["pack-objects", "objects/pack/pack"],
+        format!("{shadow}\n").as_bytes(),
+    );
+    let pack = root
+        .path()
+        .join(format!("objects/pack/pack-{checksum}.pack"));
+    let shadow_pack = root.path().join("objects/pack/000-shadow.pack");
+    fs::rename(
+        pack.with_extension("idx"),
+        shadow_pack.with_extension("idx"),
+    )
+    .unwrap();
+    fs::rename(pack, &shadow_pack).unwrap();
+    let pack = shadow_pack;
+    mislabel_single_entry_index(&pack.with_extension("idx"), format, commit);
+    let log = root.path().join("logs/refs/heads/deleted");
+    let original_log = fs::read(&log).unwrap();
+    let error = repo
+        .collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Incomplete(_)
+    ));
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    assert_eq!(fs::read(log).unwrap(), original_log);
+    fs::remove_file(pack.with_extension("idx")).unwrap();
+    fs::remove_file(pack).unwrap();
+    git(
+        root.path(),
+        &["update-ref", "-d", "refs/tags/disguised"],
+        b"",
+    );
+    fs::remove_file(loose_path(root.path(), tag.parse().unwrap())).unwrap();
+    git(root.path(), &["cat-file", "-e", &blob], b"");
+    git(root.path(), &["cat-file", "-e", &tree], b"");
+    git(root.path(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+fn move_graph_copy(root: &Path, format: &str, commit: ObjectId, copy: &str) {
+    match copy {
+        "loose" => {}
+        "pack" => {
+            git(
+                root,
+                &["pack-objects", "objects/pack/pack"],
+                format!("{commit}\n").as_bytes(),
+            );
+            fs::remove_file(loose_path(root, commit)).unwrap();
+        }
+        "alternate" => {
+            git(
+                root,
+                &[
+                    "init",
+                    "--bare",
+                    "--template=",
+                    &format!("--object-format={format}"),
+                    "borrowed",
+                ],
+                b"",
+            );
+            let alternate = root.join("borrowed");
+            let destination = loose_path(&alternate, commit);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::rename(loose_path(root, commit), destination).unwrap();
+            fs::write(
+                root.join("objects/info/alternates"),
+                format!("{}\n", alternate.join("objects").display()),
+            )
+            .unwrap();
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(unix)]
+fn mislabel_single_entry_index(path: &Path, format: girt::ObjectFormat, id: ObjectId) {
+    use sha1::Digest;
+    let mut bytes = fs::read(path).unwrap();
+    let width = format.digest_len();
+    // Original v2 index mutation: one identity, cumulative fanout and independent checksum.
+    bytes[1032..1032 + width].copy_from_slice(id.as_bytes());
+    for bucket in 0..256 {
+        let count = u32::from(bucket >= usize::from(id.as_bytes()[0]));
+        bytes[8 + bucket * 4..12 + bucket * 4].copy_from_slice(&count.to_be_bytes());
+    }
+    let end = bytes.len() - width;
+    let checksum = match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+    };
+    bytes[end..].copy_from_slice(&checksum);
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn corrupted_blob_shaped_root_refuses_before_descendant_deletion(#[case] format: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let (root, repo, _, _) = fixture_format(format);
+    let blob = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"required descendant",
+    );
+    let tree = git(
+        root.path(),
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    );
+    let commit: ObjectId = git(root.path(), &["commit-tree", &tree], b"readable commit")
+        .parse()
+        .unwrap();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &commit.to_string()],
+        b"",
+    );
+    let checksum = git(
+        root.path(),
+        &["pack-objects", "objects/pack/pack"],
+        format!("{commit}\n").as_bytes(),
+    );
+    fs::remove_file(loose_path(root.path(), commit)).unwrap();
+    let pack = root
+        .path()
+        .join(format!("objects/pack/pack-{checksum}.pack"));
+    let original = fs::read(&pack).unwrap();
+    let mut corrupt = original.clone();
+    corrupt[12] = (corrupt[12] & !0x70) | 0x30;
+    fs::set_permissions(&pack, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(&pack, corrupt).unwrap();
+    let error = repo
+        .collect_garbage(&mut FixtureIsolation, &gc_policy(), &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(
+        error.cause,
+        girt::retention::MaintenanceCause::Incomplete(_)
+    ));
+    assert!(error.report.expired.is_none());
+    assert!(error.report.pruned.is_none());
+    fs::write(pack, original).unwrap();
+    git(root.path(), &["cat-file", "-e", &blob], b"");
+    git(root.path(), &["cat-file", "-e", &tree], b"");
+    git(root.path(), &["fsck", "--strict"], b"");
 }

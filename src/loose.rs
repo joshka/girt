@@ -152,6 +152,43 @@ impl LooseObjects {
         self.decode_raw(id, max_size, None)
     }
 
+    /// Locates a retention candidate by its canonical header without decoding its payload.
+    pub(crate) fn locate(&self, id: ObjectId) -> Result<(crate::ObjectKind, u64), Error> {
+        use std::io::Read;
+
+        id.require_format(self.format)?;
+        let file = File::open(self.object_path(id))?;
+        let mut decoder = flate2::read::ZlibDecoder::new(file);
+        let mut header = Vec::new();
+        for _ in 0..32 {
+            let mut byte = [0];
+            decoder.read_exact(&mut byte)?;
+            if byte[0] == 0 {
+                let text = std::str::from_utf8(&header)
+                    .map_err(|_| Error::Corrupt("invalid loose header"))?;
+                let (kind, length) = text
+                    .split_once(' ')
+                    .ok_or(Error::Corrupt("invalid loose header"))?;
+                let kind = match kind {
+                    "blob" => crate::ObjectKind::Blob,
+                    "tree" => crate::ObjectKind::Tree,
+                    "commit" => crate::ObjectKind::Commit,
+                    "tag" => crate::ObjectKind::Tag,
+                    _ => return Err(Error::UnknownObjectType),
+                };
+                let size: u64 = length
+                    .parse()
+                    .map_err(|_| Error::Corrupt("invalid loose size"))?;
+                if size.to_string() != length {
+                    return Err(Error::Corrupt("noncanonical loose size"));
+                }
+                return Ok((kind, size));
+            }
+            header.push(byte[0]);
+        }
+        Err(Error::Corrupt("loose header limit"))
+    }
+
     fn decode_raw(
         &self,
         id: ObjectId,
@@ -1101,5 +1138,33 @@ mod dual_format_tests {
             objects.read_commit(id, 1000),
             Err(Error::Commit(CommitError::InvalidObjectId))
         ));
+    }
+    #[rstest::rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn retention_location_does_not_validate_blob_payload(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), format);
+        let id = objects.write_blob(b"original").unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"blob 8\0different").unwrap();
+        fs::write(objects.object_path(id), encoder.finish().unwrap()).unwrap();
+        assert_eq!(objects.locate(id).unwrap(), (crate::ObjectKind::Blob, 8));
+        assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+    }
+
+    #[rstest::rstest]
+    #[case::leading_zero(b"blob 08\0original")]
+    #[case::negative(b"blob -8\0original")]
+    #[case::missing_kind(b" 8\0original")]
+    #[case::unterminated(b"blob 8")]
+    fn retention_location_rejects_malformed_headers(#[case] encoded: &[u8]) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = objects.write_blob(b"original").unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(encoded).unwrap();
+        fs::write(objects.object_path(id), encoder.finish().unwrap()).unwrap();
+        assert!(objects.locate(id).is_err());
     }
 }
