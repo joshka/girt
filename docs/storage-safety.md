@@ -71,9 +71,12 @@ pack checksum, and its retained index must match the generated receive index. No
 select that exact pack; a different primary, alternate or duplicate copy receives the ordinary
 checked read. Independent walk object, payload-byte and edge budgets still apply. Recorded uncached
 representation costs must satisfy the caller's per-read limits; otherwise the ordinary reader checks
-those limits. Full ancestry and cycle validation remain unchanged. This is no process-wide or
-persistent trust cache, and the caller's existing trusted-directory and GC coordination obligations
-still apply.
+those limits. Fetch's fast-forward query reads verified commits breadth-first from the new tip and
+stops after verifying the old tip, without following its parents. It detects cycles in the explored
+graph and respects shallow boundaries; a negative answer exhausts the reachable graph. Unvisited
+history supplies no evidence. Public full-history queries retain complete ancestry validation. This
+is no process-wide or persistent trust cache, and the caller's existing trusted-directory and GC
+coordination obligations still apply.
 
 A walk locates blobs without decoding them, so it does not see a damaged blob. A content read of
 that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack checksums) and

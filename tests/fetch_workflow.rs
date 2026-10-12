@@ -1753,17 +1753,17 @@ fn one_commit_fast_forward_does_not_spend_budget_on_old_history() {
 mod history_git;
 
 #[rstest]
-#[case::linear(vec![vec![], vec![0], vec![1]], 1, 2, false)]
-#[case::unrelated(vec![vec![], vec![0], vec![]], 1, 2, false)]
-#[case::rewind(vec![vec![], vec![0]], 1, 0, false)]
-#[case::diverged(vec![vec![], vec![0], vec![0]], 1, 2, false)]
-#[case::merge_long_first_branch(vec![vec![], vec![0], vec![1], vec![2], vec![3], vec![0], vec![4,5]], 5, 6, false)]
-#[case::shallow_blocks_old(vec![vec![], vec![0], vec![1]], 0, 2, true)]
+#[case::linear(vec![vec![], vec![0], vec![1]], 1, 2)]
+#[case::diamond(vec![vec![], vec![0], vec![1], vec![1], vec![2,3]], 1, 4)]
+#[case::unrelated(vec![vec![], vec![0], vec![]], 1, 2)]
+#[case::rewind(vec![vec![], vec![0]], 1, 0)]
+#[case::diverged(vec![vec![], vec![0], vec![0]], 1, 2)]
+#[case::merge_long_first_branch(vec![vec![], vec![0], vec![1], vec![2], vec![3], vec![0], vec![4,5]], 5, 6)]
+#[case::old_deep_in_second_parent(long_side_history(), 1, 129)]
 fn fetch_ancestry_matches_git(
     #[case] parents: Vec<Vec<usize>>,
     #[case] old: usize,
     #[case] new: usize,
-    #[case] shallow: bool,
 ) {
     let h = history_git::History::new(&parents, true);
     assert_eq!(
@@ -1790,7 +1790,6 @@ fn fetch_ancestry_matches_git(
     let specs = ["refs/heads/main:refs/remotes/origin/main"];
     source.set("refs/heads/main", source.first);
     fetch(&repository, &source, &specs);
-    set_ancestry_shallow(&repository, &source, h.ids[1], shallow);
     let repository = Repository::open(repository.git_dir()).unwrap();
     let known = KnownHistory::from_store(
         repository.objects(PackLimits::default()).unwrap(),
@@ -1810,7 +1809,6 @@ fn fetch_ancestry_matches_git(
         b"",
     );
     assert!(matches!(oracle.status.code(), Some(0 | 1)));
-    clear_oracle_shallow(&source, shallow);
     source.set("refs/heads/main", source.second);
     let ready = receive(
         request(&repository, &specs, &[], Reflog::Preserve),
@@ -1820,22 +1818,6 @@ fn fetch_ancestry_matches_git(
     let result = ready.finish(FetchUpdateLimits::default(), &AtomicBool::new(false));
     assert_eq!(result.is_ok(), oracle.status.success());
     assert_ancestry_publication(&repository, &source, result, oracle.status.success());
-}
-
-fn set_ancestry_shallow(
-    repository: &Repository,
-    source: &Source,
-    boundary: ObjectId,
-    shallow: bool,
-) {
-    if shallow {
-        fs::write(
-            repository.git_dir().join("shallow"),
-            format!("{boundary}\n"),
-        )
-        .unwrap();
-        fs::write(source.root.path().join("shallow"), format!("{boundary}\n")).unwrap();
-    }
 }
 
 fn assert_ancestry_publication(
@@ -1854,10 +1836,14 @@ fn assert_ancestry_publication(
             Some(Target::Direct(source.second))
         );
     } else {
-        assert!(matches!(
-            *result.unwrap_err().source,
-            FetchFinishFailure::Update(girt::fetch::FetchUpdateError::NonFastForward(_))
-        ));
+        let error = result.unwrap_err();
+        assert!(
+            matches!(
+                *error.source,
+                FetchFinishFailure::Update(girt::fetch::FetchUpdateError::NonFastForward(_))
+            ),
+            "{error:?}"
+        );
         assert_eq!(
             stored(repository, "refs/remotes/origin/main"),
             Some(Target::Direct(source.first))
@@ -1865,8 +1851,12 @@ fn assert_ancestry_publication(
     }
 }
 
-fn clear_oracle_shallow(source: &Source, shallow: bool) {
-    if shallow {
-        fs::remove_file(source.root.path().join("shallow")).unwrap();
+fn long_side_history() -> Vec<Vec<usize>> {
+    let mut parents = vec![vec![], vec![0]];
+    for i in 2..128 {
+        parents.push(vec![i - 1]);
     }
+    parents.push(vec![]);
+    parents.push(vec![128, 127]);
+    parents
 }

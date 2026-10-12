@@ -22,6 +22,10 @@ pub struct FetchUpdateLimits {
     /// counts and per-read bounds. Other destination representations use ordinary checked reads.
     pub verification: FetchLimits,
     /// Commit/edge/per-read bounds for each ancestry decision.
+    /// The verified breadth-first walk stops at the old tip. Commits discovered before that match
+    /// and followed parent occurrences count; the old tip's parents are not followed. Negative
+    /// decisions exhaust the new tip's reachable history up to shallow boundaries, without walking
+    /// the old tip's history. Both tips still undergo checked peeling before the ancestry query.
     pub history: HistoryLimits,
     /// Maximum tag objects followed per old/new tip (default 32).
     pub max_tag_depth: usize,
@@ -90,27 +94,26 @@ pub(super) fn validate(
         let (Some(old), Some(new)) = (old_commit, new_commit) else {
             continue;
         };
-        // Existing history traversal is synchronous and bounded, with no cancellation inside one
-        // query. Check immediately on either side; never start publication after cancellation.
-        let fast_forward = objects.is_ancestor_verified(old, new, limits.history, |id, read| {
-            let Some(object) = verified
-                .get(id, read, cancel)
-                .map_err(|source| crate::HistoryError::Read { id, source })?
-            else {
-                return Ok(None);
-            };
-            if object.kind != ObjectKind::Commit {
-                return Err(crate::HistoryError::NotCommit(id));
-            }
-            let parents = object
-                .edges
-                .as_ref()
-                .expect("InstalledObjects::get requires parsed edges")
-                .iter()
-                .filter_map(|&(id, kind)| (kind == ObjectKind::Commit).then_some(id))
-                .collect();
-            Ok(Some(parents))
-        })?;
+        let fast_forward =
+            objects.is_ancestor_verified(old, new, limits.history, cancel, |id, read| {
+                let Some(object) = verified
+                    .get(id, read, cancel)
+                    .map_err(|source| crate::HistoryError::Read { id, source })?
+                else {
+                    return Ok(None);
+                };
+                if object.kind != ObjectKind::Commit {
+                    return Err(crate::HistoryError::NotCommit(id));
+                }
+                let parents = object
+                    .edges
+                    .as_ref()
+                    .expect("InstalledObjects::get requires parsed edges")
+                    .iter()
+                    .filter_map(|&(id, kind)| (kind == ObjectKind::Commit).then_some(id))
+                    .collect();
+                Ok(Some(parents))
+            })?;
         check_cancelled(cancel)?;
         let name = update
             .mapping

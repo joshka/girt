@@ -33,6 +33,24 @@ fn history(c: &mut Criterion) {
                     .unwrap()
             })
         });
+        c.bench_function(
+            &format!("history/{shape}/fetch-finish-one-commit-packed-256"),
+            |b| {
+                b.iter_batched(
+                    || prepare_one_commit(&h),
+                    |(root, ready)| {
+                        let report = ready
+                            .finish(
+                                girt::fetch::FetchUpdateLimits::default(),
+                                &std::sync::atomic::AtomicBool::new(false),
+                            )
+                            .unwrap();
+                        black_box((root, report))
+                    },
+                    criterion::BatchSize::PerIteration,
+                );
+            },
+        );
         std::fs::write(h.root.path().join("shallow"), format!("{}\n", h.ids[128])).unwrap();
         let shallow = h.objects();
         c.bench_function(&format!("history/{shape}/walk-shallow-packed-256"), |b| {
@@ -55,6 +73,62 @@ fn history(c: &mut Criterion) {
         });
     }
 }
+// Git creates the destination's old closure; receive/setup are outside the measured finish.
+fn prepare_one_commit(h: &history_git::History) -> (tempfile::TempDir, girt::fetch::FetchReady) {
+    use girt::fetch::{FetchLimits, FetchRequest, KnownHistory};
+    use girt::refs::Reflog;
+    let root = tempfile::tempdir().unwrap();
+    let dest = root.path().join("dest.git");
+    history_git::git(
+        root.path(),
+        &[
+            "clone",
+            "--bare",
+            "--no-hardlinks",
+            "--single-branch",
+            "--branch",
+            "node-254",
+            h.root.path().to_str().unwrap(),
+            dest.to_str().unwrap(),
+        ],
+        b"",
+    );
+    history_git::git(
+        &dest,
+        &[
+            "update-ref",
+            "refs/remotes/origin/main",
+            &h.ids[254].to_string(),
+        ],
+        b"",
+    );
+    let repo = girt::Repository::open(&dest).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let known = KnownHistory::from_store(
+        repo.objects(girt::PackLimits::default()).unwrap(),
+        &[h.ids[254]],
+        FetchLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let specs = girt::remote::Refspecs::parse(
+        girt::remote::Direction::Fetch,
+        ["refs/heads/node-255:refs/remotes/origin/main"],
+    )
+    .unwrap();
+    let ready = FetchRequest::prepare(repo, specs, Default::default(), Reflog::Preserve)
+        .unwrap()
+        .receive_local(
+            h.root.path(),
+            &known,
+            FetchLimits::default(),
+            girt::transport::TransportControl::new(&cancel),
+            |_| std::ops::ControlFlow::Continue(()),
+        )
+        .unwrap();
+    (root, ready)
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(20).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(4));
