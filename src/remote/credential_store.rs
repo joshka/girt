@@ -15,9 +15,10 @@ use super::credential::{Credential, CredentialContext, CredentialError};
 ///
 /// Lookups read the files in order and return the first matching entry. Approval writes to the
 /// first file that exists, or creates the first file when none does. Rejection removes matching
-/// entries from every file. Rewrites go through a `<file>.lock` sibling that is renamed over the
-/// file, so an interrupted write leaves the old contents in place, and the rewritten file is
-/// readable only by its owner.
+/// entries from every file. Each change holds a `<file>.lock` sibling from before the read until
+/// it is renamed over the file, so concurrent Git or girt writers fail instead of losing updates
+/// and an interrupted write leaves the old contents. New files are mode 0600; a rewrite drops group
+/// and other access, as Git does, and keeps stricter owner bits such as 0400.
 ///
 /// ```
 /// use std::path::Path;
@@ -108,17 +109,17 @@ impl CredentialStore {
         let (Some(username), Some(password)) = (&credential.username, &credential.password) else {
             return Ok(());
         };
-        let mut target = None;
-        for file in &self.files {
-            if let Some(contents) = read(file)? {
-                target = Some((file, contents));
-                break;
-            }
-        }
-        let Some((file, contents)) = target.or_else(|| self.files.first().map(|f| (f, Vec::new())))
+        // Like Git: the first file that exists, else the first file.
+        let Some(file) = self
+            .files
+            .iter()
+            .find(|file| file.exists())
+            .or_else(|| self.files.first())
         else {
             return Ok(());
         };
+        let lock = Lock::acquire(file)?;
+        let contents = lock.read()?.unwrap_or_default();
         let query = Query::new(context, credential, false);
         let mut output = Entry {
             protocol: context.protocol.clone(),
@@ -135,7 +136,7 @@ impl CredentialStore {
                 output.push(b'\n');
             }
         }
-        replace(file, &output)
+        lock.commit(&output)
     }
 
     /// Removes matching entries from every file. A supplied password must also match.
@@ -145,8 +146,9 @@ impl CredentialStore {
         credential: &Credential,
     ) -> Result<(), CredentialError> {
         let query = Query::new(context, credential, true);
-        for file in &self.files {
-            let Some(contents) = read(file)? else {
+        for file in self.files.iter().filter(|file| file.exists()) {
+            let lock = Lock::acquire(file)?;
+            let Some(contents) = lock.read()? else {
                 continue;
             };
             let mut output = Vec::with_capacity(contents.len());
@@ -160,7 +162,7 @@ impl CredentialStore {
                 }
             }
             if erased {
-                replace(file, &output)?;
+                lock.commit(&output)?;
             }
         }
         Ok(())
@@ -208,8 +210,9 @@ struct Entry {
 }
 
 impl Entry {
-    /// Decodes `protocol://user:password@host[/path]`. Lines without a username and password are
-    /// not entries. Trailing slashes are not part of the path.
+    /// Decodes `protocol://user:password@host[/path]`. Lines without a username and password, or
+    /// with a field that decodes to a line feed, are not entries. Trailing slashes are not part of
+    /// the path.
     fn parse(line: &[u8]) -> Option<Self> {
         let separator = line.windows(3).position(|part| part == b"://")?;
         let protocol = &line[..separator];
@@ -225,13 +228,20 @@ impl Entry {
             .rposition(|b| *b != b'/')
             .map_or(0, |end| end + 1);
         let path = &path[..path_end];
-        Some(Self {
+        let entry = Self {
             protocol: protocol.to_vec(),
             username: decode(&user_info[..colon]),
             password: decode(&user_info[colon + 1..]),
             host: decode(host),
             path: (!path.is_empty()).then(|| decode(path)),
-        })
+        };
+        // Git skips (and keeps) lines whose fields decode to a line feed.
+        let fields = [&entry.username, &entry.password, &entry.host];
+        let has_newline = fields
+            .into_iter()
+            .chain(&entry.path)
+            .any(|field| field.contains(&b'\n'));
+        (!has_newline).then_some(entry)
     }
 
     fn format(&self) -> Vec<u8> {
@@ -267,7 +277,7 @@ fn encode(output: &mut Vec<u8>, value: &[u8], path: bool) {
     }
 }
 
-/// Decodes `%XX` escapes; a `%` without two hex digits stays literal.
+/// Decodes `%XX` escapes. `%00` and a `%` without two hex digits stay literal, as in Git.
 fn decode(value: &[u8]) -> Vec<u8> {
     let hex = |byte: u8| (byte as char).to_digit(16).map(|digit| digit as u8);
     let mut output = Vec::with_capacity(value.len());
@@ -276,6 +286,7 @@ fn decode(value: &[u8]) -> Vec<u8> {
         if value[index] == b'%'
             && let Some(high) = value.get(index + 1).copied().and_then(hex)
             && let Some(low) = value.get(index + 2).copied().and_then(hex)
+            && (high, low) != (0, 0)
         {
             output.push(high << 4 | low);
             index += 3;
@@ -296,6 +307,83 @@ fn lines(contents: &[u8]) -> impl Iterator<Item = &[u8]> {
         .filter(move |_| !contents.is_empty())
 }
 
+/// A held `<file>.lock` for one read-modify-write of a credential file (or its symlink target).
+///
+/// The lock is created exclusively before the file is read and is renamed over the file to publish
+/// the new contents, so a concurrent Git or girt writer fails rather than losing an update. An
+/// interrupted write leaves the old contents. Dropping an uncommitted lock removes it.
+struct Lock {
+    file: PathBuf,
+    lock: PathBuf,
+    handle: Option<std::fs::File>,
+}
+
+impl Lock {
+    fn acquire(file: &Path) -> Result<Self, CredentialError> {
+        let file = match std::fs::canonicalize(file) {
+            Ok(target) => target,
+            Err(error) if error.kind() == ErrorKind::NotFound => file.to_path_buf(),
+            Err(source) => return Err(write_error(source)),
+        };
+        let mut lock = file.as_os_str().to_owned();
+        lock.push(".lock");
+        let lock = PathBuf::from(lock);
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        // New files are owner-only. A rewrite keeps stricter existing bits (such as 0400) and,
+        // like Git, drops group and other access.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mode = match std::fs::metadata(&file) {
+                Ok(metadata) => metadata.permissions().mode() & 0o600,
+                Err(_) => 0o600,
+            };
+            options.mode(mode);
+        }
+        let handle = options.open(&lock).map_err(write_error)?;
+        Ok(Self {
+            file,
+            lock,
+            handle: Some(handle),
+        })
+    }
+
+    fn read(&self) -> Result<Option<Vec<u8>>, CredentialError> {
+        read(&self.file)
+    }
+
+    fn commit(mut self, contents: &[u8]) -> Result<(), CredentialError> {
+        let mut handle = self.handle.take().expect("uncommitted lock");
+        let published = handle
+            .write_all(contents)
+            .and_then(|()| handle.sync_all())
+            .and_then(|()| {
+                drop(handle);
+                std::fs::rename(&self.lock, &self.file)
+            });
+        if published.is_err() {
+            let _ = std::fs::remove_file(&self.lock);
+        }
+        published.map_err(write_error)
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if self.handle.take().is_some() {
+            let _ = std::fs::remove_file(&self.lock);
+        }
+    }
+}
+
+fn write_error(source: std::io::Error) -> CredentialError {
+    CredentialError::Io {
+        stage: "store write",
+        source,
+    }
+}
+
 fn read(file: &Path) -> Result<Option<Vec<u8>>, CredentialError> {
     match std::fs::read(file) {
         Ok(contents) => Ok(Some(contents)),
@@ -305,42 +393,6 @@ fn read(file: &Path) -> Result<Option<Vec<u8>>, CredentialError> {
             source,
         }),
     }
-}
-
-/// Atomically replaces `file` (or its symlink target) with `contents`, readable only by the owner.
-///
-/// The `<file>.lock` sibling is created exclusively, so a concurrent Git or girt writer fails
-/// rather than losing an update.
-fn replace(file: &Path, contents: &[u8]) -> Result<(), CredentialError> {
-    let io = |source| CredentialError::Io {
-        stage: "store write",
-        source,
-    };
-    let file = match std::fs::canonicalize(file) {
-        Ok(target) => target,
-        Err(error) if error.kind() == ErrorKind::NotFound => file.to_path_buf(),
-        Err(source) => return Err(io(source)),
-    };
-    let mut lock_name = file.as_os_str().to_owned();
-    lock_name.push(".lock");
-    let lock = PathBuf::from(lock_name);
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut handle = options.open(&lock).map_err(io)?;
-    let written = handle
-        .write_all(contents)
-        .and_then(|()| handle.sync_all())
-        .and_then(|()| {
-            drop(handle);
-            std::fs::rename(&lock, &file)
-        });
-    if let Err(source) = written {
-        let _ = std::fs::remove_file(&lock);
-        return Err(io(source));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -526,5 +578,72 @@ mod tests {
             std::fs::read_to_string(&file).unwrap(),
             "https://user:old@example.invalid%3a8443\n"
         );
+    }
+
+    #[test]
+    fn concurrent_writers_do_not_lose_updates() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("credentials");
+        std::fs::write(&file, "").unwrap();
+        let store = CredentialStore::file(&file);
+        std::thread::scope(|scope| {
+            for writer in 0..8 {
+                let store = &store;
+                scope.spawn(move || {
+                    for entry in 0..25 {
+                        let mut context = context(None);
+                        context.host = format!("host-{writer}-{entry}").into_bytes();
+                        let complete = credential(Some("user"), Some("secret"));
+                        // A held lock fails the write; retry like a caller would.
+                        while store.store(&context, &complete).is_err() {
+                            std::thread::yield_now();
+                        }
+                    }
+                });
+            }
+        });
+        let contents = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(contents.lines().count(), 8 * 25);
+    }
+
+    #[test]
+    fn lines_decoding_to_line_feeds_are_kept_and_nul_escapes_stay_literal() {
+        // Observed from `git credential-store` (Git 2.56): these lines are skipped by `get` and
+        // survive a `store` for the same host; `%00` is returned undecoded and `%0d` decoded.
+        let foreign = "https://u:foreign%0aline@example.invalid%3a8443\n\
+                       https://u%0a:p@example.invalid%3a8443\n";
+        assert!(lines(foreign.as_bytes()).all(|line| Entry::parse(line).is_none()));
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("credentials");
+        std::fs::write(
+            &file,
+            format!("https://u:p@example.invalid%3a8443\n{foreign}"),
+        )
+        .unwrap();
+        let store = CredentialStore::file(&file);
+        store
+            .store(&context(None), &credential(Some("u"), Some("n")))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("https://u:n@example.invalid%3a8443\n{foreign}")
+        );
+        let entry = Entry::parse(b"https://u:p%00q%0dr@host").unwrap();
+        assert_eq!(entry.password, b"p%00q\rr");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_keeps_stricter_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("credentials");
+        std::fs::write(&file, "").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o400)).unwrap();
+        CredentialStore::file(&file)
+            .store(&context(None), &credential(Some("user"), Some("secret")))
+            .unwrap();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o400);
     }
 }

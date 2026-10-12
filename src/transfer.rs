@@ -501,7 +501,7 @@ fn credential_helpers(
 }
 
 /// Recognizes `store`, `store --file <path>` and `store --file=<path>`, which girt answers itself.
-/// Other arguments, and paths that would need shell quoting, keep using Git's program.
+/// Other arguments, and paths containing shell syntax, keep using Git's program.
 #[cfg(feature = "http")]
 fn native_store(text: &str, environment: &Environment) -> Option<crate::remote::CredentialStore> {
     let mut words = text.split_whitespace();
@@ -525,7 +525,10 @@ fn native_store(text: &str, environment: &Environment) -> Option<crate::remote::
             xdg.as_deref(),
         ));
     };
-    if file.contains(['\'', '"', '\\', '$', '`', '*', '?', '[']) {
+    // Anything the shell would interpret (quotes, expansions, redirections, separators) keeps
+    // Git's program, so only plain path bytes are taken literally.
+    let plain = |byte: u8| byte.is_ascii_alphanumeric() || b"/._-+,:@%=~".contains(&byte);
+    if !file.bytes().all(plain) {
         return None;
     }
     let path = match file.strip_prefix("~/") {
@@ -1368,5 +1371,38 @@ mod tests {
         assert_eq!(attempts.get(), 2);
         assert_eq!(packed(&dest), before);
         assert!(git(&dest, &["for-each-ref", "refs/heads/topic"], 0).is_empty());
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn native_store_accepts_plain_paths_and_leaves_shell_syntax_to_git() {
+        let environment = Environment::default()
+            .with("HOME", "/home/user")
+            .with_current_dir("/work");
+        let files = |text| native_store(text, &environment).map(|store| store.files().to_vec());
+        assert_eq!(
+            files("store --file=~/creds"),
+            Some(vec![PathBuf::from("/home/user/creds")])
+        );
+        assert_eq!(
+            files("store --file creds"),
+            Some(vec![PathBuf::from("/work/creds")])
+        );
+        assert_eq!(files("store").map(|files| files.len()), Some(2));
+        for text in [
+            "store --file=creds>out",
+            "store --file creds|tee",
+            "store --file=a;b",
+            "store --file=$HOME/creds",
+            "store --file='creds'",
+            "store --file=(creds)",
+            "store --file=a&",
+            "store --file=<in",
+            "store --other",
+            "store --file a b",
+            "store>out",
+        ] {
+            assert!(files(text).is_none(), "{text}");
+        }
     }
 }

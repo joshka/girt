@@ -59,6 +59,16 @@ fn session(file: &Path, context: CredentialContext) -> CredentialSession {
 }
 
 fn prompted(file: &Path, context: CredentialContext) -> CredentialSession {
+    prompted_with(file, context, USERNAME, PASSWORD)
+}
+
+/// Fills a session whose username and password come from the prompt when the store has no match.
+fn prompted_with(
+    file: &Path,
+    context: CredentialContext,
+    username: &str,
+    password: &str,
+) -> CredentialSession {
     let config = Config::parse(b"[credential]\nhelper = store\n").unwrap();
     let helper = CredentialHelper {
         configured_name: b"store".to_vec(),
@@ -67,8 +77,8 @@ fn prompted(file: &Path, context: CredentialContext) -> CredentialSession {
     let cancel = AtomicBool::new(false);
     let mut prompt = |field| {
         Some(match field {
-            girt::remote::Prompt::Username => USERNAME.as_bytes().to_vec(),
-            girt::remote::Prompt::Password => PASSWORD.as_bytes().to_vec(),
+            girt::remote::Prompt::Username => username.as_bytes().to_vec(),
+            girt::remote::Prompt::Password => password.as_bytes().to_vec(),
         })
     };
     CredentialSession::fill(
@@ -194,4 +204,47 @@ fn created_file_is_owner_only_like_git() {
         .unwrap();
     let mode = std::fs::metadata(&file).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+#[test]
+fn git_and_girt_agree_on_line_feed_and_nul_escapes() {
+    let directory = tempfile::tempdir().unwrap();
+    let seed = "https://u:p@example.invalid\n\
+                https://u:foreign%0aline@example.invalid\n\
+                https://u%0a:p@example.invalid\n";
+    let by_git = directory.path().join("git");
+    let by_girt = directory.path().join("girt");
+    std::fs::write(&by_git, seed).unwrap();
+    git_store(
+        directory.path(),
+        &by_git,
+        "store",
+        "protocol=https\nhost=example.invalid\nusername=u\npassword=n\n\n",
+    );
+    // Fill from the prompt before the file exists, then approve into the seeded file.
+    let replacement = prompted_with(&by_girt, context("example.invalid"), "u", "n");
+    std::fs::write(&by_girt, seed).unwrap();
+    let found = session(&by_girt, context("example.invalid"));
+    assert_eq!(found.credential().password.as_deref(), Some(&b"p"[..]));
+    let cancel = AtomicBool::new(false);
+    replacement.approve(&cancel, None).unwrap();
+    assert_eq!(
+        std::fs::read(&by_girt).unwrap(),
+        std::fs::read(&by_git).unwrap()
+    );
+
+    let nul = directory.path().join("nul");
+    std::fs::write(&nul, "https://u:p%00q@example.invalid\n").unwrap();
+    let from_git = git_store(
+        directory.path(),
+        &nul,
+        "get",
+        "protocol=https\nhost=example.invalid\n\n",
+    );
+    assert_eq!(from_git, "username=u\npassword=p%00q\n");
+    let from_girt = session(&nul, context("example.invalid"));
+    assert_eq!(
+        from_girt.credential().password.as_deref(),
+        Some(&b"p%00q"[..])
+    );
 }
