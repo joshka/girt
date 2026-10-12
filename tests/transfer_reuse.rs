@@ -454,3 +454,80 @@ fn legacy_index_transfer_keeps_git_fidelity_without_crc_reuse() {
     );
     assert_eq!(delta_count(dest.git_dir()), 0);
 }
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1, false, false)]
+#[case::sha256(ObjectFormat::Sha256, false, false)]
+#[case::retained_sha1(ObjectFormat::Sha1, true, false)]
+#[case::retained_sha256(ObjectFormat::Sha256, true, false)]
+#[case::configured_sha1(ObjectFormat::Sha1, false, true)]
+#[case::configured_sha256(ObjectFormat::Sha256, false, true)]
+fn unreferenced_commit_does_not_prove_complete_history(
+    #[case] format: ObjectFormat,
+    #[case] retained: bool,
+    #[case] configured: bool,
+) {
+    let source = fixture(format);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dest.git");
+    git(
+        root.path(),
+        &[
+            "clone",
+            "--bare",
+            source.path().to_str().unwrap(),
+            path.to_str().unwrap(),
+        ],
+    );
+    let old = tip(&path);
+    std::fs::write(source.path().join("file"), b"interrupted fetch content\n").unwrap();
+    git(source.path(), &["add", "file"]);
+    git(source.path(), &["commit", "-qm", "interrupted fetch"]);
+    let new = tip(source.path());
+    let commit = git(source.path(), &["cat-file", "commit", &new.to_string()]);
+    let commit_path = root.path().join("commit");
+    std::fs::write(&commit_path, commit).unwrap();
+    // An interrupted unpack can leave a commit without its tree and blob, outside every ref.
+    let stored = git(
+        &path,
+        &[
+            "hash-object",
+            "-w",
+            "-t",
+            "commit",
+            "--literally",
+            commit_path.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(String::from_utf8(stored).unwrap().trim(), new.to_string());
+    assert_eq!(tip(&path), old);
+    let dest = Repository::open(&path).unwrap();
+    if configured {
+        let options = girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+        dest.fetch(
+            "origin",
+            &options,
+            &girt::transfer::Environment::from_process(),
+            &mut girt::transfer::NoCallbacks,
+        )
+        .unwrap();
+        git(&path, &["fsck", "--strict"]);
+    } else {
+        let known = KnownHistory::from_store(
+            dest.objects(PackLimits::trusted()).unwrap(),
+            &[old],
+            FetchLimits::trusted(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let known = if retained {
+            known.only_when_all_wants_known()
+        } else {
+            known
+        };
+        let (received, _) = receive(source.path(), &known);
+        assert_eq!(received.object_count(), if retained { 3 } else { 2 });
+        publish(&received, &dest, new);
+    }
+    assert_eq!(object_set(&path), object_set(&source.path().join(".git")));
+}
