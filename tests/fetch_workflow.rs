@@ -1691,3 +1691,182 @@ fn received_proof_does_not_trust_an_earlier_mislabelled_pack(#[case] format: &st
             .success()
     );
 }
+
+#[test]
+fn one_commit_fast_forward_does_not_spend_budget_on_old_history() {
+    let source = Source::new();
+    source.set("refs/heads/main", source.second);
+    let (_root, repository) = destination();
+    let specs = ["refs/heads/main:refs/remotes/origin/main"];
+    fetch(&repository, &source, &specs);
+    let third = oid(&git(
+        source.root.path(),
+        &[
+            "commit-tree",
+            &source.tree.to_string(),
+            "-p",
+            &source.second.to_string(),
+        ],
+        b"third\n",
+    ));
+    assert!(
+        command(
+            source.root.path(),
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &source.second.to_string(),
+                &third.to_string()
+            ],
+            b""
+        )
+        .status
+        .success()
+    );
+    source.set("refs/heads/main", third);
+    let ready = receive(
+        request(&repository, &specs, &[], Reflog::Preserve),
+        &source,
+        &KnownHistory::default(),
+    );
+    let report = ready
+        .finish(
+            FetchUpdateLimits {
+                history: girt::HistoryLimits {
+                    max_commits: 2,
+                    max_parents: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(report.updates[0].kind, FetchUpdateKind::FastForward);
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/main"),
+        Some(Target::Direct(third))
+    );
+}
+
+#[path = "support/history_git.rs"]
+mod history_git;
+
+#[rstest]
+#[case::linear(vec![vec![], vec![0], vec![1]], 1, 2, false)]
+#[case::unrelated(vec![vec![], vec![0], vec![]], 1, 2, false)]
+#[case::rewind(vec![vec![], vec![0]], 1, 0, false)]
+#[case::diverged(vec![vec![], vec![0], vec![0]], 1, 2, false)]
+#[case::merge_long_first_branch(vec![vec![], vec![0], vec![1], vec![2], vec![3], vec![0], vec![4,5]], 5, 6, false)]
+#[case::shallow_blocks_old(vec![vec![], vec![0], vec![1]], 0, 2, true)]
+fn fetch_ancestry_matches_git(
+    #[case] parents: Vec<Vec<usize>>,
+    #[case] old: usize,
+    #[case] new: usize,
+    #[case] shallow: bool,
+) {
+    let h = history_git::History::new(&parents, true);
+    assert_eq!(
+        h.objects()
+            .is_ancestor(h.ids[old], h.ids[new], girt::HistoryLimits::default())
+            .unwrap(),
+        h.is_ancestor(h.ids[old], h.ids[new])
+    );
+    assert_eq!(
+        h.objects()
+            .merge_bases(h.ids[old], h.ids[new], girt::HistoryLimits::default())
+            .unwrap(),
+        h.query("merge-base", &[h.ids[old], h.ids[new]])
+    );
+    let (_root, repository) = destination();
+    let source = Source {
+        first: h.ids[old],
+        second: h.ids[new],
+        tree: h.ids[0],
+        blob: h.ids[0],
+        tag: h.ids[0],
+        root: h.root,
+    };
+    let specs = ["refs/heads/main:refs/remotes/origin/main"];
+    source.set("refs/heads/main", source.first);
+    fetch(&repository, &source, &specs);
+    set_ancestry_shallow(&repository, &source, h.ids[1], shallow);
+    let repository = Repository::open(repository.git_dir()).unwrap();
+    let known = KnownHistory::from_store(
+        repository.objects(PackLimits::default()).unwrap(),
+        &[source.first],
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let oracle = command(
+        source.root.path(),
+        &[
+            "merge-base",
+            "--is-ancestor",
+            &source.first.to_string(),
+            &source.second.to_string(),
+        ],
+        b"",
+    );
+    assert!(matches!(oracle.status.code(), Some(0 | 1)));
+    clear_oracle_shallow(&source, shallow);
+    source.set("refs/heads/main", source.second);
+    let ready = receive(
+        request(&repository, &specs, &[], Reflog::Preserve),
+        &source,
+        &known,
+    );
+    let result = ready.finish(FetchUpdateLimits::default(), &AtomicBool::new(false));
+    assert_eq!(result.is_ok(), oracle.status.success());
+    assert_ancestry_publication(&repository, &source, result, oracle.status.success());
+}
+
+fn set_ancestry_shallow(
+    repository: &Repository,
+    source: &Source,
+    boundary: ObjectId,
+    shallow: bool,
+) {
+    if shallow {
+        fs::write(
+            repository.git_dir().join("shallow"),
+            format!("{boundary}\n"),
+        )
+        .unwrap();
+        fs::write(source.root.path().join("shallow"), format!("{boundary}\n")).unwrap();
+    }
+}
+
+fn assert_ancestry_publication(
+    repository: &Repository,
+    source: &Source,
+    result: Result<girt::fetch::FetchReport, girt::fetch::FetchFinishError>,
+    fast_forward: bool,
+) {
+    if fast_forward {
+        assert_eq!(
+            result.unwrap().updates[0].kind,
+            FetchUpdateKind::FastForward
+        );
+        assert_eq!(
+            stored(repository, "refs/remotes/origin/main"),
+            Some(Target::Direct(source.second))
+        );
+    } else {
+        assert!(matches!(
+            *result.unwrap_err().source,
+            FetchFinishFailure::Update(girt::fetch::FetchUpdateError::NonFastForward(_))
+        ));
+        assert_eq!(
+            stored(repository, "refs/remotes/origin/main"),
+            Some(Target::Direct(source.first))
+        );
+    }
+}
+
+fn clear_oracle_shallow(source: &Source, shallow: bool) {
+    if shallow {
+        fs::remove_file(source.root.path().join("shallow")).unwrap();
+    }
+}

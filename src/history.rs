@@ -398,6 +398,77 @@ mod tests {
         }
     }
 
+    fn verified_query(
+        parents: Vec<Vec<usize>>,
+        old: usize,
+        new: usize,
+        limits: HistoryLimits,
+    ) -> Result<bool, HistoryError> {
+        let graph = graph(parents);
+        let root = tempfile::tempdir().unwrap();
+        let repo = crate::Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        objects.is_ancestor_verified(graph.ids[old], graph.ids[new], limits, |id, _| {
+            Ok(Some(
+                graph.parents[graph.positions[&id]]
+                    .iter()
+                    .map(|&i| graph.ids[i])
+                    .collect(),
+            ))
+        })
+    }
+
+    #[test]
+    fn verified_match_stops_before_old_parents_are_queued() {
+        assert!(
+            verified_query(
+                vec![vec![], vec![0], vec![1]],
+                1,
+                2,
+                HistoryLimits {
+                    max_commits: 2,
+                    max_parents: 1,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::unrelated(vec![vec![], vec![0], vec![]], 1, 2, false)]
+    #[case::rewind(vec![vec![], vec![0]], 1, 0, false)]
+    #[case::merge_second_parent(vec![vec![], vec![0], vec![1], vec![2], vec![0], vec![3,4]], 4, 5, true)]
+    #[case::duplicate_edges(vec![vec![], vec![0,0]], 0, 1, true)]
+    #[case::equal(vec![vec![], vec![0]], 1, 1, true)]
+    fn verified_reachability(
+        #[case] parents: Vec<Vec<usize>>,
+        #[case] old: usize,
+        #[case] new: usize,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(
+            verified_query(parents, old, new, HistoryLimits::default()).unwrap(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::self_cycle(vec![vec![0], vec![]])]
+    #[case::two_node_cycle(vec![vec![1], vec![0], vec![]])]
+    fn verified_search_rejects_explored_cycles(#[case] parents: Vec<Vec<usize>>) {
+        let old = parents.len() - 1;
+        assert!(matches!(
+            verified_query(parents, old, 0, HistoryLimits::default()),
+            Err(HistoryError::Cycle)
+        ));
+    }
+
     #[rstest]
     #[case::self_cycle(vec![vec![0]])]
     #[case::two_node_cycle(vec![vec![1],vec![0]])]
