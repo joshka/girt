@@ -100,8 +100,8 @@ impl PreparedPush {
     /// advertisement as a ref tip or `.have`, independently of command expectations; roots whose
     /// closure omitted nothing and supplied no emitted delta base are not required. Delta bases
     /// come only from the already marked blob/tree closure, never from unrelated stored objects.
-    /// Candidate matching tries a bounded number of nearest-size blobs; it does not guarantee
-    /// Git's compression choices. If a root has disappeared, prepare a full
+    /// Candidate matching tries a bounded number of nearest-size blobs and trees; it does not
+    /// guarantee Git's compression choices. If a root has disappeared, prepare a full
     /// transfer or retry using fresh knowledge. Coordinate with server pruning/GC; advertisements
     /// cannot guarantee object retention against concurrent deletion.
     ///

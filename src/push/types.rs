@@ -71,11 +71,13 @@ pub struct PushLimits {
     /// Compression policy for fresh and reconstructed objects; bounded delta search by default.
     /// Blob and tree candidates may come from verified advertised-root history; their
     /// reconstructed values count against `pack.max_input_bytes`. Insufficient candidate
-    /// budget falls back to whole objects. Existing compressed entries and eligible deltas are
-    /// reused under either policy. Transfer deltas use REF_DELTA, requiring no optional OFS
-    /// capability. Search and copied chains obey `read.max_delta_depth` and the delta policy's
-    /// depth bound when enabled. Offering receiver candidates additionally caps output depth at
-    /// one so internal bases always resolve before receiver-assisted external lookup.
+    /// budget falls back to whole objects. A corrupt offered candidate refuses preparation even
+    /// if another candidate could produce a valid delta; candidate integrity is checked strictly.
+    /// Existing compressed entries and eligible deltas are reused under either policy.
+    /// Transfer deltas use REF_DELTA, requiring no optional OFS capability. Search and copied
+    /// chains obey `read.max_delta_depth` and the delta policy's depth bound when enabled.
+    /// Offering receiver candidates additionally caps output depth at one so internal bases
+    /// always resolve before receiver-assisted external lookup.
     pub compression: PackCompression,
 }
 impl Default for PushLimits {

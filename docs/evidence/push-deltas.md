@@ -3,14 +3,14 @@
 ## Result
 
 A push of an eight-byte edit to a deterministic 512 KiB blob on the large fixture produces a
-598-byte pack, compared with main's 525,690 bytes and Git's 311 bytes. The pack-size budget of at
-most twice Git is met (1.92×). Latest local edit latency is 0.31 s versus Git's 0.16 s; HTTP edit
-latency is 0.26 s versus 0.19 s. Ranges are wide. An earlier tree-search repeat measured 0.22 s
-locally versus Git's 0.10 s, above the 2× target, so these repeats do not establish a consistent 2×
-latency result. The latest new-branch median is 15% above main, while earlier repeats show no
-regression; the 10% regression budget is therefore not established. Native peak RSS remains below
-128 MiB. These results establish this workload's pack-size behavior, not parity with Git's
-heuristics, a latency improvement or an end-to-end jj result.
+598-byte pack, compared with main's 525,690 bytes and Git's 310 bytes. The pack-size budget of at
+most twice Git is met (1.93×). After the review correction preserves compressed packed-whole
+fallbacks, local edit latency is 0.22 s versus Git's 0.10 s, above the 2× target; HTTP edit latency
+is 0.19 s versus 0.18 s. Native new-branch median is 0.18 s versus main's 0.19 s. Earlier repeats
+ranged from no new-branch regression to a 15% increase, so the latest repeat alone does not
+establish a stable regression budget. Native peak RSS remains below 128 MiB. These results establish
+this workload's pack-size behavior, not parity with Git's heuristics, a latency improvement or an
+end-to-end jj result.
 
 ## Specification and Implementation
 
@@ -55,14 +55,16 @@ HTTP uses the checked-in loopback `http_server.py` and `git http-backend`; the o
 terminated and waited on in `finally`. Every destination passes Git connectivity checking and edit
 runs compare exact blob bytes. This does not claim cold-storage behavior.
 
+Measurements below are from the review follow-up `ceafb46c`.
+
 | Workload           | Main `608f4dd0`              | Changed                      | Git                          |
 | ------------------ | ---------------------------- | ---------------------------- | ---------------------------- |
-| local new branch   | 0.26 s (0.23–0.33), 91.4 MiB | 0.30 s (0.27–0.55), 91.2 MiB | 0.12 s (0.07–0.13), 14.4 MiB |
-| local fast-forward | 0.20 s (0.18–0.22), 91.3 MiB | 0.19 s (0.19–0.26), 90.9 MiB | 0.07 s (0.07–0.16), 14.4 MiB |
-| local 512 KiB edit | 0.19 s (0.18–1.04), 91.0 MiB | 0.31 s (0.27–0.34), 92.1 MiB | 0.16 s (0.10–0.18), 15.9 MiB |
-| http new branch    | 0.28 s (0.15–0.29), 26.6 MiB | 0.24 s (0.15–0.31), 26.7 MiB | 0.28 s (0.17–0.31), 10.7 MiB |
-| http fast-forward  | 0.29 s (0.29–0.96), 26.5 MiB | 0.25 s (0.18–0.32), 26.8 MiB | 0.26 s (0.20–0.32), 11.7 MiB |
-| http 512 KiB edit  | 0.32 s (0.22–0.58), 27.6 MiB | 0.26 s (0.22–0.28), 28.8 MiB | 0.19 s (0.18–0.32), 15.9 MiB |
+| local new branch   | 0.19 s (0.17–0.50), 90.8 MiB | 0.18 s (0.18–0.56), 91.9 MiB | 0.07 s (0.07–0.09), 14.4 MiB |
+| local fast-forward | 0.19 s (0.18–0.20), 90.9 MiB | 0.17 s (0.17–0.18), 91.0 MiB | 0.07 s (0.07–0.08), 14.4 MiB |
+| local 512 KiB edit | 0.19 s (0.18–0.19), 91.0 MiB | 0.22 s (0.22–0.23), 90.9 MiB | 0.10 s (0.09–0.10), 15.9 MiB |
+| http new branch    | 0.14 s (0.13–0.15), 26.1 MiB | 0.15 s (0.14–0.15), 26.5 MiB | 0.15 s (0.14–0.15), 10.7 MiB |
+| http fast-forward  | 0.14 s (0.14–0.14), 26.1 MiB | 0.15 s (0.14–0.15), 26.8 MiB | 0.16 s (0.15–0.16), 11.6 MiB |
+| http 512 KiB edit  | 0.16 s (0.16–0.16), 26.9 MiB | 0.19 s (0.18–0.19), 28.1 MiB | 0.18 s (0.17–0.18), 15.8 MiB |
 
 The initial baseline was taken before acceptance implementation. An intermediate blob-only version
 sent 1,568 bytes and regressed median latency by trying further candidates. The earlier tree-search
@@ -133,23 +135,28 @@ The acceptance suite covers both hashes, strict Git thin-pack repair, exact cont
 REF framing with and without OFS advertisement, packed-source edits, empty receiver internal bases,
 zero/one output depth, ordinary policy, input/work fallback and corrupt candidate refusal with the
 receiver unchanged. Configured native, HTTP and SSH pushes reach real Git-compatible receivers; SSH
-uses a local client stand-in and starts no sshd. Existing advertisement and transfer-reuse suites
-retain shallow refusal, hidden refs, root-race retry, CRC damage, false index/base identity,
-connectivity and no-mutation evidence. The advertisement corpus explicitly selects ordinary
-compression so installed-index counts still equal wire-object counts; default delta cases separately
-check thin repair, including hidden receiver history. The retry compares incoming IDs against Git's
-six selected IDs plus its verified repair base. Windows CI explicitly includes the portable delta
-suite; Unix CI runs all features and the SSH stand-in. Platform results remain CI evidence.
+uses a local client stand-in and starts no sshd. Configured native, HTTP and SSH cases cover both
+SHA-1 and SHA-256. A packed-whole fallback test compares complete output bytes against ordinary
+compressed reuse in both formats. Existing advertisement and transfer-reuse suites retain shallow
+refusal, hidden refs, root-race retry, CRC damage, false index/base identity, connectivity and
+no-mutation evidence. The advertisement corpus explicitly selects ordinary compression so
+installed-index counts still equal wire-object counts; default delta cases separately check thin
+repair, including hidden receiver history. The retry compares incoming IDs against Git's six
+selected IDs plus its verified repair base. Windows CI explicitly includes the portable delta suite;
+Unix CI runs all features and the SSH stand-in. Platform results remain CI evidence.
 
 The default external search skips payloads under 64 bytes, limits eligible payloads to 1 MiB, tries
 nearest-size candidates, and stops after a completed delta below 1% of target size. Larger objects,
-unmatched candidates and exhausted search use whole-object output. Git can find better deltas;
-pathname-oriented matching and broader size/work heuristics remain possible follow-ups. Native
-import repairs thin packs by appending ordinary bases, potentially duplicating an already stored
-base. Full `just check` exposed a receiver resolution ambiguity when a physically present,
-unreferenced object was both a pending internal delta target and a candidate for store-assisted
-external lookup. The existing native root-change retry failed with duplicate identity before any
-mutation. The
+unmatched candidates and exhausted search use whole-object output. Packed whole entries keep their
+CRC-checked stored compressed stream when search produces no delta, and objects under 64 bytes skip
+reconstruction for search. Corrupt offered candidates deliberately refuse preparation even when a
+different candidate might work; this strictness is documented in `PushLimits::compression`. Git can
+find better deltas; pathname-oriented matching and broader size/work heuristics remain possible
+follow-ups. Native import repairs thin packs by appending ordinary bases, potentially duplicating an
+already stored base. Full `just check` exposed a receiver resolution ambiguity when a physically
+present, unreferenced object was both a pending internal delta target and a candidate for
+store-assisted external lookup. The existing native root-change retry failed with duplicate identity
+before any mutation. The
 [recorded correction](https://github.com/joshka/girt/issues/25#issuecomment-6124896054) caps
 candidate packs to one delta level, eliminating that shape by construction. Both-format
 interrupted/rejected receive cases and the existing retry assert successful exact publication.
@@ -158,4 +165,4 @@ concurrent server GC protection remain outside this increment.
 
 The final local gate is `just check` under the shared timing lock, with warnings rejected. Its
 result and exact published revision are recorded in the PR; this report's measurements describe the
-final algorithm before subsequent formatting and documentation changes.
+review follow-up algorithm, including preserved compressed fallback entries.

@@ -232,13 +232,14 @@ fn write_reusing_impl(
                 limits,
                 &mut deltas,
                 check,
+                |pack| write_ordinary(pack, object.kind(), object.data()).map_err(Into::into),
             )?;
         } else {
             match header.base {
                 None if matches!(kind, crate::ObjectKind::Blob | crate::ObjectKind::Tree)
                     && external.as_ref().is_some_and(|bases| !bases.ids.is_empty())
                     && matches!(compression, PackCompression::Delta(options)
-                        if max_depth > 0 && options.max_depth > 0 && length >= 8
+                        if max_depth > 0 && options.max_depth > 0 && length >= 64
                             && length <= options.max_object_bytes) =>
                 {
                     let object = source
@@ -256,6 +257,7 @@ fn write_reusing_impl(
                         limits,
                         &mut deltas,
                         check,
+                        |pack| source.copy_raw(&entry, &header, pack).map_err(copy_error),
                     )?;
                 }
                 None => source
@@ -296,6 +298,10 @@ fn write_reusing_impl(
                             limits,
                             &mut deltas,
                             check,
+                            |pack| {
+                                write_ordinary(pack, object.kind(), object.data())
+                                    .map_err(Into::into)
+                            },
                         )?;
                     }
                 },
@@ -592,8 +598,8 @@ impl<'a> ExternalBases<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_reconstructed(
-    pack: &mut Output<'_, impl Write>,
+fn write_reconstructed<W: Write>(
+    pack: &mut Output<'_, W>,
     id: ObjectId,
     object: &crate::Object,
     external: Option<&mut ExternalBases<'_>>,
@@ -604,6 +610,7 @@ fn write_reconstructed(
     limits: PackWriteLimits,
     stats: &mut DeltaStats,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    whole: impl FnOnce(&mut Output<'_, W>) -> Result<(), ReuseError>,
 ) -> Result<usize, ReuseError> {
     let mut search_stats = DeltaStats::default();
     let selected =
@@ -628,7 +635,7 @@ fn write_reconstructed(
         };
     stats.candidates = stats.candidates.saturating_add(search_stats.candidates);
     stats.work = stats.work.saturating_add(search_stats.work);
-    if let Some(selected) = selected {
+    if let Some(selected) = selected.filter(|entry| entry.depth != 0) {
         pack.put(&selected.bytes)?;
         if selected.depth != 0 {
             stats.entries += 1;
@@ -636,7 +643,7 @@ fn write_reconstructed(
         }
         Ok(selected.depth)
     } else {
-        write_ordinary(pack, object.kind(), object.data())?;
+        whole(pack)?;
         Ok(0)
     }
 }

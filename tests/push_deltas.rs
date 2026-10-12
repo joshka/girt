@@ -320,6 +320,38 @@ fn packed_edit_with_excluded_base_still_uses_thin_delta(#[case] format: ObjectFo
 }
 
 #[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn packed_whole_search_fallback_preserves_compressed_entries(#[case] format: ObjectFormat) {
+    let f = fixture(format);
+    git(&f.source, &["repack", "-ad", "--window=0"], &[]);
+    let ordinary = prepare_with_limits(
+        &f,
+        &[f.old],
+        PushLimits {
+            compression: girt::PackCompression::Ordinary,
+            ..PushLimits::default()
+        },
+    );
+    let bounded = prepare_with_limits(
+        &f,
+        &[f.old],
+        PushLimits {
+            compression: girt::PackCompression::Delta(girt::DeltaOptions {
+                max_work: 1,
+                ..girt::DeltaOptions::default()
+            }),
+            ..PushLimits::default()
+        },
+    );
+    assert_eq!(
+        wire_pack(&f, &bounded, false),
+        wire_pack(&f, &ordinary, false)
+    );
+    publish(&f, &bounded);
+}
+
+#[rstest]
 #[case::input_budget(PushLimits { pack: girt::PackWriteLimits { max_input_bytes: 526000, ..girt::PackWriteLimits::default() }, ..PushLimits::default() })]
 #[case::work_budget(PushLimits { compression: girt::PackCompression::Delta(girt::DeltaOptions { max_work: 1, ..girt::DeltaOptions::default() }), ..PushLimits::default() })]
 #[case::ordinary(PushLimits { compression: girt::PackCompression::Ordinary, ..PushLimits::default() })]
@@ -444,9 +476,11 @@ fn configured_push(f: &Fixture, url: &str, environment: &girt::transfer::Environ
     git(&f.dest, &["fsck", "--strict"], &[]);
 }
 
-#[test]
-fn configured_native_push_imports_thin_delta() {
-    let f = fixture(ObjectFormat::Sha1);
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn configured_native_push_imports_thin_delta(#[case] format: ObjectFormat) {
+    let f = fixture(format);
     configured_push(
         &f,
         f.dest.to_str().unwrap(),
@@ -455,9 +489,11 @@ fn configured_native_push_imports_thin_delta() {
 }
 
 #[cfg(feature = "http")]
-#[test]
-fn configured_http_push_sends_thin_delta_to_git() {
-    let f = fixture(ObjectFormat::Sha1);
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn configured_http_push_sends_thin_delta_to_git(#[case] format: ObjectFormat) {
+    let f = fixture(format);
     git(&f.dest, &["config", "http.receivepack", "true"], &[]);
     let server = http_git::Server::new(&f.dest, "", "", None);
     configured_push(&f, &server.url, &girt::transfer::Environment::default());
@@ -465,9 +501,11 @@ fn configured_http_push_sends_thin_delta_to_git() {
 }
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-#[test]
-fn configured_ssh_push_sends_thin_delta_to_git_without_sshd() {
-    let f = fixture(ObjectFormat::Sha1);
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn configured_ssh_push_sends_thin_delta_to_git_without_sshd(#[case] format: ObjectFormat) {
+    let f = fixture(format);
     let client = f._root.path().join("ssh");
     stand_in::shell(&client, "for last; do :; done\nexec /bin/sh -c \"$last\"\n");
     let url = format!("ssh://localhost{}", f.dest.display());
