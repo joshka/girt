@@ -1,5 +1,6 @@
 //! Bounded ancestry queries over verified loose and packed commit objects.
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{Commit, CommitError, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits};
 
@@ -119,18 +120,21 @@ impl Objects {
         result
     }
 
-    /// Fetch can reuse byte-bound, identity-checked parent records without weakening the
-    /// full-ancestry, budget or cycle checks. Missing evidence uses the ordinary content reader.
+    /// Fetch stops after verifying the reached ancestor, without following its parents.
+    /// Byte-bound receive evidence and fallback reads both verify identity. Budgets cover
+    /// discovered commits and followed edges; cycles in the explored graph fail. No timestamp
+    /// assumptions.
     pub(crate) fn is_ancestor_verified(
         &self,
         ancestor: ObjectId,
         descendant: ObjectId,
         limits: HistoryLimits,
+        cancel: &AtomicBool,
         parents: impl FnMut(ObjectId, ReadLimits) -> Result<Option<Vec<ObjectId>>, HistoryError>,
     ) -> Result<bool, HistoryError> {
-        let graph = Graph::read_with(self, &[descendant, ancestor], limits, parents)?;
-        let marks = graph.reachable(0);
-        Ok(marks[graph.positions[&ancestor]])
+        let graph =
+            Graph::read_until(self, &[descendant], limits, parents, Some(ancestor), cancel)?;
+        Ok(graph.positions.contains_key(&ancestor))
     }
 
     /// Returns all best common ancestors of two commits, sorted by raw object ID.
@@ -216,7 +220,25 @@ impl Graph {
         objects: &Objects,
         roots: &[ObjectId],
         limits: HistoryLimits,
+        verified: impl FnMut(ObjectId, ReadLimits) -> Result<Option<Vec<ObjectId>>, HistoryError>,
+    ) -> Result<Self, HistoryError> {
+        Self::read_until(
+            objects,
+            roots,
+            limits,
+            verified,
+            None,
+            &AtomicBool::new(false),
+        )
+    }
+
+    fn read_until(
+        objects: &Objects,
+        roots: &[ObjectId],
+        limits: HistoryLimits,
         mut verified: impl FnMut(ObjectId, ReadLimits) -> Result<Option<Vec<ObjectId>>, HistoryError>,
+        stop: Option<ObjectId>,
+        cancel: &AtomicBool,
     ) -> Result<Self, HistoryError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -242,11 +264,12 @@ impl Graph {
             let mut index = 0;
             while index < graph.ids.len() {
                 let id = graph.ids[index];
+                check_cancelled(cancel, id)?;
                 let parents = match verified(id, limits.read)? {
                     Some(parents) => parents,
                     None => {
                         let object = objects
-                            .read(id, limits.read)
+                            .read_controlled(id, limits.read, cancel)
                             .map_err(|source| HistoryError::Read { id, source })?
                             .ok_or(HistoryError::Missing(id))?;
                         if object.kind() != ObjectKind::Commit {
@@ -257,6 +280,12 @@ impl Graph {
                         commit.parents().to_vec()
                     }
                 };
+                if stop == Some(id) {
+                    // Queued commits have no explored outgoing edges. The matching commit was
+                    // identity-checked and parsed above; its parents are outside this query.
+                    graph.parents.resize_with(graph.ids.len(), Vec::new);
+                    break;
+                }
                 let parents = if objects.shallow_roots().contains(id) {
                     &[]
                 } else {
@@ -267,12 +296,13 @@ impl Graph {
                     .ok_or(HistoryError::Limit("parent occurrences"))?;
                 let mut edges = Vec::with_capacity(parents.len());
                 for &parent in parents {
+                    check_cancelled(cancel, id)?;
                     edges.push(graph.discover(parent, limits.max_commits)?);
                 }
                 graph.parents.push(edges);
                 index += 1;
             }
-            graph.check_acyclic()?;
+            graph.check_acyclic_controlled(cancel)?;
             Ok(graph)
         };
         #[cfg(feature = "tracing")]
@@ -301,9 +331,15 @@ impl Graph {
         Ok(index)
     }
 
+    #[cfg(test)]
     fn check_acyclic(&self) -> Result<(), HistoryError> {
+        self.check_acyclic_controlled(&AtomicBool::new(false))
+    }
+
+    fn check_acyclic_controlled(&self, cancel: &AtomicBool) -> Result<(), HistoryError> {
         let mut children = vec![0usize; self.ids.len()];
-        for parents in &self.parents {
+        for (index, parents) in self.parents.iter().enumerate() {
+            check_cancelled(cancel, self.ids[index])?;
             for &parent in parents {
                 children[parent] += 1;
             }
@@ -315,6 +351,7 @@ impl Graph {
             .collect();
         let mut visited = 0;
         while let Some(index) = ready.pop_front() {
+            check_cancelled(cancel, self.ids[index])?;
             visited += 1;
             for &parent in &self.parents[index] {
                 children[parent] -= 1;
@@ -342,6 +379,17 @@ impl Graph {
             }
         }
         marks
+    }
+}
+
+fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(HistoryError::Read {
+            id,
+            source: ObjectReadError::Cancelled,
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -396,6 +444,260 @@ mod tests {
             positions,
             parents,
         }
+    }
+
+    fn verified_query(
+        parents: Vec<Vec<usize>>,
+        old: usize,
+        new: usize,
+        limits: HistoryLimits,
+    ) -> Result<bool, HistoryError> {
+        let graph = graph(parents);
+        let root = tempfile::tempdir().unwrap();
+        let repo = crate::Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        objects.is_ancestor_verified(
+            graph.ids[old],
+            graph.ids[new],
+            limits,
+            &AtomicBool::new(false),
+            |id, _| {
+                Ok(Some(
+                    graph.parents[graph.positions[&id]]
+                        .iter()
+                        .map(|&i| graph.ids[i])
+                        .collect(),
+                ))
+            },
+        )
+    }
+
+    fn stored_history() -> (tempfile::TempDir, crate::Repository, Vec<ObjectId>) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = crate::Repository::init(
+            crate::ObjectFormat::Sha1,
+            root.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let loose = repo.loose_objects();
+        let tree = loose
+            .write_tree(&crate::Tree::new(crate::ObjectFormat::Sha1, vec![]).unwrap())
+            .unwrap();
+        let signature = crate::Signature {
+            name: b"History".to_vec(),
+            email: b"history@example.test".to_vec(),
+            seconds: 1700000000,
+            offset_minutes: 0,
+        };
+        let mut ids = vec![];
+        for i in 0..3 {
+            let commit = Commit::new(crate::CommitFields {
+                tree,
+                parents: ids.last().copied().into_iter().collect(),
+                author: signature.clone(),
+                committer: signature.clone(),
+                extra_headers: vec![],
+                message: format!("node {i}").into_bytes(),
+            })
+            .unwrap();
+            ids.push(loose.write_commit(&commit).unwrap());
+        }
+        (root, repo, ids)
+    }
+
+    fn loose_path(repo: &crate::Repository, id: ObjectId) -> std::path::PathBuf {
+        let hex = id.to_string();
+        repo.git_dir()
+            .join("objects")
+            .join(&hex[..2])
+            .join(&hex[2..])
+    }
+
+    #[test]
+    fn verified_query_hashes_the_matching_commit() {
+        let (_root, repo, ids) = stored_history();
+        std::fs::copy(loose_path(&repo, ids[0]), loose_path(&repo, ids[1])).unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        assert!(
+            matches!(objects.is_ancestor_verified(ids[1], ids[2], HistoryLimits::default(), &AtomicBool::new(false), |_, _| Ok(None)), Err(HistoryError::Read { id, .. }) if id == ids[1])
+        );
+    }
+
+    #[test]
+    fn verified_query_respects_git_shallow_boundary() {
+        let (_root, repo, ids) = stored_history();
+        std::fs::write(repo.git_dir().join("shallow"), format!("{}\n", ids[1])).unwrap();
+        let repo = crate::Repository::open(repo.git_dir()).unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let oracle = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.git_dir())
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                &ids[0].to_string(),
+                &ids[2].to_string(),
+            ])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert_eq!(oracle.code(), Some(1));
+        assert!(
+            !objects
+                .is_ancestor_verified(
+                    ids[0],
+                    ids[2],
+                    HistoryLimits::default(),
+                    &AtomicBool::new(false),
+                    |_, _| Ok(None)
+                )
+                .unwrap()
+        );
+        assert!(
+            objects
+                .is_ancestor_verified(
+                    ids[1],
+                    ids[2],
+                    HistoryLimits::default(),
+                    &AtomicBool::new(false),
+                    |_, _| Ok(None)
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn cancellation_during_verified_walk_prevents_an_answer() {
+        let (_root, repo, ids) = stored_history();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let result = objects.is_ancestor_verified(
+            ids[0],
+            ids[2],
+            HistoryLimits::default(),
+            &cancel,
+            |_, _| {
+                cancel.store(true, Ordering::Relaxed);
+                Ok(None)
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(HistoryError::Read {
+                source: ObjectReadError::Cancelled,
+                ..
+            })
+        ));
+    }
+
+    #[rstest]
+    #[case::commits(1, 10, "commits")]
+    #[case::parents(10, 0, "parent occurrences")]
+    fn verified_query_keeps_graph_budgets(
+        #[case] max_commits: usize,
+        #[case] max_parents: usize,
+        #[case] expected: &str,
+    ) {
+        assert!(
+            matches!(verified_query(vec![vec![], vec![0]], 0, 1, HistoryLimits { max_commits, max_parents, ..Default::default() }), Err(HistoryError::Limit(name)) if name == expected)
+        );
+    }
+
+    #[test]
+    fn verified_query_keeps_per_read_budget() {
+        let (_root, repo, ids) = stored_history();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        let mut limits = HistoryLimits::default();
+        limits.read.max_object_bytes = 1;
+        assert!(matches!(
+            objects.is_ancestor_verified(
+                ids[1],
+                ids[2],
+                limits,
+                &AtomicBool::new(false),
+                |_, _| Ok(None)
+            ),
+            Err(HistoryError::Read { .. })
+        ));
+    }
+
+    #[test]
+    fn early_match_does_not_hide_an_explored_cycle() {
+        assert!(matches!(
+            verified_query(vec![vec![0, 1], vec![]], 1, 0, HistoryLimits::default()),
+            Err(HistoryError::Cycle)
+        ));
+    }
+
+    #[test]
+    fn verified_query_does_not_read_beyond_matching_commit() {
+        let (_root, repo, ids) = stored_history();
+        std::fs::remove_file(loose_path(&repo, ids[0])).unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        assert!(
+            objects
+                .is_ancestor_verified(
+                    ids[1],
+                    ids[2],
+                    HistoryLimits::default(),
+                    &AtomicBool::new(false),
+                    |_, _| Ok(None)
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn verified_match_stops_before_old_parents_are_queued() {
+        assert!(
+            verified_query(
+                vec![vec![], vec![0], vec![1]],
+                1,
+                2,
+                HistoryLimits {
+                    max_commits: 2,
+                    max_parents: 1,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::unrelated(vec![vec![], vec![0], vec![]], 1, 2, false)]
+    #[case::rewind(vec![vec![], vec![0]], 1, 0, false)]
+    #[case::merge_second_parent(vec![vec![], vec![0], vec![1], vec![2], vec![0], vec![3,4]], 4, 5, true)]
+    #[case::duplicate_edges(vec![vec![], vec![0,0]], 0, 1, true)]
+    #[case::equal(vec![vec![], vec![0]], 1, 1, true)]
+    fn verified_reachability(
+        #[case] parents: Vec<Vec<usize>>,
+        #[case] old: usize,
+        #[case] new: usize,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(
+            verified_query(parents, old, new, HistoryLimits::default()).unwrap(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::self_cycle(vec![vec![0], vec![]])]
+    #[case::two_node_cycle(vec![vec![1], vec![0], vec![]])]
+    fn verified_search_rejects_explored_cycles(#[case] parents: Vec<Vec<usize>>) {
+        let old = parents.len() - 1;
+        assert!(matches!(
+            verified_query(parents, old, 0, HistoryLimits::default()),
+            Err(HistoryError::Cycle)
+        ));
     }
 
     #[rstest]
