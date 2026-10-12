@@ -17,6 +17,10 @@ pub struct Server {
 }
 impl Server {
     pub fn new(repository: &Path, fault: &str) -> Self {
+        Self::start(repository, fault, false)
+    }
+
+    pub(super) fn start(repository: &Path, fault: &str, encrypted_key: bool) -> Self {
         let mut command = Command::new("python3");
         command
             .arg(concat!(
@@ -24,7 +28,12 @@ impl Server {
                 "/tests/fixtures/ssh/server.py"
             ))
             .arg(repository)
-            .args(["--fault", fault]);
+            .args(["--fault", fault])
+            .arg("--owner")
+            .arg(std::process::id().to_string());
+        if encrypted_key {
+            command.arg("--encrypted-key");
+        }
         let mut process = Process::spawn(&mut command, true);
         let (port, user, root) = process.ready(parse_startup);
         Self {

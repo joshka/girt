@@ -28,7 +28,9 @@ impl Server {
             .arg(repository)
             .args(["--fault", fault, "--authorization", authorization])
             .arg("--requests")
-            .arg(root.path().join("requests"));
+            .arg(root.path().join("requests"))
+            .arg("--owner")
+            .arg(std::process::id().to_string());
         if let Some((cert, key)) = tls {
             command.arg("--certificate").arg(cert).arg("--key").arg(key);
         }

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Original launcher for test programs: SSH executables, askpass helpers and Git hooks. Tests link
+# each program path to this checked-in file and write the program text beside the link as
+# "<link>.sh" or "<link>.py". On macOS the first launch of every new executable file waits for a
+# serialized system policy check, which takes seconds while builds create new binaries. A link to
+# this file needs that check once rather than once per test. The program keeps this process ID,
+# arguments, environment and working directory.
+if [ -f "$0.py" ]; then
+    exec python3 "$0.py" "$@"
+elif [ -f "$0.sh" ]; then
+    . "$0.sh"
+else
+    printf 'stand-in: no program beside %s\n' "$0" >&2
+    exit 127
+fi

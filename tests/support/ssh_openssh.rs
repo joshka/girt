@@ -1,7 +1,6 @@
 //! Original executable wrappers and disposable OpenSSH server; no upstream source fixtures.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,8 +29,7 @@ fn remote(url: &str, options: OpenSshOptions) -> SshRemote {
 
 fn script(root: &Path, body: &str) -> PathBuf {
     let path = root.join("ssh");
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    super::stand_in::shell(&path, body);
     path
 }
 

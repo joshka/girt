@@ -47,6 +47,34 @@ deadline being tested: slow discovery can legitimately expire an overall deadlin
 Assert the specific structured error and retained effects, and include request observations in
 failure diagnostics. See [R14's HTTP repair](evidence/r14-http.md) for a controlled example.
 
+## Process Fixtures
+
+Tests often need their own programs, such as a stand-in SSH executable, an askpass helper or a Git
+hook. Do not write a new executable file for each test. macOS runs a policy check on the first
+launch of every new executable. The checks run one at a time and each takes seconds while builds
+create new binaries, so per-test executables spend transport deadlines waiting and fail only on busy
+machines. Link the program path to the checked-in `tests/fixtures/stand-in` launcher with
+`tests/support/stand_in.rs`, and pass the program text as data.
+
+A fixture that outlives a call, such as a loopback server, must stop when its test stops. That
+includes a test killed by a signal or a runner timeout, when no `Drop` runs. Pass the test's process
+ID to the fixture and check direct-parent identity on POSIX; a zombie owner still has a PID. Ignore
+further termination signals once cleanup has started, so a second signal cannot abandon it halfway.
+SSH supervisors and listeners retain the test's session, with a separate process group. Independent
+lifetime guards reserve their group identities and stay runnable during tree discovery. They watch
+the original test lifetime, plus stdin EOF or the supervisor-held FIFO for forced commands, so
+subreaper adoption of a stopped parent does not hide owner death. Git children stay in the forced
+command's guarded group. Normal cleanup kills protected children before explicitly shutting down and
+reaping its guard; it never kills its own group before returning Git's exit status.
+
+Freeze and rescan the protected tree before terminating and continuing its supervisor. Bound both
+discovery and its subprocesses, stop new children immediately, and retain the leader PID until
+cleanup finishes. Never freeze an independent lifetime guard. Incomplete discovery reports an error
+and leaves that guard armed for group cleanup rather than declaring success. Regression tests cover
+supervisor death, stopped parents beneath a Linux subreaper, launch-registration signals, and
+blocked discovery. Windows retains normal process teardown; abrupt-owner containment needs a
+separate Job Object change.
+
 ## Performance Evidence
 
 Performance is a primary goal alongside Git fidelity. Small fixtures hid the clone, fetch and GC

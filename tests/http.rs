@@ -6,6 +6,9 @@ mod connect_proxy;
 mod http_git;
 #[path = "support/pack_git.rs"]
 mod pack_git;
+#[cfg(unix)]
+#[path = "support/stand_in.rs"]
+mod stand_in;
 
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
@@ -1324,13 +1327,11 @@ fn discovery_deadline_does_not_reach_post_fault(#[case] fault: &str) {
 #[cfg(unix)]
 #[test]
 fn server_can_accept_one_ref_and_reject_another() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let hook = dest.git_dir().join("hooks/update");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\n[ \"$1\" != refs/heads/reject ]\n").unwrap();
-    std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stand_in::shell(&hook, "[ \"$1\" != refs/heads/reject ]\n");
     let server = Server::new(dest.git_dir(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let id = tip(&f.repo, "refs/heads/main");
@@ -1359,7 +1360,6 @@ fn server_can_accept_one_ref_and_reject_another() {
 #[cfg(unix)]
 #[test]
 fn git_proc_receive_reports_rewritten_destination() {
-    use std::os::unix::fs::PermissionsExt;
     let source = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination();
     let id = tip(&source.repo, "refs/heads/main");
@@ -1379,10 +1379,9 @@ fn git_proc_receive_reports_rewritten_destination() {
     );
     let hook = dest.git_dir().join("hooks/proc-receive");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(
+    stand_in::python(
         &hook,
-        r##"#!/usr/bin/env python3
-import subprocess
+        r##"import subprocess
 import sys
 
 reader = sys.stdin.buffer
@@ -1413,9 +1412,7 @@ write_packet(b"option forced-update")
 writer.write(b"0000")
 writer.flush()
 "##,
-    )
-    .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let server = Server::new(dest.git_dir(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let prepared = prepared(&source, vec![command("refs/for/main", None, id)], &[]);
