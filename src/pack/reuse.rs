@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::atomic::AtomicBool;
 
 use super::compression::{DeltaStats, PackCompression};
-use super::file::FilePack;
+use super::file::{CopyError, FilePack};
 use super::reader::{Source, entry_header};
 use super::write::{
     Entry, Output, PackObject, PackWriteError, PackWriteLimits, PackWritten, entry_header_code,
@@ -38,8 +38,10 @@ pub(crate) enum ReuseError {
 /// Packed entries keep their source order. A whole-object entry is copied byte for byte. A delta
 /// entry is copied with its zlib stream unchanged when its base entry was written earlier from the
 /// same source pack; its header is rewritten as an OFS_DELTA with the new distance. Any other delta
-/// is reconstructed, identity-checked, and written whole. Source packs were checksum-validated when
-/// opened, so copied bytes are not re-inflated. Fresh objects are identity-checked and may become
+/// is reconstructed, identity-checked, and written whole. Raw copies check available source CRCs
+/// over the bytes streamed, including original delta framing, without re-inflating. Legacy v1
+/// indexes have no entry CRCs; retirement must still decode the replacement. Fresh objects are
+/// identity-checked and may become
 /// OFS_DELTA entries against earlier fresh objects under `compression`. Identities in `fresh`
 /// must not repeat identities in `packed`.
 #[allow(clippy::too_many_arguments)]
@@ -100,6 +102,10 @@ pub(crate) fn write_reusing(
             id: item.id,
             source,
         };
+        let copy_error = |error| match error {
+            CopyError::Read(source) => read_error(source),
+            CopyError::Write(error) => ReuseError::Write(output_error(error)),
+        };
         let entry = source.entry(item.position).map_err(read_error)?;
         let header = entry_header(source, &entry).map_err(read_error)?;
         let offset = pack.bytes;
@@ -107,16 +113,16 @@ pub(crate) fn write_reusing(
         let mut depth = 0;
         match header.base {
             None => source
-                .copy_raw(entry.offset, entry.end, &mut pack)
-                .map_err(output_error)?,
+                .copy_raw(&entry, &header, &mut pack)
+                .map_err(copy_error)?,
             Some(base) => match written.get(&(source_index, base)) {
                 Some(&(base_offset, base_depth)) => {
                     depth = base_depth + 1;
                     pack.put(&entry_header_code(6, header.length as u64))?;
                     pack.put(&offset_distance(offset - base_offset))?;
                     source
-                        .copy_raw(header.data_start, entry.end, &mut pack)
-                        .map_err(output_error)?;
+                        .copy_raw(&entry, &header, &mut pack)
+                        .map_err(copy_error)?;
                     deltas.entries += 1;
                 }
                 None => {
@@ -313,6 +319,34 @@ mod tests {
                 .unwrap();
             assert_eq!(object.data(), data.as_slice());
         }
+    }
+
+    #[rstest::rstest]
+    #[case::ordinary(0)]
+    #[case::delta(1)]
+    fn raw_reuse_rejects_source_crc_mismatch(#[case] damaged: usize) {
+        let root = tempfile::tempdir().unwrap();
+        let data = versions();
+        let (_, ids) = source(root.path(), &data);
+        let pack_bytes = std::fs::read(root.path().join("source.pack")).unwrap();
+        let mut index = std::fs::read(root.path().join("source.idx")).unwrap();
+        let count = ids.len();
+        let identities = &index[1032..1032 + count * 20];
+        let slot = identities
+            .as_chunks::<20>()
+            .0
+            .iter()
+            .position(|bytes| bytes.as_slice() == ids[damaged].as_bytes())
+            .unwrap();
+        index[1032 + count * 20 + slot * 4] ^= 1;
+        let end = index.len() - 20;
+        let checksum = ObjectFormat::Sha1.checksum(&index[..end]);
+        index[end..].copy_from_slice(checksum.as_bytes());
+        let pack = open(root.path(), "damaged", &pack_bytes, &index);
+        let result = rewrite(&[&pack], &packed(&pack, &ids), &[]);
+        assert!(
+            matches!(result, Err(ReuseError::Read { id, source: ObjectReadError::Corrupt("entry CRC") }) if id == ids[damaged])
+        );
     }
 
     #[test]

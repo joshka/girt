@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 use super::index::{Entry, Index, word};
-use super::reader::{Source, check_cancelled, decode};
+use super::reader::{EntryHeader, Source, check_cancelled, decode};
 use crate::object::Hasher;
 use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
 
@@ -249,21 +249,60 @@ impl FilePack {
     }
 }
 
+/// Keeps source corruption distinct from output failures during raw reuse.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CopyError {
+    #[error(transparent)]
+    Read(#[from] Error),
+    #[error("write reused entry")]
+    Write(#[source] io::Error),
+}
+
 impl FilePack {
-    /// Streams the indexed raw bytes `start..end` of the pinned pack into `output`.
+    /// Copies a whole entry or a delta's zlib stream, verifying the source CRC when available.
+    ///
+    /// Delta CRCs include the original header/base reference, even though the caller rewrites that
+    /// framing in the output. A v1 index has no CRC; replacement decoding remains required before
+    /// retirement. Output may contain partial entry bytes on error; no index is published here.
     pub(crate) fn copy_raw(
         &self,
-        start: usize,
-        end: usize,
+        entry: &Entry,
+        header: &EntryHeader,
         output: &mut impl io::Write,
-    ) -> io::Result<()> {
+    ) -> Result<(), CopyError> {
+        let delta = header.base.is_some();
+        let start = if delta {
+            header.data_start
+        } else {
+            entry.offset
+        };
+        let crc = entry.crc.map(|_| {
+            let mut crc = crc32fast::Hasher::new();
+            if delta {
+                crc.update(&header.encoded);
+            }
+            crc
+        });
         let input = Range {
             artifact: &self.pack,
             position: start,
-            end: end.min(self.pack.len),
-            crc: None,
+            end: entry.end,
+            crc,
         };
-        io::copy(&mut BufReader::with_capacity(64 * 1024, input), output).map(|_| ())
+        let mut input = BufReader::with_capacity(64 * 1024, input);
+        loop {
+            let bytes = input
+                .fill_buf()
+                .map_err(|source| path_error(&self.pack.path, source))?;
+            if bytes.is_empty() {
+                break;
+            }
+            output.write_all(bytes).map_err(CopyError::Write)?;
+            let count = bytes.len();
+            input.consume(count);
+        }
+        input.get_ref().verify_crc(entry.crc)?;
+        Ok(())
     }
 }
 
@@ -313,18 +352,17 @@ impl Source for FilePack {
     fn inflate(
         &self,
         entry: &Entry,
-        start: usize,
-        expected: usize,
+        header: &EntryHeader,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
+        let start = header.data_start;
         let end = entry.end;
-        let crc = if entry.crc.is_some() {
+        let expected = header.length;
+        let crc = entry.crc.map(|_| {
             let mut crc = crc32fast::Hasher::new();
-            crc.update(&self.pack.bytes(entry.offset, start)?);
-            Some(crc)
-        } else {
-            None
-        };
+            crc.update(&header.encoded);
+            crc
+        });
         let input = Range {
             artifact: &self.pack,
             position: start,
@@ -370,18 +408,7 @@ impl Source for FilePack {
                 return Err(Error::Corrupt("truncated packed zlib stream"));
             }
         }
-        if let Some(expected) = entry.crc {
-            let actual = input
-                .get_ref()
-                .crc
-                .as_ref()
-                .expect("v2 entry CRC")
-                .clone()
-                .finalize();
-            if actual != expected {
-                return Err(Error::Corrupt("entry CRC"));
-            }
-        }
+        input.get_ref().verify_crc(entry.crc)?;
         Ok(data)
     }
 }
@@ -392,6 +419,18 @@ struct Range<'a> {
     position: usize,
     end: usize,
     crc: Option<crc32fast::Hasher>,
+}
+
+impl Range<'_> {
+    fn verify_crc(&self, expected: Option<u32>) -> Result<(), Error> {
+        if let Some(expected) = expected {
+            let actual = self.crc.as_ref().expect("v2 entry CRC").clone().finalize();
+            if actual != expected {
+                return Err(Error::Corrupt("entry CRC"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Read for Range<'_> {

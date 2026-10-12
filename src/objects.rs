@@ -330,16 +330,18 @@ impl Objects {
     /// Every pair is reopened and revalidated, even if its filename is unchanged. The old and new
     /// views coexist until success: peak handles and tables can reach their combined limits,
     /// multiplied by independently retained generations. Clone shares handles within a generation.
-    /// Opening cost is the same full validation scan as [`crate::Repository::objects`].
+    /// Like [`crate::Repository::objects`], refresh validates index bytes and pack headers/trailers
+    /// without scanning pack bodies. Use [`Self::verify_packs`] for whole-pack checksum/CRC proof.
     ///
     /// # Errors
     ///
     /// Returns opening errors without changing this reader or its clones. An index whose pack is
-    /// absent, a mismatched pair, malformed alternate metadata or corrupt artifact is an error,
-    /// never absence. There are no automatic retries, sleeps or filesystem changes. After a
-    /// publisher finishes or a broken pair is repaired/removed, the caller may explicitly retry
-    /// with its own finite attempt budget. Continuing publication may require another refresh even
-    /// after success: directory enumeration and alternate discovery are not atomic snapshots.
+    /// absent, a mismatched pair, malformed alternate metadata or corrupt index/header is an error,
+    /// never absence. Pack body corruption is deferred to reads or explicit verification. There are
+    /// no automatic retries, sleeps or filesystem changes. After a publisher finishes or a
+    /// broken pair is repaired/removed, the caller may explicitly retry with its own finite
+    /// attempt budget. Continuing publication may require another refresh even after success:
+    /// directory enumeration and alternate discovery are not atomic snapshots.
     pub fn refresh(
         &mut self,
         packs: PackLimits,

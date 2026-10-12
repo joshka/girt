@@ -581,11 +581,10 @@ impl Source for IndexedObjects {
     fn inflate(
         &self,
         entry: &crate::pack::index::Entry,
-        start: usize,
-        expected: usize,
+        header: &crate::pack::reader::EntryHeader,
         cancel: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
-        self.inflate_range(start, entry.end, expected, cancel)
+        self.inflate_range(header.data_start, entry.end, header.length, cancel)
     }
     fn base_cache(&self) -> Option<&BaseCache> {
         Some(&self.cache)

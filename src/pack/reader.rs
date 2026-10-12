@@ -69,8 +69,7 @@ pub(crate) trait Source {
     fn inflate(
         &self,
         entry: &super::index::Entry,
-        start: usize,
-        expected: usize,
+        header: &EntryHeader,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error>;
     /// Decoded objects kept to avoid re-inflating shared delta bases, if this source has one.
@@ -190,11 +189,10 @@ impl Source for Pack {
     fn inflate(
         &self,
         entry: &super::index::Entry,
-        start: usize,
-        expected: usize,
+        header: &EntryHeader,
         _: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
-        inflate(&self.data[start..entry.end], expected)
+        inflate(&self.data[header.data_start..entry.end], header.length)
     }
 }
 
@@ -252,12 +250,10 @@ pub(crate) fn decode_budgeted(
         input_remaining = input_remaining
             .checked_sub(entry.end - entry.offset)
             .ok_or(Error::Limit("compressed entry bytes"))?;
-        let EntryHeader {
-            kind,
-            length,
-            base,
-            data_start: start,
-        } = entry_header(source, &entry)?;
+        let header = entry_header(source, &entry)?;
+        let kind = header.kind;
+        let length = header.length;
+        let base = header.base;
         let limit = if base.is_some() {
             limits.max_delta_bytes
         } else {
@@ -274,7 +270,7 @@ pub(crate) fn decode_budgeted(
             return Err(Error::Limit("delta depth"));
         }
         charge(remaining, length)?;
-        let data = source.inflate(&entry, start, length, cancelled)?;
+        let data = source.inflate(&entry, &header, cancelled)?;
         if let Some(base) = base {
             pending.push((position, data));
             position = base;
@@ -323,6 +319,8 @@ pub(crate) struct EntryHeader {
     pub base: Option<usize>,
     /// Offset of the first zlib byte.
     pub data_start: usize,
+    /// Original encoded header and base reference, used to seed the entry CRC without rereading.
+    pub encoded: Vec<u8>,
 }
 
 /// Parses an entry header and resolves a delta base to a position in the same pack.
@@ -331,7 +329,7 @@ pub(crate) fn entry_header(
     entry: &super::index::Entry,
 ) -> Result<EntryHeader, Error> {
     let width = source.format().digest_len();
-    let prefix = source.prefix(entry)?;
+    let mut prefix = source.prefix(entry)?;
     let mut input = prefix.as_slice();
     let header = byte(&mut input)?;
     let kind = (header >> 4) & 7;
@@ -368,11 +366,14 @@ pub(crate) fn entry_header(
         }
         other => return Err(Error::ObjectType(other)),
     };
+    let header_len = prefix.len() - input.len();
+    prefix.truncate(header_len);
     Ok(EntryHeader {
         kind,
         length,
         base,
-        data_start: entry.offset + prefix.len() - input.len(),
+        data_start: entry.offset + header_len,
+        encoded: prefix,
     })
 }
 
