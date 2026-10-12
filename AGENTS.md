@@ -41,6 +41,9 @@ Load the guide that matches the work:
 
 - Rust design, implementation and review: [Rust Conventions](docs/rust-conventions.md).
 - Tests, Git compatibility and benchmarks: [Testing and Completion Criteria](docs/testing.md).
+- Anything that deletes, rewrites or re-encodes stored data, adds a fast path or optimizes a
+  benchmarked path: [Specify Before Implementing](docs/testing.md#specify-before-implementing)
+  before writing code.
 - Any prose, including doc comments and pull request descriptions:
   [Documentation Standard](docs/documentation.md).
 - Public APIs, Rustdoc and examples: [Rustdoc Standard](docs/rustdoc.md).

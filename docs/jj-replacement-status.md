@@ -89,6 +89,10 @@ with the `jj` label, each a self-contained brief with acceptance criteria.
 - **One issue per session**, in its own jj workspace. If the coordinator hasn't created one, run
   `jj workspace add work/<name> -r main` in the girt repo. In the jj repo, work from the
   `joshka/girt-backend` change. Keep build output out of repository roots (see `.git/info/exclude`).
+- **Before implementing:** items that delete, rewrite or re-encode stored data, add a fast path or
+  optimize a benchmarked path follow
+  [Specify Before Implementing](testing.md#specify-before-implementing) first: failure-mode
+  inventory, acceptance tests, profile, design round, then one implementation.
 - **Toolchain:** girt needs Rust 1.97.1 or newer. If a mise shim pins an older Rust, put
   `~/.cargo/bin` first on `PATH` and unset `RUSTUP_TOOLCHAIN`.
 - **girt checks:** `just check`, or `cargo nextest run --all-features` plus `just clippy` and
