@@ -235,6 +235,8 @@ struct Store {
     directory: PathBuf,
     loose: LooseObjects,
     packs: Vec<Arc<FilePack>>,
+    /// `.pack` path of each entry in `packs`, in the same order.
+    pack_paths: Vec<PathBuf>,
 }
 
 impl Objects {
@@ -457,6 +459,23 @@ impl Objects {
     }
 }
 
+impl Objects {
+    /// Primary-store packs with their `.pack` paths, in search order.
+    pub(crate) fn primary_packs_with_paths(&self) -> Vec<(&Path, &FilePack)> {
+        self.stores
+            .iter()
+            .take(1)
+            .flat_map(|store| {
+                store
+                    .pack_paths
+                    .iter()
+                    .map(Path::new)
+                    .zip(store.packs.iter().map(AsRef::as_ref))
+            })
+            .collect()
+    }
+}
+
 impl Store {
     fn open(
         format: ObjectFormat,
@@ -473,6 +492,7 @@ impl Store {
                     directory: directory.to_owned(),
                     loose,
                     packs: vec![],
+                    pack_paths: vec![],
                 });
             }
             Err(source) => {
@@ -504,6 +524,7 @@ impl Store {
             }
         }
         paths.sort();
+        let pack_paths: Vec<PathBuf> = paths.iter().map(|p| p.with_extension("pack")).collect();
         let mut packs = Vec::new();
         for path in paths {
             budget.max_open_files = budget
@@ -529,6 +550,7 @@ impl Store {
             directory: directory.to_owned(),
             loose,
             packs,
+            pack_paths,
         })
     }
 }

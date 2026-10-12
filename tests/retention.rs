@@ -578,6 +578,19 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         &["repack", "-ad", "--no-write-bitmap-index"],
         b"",
     );
+    // A loose descendant makes the replacement differ from the old pack.
+    let tree = git(root.path(), &["mktree"], b"");
+    let parent = second.to_string();
+    let child = git(
+        root.path(),
+        &["commit-tree", &tree, "-p", &parent],
+        b"loose\n",
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/loose", &child],
+        b"",
+    );
     let directory = root.path().join("objects/pack");
     let old_index = fs::read_dir(&directory)
         .unwrap()
@@ -612,6 +625,99 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
         "commit"
     );
+}
+
+#[cfg(unix)]
+fn pack_files(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    fs::read_dir(root.join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == extension))
+        .collect()
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn retirement_reuses_git_deltas_and_compresses_loose_objects(#[case] format: &str) {
+    let (root, repo, _, _) = fixture_format(format);
+    let base: String = (0..2000).map(|n| format!("line {n}\n")).collect();
+    let mut parent = git(root.path(), &["rev-parse", "main"], b"");
+    let commit_version = |version: usize, parent: &str| {
+        let blob = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            format!("{base}version {version}\n").as_bytes(),
+        );
+        let tree = git(
+            root.path(),
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        git(
+            root.path(),
+            &["commit-tree", &tree, "-p", parent],
+            format!("v{version}\n").as_bytes(),
+        )
+    };
+    for version in 0..8 {
+        parent = commit_version(version, &parent);
+    }
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &parent],
+        b"",
+    );
+    git(
+        root.path(),
+        &["repack", "-adf", "--no-write-bitmap-index"],
+        b"",
+    );
+    let old_pack = pack_files(root.path(), "pack").pop().unwrap();
+    let old_size = fs::metadata(&old_pack).unwrap().len();
+    for version in 8..12 {
+        parent = commit_version(version, &parent);
+    }
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &parent],
+        b"",
+    );
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let report = repo
+        .retire_old_packs(
+            &mut FixtureIsolation,
+            &policy,
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let written = report.published.unwrap().written;
+    // Seven reused Git blob deltas plus three new ones among the four loose versions.
+    assert!(written.deltas.entries >= 10, "{:?}", written.deltas);
+    assert!(!old_pack.exists());
+    let packs = pack_files(root.path(), "pack");
+    assert_eq!(packs.len(), 1);
+    // Loose objects delta only against each other, so at most one more whole blob is added.
+    assert!(
+        written.pack_bytes < old_size * 2,
+        "{written:?} vs {old_size}"
+    );
+    let verify = git(
+        root.path(),
+        &[
+            "verify-pack",
+            "-v",
+            packs[0].with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
+    assert!(verify.contains("chain length = "), "{verify}");
+    git(root.path(), &["fsck", "--full", "--strict"], b"");
 }
 
 #[cfg(unix)]
@@ -788,6 +894,7 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
     assert_eq!(again.written.checksum, result.written.checksum);
+    assert_eq!(again.written.pack_bytes, result.written.pack_bytes);
 }
 
 #[rstest::rstest]
@@ -1613,4 +1720,117 @@ fn retained_registration_unreadable_metadata_blocks_scan() {
     fs::create_dir(backlink).unwrap();
     let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     assert!(!plan.is_complete());
+}
+
+/// Commits `count` revisions of one growing text file on `main`, so Git can find deltas.
+fn grow_history(root: &Path, count: usize, parent: Option<String>) -> String {
+    let mut parent = parent;
+    let mut text = String::new();
+    for revision in 0..count {
+        for line in 0..40 {
+            text.push_str(&format!(
+                "revision {revision} line {line} of a slowly growing file\n"
+            ));
+        }
+        let blob = git(root, &["hash-object", "-w", "--stdin"], text.as_bytes());
+        let tree = git(
+            root,
+            &["mktree"],
+            format!("100644 blob {blob}\tfile\n").as_bytes(),
+        );
+        let mut args = vec!["commit-tree", tree.as_str()];
+        if let Some(parent) = &parent {
+            args.extend(["-p", parent]);
+        }
+        parent = Some(git(
+            root,
+            &args,
+            format!("revision {revision}\n").as_bytes(),
+        ));
+    }
+    let tip = parent.unwrap();
+    git(root, &["update-ref", "refs/heads/main", &tip], b"");
+    tip
+}
+
+fn pack_paths(root: &Path, extension: &str) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir(root.join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == extension))
+        .collect();
+    paths.sort();
+    paths
+}
+
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
+    let (root, _, _, _) = fixture_format(format);
+    git(
+        root.path(),
+        &["reflog", "expire", "--expire=all", "--all"],
+        b"",
+    );
+    fs::remove_file(root.path().join("logs/refs/heads/deleted")).unwrap();
+    grow_history(root.path(), 30, None);
+    git(
+        root.path(),
+        &["repack", "-adf", "--no-write-bitmap-index"],
+        b"",
+    );
+    git(root.path(), &["prune", "--expire=now"], b"");
+    let [git_pack] = pack_paths(root.path(), "pack").try_into().unwrap();
+    let original_bytes = fs::read(&git_pack).unwrap();
+    let original_index = git_pack.with_extension("idx");
+    let original_deltas = git(
+        root.path(),
+        &["verify-pack", "-v", original_index.to_str().unwrap()],
+        b"",
+    )
+    .lines()
+    .filter(|line| line.split_whitespace().count() == 7)
+    .count();
+    let repo = Repository::open(root.path()).unwrap();
+    let published = repo
+        .repack_retained(
+            &RetentionPolicy {
+                recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+                ..RetentionPolicy::default()
+            },
+            RepackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    // Every retained object is copied in Git's order with Git's deltas, reproducing its pack.
+    assert!(published.written.deltas.entries > 0);
+    assert_eq!(
+        git_pack.file_stem().unwrap().to_str().unwrap(),
+        format!("pack-{}", published.written.checksum)
+    );
+    assert_eq!(pack_paths(root.path(), "pack").len(), 1);
+    let output = root.path().join(format!(
+        "objects/pack/pack-{}.pack",
+        published.written.checksum
+    ));
+    assert_eq!(fs::read(&output).unwrap(), original_bytes);
+    let verbose = git(
+        root.path(),
+        &[
+            "verify-pack",
+            "-v",
+            output.with_extension("idx").to_str().unwrap(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        verbose
+            .lines()
+            .filter(|line| line.split_whitespace().count() == 7)
+            .count(),
+        original_deltas
+    );
+    assert_eq!(published.written.deltas.entries as usize, original_deltas);
+    git(root.path(), &["fsck", "--strict"], b"");
 }

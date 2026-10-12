@@ -1,0 +1,1 @@
+PackWritten { checksum: Sha1([24, 96, 6, 0, 168, 244, 253, 220, 116, 87, 144, 232, 234, 105, 137, 145, 164, 115, 67, 109]), objects: 131154, pack_bytes: 205698822, index_bytes: 3673384, deltas: DeltaStats { entries: 98715, candidates: 0, work: 0, max_depth: 50 } }

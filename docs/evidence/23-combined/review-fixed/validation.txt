@@ -1,0 +1,14 @@
+Production revision: e0b15abf87cf4ebabc3cf5b4c46a22a7aeccd57d
+Test-only Windows helper gate: 408dc83136afd716fe61b91f90ae58a7d1c0dc29
+Full validation: RUST_TEST_THREADS=1 just check, exit 0, 2026-10-11 18:01-18:06 PDT.
+Shared lock owner: PID 48551; released before either judge's follow-up window.
+56 successful test harnesses, 5473 passing cases, 0 ignored, 0 failures.
+Clippy --all-features --all-targets -- -D warnings: pass.
+Nightly Rust formatting, rumdl, nightly docs-rs with -D warnings: pass.
+Warning lines in full log: 0.
+Astra's independent locked focused recheck: 127 passed, approval at 408dc831.
+Fable's independent integrity/contracts recheck: pass, approval at 408dc831.
+GitHub CI at 408dc831: all required checks pass, including native Ubuntu/macOS/Windows,
+MSRV 1.97.1, docs, portable index/references, cargo-deny and zizmor.
+All eight measured combined comparison/supplemental outputs: Git fsck --strict and verify-pack pass.
+Timing windows completed and shared lock released; no SSH fixture listener remains.

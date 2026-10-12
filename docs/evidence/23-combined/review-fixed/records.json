@@ -1,0 +1,338 @@
+[
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 1,
+    "slot": 0,
+    "status": 0,
+    "seconds": 7.48,
+    "rss_bytes": 400719872,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-1-0-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 1,
+    "slot": 1,
+    "status": 0,
+    "seconds": 18.55,
+    "rss_bytes": 417742848,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-1-1-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 1,
+    "slot": 2,
+    "status": 0,
+    "seconds": 8.02,
+    "rss_bytes": 436895744,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-1-2-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 1,
+    "slot": 3,
+    "status": 0,
+    "seconds": 1.4,
+    "rss_bytes": 297271296,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/repack-1-3-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 1,
+    "slot": 0,
+    "status": 0,
+    "seconds": 51.26,
+    "rss_bytes": 457408512,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-1-0-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 1,
+    "slot": 1,
+    "status": 0,
+    "seconds": 124.41,
+    "rss_bytes": 462602240,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-1-1-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 1,
+    "slot": 2,
+    "status": 0,
+    "seconds": 60.6,
+    "rss_bytes": 473628672,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-1-2-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 1,
+    "slot": 3,
+    "status": 0,
+    "seconds": 1.53,
+    "rss_bytes": 297222144,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/maint-1-3-git"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 2,
+    "slot": 0,
+    "status": 0,
+    "seconds": 19.34,
+    "rss_bytes": 430194688,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-2-0-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 2,
+    "slot": 1,
+    "status": 0,
+    "seconds": 8.26,
+    "rss_bytes": 436928512,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-2-1-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 2,
+    "slot": 2,
+    "status": 0,
+    "seconds": 1.43,
+    "rss_bytes": 297500672,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/repack-2-2-git"
+  },
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 2,
+    "slot": 3,
+    "status": 0,
+    "seconds": 7.38,
+    "rss_bytes": 412631040,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-2-3-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 2,
+    "slot": 0,
+    "status": 0,
+    "seconds": 125.27,
+    "rss_bytes": 454852608,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-2-0-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 2,
+    "slot": 1,
+    "status": 0,
+    "seconds": 60.96,
+    "rss_bytes": 483409920,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-2-1-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 2,
+    "slot": 2,
+    "status": 0,
+    "seconds": 1.55,
+    "rss_bytes": 298860544,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/maint-2-2-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 2,
+    "slot": 3,
+    "status": 0,
+    "seconds": 52.68,
+    "rss_bytes": 474939392,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-2-3-combined"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 3,
+    "slot": 0,
+    "status": 0,
+    "seconds": 8.28,
+    "rss_bytes": 429162496,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-3-0-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 3,
+    "slot": 1,
+    "status": 0,
+    "seconds": 1.43,
+    "rss_bytes": 297746432,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/repack-3-1-git"
+  },
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 3,
+    "slot": 2,
+    "status": 0,
+    "seconds": 7.29,
+    "rss_bytes": 426770432,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-3-2-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 3,
+    "slot": 3,
+    "status": 0,
+    "seconds": 19.4,
+    "rss_bytes": 414679040,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/repack-3-3-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 3,
+    "slot": 0,
+    "status": 0,
+    "seconds": 60.23,
+    "rss_bytes": 488636416,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-3-0-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 3,
+    "slot": 1,
+    "status": 0,
+    "seconds": 1.52,
+    "rss_bytes": 297189376,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench-fixed/maint-3-1-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 3,
+    "slot": 2,
+    "status": 0,
+    "seconds": 51.63,
+    "rss_bytes": 455163904,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-3-2-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 3,
+    "slot": 3,
+    "status": 0,
+    "seconds": 122.96,
+    "rss_bytes": 459866112,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench-fixed/maint-3-3-opus-low"
+  }
+]

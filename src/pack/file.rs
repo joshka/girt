@@ -184,6 +184,11 @@ impl FilePack {
         Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
     }
 
+    /// Iterates identities from the validated pinned index without decoding their payloads.
+    pub(crate) fn identities(&self) -> impl Iterator<Item = Result<ObjectId, Error>> + '_ {
+        (0..self.ranges.len()).map(|position| self.identity(position))
+    }
+
     pub(crate) fn read(
         &self,
         position: usize,
@@ -191,6 +196,23 @@ impl FilePack {
         cancelled: &AtomicBool,
     ) -> Result<Object, Error> {
         decode(self, position, limits, cancelled)
+    }
+}
+
+impl FilePack {
+    /// Streams the validated raw bytes `start..end` of the pinned pack into `output`.
+    pub(crate) fn copy_raw(
+        &self,
+        start: usize,
+        end: usize,
+        output: &mut impl io::Write,
+    ) -> io::Result<()> {
+        let input = Range {
+            artifact: &self.pack,
+            position: start,
+            end: end.min(self.pack.len),
+        };
+        io::copy(&mut BufReader::with_capacity(64 * 1024, input), output).map(|_| ())
     }
 }
 
@@ -370,6 +392,47 @@ mod publication_tests {
         fs::write(&path, index).unwrap();
         fs::write(path.with_extension("pack"), pack).unwrap();
         path
+    }
+
+    // Original malformed framing, with independent artifact checksums and CRCs rebuilt so the
+    // encoded-entry parser, rather than the outer checksum validator, rejects it.
+    fn malformed_pair(root: &Path, framing: &[u8]) -> PathBuf {
+        let format = ObjectFormat::Sha1;
+        let id = ObjectId::for_blob(format, b"fixture");
+        let mut bytes = b"PACK\0\0\0\x02\0\0\0\x01".to_vec();
+        bytes.extend_from_slice(framing);
+        let checksum = format.checksum(&bytes);
+        bytes.extend_from_slice(checksum.as_bytes());
+        let entry = crate::pack::write::Entry {
+            id,
+            offset: 12,
+            crc: crc32fast::hash(framing),
+        };
+        let index = crate::pack::write::encode_index(&[entry], checksum).unwrap();
+        let path = root.join("malformed.idx");
+        fs::write(&path, index).unwrap();
+        fs::write(path.with_extension("pack"), bytes).unwrap();
+        path
+    }
+
+    #[rstest]
+    #[case::reserved(&[0x50, 0])]
+    #[case::truncated_size(&[0xb0])]
+    #[case::zero_distance(&[0x60, 0])]
+    #[case::before_pack(&[0x60, 127])]
+    #[case::truncated_reference(&[0x70, 1])]
+    #[case::missing_reference(&[0x70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]
+    fn stored_entry_rejects_malformed_framing(#[case] framing: &[u8]) {
+        let root = tempfile::tempdir().unwrap();
+        let path = malformed_pair(root.path(), framing);
+        let pack = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(super::super::reader::entry_header(&pack, &pack.entry(0).unwrap()).is_err());
     }
 
     #[rstest]

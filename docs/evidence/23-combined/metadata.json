@@ -1,0 +1,31 @@
+{
+  "fixture": "/tmp/opus-med-23/source.git",
+  "fixture_head": "987c084b8f3ff28e8246d8b38c55c323c85611d5",
+  "fixture_objects": 131152,
+  "comparison_revisions": {
+    "combined": "e6b31cdf49c7",
+    "opus-low": "13d7e7cc7f840e0bfb69c4e02574a1a015eab339",
+    "sol-medium": "f6221563e22088f6b1acf20c0e57c3067145ed9c"
+  },
+  "git": "git version 2.56.0",
+  "cache": "warm-cache, APFS clone per comparison run",
+  "rounds": 3,
+  "order": [
+    "combined, opus-low, sol-medium, git",
+    "opus-low, sol-medium, git, combined",
+    "sol-medium, git, combined, opus-low"
+  ],
+  "binaries": {
+    "bench-combined": "44841cc020e560769742b4e46cd138445117acf80b4d602da51f1e2fd67b6dd7",
+    "bench-opus-low": "ffd204a5bd66eed4c9e958d0ed1f4648d53e37c7e5d150a7cb35f63a4e0b233b",
+    "bench-sol-medium": "3860c8ec64372940ee38fd12b8f1dea6f1a9179c95f5e5beee445e7067105a2e",
+    "stages": "54ad79631dbec73e9d1bc546930cd03fa9f6b4edad5e4532feed20bb89ec8e16"
+  },
+  "cpu": "Apple M2 Max",
+  "memory_bytes": 103079215104,
+  "os": "macOS 26.6.2, aarch64, APFS",
+  "rustc": "1.99.0 (b940084d7 2026-09-28)",
+  "input_packs": {
+    "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+  }
+}

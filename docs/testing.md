@@ -38,6 +38,11 @@ establish support on other platforms, recognizing a format does not establish th
 implemented, and no finite corpus proves full parity with Git. State these limits in the pull
 request.
 
+The Unix `retention_integrity`, `retention_survivors`, and `retention_repack_contracts` suites
+exercise delta reuse, damaged entries, mislabelled bases, protected-pack survivors, and logical byte
+limits with original Git-verified fixtures. They use Unix pack-retirement APIs and run alongside
+`retention` in the focused retention job.
+
 ## Fault and Race Tests
 
 Use deterministic barriers or checkpoints for races and faults before and after publication rather

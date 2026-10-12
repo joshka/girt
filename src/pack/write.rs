@@ -297,11 +297,7 @@ pub(crate) fn write_controlled_observed(
                 deltas.max_depth = deltas.max_depth.max(selected.depth);
             }
         } else {
-            pack.put(&entry_header(object.kind, object.data.len() as u64))?;
-            // Finish explicitly so buffered-write failures are reported on the success path.
-            let mut encoder = ZlibEncoder::new(&mut pack, Compression::new(6));
-            encoder.write_all(object.data).map_err(output_error)?;
-            encoder.finish().map_err(output_error)?;
+            write_ordinary(&mut pack, object.kind, object.data)?;
             depths.push(0);
         }
         entries.push(Entry {
@@ -326,12 +322,28 @@ pub(crate) fn write_controlled_observed(
     })
 }
 
-struct SelectedEntry {
-    bytes: Vec<u8>,
-    depth: usize,
+/// Streams one whole-object entry: its header, then zlib level 6 payload.
+pub(super) fn write_ordinary(
+    pack: &mut Output<'_, impl Write>,
+    kind: ObjectKind,
+    data: &[u8],
+) -> Result<(), PackWriteError> {
+    pack.put(&entry_header(kind, data.len() as u64))?;
+    // Finish explicitly so buffered-write failures are reported on the success path.
+    let mut encoder = ZlibEncoder::new(pack, Compression::new(6));
+    encoder.write_all(data).map_err(output_error)?;
+    encoder.finish().map_err(output_error)?;
+    Ok(())
 }
 
-fn select_entry(
+pub(super) struct SelectedEntry {
+    pub(super) bytes: Vec<u8>,
+    pub(super) depth: usize,
+    pub(super) base: Option<usize>,
+    pub(super) data_start: usize,
+}
+
+pub(super) fn select_entry(
     objects: &[PackObject<'_>],
     position: usize,
     depths: &[usize],
@@ -371,7 +383,12 @@ fn select_entry(
         if best.is_none() {
             let bytes = compressed(entry_header(object.kind, length as u64), object.data)?;
             ordinary_cost = bytes.len();
-            best = Some(SelectedEntry { bytes, depth: 0 });
+            best = Some(SelectedEntry {
+                bytes,
+                depth: 0,
+                base: None,
+                data_start: 0,
+            });
             // Even before zlib bytes, a REF_DELTA needs a header and a format-sized base ID.
             if ordinary_cost.saturating_sub(1 + object.id.format().digest_len())
                 <= options.min_savings
@@ -387,6 +404,7 @@ fn select_entry(
         check()?;
         let mut header = entry_header_code(7, program.len() as u64);
         header.extend_from_slice(objects[i].id.as_bytes());
+        let data_start = header.len();
         let bytes = compressed(header, &program)?;
         let current = best.as_ref().unwrap();
         if bytes.len() < current.bytes.len()
@@ -395,6 +413,8 @@ fn select_entry(
             best = Some(SelectedEntry {
                 bytes,
                 depth: depths[i] + 1,
+                base: Some(i),
+                data_start,
             });
         }
     }
@@ -407,7 +427,7 @@ fn compressed(header: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, PackWriteError> {
     Ok(encoder.finish()?)
 }
 
-fn validate<'a>(
+pub(super) fn validate<'a>(
     format: crate::ObjectFormat,
     objects: &[PackObject<'a>],
     limits: PackWriteLimits,
@@ -457,7 +477,7 @@ fn validate<'a>(
     Ok(sorted)
 }
 
-fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
+pub(super) fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     let code = match kind {
         ObjectKind::Commit => 1,
         ObjectKind::Tree => 2,
@@ -467,7 +487,7 @@ fn entry_header(kind: ObjectKind, size: u64) -> Vec<u8> {
     entry_header_code(code, size)
 }
 
-fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
+pub(super) fn entry_header_code(code: u8, mut size: u64) -> Vec<u8> {
     let mut byte = (code << 4) | (size as u8 & 15);
     size >>= 4;
     let mut bytes = Vec::with_capacity(10);
@@ -497,7 +517,7 @@ pub(crate) fn encode_index(
     Ok(bytes)
 }
 
-fn write_index(
+pub(super) fn write_index(
     entries: &[Entry],
     checksum: ObjectId,
     out: &mut Output<'_, impl Write>,
@@ -545,7 +565,7 @@ fn write_index(
 #[error("output limit: {0}")]
 struct OutputLimit(&'static str);
 
-fn output_error(error: io::Error) -> PackWriteError {
+pub(super) fn output_error(error: io::Error) -> PackWriteError {
     if let Some(limit) = error
         .get_ref()
         .and_then(|e| e.downcast_ref::<OutputLimit>())
@@ -556,17 +576,22 @@ fn output_error(error: io::Error) -> PackWriteError {
     }
 }
 
-struct Output<'a, W> {
+pub(super) struct Output<'a, W> {
     sink: &'a mut W,
-    bytes: u64,
+    pub(super) bytes: u64,
     limit: u64,
     label: &'static str,
     hash: Hasher,
-    crc: crc32fast::Hasher,
+    pub(super) crc: crc32fast::Hasher,
 }
 
 impl<'a, W: Write> Output<'a, W> {
-    fn new(format: crate::ObjectFormat, sink: &'a mut W, limit: u64, label: &'static str) -> Self {
+    pub(super) fn new(
+        format: crate::ObjectFormat,
+        sink: &'a mut W,
+        limit: u64,
+        label: &'static str,
+    ) -> Self {
         Self {
             sink,
             bytes: 0,
@@ -576,10 +601,10 @@ impl<'a, W: Write> Output<'a, W> {
             crc: crc32fast::Hasher::new(),
         }
     }
-    fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
+    pub(super) fn put(&mut self, bytes: &[u8]) -> Result<(), PackWriteError> {
         self.write_all(bytes).map_err(output_error)
     }
-    fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
+    pub(super) fn finish(&mut self) -> Result<ObjectId, PackWriteError> {
         let checksum = self.hash.clone().finalize();
         self.put(checksum.as_bytes())?;
         self.flush()?;

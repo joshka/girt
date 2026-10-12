@@ -1,0 +1,338 @@
+[
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 1,
+    "slot": 0,
+    "status": 0,
+    "seconds": 7.41,
+    "rss_bytes": 405553152,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-1-0-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 1,
+    "slot": 1,
+    "status": 0,
+    "seconds": 18.74,
+    "rss_bytes": 433471488,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-1-1-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 1,
+    "slot": 2,
+    "status": 0,
+    "seconds": 9.01,
+    "rss_bytes": 431374336,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-1-2-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 1,
+    "slot": 3,
+    "status": 0,
+    "seconds": 1.61,
+    "rss_bytes": 298418176,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/repack-1-3-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 1,
+    "slot": 0,
+    "status": 0,
+    "seconds": 54.2,
+    "rss_bytes": 448921600,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-1-0-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 1,
+    "slot": 1,
+    "status": 0,
+    "seconds": 133.03,
+    "rss_bytes": 482148352,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-1-1-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 1,
+    "slot": 2,
+    "status": 0,
+    "seconds": 63.41,
+    "rss_bytes": 451674112,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-1-2-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 1,
+    "slot": 3,
+    "status": 0,
+    "seconds": 1.69,
+    "rss_bytes": 298106880,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/maint-1-3-git"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 2,
+    "slot": 0,
+    "status": 0,
+    "seconds": 20.39,
+    "rss_bytes": 431570944,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-2-0-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 2,
+    "slot": 1,
+    "status": 0,
+    "seconds": 9.26,
+    "rss_bytes": 409747456,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-2-1-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 2,
+    "slot": 2,
+    "status": 0,
+    "seconds": 1.58,
+    "rss_bytes": 298237952,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/repack-2-2-git"
+  },
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 2,
+    "slot": 3,
+    "status": 0,
+    "seconds": 7.69,
+    "rss_bytes": 392331264,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-2-3-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 2,
+    "slot": 0,
+    "status": 0,
+    "seconds": 126.28,
+    "rss_bytes": 469958656,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-2-0-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 2,
+    "slot": 1,
+    "status": 0,
+    "seconds": 59.5,
+    "rss_bytes": 465338368,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-2-1-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 2,
+    "slot": 2,
+    "status": 0,
+    "seconds": 1.55,
+    "rss_bytes": 297205760,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/maint-2-2-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 2,
+    "slot": 3,
+    "status": 0,
+    "seconds": 51.46,
+    "rss_bytes": 449200128,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-2-3-combined"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "repack",
+    "round": 3,
+    "slot": 0,
+    "status": 0,
+    "seconds": 8.23,
+    "rss_bytes": 438878208,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-3-0-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "repack",
+    "round": 3,
+    "slot": 1,
+    "status": 0,
+    "seconds": 1.45,
+    "rss_bytes": 302039040,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/repack-3-1-git"
+  },
+  {
+    "label": "combined",
+    "mode": "repack",
+    "round": 3,
+    "slot": 2,
+    "status": 0,
+    "seconds": 7.17,
+    "rss_bytes": 407044096,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-3-2-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "repack",
+    "round": 3,
+    "slot": 3,
+    "status": 0,
+    "seconds": 18.99,
+    "rss_bytes": 422936576,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/repack-3-3-opus-low"
+  },
+  {
+    "label": "sol-medium",
+    "mode": "maint",
+    "round": 3,
+    "slot": 0,
+    "status": 0,
+    "seconds": 59.32,
+    "rss_bytes": 469794816,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-3-0-sol-medium"
+  },
+  {
+    "label": "git",
+    "mode": "maint",
+    "round": 3,
+    "slot": 1,
+    "status": 0,
+    "seconds": 1.55,
+    "rss_bytes": 297517056,
+    "packs": {
+      "pack-eb21816e712cbe191ca9f38ba3be58a51db26261.pack": 205651818
+    },
+    "total_pack_bytes": 205651818,
+    "path": "/tmp/23-combined-bench/maint-3-1-git"
+  },
+  {
+    "label": "combined",
+    "mode": "maint",
+    "round": 3,
+    "slot": 2,
+    "status": 0,
+    "seconds": 51.35,
+    "rss_bytes": 444956672,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-3-2-combined"
+  },
+  {
+    "label": "opus-low",
+    "mode": "maint",
+    "round": 3,
+    "slot": 3,
+    "status": 0,
+    "seconds": 125.18,
+    "rss_bytes": 459276288,
+    "packs": {
+      "pack-d1eb5c6452be016acbf2a5af319ef0acd4a36484.pack": 205698770
+    },
+    "total_pack_bytes": 205698770,
+    "path": "/tmp/23-combined-bench/maint-3-3-opus-low"
+  }
+]
