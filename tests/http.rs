@@ -1207,10 +1207,14 @@ fn observed_post_fault(fault: &str) -> PushError {
 #[case::slow_discovery("delayed-discovery/post-failure")]
 fn server_failure_after_post_is_uncertain_and_not_retried(#[case] fault: &str) {
     let error = observed_post_fault(fault);
+    // The fixture sends 503 without consuming the POST body, then closes the connection.
+    // A reset can beat the response headers to the client, particularly on Windows.
     assert!(
         matches!(
             &error,
-            PushError::Uncertain { cause: PushFailure::Http(HttpError::Status(503)), report }
+            PushError::Uncertain {
+                cause: PushFailure::Http(HttpError::Status(503) | HttpError::Network), report
+            }
                 if report.refs[0].status.is_none()
         ),
         "{error:?}"
