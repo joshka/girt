@@ -44,6 +44,8 @@ Load the guide that matches the work:
 - Anything that deletes, rewrites or re-encodes stored data, adds a fast path or optimizes a
   benchmarked path: [Specify Before Implementing](docs/testing.md#specify-before-implementing)
   before writing code.
+- Rules for deleting, retiring, replacing or rewriting stored data:
+  [Deleting and Rewriting Stored Data](docs/storage-safety.md).
 - Any prose, including doc comments and pull request descriptions:
   [Documentation Standard](docs/documentation.md).
 - Public APIs, Rustdoc and examples: [Rustdoc Standard](docs/rustdoc.md).
