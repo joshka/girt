@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/joshka/girt/compare/v0.3.2...v0.3.3) - 2026-10-12
+
+### Other
+
+- Add storage-safety and performance-measurement rules ([#48](https://github.com/joshka/girt/pull/48))
+- Require a specification before mutating-storage and performance work ([#59](https://github.com/joshka/girt/pull/59))
+- Fixes #23 ([#60](https://github.com/joshka/girt/pull/60))
+- Stop SSH test fixtures leaking and stalling under load ([#50](https://github.com/joshka/girt/pull/50))
+- Disable MD013 for generated CHANGELOG.md ([#56](https://github.com/joshka/girt/pull/56))
+- Wrap over-long changelog line ([#54](https://github.com/joshka/girt/pull/54))
+
 ### Changed
 
 - Repack reuses existing packed entries and deltas. `RepackLimits::default()` and `trusted()` now enable
