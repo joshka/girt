@@ -96,17 +96,18 @@ impl Repository {
     /// without inflating it, in source pack order; a delta keeps its compressed instructions when
     /// its base entry from the same pack is also copied, and is otherwise rebuilt as a whole
     /// object. The scan fully decodes required objects. Stored entries come only from primary
-    /// packs; alternate objects use the ordinary reader. Objects held by protected packs are
-    /// decoded from that copy and omitted from the replacement. Other required objects are read
+    /// packs; alternate objects use the ordinary reader. Additive repack includes protected
+    /// objects; retirement can instead verify a protected survivor and omit its replacement copy.
+    /// Other required objects are read
     /// and identity-checked, then appended with deltas against each other under
     /// [`RepackLimits::compression`]. A repository whose only pack holds exactly the required
-    /// objects can therefore reproduce that pack byte for byte when the pack is unprotected. It
-    /// writes two bounded temporary files in the primary pack directory, synchronizes each
-    /// file, then publishes the pack before its index. The index is the visibility marker. An
-    /// existing checksum-named file is reused only when every byte matches. Old packs, loose
-    /// objects, reflogs and alternates remain untouched, including protected packs. Readers
-    /// with pinned generations keep their handles; new readers discover the indexed pair and
-    /// existing readers can refresh explicitly.
+    /// objects can therefore reproduce that pack byte for byte. It writes two bounded temporary
+    /// files in the primary pack directory, synchronizes each file, then publishes the pack
+    /// before its index. The index is the visibility marker. An existing checksum-named file is
+    /// reused only when every byte matches. Old packs, loose objects, reflogs and alternates
+    /// remain untouched, including protected packs. Readers with pinned generations keep their
+    /// handles; new readers discover the indexed pair and existing readers can refresh
+    /// explicitly.
     ///
     /// The caller must exclude cooperating ref, reflog and object writers when it requires a
     /// stable maintenance observation. Girt has no lock that excludes arbitrary external Git
@@ -144,11 +145,13 @@ impl Repository {
         after_plan: impl FnOnce(),
     ) -> Result<RepackPublished, RepackError> {
         check(cancel)?;
-        let plan = self.plan_retention(policy, cancel);
+        let mut plan = self.plan_retention(policy, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(RepackError::Incomplete(reason));
         }
         after_plan();
+        // Additive repack publishes the complete retained set. Only retirement omits survivors.
+        plan.protected_packs.clear();
         self.publish_required(&plan, policy, limits, cancel)
             .map(|(published, _)| published)
     }
@@ -175,38 +178,46 @@ impl Repository {
             .iter()
             .filter_map(|path| path.file_name().map(std::ffi::OsStr::to_owned))
             .collect();
-        let pack_paths = objects.primary_packs_with_paths();
+        let pack_sources = objects.primary_packs_with_paths();
         let mut held = std::collections::BTreeSet::new();
         let count =
             u32::try_from(required.len()).map_err(|_| PackWriteError::Limit("object count"))?;
         if count > limits.write.max_objects {
             return Err(PackWriteError::Limit("object count").into());
         }
-        let packs = objects.packs();
+        let packs: Vec<_> = pack_sources.iter().map(|(_, pack)| *pack).collect();
         let mut packed = Vec::new();
         let mut decoded = Vec::new();
         let mut bytes = 0u64;
         'required: for &id in required {
             check(cancel)?;
+            if !protected_names.is_empty() {
+                for (path, source) in &pack_sources {
+                    if !path
+                        .file_name()
+                        .is_some_and(|name| protected_names.contains(name))
+                    {
+                        continue;
+                    }
+                    let found = source
+                        .find(id)
+                        .map_err(|source| RepackError::Read { id, source })?;
+                    if let Some(position) = found {
+                        // A later readable protected copy can survive in place. A damaged entry
+                        // cannot authorize omission; retain the ordinary first copy instead.
+                        if source.read(position, policy.read, cancel).is_ok() {
+                            held.insert(id);
+                            continue 'required;
+                        }
+                        check(cancel)?;
+                    }
+                }
+            }
             for (pack, source) in packs.iter().enumerate() {
                 let found = source
                     .find(id)
                     .map_err(|source| RepackError::Read { id, source })?;
                 if let Some(position) = found {
-                    let is_protected = pack_paths
-                        .get(pack)
-                        .and_then(|(path, _)| path.file_name())
-                        .is_some_and(|name| protected_names.contains(name));
-                    if is_protected {
-                        let object = source
-                            .read(position, policy.read, cancel)
-                            .map_err(|source| RepackError::Read { id, source })?;
-                        if object.id() != id {
-                            return Err(RepackError::Missing(id));
-                        }
-                        held.insert(id);
-                        continue 'required;
-                    }
                     charge_input(plan.object_sizes[&id], &mut bytes, limits.write)?;
                     packed.push(Packed { id, pack, position });
                     continue 'required;

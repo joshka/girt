@@ -206,6 +206,14 @@ impl Repository {
             || first.reachable != second.reachable
             || first.required != second.required
             || first.alternate_stores != second.alternate_stores
+            || !first
+                .protected_packs
+                .iter()
+                .filter(|path| *path != &replacement_pack)
+                .eq(second
+                    .protected_packs
+                    .iter()
+                    .filter(|path| *path != &replacement_pack))
         {
             return Err(failed(RetireCause::Changed, report));
         }
@@ -220,7 +228,7 @@ impl Repository {
         // Objects left out because a protected pack holds them must still decode from one of the
         // protected packs that survive this retirement.
         let mut unverified = held.clone();
-        for protected in &second.protected_packs {
+        for protected in first.protected_packs.intersection(&second.protected_packs) {
             if unverified.is_empty() {
                 break;
             }
@@ -582,6 +590,28 @@ mod tests {
         let error = result.unwrap_err();
         assert!(matches!(error.cause, RetireCause::Changed));
         assert!(error.report.published.is_some());
+        assert!(error.report.removed.is_empty());
+        assert!(old_index.exists());
+    }
+
+    #[test]
+    fn changed_protection_is_refused_before_survivor_verification() {
+        let (_root, repository, policy, old_index) = fixture();
+        let keep = old_index.with_extension("keep");
+        fs::write(&keep, b"").unwrap();
+        let error = repository
+            .retire_old_packs_at(
+                &policy,
+                RepackLimits::default(),
+                &AtomicBool::new(false),
+                || {
+                    fs::remove_file(&keep).unwrap();
+                },
+                |path| fs::remove_file(path),
+                |directory| File::open(directory).and_then(|dir| dir.sync_all()),
+            )
+            .unwrap_err();
+        assert!(matches!(error.cause, RetireCause::Changed));
         assert!(error.report.removed.is_empty());
         assert!(old_index.exists());
     }

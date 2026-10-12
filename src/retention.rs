@@ -166,7 +166,8 @@ impl RetentionPolicy {
 /// objects, alternates, or an independent writer can still refer to it.
 #[derive(Debug)]
 pub struct RetentionPlan {
-    /// Distinct root candidates recovered before any failure.
+    /// Distinct explicit root candidates recovered before any failure.
+    /// Recent packed objects contribute traversal roots through the protected pack inventory.
     pub roots: BTreeSet<ObjectId>,
     /// Heads, refs, indexes and recent loose objects before applying reflog policy.
     pub strong_roots: BTreeSet<ObjectId>,
@@ -177,6 +178,7 @@ pub struct RetentionPlan {
     observed_logs: Vec<ObservedLog>,
     // Payload sizes from the full scan, including reconstructed delta results.
     object_sizes: BTreeMap<ObjectId, u64>,
+    recent_packs: BTreeSet<PathBuf>,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
     /// Packs protected by `.keep` or by a recent pack modification time.
@@ -246,6 +248,7 @@ impl Repository {
             reflog_expiry_candidates: BTreeMap::new(),
             observed_logs: Vec::new(),
             object_sizes: BTreeMap::new(),
+            recent_packs: BTreeSet::new(),
             reachable: BTreeSet::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
@@ -283,14 +286,43 @@ impl Repository {
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        match walk(
-            self,
-            &store,
-            policy,
-            cancel,
-            &plan.roots,
-            &mut plan.object_sizes,
-        ) {
+        // Pack-derived roots stay separate from explicit roots: publishing our replacement
+        // must not appear to change the caller's roots during the retirement recheck.
+        let mut roots = plan.roots.clone();
+        let mut strong_roots = plan.strong_roots.clone();
+        let recent_names: BTreeSet<_> = plan
+            .recent_packs
+            .iter()
+            .filter_map(|path| path.file_name())
+            .collect();
+        for (path, pack) in store.primary_packs_with_paths() {
+            if !path
+                .file_name()
+                .is_some_and(|name| recent_names.contains(name))
+            {
+                continue;
+            }
+            for id in pack.identities() {
+                if let Err(reason) = check(cancel) {
+                    plan.fail(reason);
+                    return plan;
+                }
+                let id = match id {
+                    Ok(id) => id,
+                    Err(error) => {
+                        plan.fail(error.to_string());
+                        return plan;
+                    }
+                };
+                roots.insert(id);
+                strong_roots.insert(id);
+                if roots.len() > policy.max_entries {
+                    plan.fail("recent packed root limit");
+                    return plan;
+                }
+            }
+        }
+        match walk(self, &store, policy, cancel, &roots, &mut plan.object_sizes) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
@@ -298,7 +330,7 @@ impl Repository {
             }
         }
         // Equal root sets share the fully decoded and validated closure.
-        let live = if plan.strong_roots == plan.roots {
+        let live = if strong_roots == roots {
             plan.reachable.clone()
         } else {
             match walk(
@@ -306,7 +338,7 @@ impl Repository {
                 &store,
                 policy,
                 cancel,
-                &plan.strong_roots,
+                &strong_roots,
                 &mut plan.object_sizes,
             ) {
                 Ok(reachable) => reachable,
@@ -316,7 +348,7 @@ impl Repository {
                 }
             }
         };
-        let mut required_roots = plan.strong_roots.clone();
+        let mut required_roots = strong_roots.clone();
         for record in &plan.observed_logs {
             let live_record = live.contains(&record.old) || live.contains(&record.new);
             let cutoff = if live_record {
@@ -337,9 +369,9 @@ impl Repository {
                 );
             }
         }
-        if required_roots == plan.roots {
+        if required_roots == roots {
             plan.required = plan.reachable.clone();
-        } else if required_roots == plan.strong_roots {
+        } else if required_roots == strong_roots {
             plan.required = live;
         } else {
             match walk(
@@ -619,6 +651,7 @@ fn recent_objects(
                 } else if path.extension().is_some_and(|ext| ext == "pack")
                     && metadata.modified().map_err(|e| e.to_string())? >= policy.recent_cutoff
                 {
+                    plan.recent_packs.insert(path.clone());
                     plan.protected_packs.insert(path);
                 }
             }

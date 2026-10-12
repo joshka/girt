@@ -184,6 +184,11 @@ impl FilePack {
         Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
     }
 
+    /// Iterates identities from the validated pinned index without decoding their payloads.
+    pub(crate) fn identities(&self) -> impl Iterator<Item = Result<ObjectId, Error>> + '_ {
+        (0..self.ranges.len()).map(|position| self.identity(position))
+    }
+
     pub(crate) fn read(
         &self,
         position: usize,

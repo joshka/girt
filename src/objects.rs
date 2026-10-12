@@ -460,7 +460,6 @@ impl Objects {
 }
 
 impl Objects {
-    /// Returns every indexed pack in lookup order, primary store first.
     /// Primary-store packs with their `.pack` paths, in search order.
     pub(crate) fn primary_packs_with_paths(&self) -> Vec<(&Path, &FilePack)> {
         self.stores
@@ -473,16 +472,6 @@ impl Objects {
                     .map(Path::new)
                     .zip(store.packs.iter().map(AsRef::as_ref))
             })
-            .collect()
-    }
-
-    pub(crate) fn packs(&self) -> Vec<&FilePack> {
-        // Probe: primary store only. Alternates are read through `read_controlled`, which keeps
-        // store precedence, rather than copied as stored entries.
-        self.stores
-            .iter()
-            .take(1)
-            .flat_map(|store| store.packs.iter().map(AsRef::as_ref))
             .collect()
     }
 }

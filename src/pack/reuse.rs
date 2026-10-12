@@ -40,7 +40,7 @@ pub(crate) enum ReuseError {
 /// same source pack; its header is rewritten as an OFS_DELTA with the new distance. Any other delta
 /// is reconstructed, identity-checked, and written whole. Source packs were checksum-validated when
 /// opened, so copied bytes are not re-inflated. Fresh objects are identity-checked and may become
-/// REF_DELTA entries against earlier fresh objects under `compression`. Identities in `fresh`
+/// OFS_DELTA entries against earlier fresh objects under `compression`. Identities in `fresh`
 /// must not repeat identities in `packed`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_reusing(
@@ -140,6 +140,7 @@ pub(crate) fn write_reusing(
     }
 
     let mut depths = Vec::with_capacity(fresh.len());
+    let mut fresh_offsets = Vec::with_capacity(fresh.len());
     for position in 0..fresh.len() {
         check()?;
         let object = fresh[position];
@@ -152,7 +153,17 @@ pub(crate) fn write_reusing(
             }
         };
         if let Some(selected) = selected {
-            pack.put(&selected.bytes)?;
+            if let Some(base) = selected.base {
+                // Fresh deltas use the OFS framing that later repacks preserve verbatim.
+                let header_end = selected.data_start - format.digest_len();
+                let mut header = selected.bytes[..header_end].to_vec();
+                header[0] = (header[0] & !0x70) | 0x60;
+                pack.put(&header)?;
+                pack.put(&offset_distance(offset - fresh_offsets[base]))?;
+                pack.put(&selected.bytes[selected.data_start..])?;
+            } else {
+                pack.put(&selected.bytes)?;
+            }
             if selected.depth != 0 {
                 deltas.entries += 1;
                 deltas.max_depth = deltas.max_depth.max(selected.depth);
@@ -162,6 +173,7 @@ pub(crate) fn write_reusing(
             write_ordinary(&mut pack, object.kind, object.data)?;
             depths.push(0);
         }
+        fresh_offsets.push(offset);
         entries.push(Entry {
             id: object.id,
             offset,

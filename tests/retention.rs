@@ -892,8 +892,8 @@ fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     let again = repo
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
-    // Entries are now copied from whichever pack holds them first, so bytes may differ.
-    assert_eq!(again.written.objects, result.written.objects);
+    assert_eq!(again.written.checksum, result.written.checksum);
+    assert_eq!(again.written.pack_bytes, result.written.pack_bytes);
 }
 
 #[rstest::rstest]

@@ -88,7 +88,7 @@ jobs:
       - name: Core-only runtime without tracing
         run: >-
           cargo +stable test --locked --no-default-features --no-fail-fast
-          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable --test retention --test retention_integrity --test retention_survivors
+          --lib --test layout_shallow --test worktree_create --test worktree_admin --test object_ids --test sha256 --test commits --test decoding --test packs --test index --test colocation --test references --test references_portable --test retention --test retention_integrity --test retention_survivors --test retention_repack_contracts
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
@@ -333,13 +333,13 @@ jobs:
           git --version
           python -c "import platform,tempfile; print(platform.platform()); print(tempfile.gettempdir())"
       - name: Retention and repack cases
-        run: cargo +stable test --locked --no-default-features --test retention --test retention_integrity --test retention_survivors
+        run: cargo +stable test --locked --no-default-features --test retention --test retention_integrity --test retention_survivors --test retention_repack_contracts
       - name: Maintenance fault and race cases
         run: |
           cargo +stable test --locked --no-default-features --lib 'retention::'
           cargo +stable test --locked --no-default-features --lib 'refs::reftable::stack_tests::expiry_'
       - name: Retention API and benchmark lint
-        run: cargo +stable clippy --locked --no-default-features --lib --test retention --test retention_integrity --test retention_survivors --bench retention -- -D warnings
+        run: cargo +stable clippy --locked --no-default-features --lib --test retention --test retention_integrity --test retention_survivors --test retention_repack_contracts --bench retention -- -D warnings
 
   changes:
     name: Changes

@@ -339,6 +339,8 @@ pub(super) fn write_ordinary(
 pub(super) struct SelectedEntry {
     pub(super) bytes: Vec<u8>,
     pub(super) depth: usize,
+    pub(super) base: Option<usize>,
+    pub(super) data_start: usize,
 }
 
 pub(super) fn select_entry(
@@ -381,7 +383,12 @@ pub(super) fn select_entry(
         if best.is_none() {
             let bytes = compressed(entry_header(object.kind, length as u64), object.data)?;
             ordinary_cost = bytes.len();
-            best = Some(SelectedEntry { bytes, depth: 0 });
+            best = Some(SelectedEntry {
+                bytes,
+                depth: 0,
+                base: None,
+                data_start: 0,
+            });
             // Even before zlib bytes, a REF_DELTA needs a header and a format-sized base ID.
             if ordinary_cost.saturating_sub(1 + object.id.format().digest_len())
                 <= options.min_savings
@@ -397,6 +404,7 @@ pub(super) fn select_entry(
         check()?;
         let mut header = entry_header_code(7, program.len() as u64);
         header.extend_from_slice(objects[i].id.as_bytes());
+        let data_start = header.len();
         let bytes = compressed(header, &program)?;
         let current = best.as_ref().unwrap();
         if bytes.len() < current.bytes.len()
@@ -405,6 +413,8 @@ pub(super) fn select_entry(
             best = Some(SelectedEntry {
                 bytes,
                 depth: depths[i] + 1,
+                base: Some(i),
+                data_start,
             });
         }
     }

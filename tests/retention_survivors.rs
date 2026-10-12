@@ -460,3 +460,159 @@ fn reused_entries_obey_logical_byte_budgets(
     );
     assert_eq!(packs(root).len(), 1);
 }
+
+fn git_pack_selected(root: &Path, name: &str, ids: &[ObjectId]) -> PathBuf {
+    let input = ids.iter().map(|id| format!("{id}\n")).collect::<String>();
+    let bytes = git(
+        root,
+        &["pack-objects", "--stdout", "--delta-base-offset"],
+        input.as_bytes(),
+    );
+    let path = root.join(format!("objects/pack/pack-{name}.pack"));
+    fs::write(&path, bytes).unwrap();
+    git(root, &["index-pack", path.to_str().unwrap()], b"");
+    git(
+        root,
+        &["verify-pack", path.with_extension("idx").to_str().unwrap()],
+        b"",
+    );
+    path
+}
+
+#[test]
+fn recent_unreachable_commit_keeps_older_packed_dependencies() {
+    let dir = bare();
+    let root = dir.path();
+    let blob = loose(root, b"old content still used by recent commit");
+    let tree: ObjectId = String::from_utf8(git(
+        root,
+        &["mktree"],
+        format!("100644 blob {blob}\tfile\n").as_bytes(),
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    let commit: ObjectId = String::from_utf8(git(
+        root,
+        &[
+            "-c",
+            "user.name=Probe",
+            "-c",
+            "user.email=probe@example.com",
+            "commit-tree",
+            &tree.to_string(),
+        ],
+        b"recent unreachable commit\n",
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    let old = git_pack_selected(root, "old", &[blob, tree]);
+    git_pack_selected(root, "recent", &[commit]);
+    remove_loose_copies(root, &[blob, tree, commit]);
+    let file = fs::File::open(&old).unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
+        .unwrap();
+    let fresh = loose(root, b"independent live root");
+    git(
+        root,
+        &["update-ref", "refs/tags/current", &fresh.to_string()],
+        b"",
+    );
+    let control = bare();
+    copy_fixture_tree(root, control.path());
+    git(
+        control.path(),
+        &["-c", "gc.auto=0", "gc", "--prune=1.hour.ago"],
+        b"",
+    );
+    assert!(
+        read(control.path(), commit, ReadLimits::default()).is_ok(),
+        "Git retains recent commit"
+    );
+    assert!(
+        read(control.path(), tree, ReadLimits::default()).is_ok(),
+        "Git retains recent commit tree"
+    );
+    assert!(
+        read(control.path(), blob, ReadLimits::default()).is_ok(),
+        "Git retains recent commit blob"
+    );
+    let mut p = policy(vec![fresh]);
+    p.recent_cutoff = SystemTime::now() - Duration::from_secs(3600);
+    assert!(read(root, commit, p.read).is_ok());
+    assert!(read(root, tree, p.read).is_ok());
+    assert!(read(root, blob, p.read).is_ok());
+    let report = Repository::open(root).unwrap().retire_old_packs(
+        &mut Exclusive,
+        &p,
+        limits(),
+        &AtomicBool::new(false),
+    );
+    eprintln!("recent commit dependency retirement: {report:?}");
+    assert!(
+        read(root, commit, p.read).is_ok(),
+        "recent commit must survive"
+    );
+    assert!(
+        read(root, tree, p.read).is_ok(),
+        "recent retained commit lost its tree"
+    );
+    assert!(
+        read(root, blob, p.read).is_ok(),
+        "recent retained commit lost its blob"
+    );
+}
+
+fn remove_loose_copies(root: &Path, objects: &[ObjectId]) {
+    for object in objects {
+        let name = object.to_string();
+        fs::remove_file(root.join("objects").join(&name[..2]).join(&name[2..])).unwrap();
+    }
+}
+
+fn copy_fixture_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_fixture_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+            let metadata = entry.metadata().unwrap();
+            fs::File::open(&target)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(metadata.modified().unwrap()))
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn later_protected_copy_is_not_duplicated_in_replacement() {
+    let dir = bare();
+    let root = dir.path();
+    git_pack_selected(root, "a", &[loose(root, b"shared object")]);
+    let object = id(root, b"shared object");
+    let protected = git_pack_selected(root, "z", &[object]);
+    fs::write(protected.with_extension("keep"), b"").unwrap();
+    let name = object.to_string();
+    fs::remove_file(root.join("objects").join(&name[..2]).join(&name[2..])).unwrap();
+    let fresh = loose(root, b"new root makes distinct output");
+    let p = policy(vec![object, fresh]);
+    let report = Repository::open(root)
+        .unwrap()
+        .retire_old_packs(&mut Exclusive, &p, limits(), &AtomicBool::new(false))
+        .unwrap();
+    let copies = packs(root)
+        .iter()
+        .filter(|pack| read(isolate(pack).path(), object, p.read).is_ok())
+        .count();
+    assert_eq!(
+        copies, 1,
+        "later protected copy should suffice; retirement={report:?}"
+    );
+}
