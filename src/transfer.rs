@@ -238,9 +238,25 @@ pub struct FetchOutcome {
 pub struct PushOptions {
     push_options: Vec<Vec<u8>>,
     identity: Option<crate::Signature>,
+    compression: Option<crate::PackCompression>,
 }
 
 impl PushOptions {
+    /// Selects compression for a configured push, replacing the default bounded delta policy.
+    ///
+    /// Both policies can reuse eligible stored compressed entries and internal deltas. Ordinary
+    /// compression disables new internal/external delta search. Delta search respects its bounds;
+    /// packs offering advertised receiver candidates additionally cap output depth at one.
+    ///
+    /// ```
+    /// let _options =
+    ///     girt::transfer::PushOptions::default().compression(girt::PackCompression::Ordinary);
+    /// ```
+    pub fn compression(mut self, compression: crate::PackCompression) -> Self {
+        self.compression = Some(compression);
+        self
+    }
+
     /// Identity for reflog entries written in a local destination repository.
     pub fn identity(mut self, identity: crate::Signature) -> Self {
         self.identity = Some(identity);
@@ -970,7 +986,10 @@ impl Repository {
             .objects(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
         let format = objects.object_format();
-        let limits = PushLimits::trusted();
+        let mut limits = PushLimits::trusted();
+        if let Some(compression) = options.compression {
+            limits.compression = compression;
+        }
         let cancel = AtomicBool::new(false);
         let control = TransportControl::new(&cancel);
         // Each transport reads the receiver's advertisement before preparing. Like `git
@@ -1320,8 +1339,8 @@ mod tests {
         )
     }
 
-    /// Objects in the destination's packs.
-    fn packed(dest: &Path) -> usize {
+    /// Pack identities independently listed by Git, including verified thin-pack repair bases.
+    fn pack_ids(dest: &Path) -> std::collections::BTreeMap<PathBuf, Vec<String>> {
         std::fs::read_dir(dest.join("objects/pack"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -1329,18 +1348,29 @@ mod tests {
             .map(|index| {
                 let output = Command::new("git")
                     .arg("show-index")
-                    .stdin(std::fs::File::open(index).unwrap())
+                    .stdin(std::fs::File::open(&index).unwrap())
                     .output()
                     .unwrap();
-                output.stdout.iter().filter(|b| **b == b'\n').count()
+                assert!(output.status.success());
+                let ids = String::from_utf8(output.stdout)
+                    .unwrap()
+                    .lines()
+                    .map(|line| line.split_whitespace().nth(1).unwrap().to_owned())
+                    .collect();
+                (index, ids)
             })
-            .sum()
+            .collect()
+    }
+
+    fn packed(dest: &Path) -> usize {
+        pack_ids(dest).values().map(Vec::len).sum()
     }
 
     #[test]
     fn push_retry_after_knowledge_change_reuses_advertisement() {
         let (_root, work, dest, topic) = fixture();
-        let before = packed(&dest);
+        let before = pack_ids(&dest);
+        let base_tree = git(&work, &["rev-parse", "main~1^{tree}"], 0);
         let attempts = Cell::new(0);
         // The destination's only ref moves back one commit while the first pack is prepared, so
         // the root that pack relies on is no longer advertised.
@@ -1353,8 +1383,28 @@ mod tests {
         .unwrap();
         assert!(report.all_succeeded(), "{report:?}");
         assert_eq!(attempts.get(), 2);
-        // The retry excludes the new `main`: both missing commits with their trees and blobs.
-        assert_eq!(packed(&dest) - before, 6);
+        // The retry sends exactly Git's six selected objects. Native thin-pack repair additionally
+        // appends the verified old tree base, rather than retransmitting receiver history.
+        let after = pack_ids(&dest);
+        let mut incoming: Vec<_> = after
+            .iter()
+            .filter(|(path, _)| !before.contains_key(*path))
+            .flat_map(|(_, ids)| ids.iter().cloned())
+            .collect();
+        let oracle = git(
+            &work,
+            &["rev-list", "--objects", "topic", "--not", "main~1"],
+            0,
+        );
+        let mut expected: Vec<_> = oracle
+            .lines()
+            .map(|line| line.split_whitespace().next().unwrap().to_owned())
+            .collect();
+        assert_eq!(expected.len(), 6);
+        expected.push(base_tree);
+        incoming.sort();
+        expected.sort();
+        assert_eq!(incoming, expected);
         assert_eq!(git(&dest, &["rev-parse", "topic"], 0), topic.to_string());
         git(&dest, &["fsck", "--strict", "--no-dangling"], 0);
     }

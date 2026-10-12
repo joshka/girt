@@ -12,9 +12,9 @@ use crate::refs::RefName;
 /// Publishes prepared commands through caller-owned receive-pack v0 blocking streams.
 ///
 /// Reads a complete advertisement, requires `report-status` for nonempty pushes, checks required
-/// capabilities, then writes commands and a raw non-thin pack. Every command carries its exact
-/// expected old value for the server to compare under its reference transaction. SHA-256 requests
-/// `object-format=sha256`; deletions require `delete-refs`, and supplied options require
+/// capabilities, then writes commands and a raw pack (possibly thin). Every command carries its
+/// exact expected old value for the server to compare under its reference transaction. SHA-256
+/// requests `object-format=sha256`; deletions require `delete-refs`, and supplied options require
 /// `push-options`. Report-status-v2 is requested when advertised, preserving proc-receive rewrite
 /// options. [`PreparedPush::with_progress`] requests sideband when available; channel-2 frames
 /// remain untrusted bytes in the report. Protocol versions, shallow advertisements and peeled

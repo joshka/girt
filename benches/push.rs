@@ -195,9 +195,66 @@ fn push(c: &mut Criterion) {
     }
     group.finish();
 }
+/// New loose edits against an explicitly advertised blob isolate bounded external-base search.
+fn blob_edits(c: &mut Criterion) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = girt::Repository::init(
+        girt::ObjectFormat::Sha1,
+        root.path().join("source.git"),
+        girt::InitKind::Bare,
+    )
+    .unwrap();
+    let mut state = 0x12345678u32;
+    let mut data: Vec<_> = (0..512 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect();
+    let base = repo.loose_objects().write_blob(&data).unwrap();
+    data[262144..262152].copy_from_slice(b"EDITED!!");
+    let tip = repo.loose_objects().write_blob(&data).unwrap();
+    let objects = repo.objects(PackLimits::trusted()).unwrap();
+    let command = PushCommand {
+        name: RefName::new("refs/tags/edit").unwrap(),
+        expected: None,
+        new: tip,
+        force: ForcePolicy::Allow,
+    };
+    let cancel = AtomicBool::new(false);
+    let mut group = c.benchmark_group("push-blob-edit");
+    group.throughput(Throughput::Bytes(data.len() as u64));
+    for (name, compression) in [
+        ("ordinary", girt::PackCompression::Ordinary),
+        (
+            "advertised-base",
+            girt::PackCompression::Delta(girt::DeltaOptions::default()),
+        ),
+    ] {
+        let limits = PushLimits {
+            compression,
+            ..PushLimits::default()
+        };
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                PreparedPush::new_excluding(
+                    black_box(&objects),
+                    vec![command.clone()],
+                    &[base],
+                    limits,
+                    &cancel,
+                )
+                .unwrap()
+            })
+        });
+    }
+    group.finish();
+}
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(30).warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(5));
-    targets = push
+    targets = push, blob_edits
 }
 criterion_main!(benches);

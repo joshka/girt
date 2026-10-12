@@ -9,14 +9,14 @@
 //! known acknowledgements when the final outcome is uncertain; read destination refs before
 //! retrying.
 //!
-//! Preparation validates structured objects, locates blobs and spools a non-thin pack before any
-//! commands can reach a server. Reused compressed entries are CRC-checked; the receiver derives
-//! their identities and checks connectivity before publishing refs. With receiver roots, it reads
-//! only the history they do not cover plus a boundary; see [`PreparedPush::new_excluding`].
-//! Preparation leaves local refs and reflogs untouched. These functions take an already prepared
-//! push, so its roots come from the caller's knowledge. [`crate::Repository::push`] instead
-//! prepares after reading the advertisement and excludes [`PushAdvertisement::receiver_roots`],
-//! as `git send-pack` does.
+//! Preparation validates structured objects, locates blobs and spools a pack (possibly thin against
+//! advertised history) before any commands can reach a server. Reused compressed entries are
+//! CRC-checked; the receiver derives their identities and checks connectivity before publishing
+//! refs. With receiver roots, it reads only the history they do not cover plus a boundary; see
+//! [`PreparedPush::new_excluding`]. Preparation leaves local refs and reflogs untouched. These
+//! functions take an already prepared push, so its roots come from the caller's knowledge.
+//! [`crate::Repository::push`] instead prepares after reading the advertisement and excludes
+//! [`PushAdvertisement::receiver_roots`], as `git send-pack` does.
 //!
 //! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
 //! deletion requires the advertised `delete-refs` capability, and supplied push options require

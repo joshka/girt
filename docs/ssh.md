@@ -358,8 +358,9 @@ thread-local signal-mask and pre-exec handoff calls on macOS/Linux. Core-only bu
 runtime-free. OpenSSH is an external caller-selected executable with its own distribution notices,
 not linked or vendored code.
 
-Supported Git scope uses SHA-1/SHA-256 protocol v0 and non-thin push packs. Windows SSH, proxy/jump
-hosts, connection reuse, broader URL/refspec/remote policy, protocol v2, shallow/partial
-repositories and new credential services remain excluded. Broader async object-store/filesystem
-interfaces and storage concurrency need a subsequent design investigation driven by a consumer's
-responsiveness requirements; this adapter does not decide them.
+Supported Git scope uses SHA-1/SHA-256 protocol v0 and push packs that may use thin REF deltas
+against advertised receiver history. Windows SSH, proxy/jump hosts, connection reuse, broader
+URL/refspec/remote policy, protocol v2, shallow/partial repositories and new credential services
+remain excluded. Broader async object-store/filesystem interfaces and storage concurrency need a
+subsequent design investigation driven by a consumer's responsiveness requirements; this adapter
+does not decide them.

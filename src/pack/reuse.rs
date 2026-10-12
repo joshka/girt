@@ -1,4 +1,4 @@
-//! Pack writing that copies existing entries verbatim and searches deltas only for new objects.
+//! Pack writing that reuses stored entries and searches bounded deltas for transfer output.
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
@@ -62,6 +62,7 @@ pub(crate) fn write_reusing(
         packed,
         fresh,
         None,
+        None,
         outputs,
         limits,
         compression,
@@ -78,6 +79,7 @@ pub(crate) fn write_reusing(
 pub(crate) fn write_transfer(
     store: &crate::Objects,
     ids: &[ObjectId],
+    known_bases: &[(ObjectId, crate::ObjectKind)],
     outputs: (&mut impl Write, &mut impl Write),
     limits: PackWriteLimits,
     compression: PackCompression,
@@ -85,7 +87,18 @@ pub(crate) fn write_transfer(
     max_depth: usize,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
     observe: &mut impl FnMut(u64, u64),
-) -> Result<PackWritten, ReuseError> {
+) -> Result<(PackWritten, HashSet<ObjectId>), ReuseError> {
+    let max_depth = match compression {
+        PackCompression::Delta(options) => max_depth.min(options.max_depth),
+        PackCompression::Ordinary => max_depth,
+    };
+    // Store-assisted thin import can find a pending in-pack identity in receiver storage. Keep
+    // every internal base ordinary so it resolves before external lookup can append that ID.
+    let max_depth = if known_bases.is_empty() {
+        max_depth
+    } else {
+        max_depth.min(1)
+    };
     let packs = store.transfer_packs();
     let mut packed = Vec::new();
     let mut fresh = Vec::new();
@@ -104,12 +117,14 @@ pub(crate) fn write_transfer(
         }
     }
     fresh.sort_unstable();
-    write_reusing_impl(
+    let mut external = ExternalBases::new(store, known_bases);
+    let written = write_reusing_impl(
         store.object_format(),
         &packs,
         &packed,
         &[],
         Some((store, &fresh)),
+        Some(&mut external),
         outputs,
         limits,
         compression,
@@ -117,7 +132,8 @@ pub(crate) fn write_transfer(
         max_depth,
         check,
         observe,
-    )
+    )?;
+    Ok((written, external.used))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,6 +143,7 @@ fn write_reusing_impl(
     packed: &[Packed],
     fresh: &[PackObject<'_>],
     stored: Option<(&crate::Objects, &[ObjectId])>,
+    mut external: Option<&mut ExternalBases<'_>>,
     outputs: (&mut impl Write, &mut impl Write),
     limits: PackWriteLimits,
     compression: PackCompression,
@@ -190,7 +207,7 @@ fn write_reusing_impl(
         };
         let entry = source.entry(item.position).map_err(read_error)?;
         let header = entry_header(source, &entry).map_err(read_error)?;
-        let (_, length) = source
+        let (kind, length) = source
             .object_header(item.position, read_limits)
             .map_err(read_error)?;
         charge_input(&mut input_bytes, length, limits)?;
@@ -203,9 +220,46 @@ fn write_reusing_impl(
             let object = source
                 .read(item.position, read_limits, cancelled)
                 .map_err(read_error)?;
-            write_ordinary(&mut pack, object.kind(), object.data())?;
+            depth = write_reconstructed(
+                &mut pack,
+                item.id,
+                &object,
+                external.as_deref_mut(),
+                compression,
+                read,
+                max_depth,
+                &mut input_bytes,
+                limits,
+                &mut deltas,
+                check,
+                |pack| write_ordinary(pack, object.kind(), object.data()).map_err(Into::into),
+            )?;
         } else {
             match header.base {
+                None if matches!(kind, crate::ObjectKind::Blob | crate::ObjectKind::Tree)
+                    && external.as_ref().is_some_and(|bases| !bases.ids.is_empty())
+                    && matches!(compression, PackCompression::Delta(options)
+                        if max_depth > 0 && options.max_depth > 0 && length >= 64
+                            && length <= options.max_object_bytes) =>
+                {
+                    let object = source
+                        .read(item.position, read_limits, cancelled)
+                        .map_err(read_error)?;
+                    depth = write_reconstructed(
+                        &mut pack,
+                        item.id,
+                        &object,
+                        external.as_deref_mut(),
+                        compression,
+                        read,
+                        max_depth,
+                        &mut input_bytes,
+                        limits,
+                        &mut deltas,
+                        check,
+                        |pack| source.copy_raw(&entry, &header, pack).map_err(copy_error),
+                    )?;
+                }
                 None => source
                     .copy_raw(&entry, &header, &mut pack)
                     .map_err(copy_error)?,
@@ -232,7 +286,23 @@ fn write_reusing_impl(
                         if object.data().len() as u64 > limits.max_object_bytes {
                             return Err(PackWriteError::Limit("object bytes").into());
                         }
-                        write_ordinary(&mut pack, object.kind(), object.data())?;
+                        depth = write_reconstructed(
+                            &mut pack,
+                            item.id,
+                            &object,
+                            external.as_deref_mut(),
+                            compression,
+                            read,
+                            max_depth,
+                            &mut input_bytes,
+                            limits,
+                            &mut deltas,
+                            check,
+                            |pack| {
+                                write_ordinary(pack, object.kind(), object.data())
+                                    .map_err(Into::into)
+                            },
+                        )?;
                     }
                 },
             }
@@ -276,7 +346,8 @@ fn write_reusing_impl(
         };
         let offset = pack.bytes;
         pack.crc = crc32fast::Hasher::new();
-        let selected = match compression {
+        let mut search_stats = DeltaStats::default();
+        let mut selected = match compression {
             PackCompression::Ordinary => None,
             PackCompression::Delta(mut options) => {
                 if stored.is_some() {
@@ -296,14 +367,35 @@ fn write_reusing_impl(
                         inputs.len() - 1,
                         &depths,
                         options,
-                        &mut deltas,
+                        &mut search_stats,
                         check,
                     )?
                 } else {
-                    select_entry(&fresh, position, &depths, options, &mut deltas, check)?
+                    select_entry(&fresh, position, &depths, options, &mut search_stats, check)?
                 }
             }
         };
+        if let (Some(external), PackCompression::Delta(mut options)) =
+            (external.as_deref_mut(), compression)
+        {
+            options.max_depth = options.max_depth.min(max_depth);
+            options.max_work = options.max_work.saturating_sub(search_stats.work);
+            options.max_candidates = options
+                .max_candidates
+                .saturating_sub(search_stats.candidates as usize);
+            selected = external.select(
+                object,
+                selected,
+                options,
+                read,
+                &mut input_bytes,
+                limits,
+                &mut search_stats,
+                check,
+            )?;
+        }
+        deltas.candidates = deltas.candidates.saturating_add(search_stats.candidates);
+        deltas.work = deltas.work.saturating_add(search_stats.work);
         if let Some(selected) = selected {
             if stored.is_some() {
                 pack.put(&selected.bytes)?;
@@ -360,6 +452,200 @@ fn write_reusing_impl(
         index_bytes: index.bytes,
         deltas,
     })
+}
+
+/// Only graph-proven receiver blobs and trees are offered here. Payloads are reconstructed through
+/// normal lookup; metadata is cached, while at most one external payload is retained per search.
+struct ExternalBases<'a> {
+    store: &'a crate::Objects,
+    ids: &'a [(ObjectId, crate::ObjectKind)],
+    lengths: Vec<(crate::ObjectKind, usize, ObjectId)>,
+    loaded: Vec<crate::ObjectKind>,
+    used: HashSet<ObjectId>,
+}
+
+impl<'a> ExternalBases<'a> {
+    fn new(store: &'a crate::Objects, ids: &'a [(ObjectId, crate::ObjectKind)]) -> Self {
+        Self {
+            store,
+            ids,
+            lengths: Vec::new(),
+            loaded: Vec::new(),
+            used: HashSet::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn select(
+        &mut self,
+        object: PackObject<'_>,
+        mut best: Option<super::write::SelectedEntry>,
+        mut options: super::compression::DeltaOptions,
+        read: (ReadLimits, &AtomicBool),
+        input_bytes: &mut u64,
+        limits: PackWriteLimits,
+        stats: &mut DeltaStats,
+        check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    ) -> Result<Option<super::write::SelectedEntry>, ReuseError> {
+        if !matches!(
+            object.kind,
+            crate::ObjectKind::Blob | crate::ObjectKind::Tree
+        ) || object.data.len() < 64
+            || object.data.len() > options.max_object_bytes
+            || options.max_depth == 0
+            || options.window == 0
+            || options.max_candidates == 0
+            || options.max_work == 0
+            || self.ids.is_empty()
+        {
+            return Ok(best);
+        }
+        if !self.loaded.contains(&object.kind) {
+            self.loaded.push(object.kind);
+            for &(id, kind) in self.ids {
+                check()?;
+                if kind != object.kind {
+                    continue;
+                }
+                let metadata = self
+                    .store
+                    .transfer_object(id, read.0, read.1)
+                    .map_err(|source| ReuseError::Read { id, source })?;
+                if let Some((actual, length, _)) = metadata {
+                    if actual != kind {
+                        return Err(ReuseError::Read {
+                            id,
+                            source: ObjectReadError::Corrupt("delta candidate kind"),
+                        });
+                    }
+                    self.lengths.push((kind, length, id));
+                }
+            }
+        }
+        let mut chosen = None;
+        let length = object.data.len();
+        let mut candidates: Vec<_> = self
+            .lengths
+            .iter()
+            .copied()
+            .filter(|&(kind, size, id)| {
+                kind == object.kind
+                    && id != object.id
+                    && size <= options.max_object_bytes
+                    && size <= read.0.max_object_bytes
+                    && size as u64 <= limits.max_object_bytes
+                    && size >= length.div_ceil(2)
+                    && size.div_ceil(2) <= length
+            })
+            .map(|(_, size, id)| (size, id))
+            .collect();
+        candidates.sort_unstable_by_key(|&(size, id)| (size.abs_diff(length), id));
+        for (size, id) in candidates
+            .into_iter()
+            .take(options.max_candidates.min(options.window))
+        {
+            check()?;
+            if options.max_work == 0 {
+                break;
+            }
+            if size as u64 > limits.max_input_bytes.saturating_sub(*input_bytes) {
+                continue;
+            }
+            charge_input(input_bytes, size, limits)?;
+            let base = self
+                .store
+                .read_controlled(id, read.0, read.1)
+                .map_err(|source| ReuseError::Read { id, source })?
+                .ok_or(ReuseError::Read {
+                    id,
+                    source: ObjectReadError::Corrupt("missing delta candidate"),
+                })?;
+            if base.kind() != object.kind || base.data().len() != size {
+                return Err(ReuseError::Read {
+                    id,
+                    source: ObjectReadError::Corrupt("delta candidate metadata changed"),
+                });
+            }
+            let pair = [
+                PackObject {
+                    id,
+                    kind: base.kind(),
+                    data: base.data(),
+                },
+                object,
+            ];
+            let before = stats.work;
+            let selected = select_entry(&pair, 1, &[0], options, stats, check)?;
+            options.max_work = options.max_work.saturating_sub(stats.work - before);
+            if let Some(selected) = selected
+                && best
+                    .as_ref()
+                    .is_none_or(|entry| selected.bytes.len() < entry.bytes.len())
+            {
+                chosen = (selected.depth != 0).then_some(id);
+                let strong_match = selected.depth != 0 && selected.bytes.len() <= length / 100;
+                best = Some(selected);
+                if strong_match {
+                    break;
+                }
+            }
+        }
+        if let Some(id) = chosen {
+            self.used.insert(id);
+        }
+        Ok(best)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_reconstructed<W: Write>(
+    pack: &mut Output<'_, W>,
+    id: ObjectId,
+    object: &crate::Object,
+    external: Option<&mut ExternalBases<'_>>,
+    compression: PackCompression,
+    read: (ReadLimits, &AtomicBool),
+    max_depth: usize,
+    input_bytes: &mut u64,
+    limits: PackWriteLimits,
+    stats: &mut DeltaStats,
+    check: &mut impl FnMut() -> Result<(), PackWriteError>,
+    whole: impl FnOnce(&mut Output<'_, W>) -> Result<(), ReuseError>,
+) -> Result<usize, ReuseError> {
+    let mut search_stats = DeltaStats::default();
+    let selected =
+        if let (Some(external), PackCompression::Delta(mut options)) = (external, compression) {
+            options.max_depth = options.max_depth.min(max_depth);
+            external.select(
+                PackObject {
+                    id,
+                    kind: object.kind(),
+                    data: object.data(),
+                },
+                None,
+                options,
+                read,
+                input_bytes,
+                limits,
+                &mut search_stats,
+                check,
+            )?
+        } else {
+            None
+        };
+    stats.candidates = stats.candidates.saturating_add(search_stats.candidates);
+    stats.work = stats.work.saturating_add(search_stats.work);
+    if let Some(selected) = selected.filter(|entry| entry.depth != 0) {
+        pack.put(&selected.bytes)?;
+        if selected.depth != 0 {
+            stats.entries += 1;
+            stats.max_depth = stats.max_depth.max(selected.depth);
+        }
+        Ok(selected.depth)
+    } else {
+        whole(pack)?;
+        Ok(0)
+    }
 }
 
 fn charge_input(

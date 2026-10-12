@@ -1122,19 +1122,28 @@ missing or invalid object fails preparation before any remote command. This is n
 Git fsck equivalence.
 
 Both writer policies reuse stored zlib streams, including deltas whose same-pack base has already
-been written within the output depth limit. Other deltas are reconstructed and written whole. The
-default writes loose objects as ordinary entries; `PushLimits::compression` can enable bounded
-internal REF_DELTA search for fresh objects. Both policies produce complete packs without external
-bases. Transfer deltas use REF_DELTA framing, requiring no optional OFS capability. Its companion
-index is generated into a sink, not sent or installed. Repeated and incremental pushes using `new`
-retransmit full selected histories; `new_excluding` can reduce them as described below.
-`PreparedPush::new_local_with_progress` reports unique source reads and successfully encoded pack
-entries through `PreparationProgress`. Reads include receiver history later excluded from the pack;
-packing totals describe only selected outgoing objects. Its terminal `Complete` event follows pack
-construction and the final cancellation check. It does not report upload, server receipt, acceptance
-or publication. Observers run synchronously and must return promptly; setting the cancellation flag
-from an intermediate event stops preparation at the next cooperative check. Cancellation from the
-terminal event cannot undo completed preparation.
+been written within the output depth limit. Other deltas are reconstructed. Push defaults to bounded
+delta search for fresh and reconstructed objects, with whole-object compression explicitly
+selectable through `PushLimits::compression` or the configured `PushOptions::compression` builder.
+Earlier output objects can be internal bases; identity-checked blobs and trees marked reachable from
+an advertised receiver root can be external bases. Only roots supplying an emitted external base
+join the existing live advertisement recheck. External candidate reads count against the writer's
+aggregate input budget; insufficient remaining budget falls back to whole objects. Search tries
+nearest-size blobs and trees within the bounded candidate, size and work policy, skips payloads
+under 64 bytes, and stops after a completed delta below 1% of target size. It does not reproduce
+Git's matching heuristics. Transfer deltas use REF_DELTA framing, requiring no optional OFS
+capability. A thin pack must be independently imported and repaired against receiver objects before
+installation. Packs offering receiver candidates cap output depth at one so every internal base is
+an ordinary entry resolved before external lookup; complete packs without receiver candidates retain
+their configured depth. Its companion index is generated into a sink, not sent or installed.
+Repeated and incremental pushes using `new` retransmit full selected histories; `new_excluding` can
+reduce them as described below. `PreparedPush::new_local_with_progress` reports unique source reads
+and successfully encoded pack entries through `PreparationProgress`. Reads include receiver history
+later excluded from the pack; packing totals describe only selected outgoing objects. Its terminal
+`Complete` event follows pack construction and the final cancellation check. It does not report
+upload, server receipt, acceptance or publication. Observers run synchronously and must return
+promptly; setting the cancellation flag from an intermediate event stops preparation at the next
+cooperative check. Cancellation from the terminal event cannot undo completed preparation.
 
 Preparation releases selected payloads after spooling the pack; the caller can drop its object
 reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent

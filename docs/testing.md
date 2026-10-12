@@ -234,6 +234,10 @@ The Windows integration selection follows implemented operations, not just file 
 - `http`: Both-format fetch/push, TLS trust/hostname checks, authentication, limits, cancellation,
   uncertain/partial outcomes and HTTP-backed fetch/clone publication. Its shell-hook fixture is
   Unix-only; the remaining suite is selected on Windows with `http_portable`.
+- `push_deltas`: Both-format Git-generated edits, thin REF framing/repair, exact contents, zero/one
+  output depth, internal bases, packed sources, search fallback and no-mutation failures run in the
+  portable core suite on Windows. Unix all-feature runs also exercise configured HTTP and SSH pushes
+  against Git; SSH uses a local client stand-in without an sshd.
 - `local_native`: Both-format files/reftable local fetch and push, with Git reading the destination,
   execute on Windows. `fetch`, `push`, `fetch_workflow`, and `clone` still include Unix-only
   process/hook fixtures and are excluded as complete suites on Windows. Portable planning and clone

@@ -39,7 +39,8 @@ impl PushCommand {
 /// Packs are spooled to temporary files. Retained memory includes selected structured payloads,
 /// object/edge metadata, protocol bytes and the caller's object snapshot. Packed blob payloads
 /// are not retained by selection; writing holds one reconstructed object and, for fresh delta
-/// search, up to `window * max_object_bytes` candidate bytes. Structured parsing copies payloads.
+/// search, up to `window * max_object_bytes` internal candidate bytes plus one external candidate.
+/// Structured parsing copies payloads.
 /// Per-read decoding work is bounded separately and may recur for each selected object.
 /// These are not hard heap or wall-clock limits; allocator overhead and server memory are excluded.
 #[derive(Debug, Clone, Copy)]
@@ -67,9 +68,16 @@ pub struct PushLimits {
     /// its bound still applies. Count/payload bounds cover every object read as a candidate for
     /// sending, including commits later found in receiver history.
     pub pack: PackWriteLimits,
-    /// Compression policy for fresh objects; ordinary entries by default. Existing compressed
-    /// entries and eligible deltas are reused under either policy. Transfer deltas use REF_DELTA
-    /// framing with internal bases, requiring no optional OFS capability.
+    /// Compression policy for fresh and reconstructed objects; bounded delta search by default.
+    /// Blob and tree candidates may come from verified advertised-root history; their
+    /// reconstructed values count against `pack.max_input_bytes`. Insufficient candidate
+    /// budget falls back to whole objects. A corrupt offered candidate refuses preparation even
+    /// if another candidate could produce a valid delta; candidate integrity is checked strictly.
+    /// Existing compressed entries and eligible deltas are reused under either policy.
+    /// Transfer deltas use REF_DELTA, requiring no optional OFS capability. Search and copied
+    /// chains obey `read.max_delta_depth` and the delta policy's depth bound when enabled.
+    /// Offering receiver candidates additionally caps output depth at one so internal bases
+    /// always resolve before receiver-assisted external lookup.
     pub compression: PackCompression,
 }
 impl Default for PushLimits {
@@ -84,7 +92,7 @@ impl Default for PushLimits {
             max_ancestry_steps: 4_000_000,
             read: ReadLimits::default(),
             pack: PackWriteLimits::default(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }
@@ -108,7 +116,7 @@ impl PushLimits {
             max_ancestry_steps: UNBOUNDED,
             read: ReadLimits::trusted(),
             pack: PackWriteLimits::trusted(),
-            compression: PackCompression::Ordinary,
+            compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
         }
     }
 }

@@ -1024,8 +1024,11 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         command("refs/heads/main", None, main(&fixture)),
         command("refs/tags/packed", None, fixture.records.last().unwrap().0),
     ];
-    let ordinary =
-        PreparedPush::new(&objects, commands.clone(), PushLimits::default(), &cancel).unwrap();
+    let ordinary_limits = PushLimits {
+        compression: girt::PackCompression::Ordinary,
+        ..PushLimits::default()
+    };
+    let ordinary = PreparedPush::new(&objects, commands.clone(), ordinary_limits, &cancel).unwrap();
     let limits = PushLimits {
         compression: girt::PackCompression::Delta(girt::DeltaOptions::default()),
         ..PushLimits::default()
@@ -1066,7 +1069,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         &refreshed,
         updates,
         &[main(&fixture)],
-        PushLimits::default(),
+        ordinary_limits,
         &cancel,
     )
     .unwrap();
