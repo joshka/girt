@@ -1374,7 +1374,15 @@ fn ref_delta_push_needs_only_report_status() {
         command("refs/tags/a", None, first),
         command("refs/tags/b", None, second),
     ];
-    let ordinary = f.prepare(commands.clone(), PushLimits::default()).unwrap();
+    let ordinary = f
+        .prepare(
+            commands.clone(),
+            PushLimits {
+                compression: crate::PackCompression::Ordinary,
+                ..PushLimits::default()
+            },
+        )
+        .unwrap();
     let p = f
         .prepare(
             commands,
@@ -1718,4 +1726,35 @@ fn fresh_transfer_deltas_obey_the_receiver_depth_limit() {
     )
     .unwrap();
     assert_eq!(imported.object_count(), 2);
+}
+
+#[test]
+fn external_delta_base_requires_live_advertisement_without_history_exclusion() {
+    let f = Fixture::new();
+    let loose = f.repo.loose_objects();
+    let mut data = vec![42; 65536];
+    let base = loose.write_blob(&data).unwrap();
+    data[32768] = 43;
+    let tip = loose.write_blob(&data).unwrap();
+    let prepared = PreparedPush::new_excluding(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/tags/test", None, tip)],
+        &[base],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(prepared.receiver_roots, vec![base]);
+    let response = response(&[b"unpack ok\n", b"ok refs/tags/test\n"]);
+    let mut sent = Vec::new();
+    let result = send(
+        &mut response.as_slice(),
+        &mut sent,
+        &prepared,
+        &AtomicBool::new(false),
+    );
+    assert!(
+        matches!(result, Err(PushError::NotSent(PushFailure::KnowledgeChanged(id))) if id == base)
+    );
+    assert!(sent.is_empty());
 }

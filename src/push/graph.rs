@@ -31,6 +31,8 @@ const SKEW_SLOP: usize = 5;
 pub(super) struct Selection {
     pub objects: Vec<ObjectId>,
     pub receiver_roots: Vec<ObjectId>,
+    /// Verified graph marks identify possible external blob and tree bases.
+    pub delta_bases: Vec<(ObjectId, ObjectKind, ObjectId)>,
 }
 
 /// Selects objects reachable from the non-deleting commands' tips that are not proven to be in the
@@ -631,7 +633,30 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         for id in omitted_blobs {
             self.rely_on(id);
         }
+        let search = matches!(self.limits.compression,
+            crate::PackCompression::Delta(options)
+                if options.max_depth > 0 && options.window > 0
+                    && options.max_candidates > 0 && options.max_work > 0)
+            && self.limits.read.max_delta_depth > 0
+            && (self.blobs.iter().any(|id| !self.known.contains_key(id))
+                || self
+                    .selected
+                    .values()
+                    .any(|object| object.kind() == ObjectKind::Tree));
+        let mut delta_bases: Vec<_> = self
+            .known
+            .iter()
+            .filter_map(|(&id, mark)| {
+                (search && matches!(mark.kind, ObjectKind::Blob | ObjectKind::Tree)).then_some(id)
+            })
+            .collect();
+        delta_bases.sort_unstable();
+        let delta_bases = delta_bases
+            .into_iter()
+            .map(|id| (id, self.known[&id].kind, self.roots[self.known[&id].root].0))
+            .collect();
         Selection {
+            delta_bases,
             objects: self
                 .selected
                 .into_keys()

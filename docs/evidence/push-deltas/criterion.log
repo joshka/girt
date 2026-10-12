@@ -1,0 +1,23 @@
+push-workload,16,19,574362,3967
+push-incremental,16,19,3999,1,192
+push-workload,256,259,9185238,24224
+push-incremental,256,259,24256,1,193
+Benchmarking push-blob-edit/ordinary
+Benchmarking push-blob-edit/ordinary: Warming up for 1.0000 s
+Benchmarking push-blob-edit/ordinary: Collecting 30 samples in estimated 8.5874 s (930 iterations)
+Benchmarking push-blob-edit/ordinary: Analyzing
+push-blob-edit/ordinary time:   [9.1361 ms 9.1936 ms 9.2766 ms]
+                        thrpt:  [53.899 MiB/s 54.386 MiB/s 54.728 MiB/s]
+Found 1 outliers among 30 measurements (3.33%)
+  1 (3.33%) high severe
+Benchmarking push-blob-edit/advertised-base
+Benchmarking push-blob-edit/advertised-base: Warming up for 1.0000 s
+Benchmarking push-blob-edit/advertised-base: Collecting 30 samples in estimated 9.0912 s (930 iterations)
+Benchmarking push-blob-edit/advertised-base: Analyzing
+push-blob-edit/advertised-base
+                        time:   [9.8734 ms 10.697 ms 12.056 ms]
+                        thrpt:  [41.472 MiB/s 46.741 MiB/s 50.641 MiB/s]
+Found 5 outliers among 30 measurements (16.67%)
+  1 (3.33%) high mild
+  4 (13.33%) high severe
+

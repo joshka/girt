@@ -1,0 +1,19 @@
+true [RefStatus { command: PushCommand { name: RefName([114, 101, 102, 115, 47, 104, 101, 97, 100, 115, 47, 98, 101, 110, 99, 104, 45, 112, 117, 115, 104]), expected: None, new: Sha1([129, 42, 60, 219, 251, 51, 69, 67, 187, 213, 133, 131, 53, 226, 31, 197, 201, 65, 40, 123]), force: FastForwardOnly }, status: Some(Ok), rejection_origin: None, attempted: true, effects: Some(RefEditOutcome { name: RefName([114, 101, 102, 115, 47, 104, 101, 97, 100, 115, 47, 98, 101, 110, 99, 104, 45, 112, 117, 115, 104]), reference: Published, logs: [] }), rewrites: [], rewrite_complete: true }]
+        0.26 real         0.12 user         0.03 sys
+            95289344  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                6014  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 582  voluntary context switches
+                 446  involuntary context switches
+          1099291243  instructions retired
+           496334492  cycles elapsed
+            88703456  peak memory footprint

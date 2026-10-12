@@ -226,9 +226,10 @@ pub(super) fn receive_depth(
     let mut index = Vec::new();
     let written = {
         let mut sink = std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file_mut());
-        let written = crate::pack::write_transfer(
+        let (written, _) = crate::pack::write_transfer(
             &store,
             &selected,
+            &[],
             (&mut sink, &mut index),
             PackWriteLimits {
                 max_objects: limits.max_objects.try_into().unwrap_or(u32::MAX),

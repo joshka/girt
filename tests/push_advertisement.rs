@@ -187,10 +187,13 @@ fn try_push(
     remote: &Remote,
     commands: Vec<PushCommand>,
 ) -> Result<PushReport, TransferError> {
+    // Installed thin packs include receiver bases appended during repair. Keep this selection
+    // corpus ordinary so its exact index counts continue to measure objects transmitted.
+    let options = PushOptions::default().compression(girt::PackCompression::Ordinary);
     Repository::open(&pair.work).unwrap().push(
         "origin",
         commands,
-        &PushOptions::default(),
+        &options,
         &remote.environment,
         &mut NoCallbacks,
     )

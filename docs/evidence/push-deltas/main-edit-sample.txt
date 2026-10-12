@@ -1,0 +1,367 @@
+Analysis of sampling perfdrv (pid 49841) every 1 millisecond
+Process:         perfdrv [49841]
+Path:            /private/tmp/*/perfdrv
+Load Address:    0x104200000
+Identifier:      perfdrv
+Version:         ???
+Code Type:       ARM64
+Parent Process:  Python [49840]
+Target Type:     live task
+
+Date/Time:       2026-10-12 05:23:19.322 -0700
+Launch Time:     2026-10-12 05:23:19.296 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         18.5M
+Physical footprint (peak):  18.5M
+Idle exit:                  untracked
+----
+
+Call graph:
+    335 Thread_296156965: Main Thread
+    + 294 _dyld_start  (in dyld) + 0  [0x104d2c9c0]
+    + 39 start  (in dyld) + 6904  [0x187b7848c]
+    + ! 39 dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_1::operator()() const  (in dyld) + 320  [0x187b78b30]
+    + !   38 dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)  (in dyld) + 3996  [0x187b79ae8]
+    + !   : 38 dyld4::RuntimeState::notifyDebuggerLoad(std::span<dyld4::Loader const*, 18446744073709551615ul> const&)  (in dyld) + 528  [0x187b88c8c]
+    + !   :   38 dyld4::ExternallyViewableState::addImages(lsl::Allocator&, lsl::Allocator&, std::span<dyld4::ExternallyViewableState::ImageInfo, 18446744073709551615ul> const&)  (in dyld) + 1084  [0x187b93c80]
+    + !   :     38 dyld4::ExternallyViewableState::triggerNotifications(dyld_image_mode, unsigned int, dyld_image_info const*)  (in dyld) + 296  [0x187b93524]
+    + !   :       38 dyld4::RemoteNotificationResponder::blockOnSynchronousEvent(unsigned int)  (in dyld) + 48  [0x187bd9c90]
+    + !   :         38 dyld4::RemoteNotificationResponder::sendMessage(int, unsigned int, mach_msg_header_t*)  (in dyld) + 244  [0x187bd9904]
+    + !   :           38 mach_msg_overwrite  (in dyld) + 244  [0x187bf318c]
+    + !   :             38 mach_msg2_internal  (in dyld) + 76  [0x187bf2fe4]
+    + !   :               38 mach_msg2_trap  (in dyld) + 8  [0x187b5972c]
+    + !   1 dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)  (in dyld) + 2116  [0x187b79390]
+    + !     1 dyld4::JustInTimeLoader::applyFixups(Diagnostics&, dyld4::RuntimeState&, dyld4::DyldCacheDataConstLazyScopedWriter&, bool, lsl::Vector<std::pair<dyld4::Loader const*, char const*>>*) const  (in dyld) + 616  [0x187b99528]
+    + !       1 dyld4::Loader::forEachBindTarget(Diagnostics&, dyld4::RuntimeState&, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer) const  (in dyld) + 108  [0x187ba1e58]
+    + !         1 dyld3::MachOAnalyzer::withVMLayout(Diagnostics&, void (mach_o::Layout const&) block_pointer) const  (in dyld) + 672  [0x187bae1b4]
+    + !           1 invocation function for block in dyld4::Loader::forEachBindTarget(Diagnostics&, dyld4::RuntimeState&, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer) const  (in dyld) + 280  [0x187ba1f7c]
+    + !             1 mach_o::Fixups::forEachBindTarget_Opcodes(Diagnostics&, bool, void (mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer, void (mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer) const  (in dyld) + 208  [0x187bba900]
+    + !               1 mach_o::Fixups::forEachBindUnified_Opcodes(Diagnostics&, bool, void (unsigned long long, unsigned int, mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer, void (unsigned long long, unsigned int, mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer) const  (in dyld) + 244  [0x187bbaf48]
+    + !                 1 mach_o::Fixups::forEachBind_OpcodesLazy(Diagnostics&, void (char const*, bool, bool, unsigned int, int, unsigned int, unsigned int, unsigned long long, unsigned char, char const*, bool, bool, unsigned long long, bool, bool&) block_pointer) const  (in dyld) + 444  [0x187bbb7bc]
+    + !                   1 invocation function for block in mach_o::Fixups::forEachBindTarget_Opcodes(Diagnostics&, bool, void (mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer, void (mach_o::Fixups::BindTargetInfo const&, bool&) block_pointer) const  (in dyld) + 72  [0x187bbbeac]
+    + !                     1 invocation function for block in dyld4::Loader::forEachBindTarget(Diagnostics&, dyld4::RuntimeState&, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer, void (dyld4::Loader::ResolvedSymbol const&, bool&) block_pointer) const  (in dyld) + 96  [0x187ba2008]
+    + !                       1 dyld4::Loader::resolveSymbol(Diagnostics&, dyld4::RuntimeState&, int, char const*, bool, bool, void (unsigned int, unsigned int, dyld4::Loader::ResolvedSymbol const&) block_pointer, bool) const  (in dyld) + 544  [0x187ba2290]
+    + !                         1 dyld4::Loader::hasExportedSymbol(Diagnostics&, dyld4::RuntimeState&, char const*, dyld4::Loader::ExportedSymbolMode, dyld4::Loader::ResolverMode, dyld4::Loader::ResolvedSymbol*, dyld3::Array<dyld4::Loader const*>*) const  (in dyld) + 1340  [0x187ba3620]
+    + !                           1 dyld4::Loader::hasExportedSymbol(Diagnostics&, dyld4::RuntimeState&, char const*, dyld4::Loader::ExportedSymbolMode, dyld4::Loader::ResolverMode, dyld4::Loader::ResolvedSymbol*, dyld3::Array<dyld4::Loader const*>*) const  (in dyld) + 1284  [0x187ba35e8]
+    + !                             1 dyld4::PrebuiltLoader::dependent(dyld4::RuntimeState const&, unsigned int, mach_o::LinkedDylibAttributes*) const  (in dyld) + 128  [0x187bca6e8]
+    + !                               1 dyld4::Loader::LoaderRef::loader(dyld4::RuntimeState const&) const  (in dyld) + 12  [0x187b9c594]
+    + 1 start  (in dyld) + 332  [0x104d46ae0]
+    + ! 1 dyld3::MachOAnalyzer::withChainStarts(Diagnostics&, unsigned long long, void (dyld_chained_starts_in_image const*) block_pointer) const  (in dyld) + 236  [0x104d821e0]
+    + !   1 invocation function for block in dyld4::rebaseSelf(dyld3::MachOAnalyzer const*)  (in dyld) + 60  [0x104d48700]
+    + !     1 dyld3::MachOLoaded::fixupAllChainedFixups(Diagnostics&, dyld_chained_starts_in_image const*, unsigned long, dyld3::Array<void const*>, void (void*, void*) block_pointer) const  (in dyld) + 120  [0x104d8e488]
+    + !       1 dyld3::MachOLoaded::forEachFixupInAllChains(Diagnostics&, dyld_chained_starts_in_image const*, bool, void (mach_o::ChainedFixupPointerOnDisk*, dyld_chained_starts_in_segment const*, bool&) block_pointer) const  (in dyld) + 88  [0x104d8e4ec]
+    + !         1 dyld3::MachOLoaded::forEachFixupInSegmentChains(Diagnostics&, dyld_chained_starts_in_segment const*, bool, void (mach_o::ChainedFixupPointerOnDisk*, dyld_chained_starts_in_segment const*, bool&) block_pointer) const  (in dyld) + 212  [0x104d8e7c0]
+    + !           1 dyld3::MachOFile::walkChain(Diagnostics&, mach_o::ChainedFixupPointerOnDisk*, unsigned short, bool, unsigned int, void (mach_o::ChainedFixupPointerOnDisk*, bool&) block_pointer)  (in dyld) + 104  [0x104d878ac]
+    + !             1 invocation function for block in dyld3::MachOLoaded::fixupAllChainedFixups(Diagnostics&, dyld_chained_starts_in_image const*, unsigned long, dyld3::Array<void const*>, void (void*, void*) block_pointer) const  (in dyld) + 400  [0x104d8e6a8]
+    + 1 start  (in dyld) + 4028  [0x187b77950]
+    +   1 dyld4::ExternallyViewableState::createMinimalInfo(lsl::Allocator&, unsigned long long, char const*, unsigned long long, char const*, DyldSharedCache const*)  (in dyld) + 1336  [0x187b92948]
+    +     1 dyld4::Atlas::ProcessSnapshot::serialize()  (in dyld) + 56  [0x187bc24a0]
+    +       1 dyld4::Atlas::ProcessSnapshot::Serializer::serialize()  (in dyld) + 2040  [0x187bc2d90]
+    +         1 dyld4::Atlas::Image::uuid() const  (in dyld) + 60  [0x187bc1950]
+    +           1 dyld4::Atlas::Image::ml() const  (in dyld) + 36  [0x187bc1778]
+    337 Thread_296156965   DispatchQueue_1: com.apple.main-thread  (serial)
+      336 start  (in dyld) + 6992  [0x187b784e4]
+      ! 336 main  (in perfdrv) + 52  [0x104212064]
+      !   336 _RNvNtCs1SSuMAdGM58_3std2rt19lang_start_internal  (in perfdrv) + 936  [0x1046935f0]
+      !     336 _RNCINvNtCs1SSuMAdGM58_3std2rt10lang_startINtNtCsjIpoRzUjyHQ_4core6result6ResultuINtNtCs6zY7rJBZy9D_5alloc5boxed3BoxDNtNtBI_5error5ErrorEL_EEE0Cs98RnSx2NrtM_7perfdrv  (in perfdrv) + 16  [0x104248524]
+      !       336 _RINvNtNtCs1SSuMAdGM58_3std3sys9backtrace28___rust_begin_short_backtraceFEINtNtCsjIpoRzUjyHQ_4core6result6ResultuINtNtCs6zY7rJBZy9D_5alloc5boxed3BoxDNtNtB1e_5error5ErrorEL_EEB19_ECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 12  [0x10424064c]  backtrace.rs:166
+      !         322 _RNvCs98RnSx2NrtM_7perfdrv4main  (in perfdrv) + 22312  [0x10420b514]  main.rs:186
+      !         : 297 _RINvMNtNtCs6x0Q6yznA9z_4girt4push8preparedNtB3_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0EB19_  (in perfdrv) + 1844  [0x10423eddc]  prepared.rs:267
+      !         : | 266 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5reuse14write_transferINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEENtNtNtCsjIpoRzUjyHQ_4core2io4util4SinkNCNCINvMBT_NtBT_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E0s_0NCB3C_s0_0EB4g_  (in perfdrv) + 5056  [0x10421b604]  reuse.rs:107
+      !         : | + 246 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5write14write_ordinaryINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 332  [0x10423977c]  write.rs:334
+      !         : | + ! 246 _RNvYINtNtNtCs91TjrDSqCGN_6flate24zlib5write11ZlibEncoderQINtNtNtCs6x0Q6yznA9z_4girt4pack5write6OutputINtNtNtB10_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEEENtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_allCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 112  [0x104228e54]  write.rs:216
+      !         : | + !   231 _RNvMs2_NtCs91TjrDSqCGN_6flate23zioINtB5_6WriterQINtNtNtCs6x0Q6yznA9z_4girt4pack5write6OutputINtNtNtBR_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtB7_3mem8CompressE17write_with_statusCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 168  [0x104221d60]  zio.rs:233
+      !         : | + !   : 230 _RNvXNtCs91TjrDSqCGN_6flate23zioNtNtB4_3mem8CompressNtB2_3Ops7run_vec  (in perfdrv) + 124  [0x104660398]
+      !         : | + !   : | 230 _RNvMs5_NtCs1G4T8dhWKOP_7zlib_rs6stableNtB5_7Deflate15compress_uninit  (in perfdrv) + 72  [0x104665774]
+      !         : | + !   : |   230 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate7deflate  (in perfdrv) + 1692  [0x104664a1c]
+      !         : | + !   : |     161 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 2388,2372,...  [0x104668114,0x104668104,...]
+      !         : | + !   : |     47 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 2400  [0x104668120]
+      !         : | + !   : |     + 47 _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7deflate13longest_match13longest_match  (in perfdrv) + 264,24,...  [0x104666008,0x104665f18,...]
+      !         : | + !   : |     13 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 3132  [0x1046683fc]
+      !         : | + !   : |     + 9 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate16flush_block_only  (in perfdrv) + 880  [0x104662130]
+      !         : | + !   : |     + ! 4 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap22construct_huffman_tree  (in perfdrv) + 116  [0x104661334]
+      !         : | + !   : |     + ! : 4 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap10pqdownheap  (in perfdrv) + 108,152,...  [0x1046611ac,0x1046611d8,...]
+      !         : | + !   : |     + ! 4 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap22construct_huffman_tree  (in perfdrv) + 280  [0x1046613d8]
+      !         : | + !   : |     + ! : 4 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap10pqdownheap  (in perfdrv) + 108,0,...  [0x1046611ac,0x104661140,...]
+      !         : | + !   : |     + ! 1 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap22construct_huffman_tree  (in perfdrv) + 80  [0x104661310]
+      !         : | + !   : |     + 3 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate16flush_block_only  (in perfdrv) + 852  [0x104662114]
+      !         : | + !   : |     + ! 3 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap10pqdownheap  (in perfdrv) + 216  [0x104661218]
+      !         : | + !   : |     + 1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate16flush_block_only  (in perfdrv) + 1588  [0x1046623f4]
+      !         : | + !   : |     +   1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate9gen_codes  (in perfdrv) + 388  [0x104665100]
+      !         : | + !   : |     5 _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7deflate13longest_match13longest_match  (in perfdrv) + 680  [0x1046661a8]
+      !         : | + !   : |     4 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 120  [0x104667838]
+      !         : | + !   : |       3 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate11fill_window  (in perfdrv) + 212  [0x104665a54]
+      !         : | + !   : |       ! 3 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate10slide_hash4neon16slide_hash_chain  (in perfdrv) + 20  [0x104666d38]
+      !         : | + !   : |       1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate11fill_window  (in perfdrv) + 224  [0x104665a60]
+      !         : | + !   : |         1 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate10slide_hash4neon16slide_hash_chain  (in perfdrv) + 20  [0x104666d38]
+      !         : | + !   : 1 _RNvXNtCs91TjrDSqCGN_6flate23zioNtNtB4_3mem8CompressNtB2_3Ops7run_vec  (in perfdrv) + 84  [0x104660370]
+      !         : | + !   :   1 __bzero  (in libsystem_platform.dylib) + 68  [0x187f4d074]
+      !         : | + !   15 _RNvMs2_NtCs91TjrDSqCGN_6flate23zioINtB5_6WriterQINtNtNtCs6x0Q6yznA9z_4girt4pack5write6OutputINtNtNtBR_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtB7_3mem8CompressE17write_with_statusCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 72  [0x104221d00]  zio.rs:230
+      !         : | + !     12 _RNvXs1_NtNtCs6x0Q6yznA9z_4girt4pack5writeINtB5_6OutputINtNtNtB9_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5writeCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 248  [0x10423acb8]  write.rs:622
+      !         : | + !     | 12 _RNvMs1_NtCs6x0Q6yznA9z_4girt6objectNtB5_6Hasher6update  (in perfdrv) + 64  [0x10437b368]
+      !         : | + !     |   12 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         : | + !     |     12 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         : | + !     |       12 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 68,72,...  [0x10459fc44,0x10459fc48,...]
+      !         : | + !     3 _RNvXs1_NtNtCs6x0Q6yznA9z_4girt4pack5writeINtB5_6OutputINtNtNtB9_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5writeCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 216  [0x10423ac98]  write.rs:621
+      !         : | + !       3 _RNvMs_NtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriterINtB4_9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileE10write_coldCs6x0Q6yznA9z_4girt  (in perfdrv) + 56  [0x1046c1464]
+      !         : | + !         3 _RNvMs_NtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriterINtB4_9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileE9flush_bufCs6x0Q6yznA9z_4girt  (in perfdrv) + 128  [0x1042e8ad0]
+      !         : | + !           3 _RNvXsb_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5write  (in perfdrv) + 32  [0x10469f8f8]
+      !         : | + !             3 write  (in libsystem_kernel.dylib) + 8  [0x187f03834]
+      !         : | + 20 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5write14write_ordinaryINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 436  [0x1042397e4]  write.rs:335
+      !         : | +   18 _RNvMs2_NtCs91TjrDSqCGN_6flate23zioINtB5_6WriterQINtNtNtCs6x0Q6yznA9z_4girt4pack5write6OutputINtNtNtBR_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtB7_3mem8CompressE6finishCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 144  [0x104221f08]  zio.rs:188
+      !         : | +   : 18 _RNvXNtCs91TjrDSqCGN_6flate23zioNtNtB4_3mem8CompressNtB2_3Ops7run_vec  (in perfdrv) + 124  [0x104660398]
+      !         : | +   :   18 _RNvMs5_NtCs1G4T8dhWKOP_7zlib_rs6stableNtB5_7Deflate15compress_uninit  (in perfdrv) + 72  [0x104665774]
+      !         : | +   :     18 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate7deflate  (in perfdrv) + 1692  [0x104664a1c]
+      !         : | +   :       11 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 2388,2156,...  [0x104668114,0x10466802c,...]
+      !         : | +   :       5 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 2400  [0x104668120]
+      !         : | +   :       | 5 _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7deflate13longest_match13longest_match  (in perfdrv) + 60,100,...  [0x104665f3c,0x104665f64,...]
+      !         : | +   :       1 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 420  [0x104667964]
+      !         : | +   :       | 1 _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7deflate13longest_match13longest_match  (in perfdrv) + 332  [0x10466604c]
+      !         : | +   :       1 _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv) + 3132  [0x1046683fc]
+      !         : | +   :         1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7deflate16flush_block_only  (in perfdrv) + 880  [0x104662130]
+      !         : | +   :           1 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap22construct_huffman_tree  (in perfdrv) + 280  [0x1046613d8]
+      !         : | +   :             1 _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap10pqdownheap  (in perfdrv) + 108  [0x1046611ac]
+      !         : | +   2 _RNvMs2_NtCs91TjrDSqCGN_6flate23zioINtB5_6WriterQINtNtNtCs6x0Q6yznA9z_4girt4pack5write6OutputINtNtNtBR_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtB7_3mem8CompressE6finishCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 48  [0x104221ea8]  zio.rs:184
+      !         : | +     1 _RNvXs1_NtNtCs6x0Q6yznA9z_4girt4pack5writeINtB5_6OutputINtNtNtB9_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5writeCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 216  [0x10423ac98]  write.rs:621
+      !         : | +     | 1 _RNvMs_NtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriterINtB4_9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileE10write_coldCs6x0Q6yznA9z_4girt  (in perfdrv) + 56  [0x1046c1464]
+      !         : | +     |   1 _RNvMs_NtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriterINtB4_9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileE9flush_bufCs6x0Q6yznA9z_4girt  (in perfdrv) + 128  [0x1042e8ad0]
+      !         : | +     |     1 _RNvXsb_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5write  (in perfdrv) + 32  [0x10469f8f8]
+      !         : | +     |       1 write  (in libsystem_kernel.dylib) + 8  [0x187f03834]
+      !         : | +     1 _RNvXs1_NtNtCs6x0Q6yznA9z_4girt4pack5writeINtB5_6OutputINtNtNtB9_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEEENtNtNtCsjIpoRzUjyHQ_4core2io5write5Write5writeCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 248  [0x10423acb8]  write.rs:622
+      !         : | +       1 _RNvMs1_NtCs6x0Q6yznA9z_4girt6objectNtB5_6Hasher6update  (in perfdrv) + 64  [0x10437b368]
+      !         : | +         1 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         : | +           1 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         : | +             1 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 192  [0x10459fcc0]
+      !         : | 17 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5reuse14write_transferINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEENtNtNtCsjIpoRzUjyHQ_4core2io4util4SinkNCNCINvMBT_NtBT_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E0s_0NCB3C_s0_0EB4g_  (in perfdrv) + 4496  [0x10421b3d4]  reuse.rs:107
+      !         : | + 17 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 248  [0x10433b1e4]
+      !         : | +   8 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 1876  [0x104336044]
+      !         : | +   ! 8 _RNvMs0_NtCs6x0Q6yznA9z_4girt6objectNtB5_12ObjectFormat11hash_object  (in perfdrv) + 700  [0x10437a388]
+      !         : | +   !   8 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         : | +   !     8 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         : | +   !       8 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 160,164,...  [0x10459fca0,0x10459fca4,...]
+      !         : | +   5 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 480  [0x104335ad0]
+      !         : | +   ! 5 _RNvMs0_NtCs91TjrDSqCGN_6flate23memNtB5_10Decompress10decompress  (in perfdrv) + 48  [0x104660164]
+      !         : | +   !   5 _RNvMs0_NtCs1G4T8dhWKOP_7zlib_rs6stableNtB5_7Inflate17decompress_uninit  (in perfdrv) + 80  [0x104665530]
+      !         : | +   !     3 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate7inflate  (in perfdrv) + 9632  [0x10466b7e0]
+      !         : | +   !     : 2 _RNvMNtNtCs1G4T8dhWKOP_7zlib_rs7inflate6windowNtB2_6Window6extend  (in perfdrv) + 516  [0x10466be64]
+      !         : | +   !     : | 2 _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7adler324neon12adler32_neon  (in perfdrv) + 700,960  [0x10466dfbc,0x10466e0c0]
+      !         : | +   !     : 1 _RNvMNtNtCs1G4T8dhWKOP_7zlib_rs7inflate6windowNtB2_6Window6extend  (in perfdrv) + 500  [0x10466be54]
+      !         : | +   !     :   1 _platform_memmove  (in libsystem_platform.dylib) + 180  [0x187f4d414]
+      !         : | +   !     1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate7inflate  (in perfdrv) + 1188  [0x1046696e4]
+      !         : | +   !     : 1 _platform_memmove  (in libsystem_platform.dylib) + 180  [0x187f4d414]
+      !         : | +   !     1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate7inflate  (in perfdrv) + 4392  [0x10466a368]
+      !         : | +   !       1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate17inflate_fast_help  (in perfdrv) + 400  [0x104668ab4]
+      !         : | +   2 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 1992  [0x1043360b8]
+      !         : | +   ! 2 _RINvNtCsjIpoRzUjyHQ_4core3ptr9drop_glueINtNtNtCs6zY7rJBZy9D_5alloc3vec5drain5DrainhEECs6x0Q6yznA9z_4girt  (in perfdrv) + 76  [0x10432bd9c]
+      !         : | +   !   2 _platform_memmove  (in libsystem_platform.dylib) + 280  [0x187f4d478]
+      !         : | +   1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 204  [0x1043359bc]
+      !         : | +   ! 1 _RNvMsj_NtCs1SSuMAdGM58_3std2fsNtB5_11OpenOptions5__open  (in perfdrv) + 140  [0x104691f20]
+      !         : | +   !   1 _RNvMsi_NtNtNtCs1SSuMAdGM58_3std3sys2fs4unixNtB5_4File6open_c  (in perfdrv) + 268  [0x1046905f8]
+      !         : | +   !     1 open  (in libsystem_kernel.dylib) + 64  [0x187f0b8f0]
+      !         : | +   !       1 __open  (in libsystem_kernel.dylib) + 8  [0x187f00694]
+      !         : | +   1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 408  [0x104335a88]
+      !         : | +     1 _RNvXsa_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCs6zY7rJBZy9D_5alloc2io4read4Read8read_buf  (in perfdrv) + 52  [0x10469f740]
+      !         : | +       1 read  (in libsystem_kernel.dylib) + 8  [0x187f0091c]
+      !         : | 11 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5reuse14write_transferINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEENtNtNtCsjIpoRzUjyHQ_4core2io4util4SinkNCNCINvMBT_NtBT_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E0s_0NCB3C_s0_0EB4g_  (in perfdrv) + 284  [0x10421a360]  reuse.rs:95
+      !         : | + 11 _RNvMs4_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15transfer_object  (in perfdrv) + 292  [0x10433b8ec]
+      !         : | +   6 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 1876  [0x104336044]
+      !         : | +   ! 6 _RNvMs0_NtCs6x0Q6yznA9z_4girt6objectNtB5_12ObjectFormat11hash_object  (in perfdrv) + 700  [0x10437a388]
+      !         : | +   !   6 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         : | +   !     6 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         : | +   !       6 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 96,136,...  [0x10459fc60,0x10459fc88,...]
+      !         : | +   2 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 204  [0x1043359bc]
+      !         : | +   ! 2 _RNvMsj_NtCs1SSuMAdGM58_3std2fsNtB5_11OpenOptions5__open  (in perfdrv) + 140  [0x104691f20]
+      !         : | +   !   2 _RNvMsi_NtNtNtCs1SSuMAdGM58_3std3sys2fs4unixNtB5_4File6open_c  (in perfdrv) + 268  [0x1046905f8]
+      !         : | +   !     2 open  (in libsystem_kernel.dylib) + 64  [0x187f0b8f0]
+      !         : | +   !       2 __open  (in libsystem_kernel.dylib) + 8  [0x187f00694]
+      !         : | +   1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 408  [0x104335a88]
+      !         : | +   ! 1 _RNvXsa_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCs6zY7rJBZy9D_5alloc2io4read4Read8read_buf  (in perfdrv) + 52  [0x10469f740]
+      !         : | +   !   1 read  (in libsystem_kernel.dylib) + 8  [0x187f0091c]
+      !         : | +   1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 480  [0x104335ad0]
+      !         : | +   ! 1 _RNvMs0_NtCs91TjrDSqCGN_6flate23memNtB5_10Decompress10decompress  (in perfdrv) + 48  [0x104660164]
+      !         : | +   !   1 _RNvMs0_NtCs1G4T8dhWKOP_7zlib_rs6stableNtB5_7Inflate17decompress_uninit  (in perfdrv) + 80  [0x104665530]
+      !         : | +   !     1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate7inflate  (in perfdrv) + 1188  [0x1046696e4]
+      !         : | +   !       1 _platform_memmove  (in libsystem_platform.dylib) + 180  [0x187f4d414]
+      !         : | +   1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 1992  [0x1043360b8]
+      !         : | +     1 _RINvNtCsjIpoRzUjyHQ_4core3ptr9drop_glueINtNtNtCs6zY7rJBZy9D_5alloc3vec5drain5DrainhEECs6x0Q6yznA9z_4girt  (in perfdrv) + 76  [0x10432bd9c]
+      !         : | +       1 _platform_memmove  (in libsystem_platform.dylib) + 280  [0x187f4d478]
+      !         : | 3 _RINvNtNtCs6x0Q6yznA9z_4girt4pack5reuse14write_transferINtNtNtB6_4push8prepared12CancelWriterINtNtNtNtCs6zY7rJBZy9D_5alloc2io8buffered9bufwriter9BufWriterQNtNtCs1SSuMAdGM58_3std2fs4FileEENtNtNtCsjIpoRzUjyHQ_4core2io4util4SinkNCNCINvMBT_NtBT_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E0s_0NCB3C_s0_0EB4g_  (in perfdrv) + 3004  [0x10421ae00]  reuse.rs:107
+      !         : |   3 _RNvCs98RnSx2NrtM_7perfdrv5phase  (in perfdrv) + 112  [0x10420de70]  main.rs:20
+      !         : |     3 _RNvNtNtCs1SSuMAdGM58_3std2io5stdio7__eprint  (in perfdrv) + 84  [0x1046953d0]
+      !         : |       3 _RNvXso_NtNtCs1SSuMAdGM58_3std2io5stdioRNtB5_6StderrNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_fmt  (in perfdrv) + 68  [0x1046a0b38]
+      !         : |         2 _RNvNtCsjIpoRzUjyHQ_4core3fmt5write  (in perfdrv) + 144  [0x1046b11f8]
+      !         : |         ! 2 _RNvXNvNtNtCsjIpoRzUjyHQ_4core2io5write17default_write_fmtINtB2_7AdapterNtNtNtCs1SSuMAdGM58_3std2io5stdio10StderrLockENtNtB8_3fmt5Write9write_strB1d_  (in perfdrv) + 48  [0x10469cdf0]
+      !         : |         !   2 _RNvYNtNtNtNtCs1SSuMAdGM58_3std3sys5stdio4unix6StderrNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_allBa_  (in perfdrv) + 108  [0x1046a2548]
+      !         : |         !     2 write  (in libsystem_kernel.dylib) + 8  [0x187f03834]
+      !         : |         1 _RNvNtCsjIpoRzUjyHQ_4core3fmt5write  (in perfdrv) + 96  [0x1046b11c8]
+      !         : |           1 _RNvXNvNtNtCsjIpoRzUjyHQ_4core2io5write17default_write_fmtINtB2_7AdapterNtNtNtCs1SSuMAdGM58_3std2io5stdio10StderrLockENtNtB8_3fmt5Write9write_strB1d_  (in perfdrv) + 48  [0x10469cdf0]
+      !         : |             1 _RNvYNtNtNtNtCs1SSuMAdGM58_3std3sys5stdio4unix6StderrNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_allBa_  (in perfdrv) + 108  [0x1046a2548]
+      !         : |               1 write  (in libsystem_kernel.dylib) + 8  [0x187f03834]
+      !         : 22 _RINvMNtNtCs6x0Q6yznA9z_4girt4push8preparedNtB3_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0EB19_  (in perfdrv) + 1448  [0x10423ec50]  prepared.rs:267
+      !         : | 11 _RINvNtNtCs6x0Q6yznA9z_4girt4push5graph6selectNCNCINvMNtB4_8preparedNtBP_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00EB1y_  (in perfdrv) + 10684  [0x1042154c8]  graph.rs:57
+      !         : | + 11 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E12select_treesB1E_  (in perfdrv) + 960  [0x104216798]  graph.rs:601
+      !         : | +   10 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E14read_candidateB1E_  (in perfdrv) + 604  [0x104216f38]  graph.rs:362
+      !         : | +   ! 10 _RNvMs4_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15transfer_object  (in perfdrv) + 292  [0x10433b8ec]
+      !         : | +   !   7 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 1876  [0x104336044]
+      !         : | +   !   : 7 _RNvMs0_NtCs6x0Q6yznA9z_4girt6objectNtB5_12ObjectFormat11hash_object  (in perfdrv) + 700  [0x10437a388]
+      !         : | +   !   :   7 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         : | +   !   :     7 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         : | +   !   :       7 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 356,168,...  [0x10459fd64,0x10459fca8,...]
+      !         : | +   !   3 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 408  [0x104335a88]
+      !         : | +   !     3 _RNvXsa_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCs6zY7rJBZy9D_5alloc2io4read4Read8read_buf  (in perfdrv) + 52  [0x10469f740]
+      !         : | +   !       3 read  (in libsystem_kernel.dylib) + 8  [0x187f0091c]
+      !         : | +   1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E14read_candidateB1E_  (in perfdrv) + 1260  [0x1042171c8]  graph.rs:379
+      !         : | +     1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4readB1E_  (in perfdrv) + 144  [0x1042190ac]  graph.rs:163
+      !         : | +       1 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects4read  (in perfdrv) + 24  [0x10433b760]
+      !         : | +         1 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 248  [0x10433b1e4]
+      !         : | +           1 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 480  [0x104335ad0]
+      !         : | +             1 _RNvMs0_NtCs91TjrDSqCGN_6flate23memNtB5_10Decompress10decompress  (in perfdrv) + 48  [0x104660164]
+      !         : | +               1 _RNvMs0_NtCs1G4T8dhWKOP_7zlib_rs6stableNtB5_7Inflate17decompress_uninit  (in perfdrv) + 80  [0x104665530]
+      !         : | +                 1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate7inflate  (in perfdrv) + 4392  [0x10466a368]
+      !         : | +                   1 _RNvNtCs1G4T8dhWKOP_7zlib_rs7inflate17inflate_fast_help  (in perfdrv) + 1012  [0x104668d18]
+      !         : | 10 _RINvNtNtCs6x0Q6yznA9z_4girt4push5graph6selectNCNCINvMNtB4_8preparedNtBP_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00EB1y_  (in perfdrv) + 10660  [0x1042154b0]  graph.rs:56
+      !         : | + 10 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E19mark_boundary_treesB1E_  (in perfdrv) + 1388  [0x104218364]  graph.rs:577
+      !         : | +   5 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E17mark_tree_closureB1E_  (in perfdrv) + 420  [0x104217978]  graph.rs:289
+      !         : | +   ! 5 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4readB1E_  (in perfdrv) + 144  [0x1042190ac]  graph.rs:163
+      !         : | +   !   5 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects4read  (in perfdrv) + 24  [0x10433b760]
+      !         : | +   !     2 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 188  [0x10433b1a8]
+      !         : | +   !     : 2 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4pack4fileNtB4_8FilePack4find  (in perfdrv) + 60  [0x10433cda4]
+      !         : | +   !     :   2 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack4fileNtB2_8Artifact19check_not_truncated  (in perfdrv) + 84  [0x104336b5c]
+      !         : | +   !     :     2 _RNvMs2_NtCs1SSuMAdGM58_3std2fsNtB5_4File8metadata  (in perfdrv) + 56  [0x104683578]
+      !         : | +   !     :       2 fstat  (in libsystem_kernel.dylib) + 8  [0x187f0e288]
+      !         : | +   !     2 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 248  [0x10433b1e4]
+      !         : | +   !     : 2 _RNvMNtCs6x0Q6yznA9z_4girt5looseNtB2_12LooseObjects10decode_raw  (in perfdrv) + 204  [0x1043359bc]
+      !         : | +   !     :   2 _RNvMsj_NtCs1SSuMAdGM58_3std2fsNtB5_11OpenOptions5__open  (in perfdrv) + 140  [0x104691f20]
+      !         : | +   !     :     2 _RNvMsi_NtNtNtCs1SSuMAdGM58_3std3sys2fs4unixNtB5_4File6open_c  (in perfdrv) + 268  [0x1046905f8]
+      !         : | +   !     :       2 open  (in libsystem_kernel.dylib) + 64  [0x187f0b8f0]
+      !         : | +   !     :         2 __open  (in libsystem_kernel.dylib) + 8  [0x187f00694]
+      !         : | +   !     1 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 560  [0x10433b31c]
+      !         : | +   !       1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4pack4fileNtB4_8FilePack4read  (in perfdrv) + 416  [0x10433db10]
+      !         : | +   !         1 _RINvNtNtCs6x0Q6yznA9z_4girt4pack6reader12entry_headerNtNtB4_4file8FilePackEB6_  (in perfdrv) + 96  [0x1043337f4]
+      !         : | +   !           1 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack4fileNtB2_8Artifact5bytes  (in perfdrv) + 136  [0x104336ed4]
+      !         : | +   !             1 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack4fileNtB2_8Artifact7read_at  (in perfdrv) + 180  [0x104337028]
+      !         : | +   !               1 _RINvNtNtCs6zY7rJBZy9D_5alloc2io4read18default_read_exactNtNtCs1SSuMAdGM58_3std2fs4FileECs6x0Q6yznA9z_4girt  (in perfdrv) + 108  [0x1043a031c]
+      !         : | +   !                 1 _RNvXsa_NtCs1SSuMAdGM58_3std2fsNtB5_4FileNtNtNtCs6zY7rJBZy9D_5alloc2io4read4Read4read  (in perfdrv) + 32  [0x10469f6ac]
+      !         : | +   !                   1 read  (in libsystem_kernel.dylib) + 8  [0x187f0091c]
+      !         : | +   4 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E17mark_tree_closureB1E_  (in perfdrv) + 928  [0x104217b74]  graph.rs:299
+      !         : | +   ! 1 _RINvYNtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateNtNtCsjIpoRzUjyHQ_4core4hash11BuildHasher8hash_oneRNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 336  [0x10424b20c]  mod.rs:702
+      !         : | +   ! 1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4markB1E_  (in perfdrv) + 76  [0x104218cbc]  graph.rs:193
+      !         : | +   ! : 1 _RINvYNtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateNtNtCsjIpoRzUjyHQ_4core4hash11BuildHasher8hash_oneRNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 132  [0x10424b140]  mod.rs:700
+      !         : | +   ! :   1 _RNvXs2_NtNtCs1SSuMAdGM58_3std4hash6randomNtB5_13DefaultHasherNtNtCsjIpoRzUjyHQ_4core4hash6Hasher5write  (in perfdrv) + 400  [0x10424b604]
+      !         : | +   ! 1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4markB1E_  (in perfdrv) + 560  [0x104218ea0]  graph.rs:200
+      !         : | +   ! : 1 _RINvYNtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateNtNtCsjIpoRzUjyHQ_4core4hash11BuildHasher8hash_oneRNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 152  [0x10424b154]  mod.rs:701
+      !         : | +   ! 1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4markB1E_  (in perfdrv) + 856  [0x104218fc8]  graph.rs:204
+      !         : | +   !   1 _RNvMs1_NtCsib8wo0YhOiF_9hashbrown3mapINtB5_7HashMapNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdNtNtNtBR_4push5graph4MarkNtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateE6insertCs98RnSx2NrtM_7perfdrv  (in perfdrv) + 540  [0x10422a5fc]  map.rs:1812
+      !         : | +   !     1 _RINvMs6_NtCsib8wo0YhOiF_9hashbrown3rawINtB6_8RawTableTNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdNtNtNtBU_4push5graph4MarkEE14reserve_rehashNCINvNtB8_3map11make_hasherBQ_B1t_NtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateE0EBU_  (in perfdrv) + 260  [0x1046bc4f4]
+      !         : | +   !       1 _RINvYNtNtNtCs1SSuMAdGM58_3std4hash6random11RandomStateNtNtCsjIpoRzUjyHQ_4core4hash11BuildHasher8hash_oneRNtNtCs6x0Q6yznA9z_4girt6object8ObjectIdEB1J_  (in perfdrv) + 132  [0x1042cf49c]
+      !         : | +   !         1 _RNvXs2_NtNtCs1SSuMAdGM58_3std4hash6randomNtB5_13DefaultHasherNtNtCsjIpoRzUjyHQ_4core4hash6Hasher5write  (in perfdrv) + 12  [0x1042db470]
+      !         : | +   1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E17mark_tree_closureB1E_  (in perfdrv) + 572  [0x104217a10]  graph.rs:293
+      !         : | +     1 _RNvNtNtCs6x0Q6yznA9z_4girt4push5graph5edges  (in perfdrv) + 344  [0x104283670]
+      !         : | 1 _RINvNtNtCs6x0Q6yznA9z_4girt4push5graph6selectNCNCINvMNtB4_8preparedNtBP_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00EB1y_  (in perfdrv) + 3528  [0x1042138d4]  graph.rs:53
+      !         : |   1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E14read_candidateB1E_  (in perfdrv) + 1260  [0x1042171c8]  graph.rs:379
+      !         : |     1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4push5graphINtB4_4WalkNCNCINvMNtB6_8preparedNtBV_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0E00E4readB1E_  (in perfdrv) + 144  [0x1042190ac]  graph.rs:163
+      !         : |       1 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects4read  (in perfdrv) + 24  [0x10433b760]
+      !         : |         1 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15read_controlled  (in perfdrv) + 48  [0x10433b11c]
+      !         : 2 _RINvMNtNtCs6x0Q6yznA9z_4girt4push8preparedNtB3_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0EB19_  (in perfdrv) + 1560  [0x10423ecc0]  prepared.rs:267
+      !         : | 2 _RNvMsf_NtCsjJvyXcK4k3w_8tempfile4fileNtB5_13NamedTempFile3new  (in perfdrv) + 64  [0x10465f1b8]
+      !         : |   2 _RNvMs_CsjJvyXcK4k3w_8tempfileNtB4_7Builder8tempfile  (in perfdrv) + 196  [0x10465f12c]
+      !         : |     2 _RINvNtCsjJvyXcK4k3w_8tempfile4util13create_helperNtNtB4_4file13NamedTempFileNCINvMs_B4_NtB4_7Builder11tempfile_inNtNtCs1SSuMAdGM58_3std4path7PathBufE0EB4_  (in perfdrv) + 484  [0x10465e790]
+      !         : |       2 _RNvNtCsjJvyXcK4k3w_8tempfile4file12create_named  (in perfdrv) + 92  [0x10465f264]
+      !         : |         2 _RNvMsj_NtCs1SSuMAdGM58_3std2fsNtB5_11OpenOptions5__open  (in perfdrv) + 140  [0x104691f20]
+      !         : |           2 _RNvMsi_NtNtNtCs1SSuMAdGM58_3std3sys2fs4unixNtB5_4File6open_c  (in perfdrv) + 268  [0x1046905f8]
+      !         : |             2 open  (in libsystem_kernel.dylib) + 64  [0x187f0b8f0]
+      !         : |               2 __open  (in libsystem_kernel.dylib) + 8  [0x187f00694]
+      !         : 1 _RINvMNtNtCs6x0Q6yznA9z_4girt4push8preparedNtB3_12PreparedPush7prepareNCNvCs98RnSx2NrtM_7perfdrv4mains0_0EB19_  (in perfdrv) + 596  [0x10423e8fc]  prepared.rs:268
+      !         :   1 _RNvNtNtCs1SSuMAdGM58_3std2io5stdio7__eprint  (in perfdrv) + 84  [0x1046953d0]
+      !         :     1 _RNvXso_NtNtCs1SSuMAdGM58_3std2io5stdioRNtB5_6StderrNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_fmt  (in perfdrv) + 68  [0x1046a0b38]
+      !         :       1 _RNvNtCsjIpoRzUjyHQ_4core3fmt5write  (in perfdrv) + 144  [0x1046b11f8]
+      !         :         1 _RNvXNvNtNtCsjIpoRzUjyHQ_4core2io5write17default_write_fmtINtB2_7AdapterNtNtNtCs1SSuMAdGM58_3std2io5stdio10StderrLockENtNtB8_3fmt5Write9write_strB1d_  (in perfdrv) + 48  [0x10469cdf0]
+      !         :           1 _RNvYNtNtNtNtCs1SSuMAdGM58_3std3sys5stdio4unix6StderrNtNtNtCsjIpoRzUjyHQ_4core2io5write5Write9write_allBa_  (in perfdrv) + 108  [0x1046a2548]
+      !         :             1 write  (in libsystem_kernel.dylib) + 8  [0x187f03834]
+      !         7 _RNvCs98RnSx2NrtM_7perfdrv4main  (in perfdrv) + 22584  [0x10420b624]  main.rs:196
+      !         : 7 _RINvNtCsjIpoRzUjyHQ_4core3ptr9drop_glueNtNtNtCs6x0Q6yznA9z_4girt4push8prepared12PreparedPushECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 128  [0x1042031c0]  mod.rs:847
+      !         :   6 close  (in libsystem_kernel.dylib) + 8  [0x187f008f0]
+      !         :   1 _RINvNtCsjIpoRzUjyHQ_4core3ptr9drop_glueNtNtNtCs6x0Q6yznA9z_4girt5fetch5bytes5BytesECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 64  [0x104203b64]  mod.rs:847
+      !         :     1 _RNvXs4_NtCsjJvyXcK4k3w_8tempfile4fileNtB5_8TempPathNtNtNtCsjIpoRzUjyHQ_4core3ops4drop4Drop4drop  (in perfdrv) + 32  [0x10465f340]
+      !         :       1 _RNvNtNtCs1SSuMAdGM58_3std3sys2fs11remove_file  (in perfdrv) + 100  [0x1046954a0]
+      !         :         1 unlink  (in libsystem_kernel.dylib) + 16  [0x187f03c88]
+      !         :           1 __unlink  (in libsystem_kernel.dylib) + 8  [0x187f03cac]
+      !         6 _RNvCs98RnSx2NrtM_7perfdrv4main  (in perfdrv) + 11320  [0x104208a24]  main.rs:180
+      !         : 6 _RNvMs2_NtCs6x0Q6yznA9z_4girt10repositoryNtB5_10Repository7objects  (in perfdrv) + 40  [0x1043d2eb0]
+      !         :   6 _RNvMs2_NtCs6x0Q6yznA9z_4girt10repositoryNtB5_10Repository23objects_with_alternates  (in perfdrv) + 64  [0x1043d2d0c]
+      !         :     6 _RNvMs3_NtCs6x0Q6yznA9z_4girt7objectsNtB5_7Objects15open_controlled  (in perfdrv) + 1496  [0x10433a43c]
+      !         :       6 _RNvMs_NtNtCs6x0Q6yznA9z_4girt4pack4fileNtB4_8FilePack4open  (in perfdrv) + 1044  [0x10433d490]
+      !         :         3 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB2_5Index5parse  (in perfdrv) + 2284  [0x104304720]
+      !         :         | 2 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB2_5Index6finish  (in perfdrv) + 1072  [0x104304cc4]
+      !         :         | + 1 _RINvNtNtNtNtCsjIpoRzUjyHQ_4core5slice4sort8unstable9quicksort9quicksortjNCINvMB8_Sj20sort_unstable_by_keyjNCNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB1L_5Index6finish0E0EB1P_  (in perfdrv) + 716  [0x104302eec]
+      !         :         | + ! 1 _RINvNtNtNtNtCsjIpoRzUjyHQ_4core5slice4sort8unstable9quicksort9quicksortjNCINvMB8_Sj20sort_unstable_by_keyjNCNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB1L_5Index6finish0E0EB1P_  (in perfdrv) + 716  [0x104302eec]
+      !         :         | + !   1 _RINvNtNtNtNtCsjIpoRzUjyHQ_4core5slice4sort8unstable9quicksort9quicksortjNCINvMB8_Sj20sort_unstable_by_keyjNCNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB1L_5Index6finish0E0EB1P_  (in perfdrv) + 508  [0x104302e1c]
+      !         :         | + 1 _RINvNtNtNtNtCsjIpoRzUjyHQ_4core5slice4sort8unstable9quicksort9quicksortjNCINvMB8_Sj20sort_unstable_by_keyjNCNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB1L_5Index6finish0E0EB1P_  (in perfdrv) + 508  [0x104302e1c]
+      !         :         | 1 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB2_5Index6finish  (in perfdrv) + 988  [0x104304c70]
+      !         :         2 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB2_5Index5parse  (in perfdrv) + 376  [0x104303fac]
+      !         :         | 2 _RNvNtNtCs6x0Q6yznA9z_4girt4pack5index11verify_hash  (in perfdrv) + 164  [0x104307a9c]
+      !         :         |   2 _RNvMs1_NtCs6x0Q6yznA9z_4girt6objectNtB5_6Hasher6update  (in perfdrv) + 64  [0x10437b368]
+      !         :         |     2 sha1_update  (in perfdrv) + 16  [0x1045558f8]
+      !         :         |       2 aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+      !         :         |         2 aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 124,232  [0x10459fc7c,0x10459fce8]
+      !         :         1 _RNvMNtNtCs6x0Q6yznA9z_4girt4pack5indexNtB2_5Index5parse  (in perfdrv) + 1784  [0x10430452c]
+      !         :           1 _RNvNtNtCs6x0Q6yznA9z_4girt4pack5index4word  (in perfdrv) + 16  [0x104307b4c]
+      !         1 _RNvCs98RnSx2NrtM_7perfdrv4main  (in perfdrv) + 11088  [0x10420893c]  main.rs:178
+      !           1 _RINvMs2_NtCs6x0Q6yznA9z_4girt10repositoryNtB6_10Repository4openRNtNtCs6zY7rJBZy9D_5alloc6string6StringECs98RnSx2NrtM_7perfdrv  (in perfdrv) + 284  [0x10422ed18]  repository.rs:727
+      !             1 _RNvMs2_NtCs6x0Q6yznA9z_4girt10repositoryNtB5_10Repository13open_location  (in perfdrv) + 60  [0x1043d28d0]
+      !               1 _RNvMs0_NtCs6x0Q6yznA9z_4girt10repositoryNtB5_18RepositoryMetadata13read_location  (in perfdrv) + 2384  [0x1043ce1d0]
+      !                 1 _RNvMs_NtNtCs6x0Q6yznA9z_4girt6config5parseNtB4_6Config5parse  (in perfdrv) + 868  [0x10438b424]
+      !                   1 _RNvMs0_NtNtCs6x0Q6yznA9z_4girt6config5parseNtB5_6Parser4name  (in perfdrv) + 0  [0x104384540]
+      1 start  (in dyld) + 6904  [0x187b7848c]
+        1 dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_1::operator()() const  (in dyld) + 320  [0x187b78b30]
+          1 dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)  (in dyld) + 4184  [0x187b79ba4]
+            1 dyld4::Loader::runInitializersBottomUpPlusUpwardLinks(dyld4::RuntimeState&) const  (in dyld) + 716  [0x187ba1d98]
+              1 dyld4::Loader::runInitializersBottomUpPlusUpwardLinks(dyld4::RuntimeState&) const::$_0::operator()() const  (in dyld) + 116  [0x187ba6ac0]
+                1 dyld4::Loader::runInitializersBottomUp(dyld4::RuntimeState&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&) const  (in dyld) + 300  [0x187ba19a4]
+                  1 dyld4::Loader::runInitializersBottomUp(dyld4::RuntimeState&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&) const  (in dyld) + 300  [0x187ba19a4]
+                    1 dyld4::Loader::runInitializersBottomUp(dyld4::RuntimeState&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&) const  (in dyld) + 300  [0x187ba19a4]
+                      1 dyld4::Loader::runInitializersBottomUp(dyld4::RuntimeState&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&) const  (in dyld) + 300  [0x187ba19a4]
+                        1 dyld4::Loader::runInitializersBottomUp(dyld4::RuntimeState&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&, lsl::Vector<AuthenticatedValue<dyld4::Loader const*>>&) const  (in dyld) + 568  [0x187ba1ab0]
+                          1 dyld4::PrebuiltLoader::runInitializers(dyld4::RuntimeState&) const  (in dyld) + 44  [0x187bcbd44]
+                            1 dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const  (in dyld) + 528  [0x187ba1394]
+                              1 dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const  (in dyld) + 516  [0x187bb1580]
+                                1 mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const  (in dyld) + 124  [0x187bf024c]
+                                  1 mach_o::UnsafeHeader::forEachLoadCommand(void (load_command const*, bool&) block_pointer) const  (in dyld) + 208  [0x187bee9a4]
+                                    1 invocation function for block in mach_o::UnsafeHeader::forEachSection(void (mach_o::UnsafeHeader::SectionInfo const&, bool&) block_pointer) const  (in dyld) + 312  [0x187bf1fac]
+                                      1 invocation function for block in dyld3::MachOAnalyzer::forEachInitializer(Diagnostics&, dyld3::MachOAnalyzer::VMAddrConverter const&, void (unsigned int) block_pointer, void const*) const  (in dyld) + 320  [0x187bb1a8c]
+                                        1 invocation function for block in dyld4::Loader::findAndRunAllInitializers(dyld4::RuntimeState&) const::$_0::operator()() const  (in dyld) + 180  [0x187ba6a28]
+                                          1 __CFInitialize  (in CoreFoundation) + 200  [0x187f84868]
+                                            1 _CFStringGetUserDefaultEncoding  (in CoreFoundation) + 60  [0x187f84dbc]
+                                              1 _CFGetEUID  (in CoreFoundation) + 48  [0x187f85068]
+                                                1 __CFGetUGIDs  (in CoreFoundation) + 260  [0x18808d6dc]
+                                                  1 _dispatch_once_callout  (in libdispatch.dylib) + 32  [0x187d8a630]
+                                                    1 _dispatch_client_callout  (in libdispatch.dylib) + 16  [0x187da14b0]
+                                                      1 ___CFCanChangeEUIDs_block_invoke  (in CoreFoundation) + 204  [0x187f85164]
+                                                        1 sysctl  (in libsystem_c.dylib) + 120  [0x187dd69bc]
+                                                          1 __sysctl  (in libsystem_kernel.dylib) + 8  [0x187f01460]
+
+Total number in stack (recursive counted multiple, when >=5):
+        6       aws_lc_0_45_0_SHA1_Update  (in perfdrv) + 280  [0x104552058]
+        6       aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv) + 0  [0x10459fc00]
+        6       sha1_update  (in perfdrv) + 16  [0x1045558f8]
+        5       _platform_memmove  (in libsystem_platform.dylib) + 0  [0x187f4d360]
+        5       write  (in libsystem_kernel.dylib) + 0  [0x187f0382c]
+
+Sort by top of stack, same collapsed (when >= 5):
+        _dyld_start  (in dyld)        294
+        _RNvNtNtNtCs1G4T8dhWKOP_7zlib_rs7deflate9algorithm6medium14deflate_medium  (in perfdrv)        172
+        _RNvNtNtCs1G4T8dhWKOP_7zlib_rs7deflate13longest_match13longest_match  (in perfdrv)        58
+        mach_msg2_trap  (in dyld)        38
+        aws_lc_0_45_0_sha1_block_data_order_hw  (in perfdrv)        36
+        _RNvMsa_NtCs1G4T8dhWKOP_7zlib_rs7deflateNtB5_4Heap10pqdownheap  (in perfdrv)        12
+        write  (in libsystem_kernel.dylib)        8
+        __open  (in libsystem_kernel.dylib)        7
+        _platform_memmove  (in libsystem_platform.dylib)        6
+        close  (in libsystem_kernel.dylib)        6
+        read  (in libsystem_kernel.dylib)        6
+
+Binary images description not available
+

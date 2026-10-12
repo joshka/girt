@@ -7,7 +7,7 @@ use super::{PreparationProgress, PushCommand, PushFailure as Error, PushLimits, 
 use crate::packet::{check_cancelled, packet, put};
 use crate::{ObjectId, Objects};
 
-/// An immutable command list and non-thin pack ready for one push.
+/// An immutable command list and pack ready for one push.
 ///
 /// # Preparation choices
 ///
@@ -54,8 +54,12 @@ impl PreparedPush {
     /// payloads; commits, trees and tags are decoded for graph selection. Existing zlib streams
     /// are copied after a source CRC check. Deltas reuse only earlier bases from the same pack,
     /// within `limits.read.max_delta_depth`; other deltas and entries from legacy v1 indexes are
-    /// reconstructed and encoded whole.
-    /// Loose objects are read one at a time. Fresh delta search retains only its bounded window.
+    /// reconstructed and encoded under the compression policy. Bounded search can use earlier
+    /// output entries or identity-checked blobs and trees in advertised receiver history. External
+    /// bases are transmitted by ID in REF_DELTA entries, producing a thin pack; the receiver
+    /// must reconstruct them and repair the pack before installation. Loose objects are read
+    /// one at a time. Search retains its bounded fresh window and one external candidate
+    /// payload.
     ///
     /// # Errors
     ///
@@ -74,7 +78,7 @@ impl PreparedPush {
         Self::new_excluding(objects, commands, &[], limits, cancel)
     }
 
-    /// Prepares a non-thin pack omitting objects the receiver has because it has the roots.
+    /// Prepares a pack omitting objects the receiver has because it has the roots.
     ///
     /// Like `git rev-list --objects <tips> --not <roots>`, preparation walks commits from the tips
     /// and the locally present roots together in committer-date order. Commits reachable from a
@@ -88,12 +92,16 @@ impl PreparedPush {
     /// omitted objects always lie in a root's closure; dates only order the walk. With skewed
     /// dates, commits the receiver already has can occasionally be sent. A tagged tree or blob
     /// is sent when no commit is sent, even if a root's tree contains it, as Git does. The
-    /// receiver's copy of a root's closure is trusted: known objects are not validated and may be
-    /// absent locally. Roots missing locally are ignored.
+    /// receiver's copy of a root's closure is trusted: known objects may be absent locally. Objects
+    /// used as external delta bases are independently read and identity-checked locally. Roots
+    /// missing locally are ignored.
     ///
     /// [`super::send`] requires every root that omitted objects rely on to appear in the live
     /// advertisement as a ref tip or `.have`, independently of command expectations; roots whose
-    /// closure omitted nothing are not required. If a root has disappeared, prepare a full
+    /// closure omitted nothing and supplied no emitted delta base are not required. Delta bases
+    /// come only from the already marked blob/tree closure, never from unrelated stored objects.
+    /// Candidate matching tries a bounded number of nearest-size blobs; it does not guarantee
+    /// Git's compression choices. If a root has disappeared, prepare a full
     /// transfer or retry using fresh knowledge. Coordinate with server pruning/GC; advertisements
     /// cannot guarantee object retention against concurrent deletion.
     ///
@@ -206,7 +214,7 @@ impl PreparedPush {
                     progress: false,
                 });
             }
-            let selection = graph::select(
+            let mut selection = graph::select(
                 objects,
                 &commands,
                 receiver_roots,
@@ -214,6 +222,11 @@ impl PreparedPush {
                 cancel,
                 |objects| observe(PreparationProgress::Reading { objects }),
             )?;
+            let delta_bases: Vec<_> = selection
+                .delta_bases
+                .iter()
+                .map(|&(id, kind, _)| (id, kind))
+                .collect();
             let mut temporary = tempfile::NamedTempFile::new()?;
             let mut pack = CancelWriter {
                 output: std::io::BufWriter::with_capacity(64 * 1024, temporary.as_file_mut()),
@@ -223,6 +236,7 @@ impl PreparedPush {
             let result = crate::pack::write_transfer(
                 objects,
                 &selection.objects,
+                &delta_bases,
                 (&mut pack, &mut index),
                 limits.pack,
                 limits.compression,
@@ -244,10 +258,17 @@ impl PreparedPush {
             check_cancelled(cancel)?;
             pack.flush()?;
             drop(pack);
-            let written = result.map_err(|error| match error {
+            let (written, used_bases) = result.map_err(|error| match error {
                 crate::pack::ReuseError::Read { id, source } => Error::Read { id, source },
                 crate::pack::ReuseError::Write(error) => Error::Pack(error),
             })?;
+            for (base, _, root) in selection.delta_bases {
+                if used_bases.contains(&base) {
+                    selection.receiver_roots.push(root);
+                }
+            }
+            selection.receiver_roots.sort_unstable();
+            selection.receiver_roots.dedup();
             Ok(Self {
                 format: objects.object_format(),
                 commands,

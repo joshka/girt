@@ -162,7 +162,8 @@ text remain server-controlled bytes for callers to handle.
 Discovery requires the exact service prelude and flush followed by a valid v0 advertisement. Media
 types must match the requested smart Git service without parameters or duplicates. HTTP content
 encoding is rejected, avoiding a second decompression budget. Dumb HTTP and protocol v1/v2 are
-explicitly unsupported; existing SHA-1 and non-thin-pack constraints apply.
+explicitly unsupported; existing object-format and push preparation constraints apply;
+advertised-history deltas may produce thin packs.
 
 Fetch advertisement and aggregate wire budgets include the smart service prelude. A fetch request
 uses at most 96 bytes per want plus 2048 bytes of have/framing overhead. The bounded response is

@@ -408,6 +408,12 @@ The harness prints exact input, pack and index sizes alongside Criterion through
 compare pack bytes with payload bytes; index bytes are additional. These workloads illustrate
 compressibility, not the savings available from delta selection across real revision histories.
 
+The `push-blob-edit` group adds an independent 512 KiB deterministic blob and one eight-byte edit.
+An explicitly advertised blob root supplies the base. Ordinary and advertised-base preparation use
+the same opened source snapshot, with setup outside measurement. The
+[push delta report](evidence/push-deltas.md) records Criterion results, bounds and large-fixture
+comparisons. Filter it with `cargo bench --bench push -- push-blob-edit`.
+
 Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, using the
 default optimized bench profile and flate2's lockfile-selected backend. The desktop session was not
 CPU-isolated. The [CSV](benchmarks/pack-write-baseline.csv) retains median estimates and 95%
@@ -465,16 +471,17 @@ Resource-bound tests, rather than these throughput numbers, provide the memory/w
 Run `cargo bench --bench push` with the checked-in lockfile. Criterion uses 30 samples, one-second
 warmup and five-second target measurement windows. Fixture construction, object-snapshot opening and
 one real receive-pack transfer per fixture occur outside timing. Selection/read/validation/pack
-construction starts from a packed `Objects` snapshot and ends with a buffered `PreparedPush`.
+construction starts from a packed `Objects` snapshot and ends with a spooled `PreparedPush`.
 Prepared-protocol replay separately parses an in-memory advertisement, checks the expectation,
 writes to a sink and parses a complete report. It excludes graph work and compression; sink writes
 do not measure pack copying, disk or network throughput.
 
 Fixtures contain 16 or 256 similar Git-generated blobs plus a tree, commit and annotated tag. The
-selected tag reaches all 19 or 259 objects. Source packs use Git-selected deltas; outgoing packs use
-girt's ordinary entries. This exercises packed reads, typed graph selection, payload validation,
-hashing, sorting, compression and index generation into a sink. Filesystem caches are warm, pack
-snapshots and protocol input are resident, and no cold-cache or CPU-pinned sampling is claimed.
+selected tag reaches all 19 or 259 objects. Source packs use Git-selected deltas; the historical
+samples below write ordinary outgoing entries. Current preparation can reuse those source deltas.
+This exercises packed reads, typed graph selection, payload validation, hashing, sorting,
+compression and index generation into a sink. Filesystem caches are warm, pack snapshots and
+protocol input are resident, and no cold-cache or CPU-pinned sampling is claimed.
 
 Measured on 2026-09-23 with Git 2.55.0, rustc 1.98.1, macOS 26.6.2 arm64, Apple M2 Max, optimized
 bench profile and the lockfile-selected flate2 backend. Desktop/browser activity may overlap

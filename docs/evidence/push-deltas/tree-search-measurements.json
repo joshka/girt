@@ -1,0 +1,434 @@
+[
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.17,
+    "rss": 95223808
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.55,
+    "rss": 95207424
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.07,
+    "rss": 15007744
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.17,
+    "rss": 95371264
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.17,
+    "rss": 95666176
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.07,
+    "rss": 15024128
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.18,
+    "rss": 95387648
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.21,
+    "rss": 95191040
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.1,
+    "rss": 16596992
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.15,
+    "rss": 27148288
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.13,
+    "rss": 27738112
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 11255808
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.14,
+    "rss": 27344896
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.13,
+    "rss": 27738112
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 12173312
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 0,
+    "impl": "main",
+    "seconds": 0.16,
+    "rss": 28196864
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 0,
+    "impl": "after",
+    "seconds": 0.18,
+    "rss": 29360128
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 0,
+    "impl": "git",
+    "seconds": 0.16,
+    "rss": 16580608
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.18,
+    "rss": 94748672
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.17,
+    "rss": 95191040
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.07,
+    "rss": 14991360
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.17,
+    "rss": 95371264
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.16,
+    "rss": 94994432
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.08,
+    "rss": 15024128
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.18,
+    "rss": 94830592
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.22,
+    "rss": 95354880
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.1,
+    "rss": 16596992
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.13,
+    "rss": 27328512
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.13,
+    "rss": 27721728
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 11223040
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.13,
+    "rss": 27279360
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.15,
+    "rss": 27918336
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 12156928
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 1,
+    "impl": "main",
+    "seconds": 0.15,
+    "rss": 28114944
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 1,
+    "impl": "after",
+    "seconds": 0.18,
+    "rss": 29556736
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 1,
+    "impl": "git",
+    "seconds": 0.17,
+    "rss": 16596992
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.18,
+    "rss": 95240192
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.17,
+    "rss": 95404032
+  },
+  {
+    "transport": "local",
+    "op": "new",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.07,
+    "rss": 15007744
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.16,
+    "rss": 95256576
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.17,
+    "rss": 95240192
+  },
+  {
+    "transport": "local",
+    "op": "ff",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.07,
+    "rss": 15089664
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.18,
+    "rss": 95338496
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.22,
+    "rss": 95387648
+  },
+  {
+    "transport": "local",
+    "op": "edit",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.09,
+    "rss": 16564224
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.13,
+    "rss": 27344896
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.14,
+    "rss": 27770880
+  },
+  {
+    "transport": "http",
+    "op": "new",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 11206656
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.14,
+    "rss": 27328512
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.14,
+    "rss": 27639808
+  },
+  {
+    "transport": "http",
+    "op": "ff",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.14,
+    "rss": 12173312
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 2,
+    "impl": "main",
+    "seconds": 0.15,
+    "rss": 28033024
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 2,
+    "impl": "after",
+    "seconds": 0.19,
+    "rss": 29605888
+  },
+  {
+    "transport": "http",
+    "op": "edit",
+    "n": 2,
+    "impl": "git",
+    "seconds": 0.16,
+    "rss": 16646144
+  }
+]

@@ -1,0 +1,131 @@
+# Push Delta Evidence
+
+## Result
+
+A push of an eight-byte edit to a deterministic 512 KiB blob on the large fixture produces a
+598-byte pack, compared with main's 525,690 bytes and Git's 311 bytes. The pack-size budget of at
+most twice Git is met (1.92×). Latest local edit latency is 0.31 s versus Git's 0.16 s; HTTP edit
+latency is 0.26 s versus 0.19 s. Ranges are wide. An earlier tree-search repeat measured 0.22 s
+locally versus Git's 0.10 s, above the 2× target, so these repeats do not establish a consistent 2×
+latency result. The latest new-branch median is 15% above main, while earlier repeats show no
+regression; the 10% regression budget is therefore not established. Native peak RSS remains below
+128 MiB. These results establish this workload's pack-size behavior, not parity with Git's
+heuristics, a latency improvement or an end-to-end jj result.
+
+## Specification and Implementation
+
+The [issue specification](https://github.com/joshka/girt/issues/25#issuecomment-6124134524) precedes
+implementation. Acceptance commit `c805d4b2` fails both small-edit cases on main `608f4dd0`: 524,694
+bytes for SHA-1 and 524,749 bytes for SHA-256. Depth-zero and unadvertised-base cases pass. The
+[design round](https://github.com/joshka/girt/issues/25#issuecomment-6124203752) rejects
+internal-only search and stored-delta-only reuse because neither covers a new loose edit. The
+[measured extension](https://github.com/joshka/girt/issues/25#issuecomment-6124500162) adds tree
+bases and early termination after a strong match.
+
+Graph marks provide candidate blob/tree IDs and their advertised root proof. Candidate payloads are
+read through normal pinned-store lookup with identity checking. Only bases actually emitted add root
+dependencies to the existing live advertisement check. Default compression searches earlier output
+entries and verified receiver candidates; explicit ordinary compression remains available. REF_DELTA
+works with or without an OFS advertisement. External bases have output depth zero; internal/output
+chains obey the read bound and enabled compression depth bound. Packs offering receiver candidates
+cap depth at one, so internal bases resolve as ordinary entries before external lookup.
+`PushOptions::compression` exposes ordinary encoding through the configured workflow as well as the
+existing low-level policy. Receiver import reconstructs and repairs thin packs, checks connectivity,
+then installs before conditional ref publication. Source CRC, typed edges, source identity reads,
+budgets, cancellation, native knowledge retry, no-clobber installation and CAS remain.
+
+Candidate values count against `max_input_bytes` and the per-object read/write bounds. Inadequate
+candidate budget falls back to whole objects. Internal and external searches share each target's
+candidate/work allowance. Metadata follows the bounded graph marks and is loaded by object kind;
+search retains its existing fresh window and one external payload. This is not a process heap cap.
+
+## Large Fixture Measurements
+
+macOS 26.6.2 (25G83), Apple M2 Max, Rust 1.99.0, Git 2.56.0, release build with debug information.
+The source fixture is `/tmp/opus-med-23/source.git`, the previously retained bare jj clone with
+131,152 objects, 325 refs and a roughly 200 MiB pack. Each source and receiver starts with a fresh
+`cp -cR` of that fixture. Original push objects are overlaid from the retained perf-audit fixture;
+the large edit adds an independently Git-written blob and two commits without modifying jj. All data
+stays in disposable copies. Both Git and girt use `GIT_CONFIG_GLOBAL=/dev/null`.
+
+Cells are median wall time (three-run full range), then maximum peak RSS from `/usr/bin/time -l`.
+Runs rotate main, changed and Git. Warm filesystem cache is intentional; the first-launch range
+includes macOS executable startup overhead. Every timing process holds `/tmp/girt-timing.lock`. Git
+HTTP uses the checked-in loopback `http_server.py` and `git http-backend`; the owned server is
+terminated and waited on in `finally`. Every destination passes Git connectivity checking and edit
+runs compare exact blob bytes. This does not claim cold-storage behavior.
+
+| Workload           | Main `608f4dd0`              | Changed                      | Git                          |
+| ------------------ | ---------------------------- | ---------------------------- | ---------------------------- |
+| local new branch   | 0.26 s (0.23–0.33), 91.4 MiB | 0.30 s (0.27–0.55), 91.2 MiB | 0.12 s (0.07–0.13), 14.4 MiB |
+| local fast-forward | 0.20 s (0.18–0.22), 91.3 MiB | 0.19 s (0.19–0.26), 90.9 MiB | 0.07 s (0.07–0.16), 14.4 MiB |
+| local 512 KiB edit | 0.19 s (0.18–1.04), 91.0 MiB | 0.31 s (0.27–0.34), 92.1 MiB | 0.16 s (0.10–0.18), 15.9 MiB |
+| http new branch    | 0.28 s (0.15–0.29), 26.6 MiB | 0.24 s (0.15–0.31), 26.7 MiB | 0.28 s (0.17–0.31), 10.7 MiB |
+| http fast-forward  | 0.29 s (0.29–0.96), 26.5 MiB | 0.25 s (0.18–0.32), 26.8 MiB | 0.26 s (0.20–0.32), 11.7 MiB |
+| http 512 KiB edit  | 0.32 s (0.22–0.58), 27.6 MiB | 0.26 s (0.22–0.28), 28.8 MiB | 0.19 s (0.18–0.32), 15.9 MiB |
+
+[Raw samples](push-deltas/measurements.json), per-run logs, fixture IDs and the
+[measurement script](push-deltas/accepted-measure.py) retain reproduction details. The
+[initial baseline](push-deltas/baseline.json) was taken before acceptance implementation.
+[Intermediate samples](push-deltas/intermediate-measurements.json) describe the blob-only version,
+not the final behavior: it sent 1,568 bytes and regressed median latency by trying further
+candidates.
+
+The [earlier tree-search repeat](push-deltas/tree-search-measurements.json) precedes the per-target
+counter and one-level thin-output corrections. Its narrower ranges remain retained, not substituted
+for the final repeat. Final samples include substantial system/runtime variation; no outliers are
+discarded.
+
+## Profile and Criterion
+
+Main preparation on the large edit spent 8.66 ms opening the store, 6.34 ms selecting and 8.39 ms
+writing, before receiver work. A 200-preparation repeat sampled at 1 ms shows 172 deflate-medium and
+58 longest-match self samples, versus 36 SHA-1, eight write and six read samples. Loader samples are
+excluded. The [profile](push-deltas/main-edit-sample.txt) and phase logs retain the observations;
+instrumented wall time is not a benchmark sample. Final phase samples report main selection/writing
+7.97/8.16 ms and changed selection/writing 2.11/35.67 ms. Smaller transfer size adds search and
+receiver thin-pack repair work, so pack bytes alone do not establish a latency improvement.
+
+`benches/push.rs` adds a reproducible Criterion group over a 512 KiB original deterministic blob,
+one eight-byte edit and an explicitly advertised blob root. Setup is outside the measured operation.
+Under the same shared lock, 30 samples, one-second warmup and five-second requested measurement:
+ordinary preparation has a Criterion time estimate of 9.764 ms (95% interval 9.729–9.815 ms);
+advertised-base preparation is 11.575 ms (11.076–12.267 ms). The
+[final Criterion output](push-deltas/accepted-criterion.log) retains throughput, comparison with the
+previous run and a sampling warning: the requested five-second window expanded to 5.275 seconds for
+30 linear samples. This is a benchmark sampling warning, not a compiler/check warning. The
+large-fixture phase also enumerates boundary metadata; this small group isolates base search rather
+than claiming to represent every preparation cost.
+
+## Validation and Limits
+
+The acceptance suite covers both hashes, strict Git thin-pack repair, exact content/ref publication,
+REF framing with and without OFS advertisement, packed-source edits, empty receiver internal bases,
+zero/one output depth, ordinary policy, input/work fallback and corrupt candidate refusal with the
+receiver unchanged. Configured native, HTTP and SSH pushes reach real Git-compatible receivers; SSH
+uses a local client stand-in and starts no sshd. Existing advertisement and transfer-reuse suites
+retain shallow refusal, hidden refs, root-race retry, CRC damage, false index/base identity,
+connectivity and no-mutation evidence. The advertisement corpus explicitly selects ordinary
+compression so installed-index counts still equal wire-object counts; default delta cases separately
+check thin repair, including hidden receiver history. The retry compares incoming IDs against Git's
+six selected IDs plus its verified repair base. Windows CI explicitly includes the portable delta
+suite; Unix CI runs all features and the SSH stand-in. Platform results remain CI evidence.
+
+The default external search skips payloads under 64 bytes, limits eligible payloads to 1 MiB, tries
+nearest-size candidates, and stops after a completed delta below 1% of target size. Larger objects,
+unmatched candidates and exhausted search use whole-object output. Git can find better deltas;
+pathname-oriented matching and broader size/work heuristics remain possible follow-ups. Native
+import repairs thin packs by appending ordinary bases, potentially duplicating an already stored
+base. Full `just check` exposed a receiver resolution ambiguity when a physically present,
+unreferenced object was both a pending internal delta target and a candidate for store-assisted
+external lookup. The existing native root-change retry failed with duplicate identity before any
+mutation. The
+[recorded correction](https://github.com/joshka/girt/issues/25#issuecomment-6124896054) caps
+candidate packs to one delta level, eliminating that shape by construction. Both-format
+interrupted/rejected receive cases and the existing retry assert successful exact publication.
+Broader multi-level thin import resolution remains a follow-up. Shallow push negotiation and
+concurrent server GC protection remain outside this increment.
+
+The final local gate is `just check` under the shared timing lock, with warnings rejected. Its
+result and exact published revision are recorded in the PR; this report's measurements describe the
+final algorithm before subsequent formatting and documentation changes.
