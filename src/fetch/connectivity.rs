@@ -15,6 +15,15 @@ pub(super) trait ReceivedObjects {
         id: &ObjectId,
         cancel: &AtomicBool,
     ) -> Result<Option<Cow<'_, Object>>, FetchError>;
+    fn edges(
+        &self,
+        id: ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Vec<(ObjectId, ObjectKind)>>, FetchError> {
+        self.get(&id, cancel)?
+            .map(|object| object_edges(id, &object))
+            .transpose()
+    }
     fn kind(&self, id: ObjectId, cancel: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
         Ok(self.get(&id, cancel)?.map(|o| o.kind()))
     }
@@ -47,6 +56,23 @@ impl ReceivedObjects for super::import::IndexedObjects {
         cancel: &AtomicBool,
     ) -> Result<Option<Cow<'_, Object>>, FetchError> {
         Ok(self.get(id, cancel)?.map(Cow::Owned))
+    }
+    fn edges(
+        &self,
+        id: ObjectId,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Vec<(ObjectId, ObjectKind)>>, FetchError> {
+        if let Some(edges) = self
+            .verified
+            .objects
+            .get(&id)
+            .and_then(|o| o.edges.as_ref())
+        {
+            return Ok(Some(edges.clone()));
+        }
+        self.get(&id, cancel)?
+            .map(|object| object_edges(id, &object))
+            .transpose()
     }
     fn kind(&self, id: ObjectId, _: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
         Ok(self.kind(id))
@@ -138,10 +164,15 @@ pub(super) fn validate_with_boundaries(
             if kind(id)? == Some(ObjectKind::Blob) {
                 continue;
             }
-            let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
-            let shallow_commit =
-                shallow.contains(&id) && object.kind() == crate::ObjectKind::Commit;
-            let edge = |id, expected| {
+            let edges = match objects.edges(id, cancel)? {
+                Some(edges) => edges,
+                None => {
+                    let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
+                    object_edges(id, &object)?
+                }
+            };
+            let shallow_commit = shallow.contains(&id) && kind(id)? == Some(ObjectKind::Commit);
+            let mut edge = |id, expected| {
                 if shallow_commit && expected == crate::ObjectKind::Commit {
                     return Ok(());
                 }
@@ -159,7 +190,9 @@ pub(super) fn validate_with_boundaries(
                 }
                 Ok(())
             };
-            crate::edges::visit(id, object.kind(), object.data(), edge)?;
+            for (target, expected) in edges {
+                edge(target, expected)?;
+            }
         }
         #[cfg(feature = "tracing")]
         span.record("visited", seen.len())
@@ -174,6 +207,15 @@ pub(super) fn validate_with_boundaries(
     crate::trace::finish(&span, &result, crate::trace::fetch);
 
     result
+}
+
+fn object_edges(id: ObjectId, object: &Object) -> Result<Vec<(ObjectId, ObjectKind)>, FetchError> {
+    let mut edges = Vec::new();
+    crate::edges::visit(id, object.kind(), object.data(), |id, kind| {
+        edges.push((id, kind));
+        Ok::<_, FetchError>(())
+    })?;
+    Ok(edges)
 }
 
 #[cfg(test)]

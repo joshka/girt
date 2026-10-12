@@ -138,6 +138,8 @@ impl ObjectFormat {
     /// # Ok::<(), girt::ParseObjectIdError>(())
     /// ```
     pub fn hash_object(self, kind: crate::ObjectKind, bytes: &[u8]) -> ObjectId {
+        #[cfg(test)]
+        HASHES.with(|hashes| hashes.set(hashes.get() + 1));
         match self {
             Self::Sha1 => hash_sha1(kind.as_str(), bytes),
             Self::Sha256 => {
@@ -414,4 +416,10 @@ mod format_tests {
         assert_eq!(hashed[&sha256], 2);
         assert_eq!(hashed[&tail], 3);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Per-thread work observation for identity-verification regression tests.
+    pub(crate) static HASHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

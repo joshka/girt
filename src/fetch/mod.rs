@@ -87,6 +87,7 @@ mod workflow_network;
 ))]
 pub use workflow_network::FetchDownload;
 mod update;
+mod verified;
 pub use update::{FetchUpdateError, FetchUpdateLimits};
 mod workflow;
 mod worktree;

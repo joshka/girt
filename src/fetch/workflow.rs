@@ -782,8 +782,8 @@ impl FetchReady {
             let objects = reopened.objects(limits.snapshot).map_err(|error| {
                 FetchFinishFailure::BeforePublication(FetchError::Destination(error))
             })?;
-            // Installation does not repair corrupt loose objects shadowing the pack. Read through
-            // the destination's actual lookup precedence before any ref can name this graph.
+            // Prove the received representation is still installed, and honor destination lookup
+            // precedence before any ref can name this graph. Different copies stay checked.
             // History reachable from references that existed before the fetch was verified when
             // those references were published; only new history is walked.
             let mut verify_roots = self.received.wants().to_vec();
@@ -798,8 +798,11 @@ impl FetchReady {
                 })
                 .collect();
             let shallow: Vec<_> = objects.shallow_roots().iter().collect();
+            let verified =
+                super::verified::InstalledObjects::bind(&objects, &self.received, cancel)
+                    .map_err(FetchFinishFailure::BeforePublication)?;
             KnownHistory::verify_stopping_at(
-                &objects,
+                &verified,
                 &verify_roots,
                 &shallow,
                 &published,
@@ -809,7 +812,7 @@ impl FetchReady {
             .map_err(FetchFinishFailure::BeforePublication)?;
             let validation = super::update::validate(
                 &mut report.updates,
-                &objects,
+                &verified,
                 &self.request.authorized_force,
                 limits,
                 cancel,

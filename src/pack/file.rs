@@ -215,6 +215,49 @@ impl FilePack {
         })
     }
 
+    /// Binds receive-time identity evidence to this pinned representation, not a pathname or
+    /// claimed checksum. The index retained by this reader must agree byte for byte as well.
+    pub(crate) fn matches_received(
+        &self,
+        index: &[u8],
+        mut received: impl Read,
+        len: usize,
+        cancel: &AtomicBool,
+    ) -> Result<bool, Error> {
+        if self.index_bytes != index || self.pack.len != len {
+            return Ok(false);
+        }
+        self.index.check_not_truncated()?;
+        self.pack.check_not_truncated()?;
+        let mut expected = [0; 64 * 1024];
+        let mut actual = [0; 64 * 1024];
+        let mut offset = 0;
+        let end = len - self.format.digest_len();
+        let mut hash = Hasher::new(self.format);
+        while offset < len {
+            check_cancelled(cancel)?;
+            let count = expected.len().min(len - offset);
+            received
+                .read_exact(&mut expected[..count])
+                .map_err(|source| path_error(&self.pack.path, source))?;
+            self.pack.read_at(offset, &mut actual[..count])?;
+            if expected[..count] != actual[..count] {
+                return Ok(false);
+            }
+            if offset < end {
+                hash.update(&actual[..count.min(end - offset)]);
+            }
+            offset += count;
+        }
+        let expected_hash = &index
+            [index.len() - 2 * self.format.digest_len()..index.len() - self.format.digest_len()];
+        if hash.finalize().as_bytes() != expected_hash {
+            return Ok(false);
+        }
+        check_cancelled(cancel)?;
+        Ok(true)
+    }
+
     /// Checks the entire pinned pack checksum and every v2 entry CRC without decoding objects.
     pub(crate) fn verify(&self, cancelled: &AtomicBool) -> Result<(), Error> {
         check_cancelled(cancelled)?;

@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::{FetchError, FetchLimits, FetchUpdate, FetchUpdateKind, check_cancelled};
 use crate::refs::RefName;
-use crate::{HistoryLimits, ObjectId, ObjectKind, Objects, PackLimits, PeelLimits};
+use crate::{HistoryLimits, ObjectId, ObjectKind, PackLimits, PeelLimits};
 
 /// Bounds for reopening installed objects and checking remote-tracking update ancestry.
 ///
@@ -15,10 +15,11 @@ use crate::{HistoryLimits, ObjectId, ObjectKind, Objects, PackLimits, PeelLimits
 pub struct FetchUpdateLimits {
     /// Destination pack snapshot and installation dependency-check bounds.
     pub snapshot: PackLimits,
-    /// Bounds for rereading the installed selected-tip graph through the destination object store.
+    /// Bounds for verifying the installed selected-tip graph through destination lookup.
     /// Uses `max_wants`, `max_known_objects`, `max_known_bytes`, `max_known_edges`, `max_haves`
     /// and `known_read` through [`super::KnownHistory::new`]; other fields do not apply to
-    /// this phase. This detects corrupt loose objects shadowing valid installed pack objects.
+    /// this phase. Byte-bound receive evidence avoids repeated decoding, while preserving these
+    /// counts and per-read bounds. Other destination representations use ordinary checked reads.
     pub verification: FetchLimits,
     /// Commit/edge/per-read bounds for each ancestry decision.
     pub history: HistoryLimits,
@@ -71,11 +72,12 @@ pub enum FetchUpdateError {
 
 pub(super) fn validate(
     updates: &mut [FetchUpdate],
-    objects: &Objects,
+    verified: &super::verified::InstalledObjects<'_>,
     authorized: &BTreeSet<RefName>,
     limits: FetchUpdateLimits,
     cancel: &AtomicBool,
 ) -> Result<(), FetchUpdateError> {
+    let objects = verified.store();
     for update in updates {
         check_cancelled(cancel)?;
         if update.kind != FetchUpdateKind::Replace {
@@ -83,14 +85,32 @@ pub(super) fn validate(
         }
         let old = update.previous.expect("replacement has old value");
         let new = update.mapping.source.as_ref().expect("fetch source").id;
-        let old_commit = peel_commit(objects, old, limits, cancel)?;
-        let new_commit = peel_commit(objects, new, limits, cancel)?;
+        let old_commit = peel_commit(verified, old, limits, cancel)?;
+        let new_commit = peel_commit(verified, new, limits, cancel)?;
         let (Some(old), Some(new)) = (old_commit, new_commit) else {
             continue;
         };
         // Existing history traversal is synchronous and bounded, with no cancellation inside one
         // query. Check immediately on either side; never start publication after cancellation.
-        let fast_forward = objects.is_ancestor(old, new, limits.history)?;
+        let fast_forward = objects.is_ancestor_verified(old, new, limits.history, |id, read| {
+            let Some(object) = verified
+                .get(id, read, cancel)
+                .map_err(|source| crate::HistoryError::Read { id, source })?
+            else {
+                return Ok(None);
+            };
+            if object.kind != ObjectKind::Commit {
+                return Err(crate::HistoryError::NotCommit(id));
+            }
+            let parents = object
+                .edges
+                .as_ref()
+                .expect("InstalledObjects::get requires parsed edges")
+                .iter()
+                .filter_map(|&(id, kind)| (kind == ObjectKind::Commit).then_some(id))
+                .collect();
+            Ok(Some(parents))
+        })?;
         check_cancelled(cancel)?;
         let name = update
             .mapping
@@ -123,12 +143,23 @@ fn commit_update_kind(
 }
 
 fn peel_commit(
-    objects: &Objects,
+    verified: &super::verified::InstalledObjects<'_>,
     id: ObjectId,
     limits: FetchUpdateLimits,
     cancel: &AtomicBool,
 ) -> Result<Option<ObjectId>, FetchUpdateError> {
-    let result = objects.peel(
+    let mut read = limits.history.read;
+    read.max_object_bytes = read
+        .max_object_bytes
+        .min(limits.verification.max_known_bytes);
+    if let Some(object) = verified
+        .get(id, read, cancel)
+        .map_err(|source| FetchError::LocalRead { id, source })?
+        && object.kind != ObjectKind::Tag
+    {
+        return Ok((object.kind == ObjectKind::Commit).then_some(id));
+    }
+    let result = verified.store().peel(
         id,
         PeelLimits {
             max_tags: limits.max_tag_depth,

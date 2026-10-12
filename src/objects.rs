@@ -702,6 +702,36 @@ impl Objects {
         Ok(false)
     }
 
+    /// Whether normal lookup selects a byte-bound received pack for an identity it contains.
+    /// Primary loose storage still precedes alternate packs. Other copies never inherit proof.
+    pub(crate) fn selects_received(
+        &self,
+        id: ObjectId,
+        received: &FilePack,
+        cancel: &AtomicBool,
+    ) -> Result<bool, ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                check_cancelled(cancel)?;
+                if std::ptr::eq(pack.as_ref(), received) {
+                    return Ok(true);
+                }
+                if pack.find(id)?.is_some() {
+                    return Ok(false);
+                }
+            }
+            let hex = id.to_string();
+            let path = store.directory.join(&hex[..2]).join(&hex[2..]);
+            if path
+                .try_exists()
+                .map_err(|source| ObjectReadError::Path { path, source })?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(false)
+    }
+
     /// All pinned packs in the same primary/alternate lookup order as `read`.
     pub(crate) fn transfer_packs(&self) -> Vec<&FilePack> {
         self.stores
