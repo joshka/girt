@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(unix)]
 use std::fs::{self, File};
 use std::io;
@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use std::time::SystemTime;
 
-use super::{MaintenanceIsolation, RepackError, RepackLimits, RepackPublished, RetentionPolicy};
 #[cfg(unix)]
-use super::{RetentionOutcome, RetentionPlan};
+use super::RetentionPlan;
+use super::{MaintenanceIsolation, RepackError, RepackLimits, RepackPublished, RetentionPolicy};
 #[cfg(unix)]
 use crate::pack::FilePack;
 use crate::{ObjectId, ObjectReadError, Repository};
@@ -86,7 +86,8 @@ impl Repository {
     /// The caller's [`MaintenanceIsolation`] guard must exclude external Git and girt writers,
     /// old readers pinned to packs, and repositories depending on this store as an alternate for
     /// the whole operation. The operation ignores reflog expiry cutoffs: every observed history
-    /// remains a root. It makes fresh complete scans, publishes a bounded replacement pair,
+    /// remains a root. It builds one complete plan, revalidates input fingerprints, publishes a
+    /// bounded replacement pair,
     /// synchronizes the pack and object directories, verifies each required ID through the
     /// replacement or a surviving protected pack, and compares
     /// old pack generations before deleting an old index followed by its pack. `.keep`, recent
@@ -155,9 +156,54 @@ impl Repository {
         limits: RepackLimits,
         cancel: &AtomicBool,
         after_publication: impl FnOnce(),
-        mut remove: impl FnMut(&Path) -> io::Result<()>,
-        mut sync_directory: impl FnMut(&Path) -> io::Result<()>,
+        remove: impl FnMut(&Path) -> io::Result<()>,
+        sync_directory: impl FnMut(&Path) -> io::Result<()>,
     ) -> Result<RetireReport, RetireFailure> {
+        self.retire_planned_at(
+            policy,
+            limits,
+            cancel,
+            None,
+            after_publication,
+            (remove, sync_directory),
+        )
+    }
+
+    #[cfg(unix)]
+    pub(super) fn retire_planned(
+        &self,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+        session: &mut super::inputs::Session,
+    ) -> Result<RetireReport, RetireFailure> {
+        self.retire_planned_at(
+            policy,
+            limits,
+            cancel,
+            Some(session),
+            || {},
+            (
+                |path| fs::remove_file(path),
+                |directory| File::open(directory).and_then(|dir| dir.sync_all()),
+            ),
+        )
+    }
+
+    #[cfg(unix)]
+    fn retire_planned_at(
+        &self,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+        session: Option<&mut super::inputs::Session>,
+        after_publication: impl FnOnce(),
+        actions: (
+            impl FnMut(&Path) -> io::Result<()>,
+            impl FnMut(&Path) -> io::Result<()>,
+        ),
+    ) -> Result<RetireReport, RetireFailure> {
+        let (mut remove, mut sync_directory) = actions;
         let mut report = RetireReport::default();
         check(cancel, &report)?;
         let mut keep_all_logs = policy.clone();
@@ -170,14 +216,63 @@ impl Repository {
         {
             return Err(failed(RetireCause::Changed, report));
         }
-        let first = complete_plan(&current, &keep_all_logs, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
+        let mut owned = if session.is_none() {
+            Some(
+                super::inputs::Session::new(&current, &keep_all_logs, cancel).map_err(
+                    |reason| {
+                        failed(
+                            if cancel.load(Ordering::Relaxed) {
+                                RetireCause::Cancelled
+                            } else {
+                                RetireCause::Incomplete(reason)
+                            },
+                            report.clone(),
+                        )
+                    },
+                )?,
+            )
+        } else {
+            None
+        };
+        let session = session.or(owned.as_mut()).expect("retention session");
+        session.validate(&current, policy, cancel).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    RetireCause::Cancelled
+                } else {
+                    RetireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
+        session
+            .plan
+            .required
+            .extend(session.plan.protected_objects.iter().copied());
+        let first = &session.plan;
         let directory = current.object_dir().join("pack");
         let before = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
+        if old_indices(&before, first, None).is_empty()
+            && protected_survivors_only(&current, first, policy, cancel)
+                .map_err(|cause| failed(cause, report.clone()))?
+        {
+            session.validate(&current, policy, cancel).map_err(|_| {
+                failed(
+                    if cancel.load(Ordering::Relaxed) {
+                        RetireCause::Cancelled
+                    } else {
+                        RetireCause::Changed
+                    },
+                    report.clone(),
+                )
+            })?;
+            // No replacement or deletion needs a readability proof: all storage stays in place.
+            return Ok(report);
+        }
         // The isolated first scan is still current; the post-publication scan rechecks it.
         let (published, held) = current
-            .publish_required(&first, &keep_all_logs, limits, cancel)
+            .publish_required(first, &keep_all_logs, limits, cancel)
             .map_err(|error| failed(RetireCause::Repack(Box::new(error)), report.clone()))?;
         let replacement = directory.join(format!("pack-{}", published.written.checksum));
         let replacement_pack = replacement.with_extension("pack");
@@ -189,6 +284,7 @@ impl Repository {
             .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
         report.durable = true;
         after_publication();
+        check(cancel, &report)?;
         let refreshed = Repository::open(self.git_dir())
             .map_err(|error| failed(RetireCause::Incomplete(error.to_string()), report.clone()))?;
         if refreshed.object_dir() != current.object_dir()
@@ -200,23 +296,24 @@ impl Repository {
         {
             return Err(failed(RetireCause::Changed, report));
         }
-        let second = complete_plan(&refreshed, &keep_all_logs, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
-        if first.roots != second.roots
-            || first.reachable != second.reachable
-            || first.required != second.required
-            || first.alternate_stores != second.alternate_stores
-            || !first
-                .protected_packs
-                .iter()
-                .filter(|path| *path != &replacement_pack)
-                .eq(second
-                    .protected_packs
-                    .iter()
-                    .filter(|path| *path != &replacement_pack))
-        {
+        let published_inputs =
+            super::inputs::Inputs::observe(&refreshed, policy, cancel).map_err(|reason| {
+                failed(
+                    if cancel.load(Ordering::Relaxed) {
+                        RetireCause::Cancelled
+                    } else {
+                        RetireCause::Incomplete(reason)
+                    },
+                    report.clone(),
+                )
+            })?;
+        if !session.inputs.same_except(
+            &published_inputs,
+            &[replacement_pack.clone(), replacement_index.clone()],
+        ) {
             return Err(failed(RetireCause::Changed, report));
         }
+        session.inputs = published_inputs;
         let mut pack_budget = policy.packs;
         let pack = FilePack::open(
             self.object_format(),
@@ -227,10 +324,16 @@ impl Repository {
         .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
         pack.verify(cancel)
             .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-        // Objects left out because a protected pack holds them must still decode from one of the
-        // protected packs that survive this retirement.
-        let mut unverified = held.clone();
-        for protected in first.protected_packs.intersection(&second.protected_packs) {
+        let retiring = old_indices(&before, first, Some(&replacement_pack));
+        // Publishing already decodes protected survivors before omitting them. Decode them again
+        // at the deletion boundary only when old pairs will actually be unlinked. The input
+        // fingerprint is checked in either case; replacement objects are always verified below.
+        let mut unverified = if retiring.is_empty() {
+            BTreeSet::new()
+        } else {
+            held.clone()
+        };
+        for protected in &first.protected_packs {
             if unverified.is_empty() {
                 break;
             }
@@ -280,7 +383,16 @@ impl Repository {
         if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
             return Err(failed(RetireCause::Changed, report));
         }
-        let retiring = old_indices(&before, &first, &replacement_pack);
+        session.validate(&refreshed, policy, cancel).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    RetireCause::Cancelled
+                } else {
+                    RetireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
         if !retiring.is_empty() {
             // A multi-pack index (and its bitmaps) naming a retired pack would make the object
             // store unreadable to Git; Git rebuilds it when needed, as `git repack -d` does.
@@ -343,22 +455,6 @@ impl Repository {
 }
 
 #[cfg(unix)]
-fn complete_plan(
-    repository: &Repository,
-    policy: &RetentionPolicy,
-    cancel: &AtomicBool,
-) -> Result<RetentionPlan, RetireCause> {
-    let plan = repository.plan_retention(policy, cancel);
-    if cancel.load(Ordering::Relaxed) {
-        return Err(RetireCause::Cancelled);
-    }
-    match &plan.outcome {
-        RetentionOutcome::Complete => Ok(plan),
-        RetentionOutcome::Incomplete(reason) => Err(RetireCause::Incomplete(reason.clone())),
-    }
-}
-
-#[cfg(unix)]
 fn snapshot(
     directory: &Path,
     limit: usize,
@@ -408,18 +504,60 @@ fn same_old_generation(
             .filter(|(path, _)| path.as_path() != new_pack && path.as_path() != new_index))
 }
 
+/// A location-only proof is sufficient for a read-only result. It never authorizes omission
+/// from a replacement or deletion; those paths retain their full decode proofs.
+#[cfg(unix)]
+fn protected_survivors_only(
+    repository: &Repository,
+    plan: &RetentionPlan,
+    policy: &RetentionPolicy,
+    cancel: &AtomicBool,
+) -> Result<bool, RetireCause> {
+    if plan.protected_packs.is_empty() {
+        return Ok(false);
+    }
+    let objects = repository
+        .objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)
+        .map_err(|error| RetireCause::Read(Box::new(error)))?;
+    let primary = objects.primary_packs_with_paths();
+    let protected: Vec<_> = primary
+        .into_iter()
+        .filter(|(path, _)| plan.protected_packs.contains(*path))
+        .collect();
+    for &id in &plan.required {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(RetireCause::Cancelled);
+        }
+        let mut found = false;
+        for (_, pack) in &protected {
+            if pack
+                .find(id)
+                .map_err(|error| RetireCause::Read(Box::new(error)))?
+                .is_some()
+            {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(unix)]
 fn old_indices(
     before: &BTreeMap<PathBuf, Stamp>,
     plan: &RetentionPlan,
-    new_pack: &Path,
+    new_pack: Option<&Path>,
 ) -> Vec<PathBuf> {
     before
         .keys()
         .filter(|path| path.extension().is_some_and(|ext| ext == "idx"))
         .filter(|index| {
             let pack = index.with_extension("pack");
-            pack != new_pack
+            new_pack != Some(pack.as_path())
                 && before.contains_key(&pack)
                 && !plan.protected_packs.contains(&pack)
                 && !before.keys().any(|path| {

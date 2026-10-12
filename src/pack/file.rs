@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use super::index::{Entry, Index, word};
 use super::reader::{EntryHeader, Source, check_cancelled, decode};
 use crate::object::Hasher;
-use crate::{Object, ObjectFormat, ObjectId, ObjectReadError as Error, ReadLimits};
+use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
 
 /// Serializes short seek/read operations without cloning descriptors or sharing cursor state.
 #[derive(Debug)]
@@ -237,6 +237,70 @@ impl FilePack {
     /// Iterates identities from the validated pinned index without decoding their payloads.
     pub(crate) fn identities(&self) -> impl Iterator<Item = Result<ObjectId, Error>> + '_ {
         (0..self.ranges.len()).map(|position| self.identity(position))
+    }
+
+    /// Reads entry/delta headers only. Payload identity and CRC remain the reader's job.
+    pub(crate) fn locate(
+        &self,
+        mut position: usize,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<(ObjectKind, u64), Error> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut result_size = None;
+        loop {
+            check_cancelled(cancel)?;
+            if !seen.insert(position) {
+                return Err(Error::Corrupt("delta cycle"));
+            }
+            let entry = self.entry(position)?;
+            let header = super::reader::entry_header(self, &entry)?;
+            if let Some(base) = header.base {
+                if seen.len() > limits.max_delta_depth {
+                    return Err(Error::Limit("delta depth"));
+                }
+                if result_size.is_none() {
+                    let input = Range {
+                        artifact: &self.pack,
+                        position: header.data_start,
+                        end: entry.end,
+                        crc: None,
+                    };
+                    let mut decoder = flate2::read::ZlibDecoder::new(input);
+                    let mut prefix = Vec::new();
+                    // Two bounded delta size varints; no instructions or blob bytes are inflated.
+                    for _ in 0..2 {
+                        for _ in 0..10 {
+                            let mut byte = [0];
+                            decoder
+                                .read_exact(&mut byte)
+                                .map_err(|_| Error::Corrupt("delta size prefix"))?;
+                            prefix.push(byte[0]);
+                            if byte[0] & 128 == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    let mut input = prefix.as_slice();
+                    super::delta::size(&mut input, 0, 0, true)?;
+                    result_size = Some(super::delta::size(&mut input, 0, 0, true)? as u64);
+                }
+                position = base;
+            } else {
+                let kind = match header.kind {
+                    1 => ObjectKind::Commit,
+                    2 => ObjectKind::Tree,
+                    3 => ObjectKind::Blob,
+                    4 => ObjectKind::Tag,
+                    _ => return Err(Error::Corrupt("pack entry kind")),
+                };
+                let size = result_size.unwrap_or(header.length as u64);
+                if size > limits.max_object_bytes as u64 {
+                    return Err(Error::Limit("object bytes"));
+                }
+                return Ok((kind, size));
+            }
+        }
     }
 
     pub(crate) fn read(

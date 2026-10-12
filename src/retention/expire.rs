@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
 use tempfile::NamedTempFile;
 
-use super::{MaintenanceIsolation, ReflogSource, RetentionPolicy};
 #[cfg(unix)]
-use super::{RetentionOutcome, RetentionPlan};
+use super::RetentionPlan;
+use super::{MaintenanceIsolation, ReflogSource, RetentionPolicy};
 use crate::Repository;
 #[cfg(unix)]
 use crate::refs::ImportedRecord;
@@ -97,14 +97,15 @@ impl Repository {
     /// The guard must exclude external Git and girt writers, readers depending on old history,
     /// and alternate-store dependents for the whole action. A fresh complete retention plan
     /// classifies records using the policy's live and unreachable cutoffs. The operation prepares
-    /// every changed files log's exact retained bytes or reftable stack's merged records, rescans
-    /// roots and expiry positions, and conditionally publishes each replacement. Files preserve
+    /// every changed files log's exact retained bytes or reftable stack's merged records,
+    /// fingerprints the plan's inputs, and conditionally publishes each replacement. Files preserve
     /// the original bytes and order of retained records; empty histories remain empty files.
     /// Reftable preserves retained binary records and reference update indexes in a compacted
     /// replacement stack. Object storage is not pruned. On Unix, replacement files and containing
     /// directories are synchronized before a change is reported as durable, assuming a local
     /// filesystem that honors those calls. Other platforms refuse until the same publication
-    /// contract is established. A fresh rescan remains necessary before later object pruning.
+    /// contract is established. Separate later pruning acquires a fresh guard and plan;
+    /// [`Self::collect_garbage`] shares the plan and advances its exact expiry outputs.
     ///
     /// Cancellation, I/O and interruption can leave a published prefix. An error from the
     /// replacement call names the uncertain history. Retry only after a fresh scan; do not reuse
@@ -153,6 +154,16 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
     ) -> Result<ExpireReport, ExpireFailure> {
+        self.expire_reftable_logs_planned(policy, cancel, None)
+    }
+
+    #[cfg(unix)]
+    fn expire_reftable_logs_planned(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        session: Option<&mut super::inputs::Session>,
+    ) -> Result<ExpireReport, ExpireFailure> {
         let mut report = ExpireReport::default();
         check(cancel, &report)?;
         let current = Repository::open(self.git_dir())
@@ -163,9 +174,25 @@ impl Repository {
         {
             return Err(failed(ExpireCause::Changed, report));
         }
-        let first = complete_plan(&current, policy, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
-        let prepared = prepare_reftable(&first, policy, cancel)
+        let mut owned = if session.is_none() {
+            Some(
+                super::inputs::Session::new(&current, policy, cancel).map_err(|reason| {
+                    failed(
+                        if cancel.load(Ordering::Relaxed) {
+                            ExpireCause::Cancelled
+                        } else {
+                            ExpireCause::Incomplete(reason)
+                        },
+                        report.clone(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        let session = session.or(owned.as_mut()).expect("retention session");
+        let first = &session.plan;
+        let prepared = prepare_reftable(first, policy, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
         let refreshed = Repository::open(self.git_dir())
             .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
@@ -179,18 +206,18 @@ impl Repository {
         {
             return Err(failed(ExpireCause::Changed, report));
         }
-        let second = complete_plan(&refreshed, policy, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
-        if first.roots != second.roots
-            || first.reachable != second.reachable
-            || first.required != second.required
-            || first.observed_logs != second.observed_logs
-            || first.reflog_expiry_candidates != second.reflog_expiry_candidates
-            || first.protected_packs != second.protected_packs
-            || first.alternate_stores != second.alternate_stores
-        {
-            return Err(failed(ExpireCause::Changed, report));
-        }
+        session.validate(&refreshed, policy, cancel).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
+
+        let mut changes = Vec::new();
         for (directory, stack) in prepared {
             check(cancel, &report)?;
             match expire_logs(
@@ -202,6 +229,10 @@ impl Repository {
                 cancel,
             ) {
                 Ok(outcome) => {
+                    changes.extend(outcome.published.iter().map(|(path, bytes)| {
+                        (path.clone(), Some(super::inputs::digest(self, bytes)))
+                    }));
+                    changes.extend(outcome.removed.into_iter().map(|path| (path, None)));
                     report.changed.extend(stack.sources);
                     report
                         .retained_tables
@@ -230,6 +261,27 @@ impl Repository {
                 }
             }
         }
+        check(cancel, &report)?;
+        let observed = super::inputs::Inputs::observe(self, policy, cancel).map_err(|reason| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Incomplete(reason)
+                },
+                report.clone(),
+            )
+        })?;
+        session.inputs.accept(observed, &changes).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
         Ok(report)
     }
 
@@ -261,10 +313,51 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
         after_prepare: impl FnOnce(),
-        mut after_publish: impl FnMut(),
+        after_publish: impl FnMut(),
+        replace: impl FnMut(NamedTempFile, &Path) -> io::Result<()>,
+        sync_directory: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<ExpireReport, ExpireFailure> {
+        self.expire_reflogs_planned_at(
+            policy,
+            cancel,
+            None,
+            (after_prepare, after_publish),
+            replace,
+            sync_directory,
+        )
+    }
+
+    #[cfg(unix)]
+    pub(super) fn expire_reflogs_planned(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        session: &mut super::inputs::Session,
+    ) -> Result<ExpireReport, ExpireFailure> {
+        if self.reference_backend() == Backend::Reftable {
+            return self.expire_reftable_logs_planned(policy, cancel, Some(session));
+        }
+        self.expire_reflogs_planned_at(
+            policy,
+            cancel,
+            Some(session),
+            (|| {}, || {}),
+            |temp, path| temp.persist(path).map(|_| ()).map_err(|e| e.error),
+            |parent| File::open(parent).and_then(|dir| dir.sync_all()),
+        )
+    }
+
+    #[cfg(unix)]
+    fn expire_reflogs_planned_at(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+        session: Option<&mut super::inputs::Session>,
+        checkpoints: (impl FnOnce(), impl FnMut()),
         mut replace: impl FnMut(NamedTempFile, &Path) -> io::Result<()>,
         mut sync_directory: impl FnMut(&Path) -> io::Result<()>,
     ) -> Result<ExpireReport, ExpireFailure> {
+        let (after_prepare, mut after_publish) = checkpoints;
         let mut report = ExpireReport::default();
         check(cancel, &report)?;
         let current = Repository::open(self.git_dir())
@@ -277,11 +370,28 @@ impl Repository {
         if current.reference_backend() != Backend::Files {
             return Err(failed(ExpireCause::UnsupportedBackend, report));
         }
-        let first = complete_plan(&current, policy, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
+        let mut owned = if session.is_none() {
+            Some(
+                super::inputs::Session::new(&current, policy, cancel).map_err(|reason| {
+                    failed(
+                        if cancel.load(Ordering::Relaxed) {
+                            ExpireCause::Cancelled
+                        } else {
+                            ExpireCause::Incomplete(reason)
+                        },
+                        report.clone(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        let session = session.or(owned.as_mut()).expect("retention session");
+        let first = &session.plan;
         let prepared =
-            prepare(&first, policy, cancel).map_err(|cause| failed(cause, report.clone()))?;
+            prepare(first, policy, cancel).map_err(|cause| failed(cause, report.clone()))?;
         after_prepare();
+        check(cancel, &report)?;
         let refreshed = Repository::open(self.git_dir())
             .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
         if refreshed.object_dir() != current.object_dir()
@@ -294,18 +404,17 @@ impl Repository {
         {
             return Err(failed(ExpireCause::Changed, report));
         }
-        let second = complete_plan(&refreshed, policy, cancel)
-            .map_err(|cause| failed(cause, report.clone()))?;
-        if first.roots != second.roots
-            || first.reachable != second.reachable
-            || first.required != second.required
-            || first.observed_logs != second.observed_logs
-            || first.reflog_expiry_candidates != second.reflog_expiry_candidates
-            || first.protected_packs != second.protected_packs
-            || first.alternate_stores != second.alternate_stores
-        {
-            return Err(failed(ExpireCause::Changed, report));
-        }
+        session.validate(&refreshed, policy, cancel).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
+
         for log in &prepared {
             check(cancel, &report)?;
             if read_bounded(&log.path, policy.reflog.bytes)
@@ -315,6 +424,15 @@ impl Repository {
                 return Err(failed(ExpireCause::Changed, report));
             }
         }
+        let changes: Vec<_> = prepared
+            .iter()
+            .map(|log| {
+                (
+                    log.path.clone(),
+                    Some(super::inputs::digest(self, &log.retained)),
+                )
+            })
+            .collect();
         for log in prepared {
             check(cancel, &report)?;
             if read_bounded(&log.path, policy.reflog.bytes)
@@ -346,23 +464,28 @@ impl Repository {
             report.changed.push(log.source);
             after_publish();
         }
+        check(cancel, &report)?;
+        let observed = super::inputs::Inputs::observe(self, policy, cancel).map_err(|reason| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Incomplete(reason)
+                },
+                report.clone(),
+            )
+        })?;
+        session.inputs.accept(observed, &changes).map_err(|_| {
+            failed(
+                if cancel.load(Ordering::Relaxed) {
+                    ExpireCause::Cancelled
+                } else {
+                    ExpireCause::Changed
+                },
+                report.clone(),
+            )
+        })?;
         Ok(report)
-    }
-}
-
-#[cfg(unix)]
-fn complete_plan(
-    repository: &Repository,
-    policy: &RetentionPolicy,
-    cancel: &AtomicBool,
-) -> Result<RetentionPlan, ExpireCause> {
-    let plan = repository.plan_retention(policy, cancel);
-    if cancel.load(Ordering::Relaxed) {
-        return Err(ExpireCause::Cancelled);
-    }
-    match &plan.outcome {
-        RetentionOutcome::Complete => Ok(plan),
-        RetentionOutcome::Incomplete(reason) => Err(ExpireCause::Incomplete(reason.clone())),
     }
 }
 

@@ -182,6 +182,8 @@ pub struct Compaction {
 /// Effects of a conditional, durable reflog-expiry stack rewrite.
 #[cfg(unix)]
 pub(crate) struct ExpiredStack {
+    pub(crate) published: Vec<(PathBuf, Vec<u8>)>,
+    pub(crate) removed: Vec<PathBuf>,
     pub(crate) retained: Vec<(PathBuf, std::io::Error)>,
 }
 
@@ -339,7 +341,20 @@ pub(super) fn expire_logs_with_sync(
         publication_uncertain: true,
         durable: true,
     })?;
-    Ok(ExpiredStack { retained })
+    let removed = expected
+        .names
+        .iter()
+        .map(|name| directory.join(name))
+        .filter(|path| !retained.iter().any(|(kept, _)| kept == path))
+        .collect();
+    Ok(ExpiredStack {
+        retained,
+        removed,
+        published: vec![
+            (directory.join(&name), bytes),
+            (directory.join("tables.list"), list.into_bytes()),
+        ],
+    })
 }
 
 #[cfg(unix)]

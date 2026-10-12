@@ -39,6 +39,7 @@ pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
 mod compose;
+mod inputs;
 pub use compose::{MaintenanceCause, MaintenanceFailure, MaintenanceReport};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,7 +86,10 @@ impl ReflogSource {
 pub struct RetentionPolicy {
     /// Metadata heads retained by the caller regardless of Git references.
     pub heads: Vec<ObjectId>,
-    /// Loose objects with a modification time at or after this instant survive as roots.
+    /// Loose objects modified at or after this instant survive as traversal roots.
+    /// Packs modified at or after it remain untouched. Their objects do not classify histories
+    /// as live; their dependencies receive a separate protection closure when deletion is
+    /// possible.
     pub recent_cutoff: SystemTime,
     /// Expire reachable reflog records older than this Unix second; `None` retains all.
     pub reflog_expire_before: Option<i128>,
@@ -93,9 +97,11 @@ pub struct RetentionPolicy {
     pub reflog_expire_unreachable_before: Option<i128>,
     /// Maximum names, directory entries, and graph objects visited in each bounded phase.
     pub max_entries: usize,
-    /// Maximum graph edges followed in each of the three closure traversals.
+    /// Maximum graph edges followed in each distinct closure traversal.
     pub max_edges: usize,
-    /// Maximum decoded bytes in each closure traversal.
+    /// Maximum decoded commit, tree and tag payload bytes in each closure traversal.
+    /// Blob payloads do not count, including ordinary reads of blob-shaped untyped roots.
+    /// Blobs reached through verified graph edges are located without decoding.
     pub max_bytes: u64,
     /// Bound for each imported history.
     pub reflog: ReflogLimits,
@@ -167,7 +173,6 @@ impl RetentionPolicy {
 #[derive(Debug)]
 pub struct RetentionPlan {
     /// Distinct explicit root candidates recovered before any failure.
-    /// Recent packed objects contribute traversal roots through the protected pack inventory.
     pub roots: BTreeSet<ObjectId>,
     /// Heads, refs, indexes and recent loose objects before applying reflog policy.
     pub strong_roots: BTreeSet<ObjectId>,
@@ -176,9 +181,10 @@ pub struct RetentionPlan {
     /// One-based record positions eligible for expiry in each stored log.
     pub reflog_expiry_candidates: BTreeMap<ReflogSource, Vec<usize>>,
     observed_logs: Vec<ObservedLog>,
-    // Payload sizes from the full scan, including reconstructed delta results.
-    object_sizes: BTreeMap<ObjectId, u64>,
-    recent_packs: BTreeSet<PathBuf>,
+    // Kinds and logical sizes from decoded graph objects and located blob headers.
+    object_info: BTreeMap<ObjectId, ObjectInfo>,
+    // Separate closure protects dependencies of surviving packs without affecting reflog liveness.
+    protected_objects: BTreeSet<ObjectId>,
     /// Successfully visited objects reachable from candidates.
     pub reachable: BTreeSet<ObjectId>,
     /// Packs protected by `.keep` or by a recent pack modification time.
@@ -189,10 +195,16 @@ pub struct RetentionPlan {
     pub outcome: RetentionOutcome,
 }
 
+#[derive(Debug)]
+struct ObjectInfo {
+    kind: ObjectKind,
+    size: u64,
+}
+
 /// Why a plan can or cannot describe complete reachability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RetentionOutcome {
-    /// Every discovered root and edge was read under the supplied bounds.
+    /// Every root and edge was located; graph-bearing objects were decoded under the bounds.
     Complete,
     /// A source or reachable graph was incomplete. The string names the failed boundary.
     Incomplete(String),
@@ -224,9 +236,26 @@ impl Repository {
     /// and do not coordinate concurrent writers. The default cutoffs retain all reflog entries
     /// and all existing loose objects. Valid registered private metadata remains a root even when
     /// its checkout is missing or now points to another registration. Malformed or unrelated
-    /// registration metadata makes the scan incomplete. The executor must rescan under an exclusion
-    /// boundary that covers ref, reflog, index, worktree, loose-object and pack publication
-    /// before using this report for mutation.
+    /// registration metadata makes the scan incomplete. Commits, trees and tags are
+    /// identity-checked and parsed. Blob edges are located through the same pinned store and
+    /// checked for kind, size and bounded delta ancestry; their payload, zlib completion, CRC
+    /// and identity are not validated. Blob-shaped untyped roots use ordinary identity-verified
+    /// reads so a damaged graph header cannot erase root edges. `max_bytes` counts only decoded
+    /// commit, tree and tag bytes, including when a blob root requires a verified read.
+    /// Replacement retirement still decodes every retained object from a surviving copy before
+    /// deleting an old pack.
+    ///
+    /// Recent packs and `.keep` packs remain protected without contributing to `roots`,
+    /// `strong_roots`, `reachable` or reflog live classification. If loose or unprotected packed
+    /// storage might be deleted, a separate closure preserves their dependencies. Unknown or
+    /// missing dependencies make the plan incomplete. Raw pinned-pack checksums and CRCs
+    /// authenticate headers before the protection inventory selects graph-bearing traversal
+    /// roots; protected blob IDs remain outside traversal roots. Equal root sets reuse their
+    /// closure. Blob-copy header inventories reject a located blob that hides a graph-bearing copy
+    /// at the same ID. Their names and entries are bounded by `max_entries`; blob edge payloads
+    /// stay uninflated. Limits apply to each distinct traversal once per plan. Destructive
+    /// composite operations use one plan under isolation and revalidate input fingerprints
+    /// before mutation.
     ///
     /// ```no_run
     /// use std::sync::atomic::AtomicBool;
@@ -247,8 +276,8 @@ impl Repository {
             required: BTreeSet::new(),
             reflog_expiry_candidates: BTreeMap::new(),
             observed_logs: Vec::new(),
-            object_sizes: BTreeMap::new(),
-            recent_packs: BTreeSet::new(),
+            object_info: BTreeMap::new(),
+            protected_objects: BTreeSet::new(),
             reachable: BTreeSet::new(),
             protected_packs: BTreeSet::new(),
             alternate_stores: Vec::new(),
@@ -286,50 +315,16 @@ impl Repository {
             .skip(1)
             .map(PathBuf::from)
             .collect();
-        // Pack-derived roots stay separate from explicit roots: publishing our replacement
-        // must not appear to change the caller's roots during the retirement recheck.
-        let mut roots = plan.roots.clone();
-        let mut strong_roots = plan.strong_roots.clone();
-        let recent_names: BTreeSet<_> = plan
-            .recent_packs
-            .iter()
-            .filter_map(|path| path.file_name())
-            .collect();
-        for (path, pack) in store.primary_packs_with_paths() {
-            if !path
-                .file_name()
-                .is_some_and(|name| recent_names.contains(name))
-            {
-                continue;
-            }
-            for id in pack.identities() {
-                if let Err(reason) = check(cancel) {
-                    plan.fail(reason);
-                    return plan;
-                }
-                let id = match id {
-                    Ok(id) => id,
-                    Err(error) => {
-                        plan.fail(error.to_string());
-                        return plan;
-                    }
-                };
-                roots.insert(id);
-                strong_roots.insert(id);
-                if roots.len() > policy.max_entries {
-                    plan.fail("recent packed root limit");
-                    return plan;
-                }
-            }
-        }
-        match walk(self, &store, policy, cancel, &roots, &mut plan.object_sizes) {
+        let roots = plan.roots.clone();
+        let strong_roots = plan.strong_roots.clone();
+        match walk(self, &store, policy, cancel, &roots, &mut plan.object_info) {
             Ok(reachable) => plan.reachable = reachable,
             Err(reason) => {
                 plan.fail(reason);
                 return plan;
             }
         }
-        // Equal root sets share the fully decoded and validated closure.
+        // Equal root sets share the same located and validated closure.
         let live = if strong_roots == roots {
             plan.reachable.clone()
         } else {
@@ -339,7 +334,7 @@ impl Repository {
                 policy,
                 cancel,
                 &strong_roots,
-                &mut plan.object_sizes,
+                &mut plan.object_info,
             ) {
                 Ok(reachable) => reachable,
                 Err(reason) => {
@@ -380,10 +375,113 @@ impl Repository {
                 policy,
                 cancel,
                 &required_roots,
-                &mut plan.object_sizes,
+                &mut plan.object_info,
             ) {
                 Ok(required) => plan.required = required,
                 Err(reason) => plan.fail(reason),
+            }
+        }
+        // Surviving packs can refer to objects held only in deletable storage. Their closure
+        // protects those dependencies separately from the roots that classify reflog liveness.
+        let has_candidates = match prune::candidates(self, policy, cancel) {
+            Ok(candidates) => !candidates.is_empty(),
+            Err(error) => {
+                plan.fail(error.to_string());
+                return plan;
+            }
+        };
+        let primary_packs = store.primary_packs_with_paths();
+        let has_old_pack = primary_packs
+            .into_iter()
+            .any(|(path, _)| !plan.protected_packs.contains(path));
+        if (has_candidates || has_old_pack) && !plan.protected_packs.is_empty() {
+            let indexed: BTreeSet<_> = store
+                .primary_packs_with_paths()
+                .into_iter()
+                .map(|(path, _)| path.to_path_buf())
+                .collect();
+            for path in &plan.protected_packs {
+                if indexed.contains(path) {
+                    continue;
+                }
+                match fs::symlink_metadata(path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        plan.fail(error.to_string());
+                        return plan;
+                    }
+                    Ok(_) => {
+                        plan.fail("protected pack has no readable index");
+                        return plan;
+                    }
+                }
+            }
+            // Classification follows normal store precedence, which can select another pack.
+            // Authenticate all pinned pack headers before this protection inventory uses them.
+            if let Err(error) = store.verify_packs(cancel) {
+                plan.fail(error.to_string());
+                return plan;
+            }
+            let mut protected_roots = BTreeSet::new();
+            for (path, pack) in store.primary_packs_with_paths() {
+                if !plan.protected_packs.contains(path) {
+                    continue;
+                }
+                for id in pack.identities() {
+                    let id = match id {
+                        Ok(id) => id,
+                        Err(error) => {
+                            plan.fail(error.to_string());
+                            return plan;
+                        }
+                    };
+                    let (kind, size) = match store.locate(id, policy.read, cancel) {
+                        Ok(Some(info)) => info,
+                        Ok(None) => {
+                            plan.fail("missing protected object");
+                            return plan;
+                        }
+                        Err(error) => {
+                            plan.fail(error.to_string());
+                            return plan;
+                        }
+                    };
+                    plan.protected_objects.insert(id);
+                    if kind == ObjectKind::Blob {
+                        plan.object_info
+                            .entry(id)
+                            .or_insert(ObjectInfo { kind, size });
+                    } else {
+                        protected_roots.insert(id);
+                    }
+                    if plan.protected_objects.len() > policy.max_entries {
+                        plan.fail("protected packed object limit");
+                        return plan;
+                    }
+                }
+            }
+            match walk(
+                self,
+                &store,
+                policy,
+                cancel,
+                &protected_roots,
+                &mut plan.object_info,
+            ) {
+                Ok(objects) => plan.protected_objects.extend(objects),
+                Err(reason) => plan.fail(reason),
+            }
+        }
+        if plan.is_complete() {
+            let is_blob = |id| {
+                plan.object_info
+                    .get(&id)
+                    .is_some_and(|info| info.kind == ObjectKind::Blob)
+            };
+            if let Err(error) =
+                store.check_retention_blob_kinds(policy.read, policy.max_entries, cancel, is_blob)
+            {
+                plan.fail(error.to_string());
             }
         }
         plan
@@ -651,7 +749,6 @@ fn recent_objects(
                 } else if path.extension().is_some_and(|ext| ext == "pack")
                     && metadata.modified().map_err(|e| e.to_string())? >= policy.recent_cutoff
                 {
-                    plan.recent_packs.insert(path.clone());
                     plan.protected_packs.insert(path);
                 }
             }
@@ -697,7 +794,7 @@ fn walk(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
-    object_sizes: &mut BTreeMap<ObjectId, u64>,
+    object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
 ) -> Result<BTreeSet<ObjectId>, String> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
     let mut reachable = BTreeSet::new();
@@ -713,13 +810,36 @@ fn walk(
         if reachable.len() >= policy.max_entries {
             return Err("reachable object limit".into());
         }
+        let (kind, size) = store
+            .locate(id, policy.read, cancel)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("missing reachable object {id}"))?;
+        if expected.get(&id).is_some_and(|expected| *expected != kind) {
+            return Err(format!("wrong reachable kind {id}"));
+        }
+        if kind == ObjectKind::Blob {
+            // An untyped root has no verified parent's kind assertion. Its ID must bind the
+            // blob kind, or a damaged graph header could erase edges and authorize pruning.
+            if roots.contains(&id) {
+                let object = store
+                    .read_controlled(id, policy.read, cancel)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("missing reachable object {id}"))?;
+                if object.kind() != kind {
+                    return Err(format!("changed root kind {id}"));
+                }
+            }
+            kinds.insert(id, kind);
+            object_info.insert(id, ObjectInfo { kind, size });
+            reachable.insert(id);
+            continue;
+        }
         let object = store
             .read_controlled(id, policy.read, cancel)
             .map_err(|e| e.to_string())?
-            .or_else(|| canonical_empty_tree(id))
             .ok_or_else(|| format!("missing reachable object {id}"))?;
-        if expected.get(&id).is_some_and(|kind| *kind != object.kind()) {
-            return Err(format!("wrong reachable kind {id}"));
+        if object.kind() != kind {
+            return Err(format!("changed reachable kind {id}"));
         }
         bytes = bytes
             .checked_add(object.data().len() as u64)
@@ -776,7 +896,13 @@ fn walk(
             }
         }
         kinds.insert(id, object.kind());
-        object_sizes.insert(id, object.data().len() as u64);
+        object_info.insert(
+            id,
+            ObjectInfo {
+                kind: object.kind(),
+                size: object.data().len() as u64,
+            },
+        );
         reachable.insert(id);
     }
     Ok(reachable)

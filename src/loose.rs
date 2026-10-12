@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 
 use flate2::write::ZlibEncoder;
@@ -7,7 +7,9 @@ use flate2::{Compression, Decompress, FlushDecompress, Status};
 use tempfile::NamedTempFile;
 
 use crate::object::object_header;
-use crate::{Commit, CommitError, ObjectFormat, ObjectId, Tag, TagError, Tree, TreeError};
+use crate::{
+    Commit, CommitError, ObjectFormat, ObjectId, ObjectKind, Tag, TagError, Tree, TreeError,
+};
 
 /// Reads and writes loose blobs, trees, commits, and tags beneath an explicitly selected
 /// object directory.
@@ -152,6 +154,41 @@ impl LooseObjects {
         self.decode_raw(id, max_size, None)
     }
 
+    /// Locates a retention candidate by its canonical header without decoding its payload.
+    pub(crate) fn locate(&self, id: ObjectId) -> Result<(ObjectKind, u64), Error> {
+        id.require_format(self.format)?;
+        let file = File::open(self.object_path(id))?;
+        let mut decoder = flate2::read::ZlibDecoder::new(file);
+        let mut header = Vec::new();
+        for _ in 0..32 {
+            let mut byte = [0];
+            decoder.read_exact(&mut byte)?;
+            if byte[0] == 0 {
+                let text = std::str::from_utf8(&header)
+                    .map_err(|_| Error::Corrupt("invalid loose header"))?;
+                let (kind, length) = text
+                    .split_once(' ')
+                    .ok_or(Error::Corrupt("invalid loose header"))?;
+                let kind = match kind {
+                    "blob" => ObjectKind::Blob,
+                    "tree" => ObjectKind::Tree,
+                    "commit" => ObjectKind::Commit,
+                    "tag" => ObjectKind::Tag,
+                    _ => return Err(Error::UnknownObjectType),
+                };
+                let size: u64 = length
+                    .parse()
+                    .map_err(|_| Error::Corrupt("invalid loose size"))?;
+                if size.to_string() != length {
+                    return Err(Error::Corrupt("noncanonical loose size"));
+                }
+                return Ok((kind, size));
+            }
+            header.push(byte[0]);
+        }
+        Err(Error::Corrupt("loose header limit"))
+    }
+
     fn decode_raw(
         &self,
         id: ObjectId,
@@ -185,10 +222,10 @@ impl LooseObjects {
             let kind = &header[..space];
             let length = &header[space + 1..];
             let kind = match kind {
-                b"blob" => crate::ObjectKind::Blob,
-                b"tree" => crate::ObjectKind::Tree,
-                b"commit" => crate::ObjectKind::Commit,
-                b"tag" => crate::ObjectKind::Tag,
+                b"blob" => ObjectKind::Blob,
+                b"tree" => ObjectKind::Tree,
+                b"commit" => ObjectKind::Commit,
+                b"tag" => ObjectKind::Tag,
                 _ => return Err(Error::UnknownObjectType),
             };
             if expected_kind.is_some_and(|expected| kind.as_str() != expected) {
@@ -237,7 +274,7 @@ impl LooseObjects {
     /// Failed operations may leave created directories. No directory synchronization is
     /// performed, so success does not guarantee power-loss durability.
     pub fn write_blob(&self, bytes: &[u8]) -> Result<ObjectId, Error> {
-        self.write_object(self.format, crate::ObjectKind::Blob, bytes)
+        self.write_object(self.format, ObjectKind::Blob, bytes)
     }
 
     /// Writes a tree's exact encoded payload and returns its selected-format identity.
@@ -255,11 +292,7 @@ impl LooseObjects {
     /// Returns the storage errors documented by [`Self::write_blob`]. Existing corrupt objects
     /// remain untouched; failed writes may leave created directories.
     pub fn write_tree(&self, tree: &Tree) -> Result<ObjectId, Error> {
-        self.write_object(
-            tree.object_format(),
-            crate::ObjectKind::Tree,
-            &tree.encode(),
-        )
+        self.write_object(tree.object_format(), ObjectKind::Tree, &tree.encode())
     }
 
     /// Writes a commit's exact payload and returns its selected-format identity without normalizing
@@ -277,7 +310,7 @@ impl LooseObjects {
     pub fn write_commit(&self, commit: &Commit) -> Result<ObjectId, Error> {
         self.write_object(
             commit.object_format(),
-            crate::ObjectKind::Commit,
+            ObjectKind::Commit,
             commit.as_bytes(),
         )
     }
@@ -293,13 +326,13 @@ impl LooseObjects {
     /// Returns the same storage failures as [`Self::write_blob`]. Failed writes can leave created
     /// directories; existing corrupt files are preserved and temporary files are cleaned up.
     pub fn write_tag(&self, tag: &Tag) -> Result<ObjectId, Error> {
-        self.write_object(tag.object_format(), crate::ObjectKind::Tag, tag.as_bytes())
+        self.write_object(tag.object_format(), ObjectKind::Tag, tag.as_bytes())
     }
 
     fn write_object(
         &self,
         format: ObjectFormat,
-        kind: crate::ObjectKind,
+        kind: ObjectKind,
         bytes: &[u8],
     ) -> Result<ObjectId, Error> {
         #[cfg(feature = "tracing")]
@@ -1091,15 +1124,39 @@ mod dual_format_tests {
             ObjectId::Sha1([1; 20])
         );
         let id = objects
-            .write_object(
-                ObjectFormat::Sha256,
-                crate::ObjectKind::Commit,
-                payload.as_bytes(),
-            )
+            .write_object(ObjectFormat::Sha256, ObjectKind::Commit, payload.as_bytes())
             .unwrap();
         assert!(matches!(
             objects.read_commit(id, 1000),
             Err(Error::Commit(CommitError::InvalidObjectId))
         ));
+    }
+    #[rstest::rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn retention_location_does_not_validate_blob_payload(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), format);
+        let id = objects.write_blob(b"original").unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"blob 8\0different").unwrap();
+        fs::write(objects.object_path(id), encoder.finish().unwrap()).unwrap();
+        assert_eq!(objects.locate(id).unwrap(), (ObjectKind::Blob, 8));
+        assert!(matches!(objects.read_blob(id, 100), Err(Error::Corrupt(_))));
+    }
+
+    #[rstest::rstest]
+    #[case::leading_zero(b"blob 08\0original")]
+    #[case::negative(b"blob -8\0original")]
+    #[case::missing_kind(b" 8\0original")]
+    #[case::unterminated(b"blob 8")]
+    fn retention_location_rejects_malformed_headers(#[case] encoded: &[u8]) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = objects.write_blob(b"original").unwrap();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(encoded).unwrap();
+        fs::write(objects.object_path(id), encoder.finish().unwrap()).unwrap();
+        assert!(objects.locate(id).is_err());
     }
 }

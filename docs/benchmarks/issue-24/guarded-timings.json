@@ -1,0 +1,92 @@
+[
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.93,
+    "rss": 155533312
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 4.59,
+    "rss": 192872448
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.71,
+    "rss": 158121984
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.44,
+    "rss": 192987136
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.69,
+    "rss": 155877376
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.65,
+    "rss": 155877376
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 3.46,
+    "rss": 192806912
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.7,
+    "rss": 155860992
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.36,
+    "rss": 192970752
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.7,
+    "rss": 155910144
+  },
+  {
+    "variant": "after",
+    "mode": "gc",
+    "wall": 2.91,
+    "rss": 155926528
+  },
+  {
+    "variant": "after",
+    "mode": "repack-old",
+    "wall": 3.43,
+    "rss": 192856064
+  },
+  {
+    "variant": "after",
+    "mode": "maintenance",
+    "wall": 2.71,
+    "rss": 158138368
+  },
+  {
+    "variant": "after",
+    "mode": "repack",
+    "wall": 3.44,
+    "rss": 192987136
+  },
+  {
+    "variant": "after",
+    "mode": "plan",
+    "wall": 2.59,
+    "rss": 155385856
+  }
+]

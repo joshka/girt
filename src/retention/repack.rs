@@ -95,7 +95,9 @@ impl Repository {
     /// [`super::RetentionPlan`]. A required object already in a pinned pack has its entry copied
     /// without inflating it, in source pack order; a delta keeps its compressed instructions when
     /// its base entry from the same pack is also copied, and is otherwise rebuilt as a whole
-    /// object. The scan fully decodes required objects. Stored entries come only from primary
+    /// object. The scan decodes graph-bearing objects and locates blobs; the writer validates
+    /// copied entry CRCs and bounds, while retirement separately verifies surviving identities.
+    /// Stored entries come only from primary
     /// packs; alternate objects use the ordinary reader. Additive repack includes protected
     /// objects; retirement can instead verify a protected survivor and omit its replacement copy.
     /// Other required objects are read
@@ -218,7 +220,7 @@ impl Repository {
                     .find(id)
                     .map_err(|source| RepackError::Read { id, source })?;
                 if let Some(position) = found {
-                    charge_input(plan.object_sizes[&id], &mut bytes, limits.write)?;
+                    charge_input(plan.object_info[&id].size, &mut bytes, limits.write)?;
                     packed.push(Packed { id, pack, position });
                     continue 'required;
                 }
