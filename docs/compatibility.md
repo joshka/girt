@@ -825,15 +825,17 @@ ordinary objects, OFS_DELTA and REF_DELTA. Unknown versions return explicit erro
 has no CRC table. Reserved object types fail when read. Index binary search uses strictly ordered
 full IDs; an offset-ordered table identifies entry boundaries and OFS_DELTA bases.
 
-Opening reads all pairs within caller-supplied aggregate byte and pack-count limits. It validates
-index lengths, sorted unique IDs, exact fanout counts, large-offset references, unique in-range
-entry offsets, pack headers/counts, both format-selected trailers, their agreement, and every
-available entry CRC32. An index without its pack is an I/O error. Unindexed packs are ignored:
-indexes are publication markers (see [fetch installation](#upload-pack-fetch)). Entry framing, exact
-zlib termination, declared lengths, delta programs, and object identities are checked on demand,
-including all traversed bases and intermediate results. Opening alone does not certify payload
-syntax or all object identities. The checks detect corruption; SHA-1 collision detection is not
-provided.
+Opening pins all pairs within caller-supplied aggregate artifact-size and pack-count limits. It
+validates index lengths and checksums, sorted unique IDs, exact fanout counts, large-offset
+references, unique in-range entry offsets, pack headers/counts and index/pack trailer agreement. It
+reads only pack headers and trailers. Reads check available entry CRC32 values while inflating;
+`Objects::verify_packs` explicitly streams whole packs to check their checksums and entry CRCs. An
+index without its pack is an I/O error. Unindexed packs are ignored: indexes are publication markers
+(see [fetch installation](#upload-pack-fetch)). Entry framing, exact zlib termination, declared
+lengths and delta programs are checked on demand, including traversed bases and intermediate
+results; reads verify the requested object's decoded identity. Opening alone does not certify
+payload syntax or all object identities. The checks detect corruption; SHA-1 collision detection is
+not provided.
 
 REF_DELTA resolves only inside its own pack, including forward references. An external or missing
 base returns `MissingBase`, even if another pack or loose storage contains that identity. Iterative

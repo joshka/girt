@@ -51,12 +51,12 @@ impl Object {
 /// Bounds the aggregate pack snapshot across primary and borrowed stores retained by
 /// [`crate::Repository::objects`].
 ///
-/// Artifact bytes bound validation work, not retained pack memory. Index input and derived tables
-/// have a separate bound. These are per-reader bounds, not a process RSS quota. Zero values permit
-/// no indexed packs. Unindexed files are ignored.
+/// Artifact bytes bound explicit verification work, not retained pack memory. Index input and
+/// derived tables have a separate bound. These are per-reader bounds, not a process RSS quota. Zero
+/// values permit no indexed packs. Unindexed files are ignored.
 #[derive(Debug, Clone, Copy)]
 pub struct PackLimits {
-    /// Maximum sum of `.idx` and `.pack` file bytes validated (default 64 GiB on 64-bit).
+    /// Maximum sum of pinned `.idx` and `.pack` artifact sizes (default 64 GiB on 64-bit).
     pub max_bytes: usize,
     /// Maximum aggregate index input bytes (default 64 MiB).
     ///
@@ -164,11 +164,13 @@ impl ReadLimits {
 /// belong to [`LooseObjects`], and reference updates belong to [`crate::refs`].
 ///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening streams
-/// all `.idx`/`.pack` pairs in the repository's object format in filename order and verifies index
-/// v1/v2 structure, checksums, pack v2/v3 headers/counts, offset ranges, and v2 entry CRCs.
-/// Legacy v1 indexes have no entry CRCs. Entry framing, zlib streams, delta programs, and object
-/// identities are checked on reads, including every base and intermediate delta; opening is not a
-/// full pack fsck.
+/// index bytes in the repository's object format in filename order and verifies index v1/v2
+/// structure and checksum, pack v2/v3 headers/counts, offset ranges, and index/pack trailer
+/// agreement. It reads only the pack header and trailer; body corruption is detected when used.
+/// Reads check entry framing, v2 CRCs, zlib streams and delta programs throughout reconstruction,
+/// and verify the requested object's decoded identity. Legacy v1 indexes have no entry CRCs.
+/// [`Self::verify_packs`] explicitly checks whole-pack checksums and CRCs; neither opening nor
+/// whole-pack verification is a full fsck.
 ///
 /// Pack bytes are never retained in full. Bounded index bytes and offset tables stay in memory
 /// so identity lookups avoid repeated file seeks. Each pair pins two handles, shared internally
@@ -328,16 +330,18 @@ impl Objects {
     /// Every pair is reopened and revalidated, even if its filename is unchanged. The old and new
     /// views coexist until success: peak handles and tables can reach their combined limits,
     /// multiplied by independently retained generations. Clone shares handles within a generation.
-    /// Opening cost is the same full validation scan as [`crate::Repository::objects`].
+    /// Like [`crate::Repository::objects`], refresh validates index bytes and pack headers/trailers
+    /// without scanning pack bodies. Use [`Self::verify_packs`] for whole-pack checksum/CRC proof.
     ///
     /// # Errors
     ///
     /// Returns opening errors without changing this reader or its clones. An index whose pack is
-    /// absent, a mismatched pair, malformed alternate metadata or corrupt artifact is an error,
-    /// never absence. There are no automatic retries, sleeps or filesystem changes. After a
-    /// publisher finishes or a broken pair is repaired/removed, the caller may explicitly retry
-    /// with its own finite attempt budget. Continuing publication may require another refresh even
-    /// after success: directory enumeration and alternate discovery are not atomic snapshots.
+    /// absent, a mismatched pair, malformed alternate metadata or corrupt index/header is an error,
+    /// never absence. Pack body corruption is deferred to reads or explicit verification. There are
+    /// no automatic retries, sleeps or filesystem changes. After a publisher finishes or a
+    /// broken pair is repaired/removed, the caller may explicitly retry with its own finite
+    /// attempt budget. Continuing publication may require another refresh even after success:
+    /// directory enumeration and alternate discovery are not atomic snapshots.
     pub fn refresh(
         &mut self,
         packs: PackLimits,
@@ -366,6 +370,31 @@ impl Objects {
         check_cancelled(cancelled)?;
         self.stores = candidate.stores;
         Ok(())
+    }
+
+    /// Verifies whole-pack checksums and v2 entry CRCs in every pinned store, including alternates.
+    ///
+    /// Opening checks index integrity, pack framing and trailer agreement without reading pack
+    /// bodies. Use this operation when the complete raw-byte checksum proof is required. It streams
+    /// each pack with bounded scratch memory and checks cancellation every 64 KiB. The artifact
+    /// sizes already charged to [`PackLimits::max_bytes`] bound this work. It changes no files or
+    /// reader state; failure and cancellation leave the reader usable for unaffected objects.
+    ///
+    /// This is not a full fsck: it does not decode objects, verify their identities, validate
+    /// payload syntax or check connectivity. Legacy v1 indexes have no entry CRCs. Artifacts
+    /// must remain immutable throughout verification, as throughout this reader's lifetime.
+    ///
+    /// # Errors
+    ///
+    /// Returns checksum/CRC corruption, artifact I/O errors or [`ObjectReadError::Cancelled`].
+    pub fn verify_packs(&self, cancelled: &AtomicBool) -> Result<(), ObjectReadError> {
+        check_cancelled(cancelled)?;
+        for store in &self.stores {
+            for pack in &store.packs {
+                pack.verify(cancelled)?;
+            }
+        }
+        check_cancelled(cancelled)
     }
 
     /// Reads an exact object by full identity in this store's format; returns `None` only when

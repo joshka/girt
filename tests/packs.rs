@@ -600,3 +600,213 @@ fn truncated_pinned_artifacts_preserve_io_failure(#[case] extension: &str) {
         matches!(reader.read(fixture.delta, ReadLimits::default()), Err(ObjectReadError::Path { path: found, source }) if found == path && source.kind() == std::io::ErrorKind::UnexpectedEof)
     );
 }
+
+// Recompute only the independent index checksum, leaving the pack unchanged.
+fn rehash_index(format: girt::ObjectFormat, bytes: &mut [u8]) {
+    use sha2::Digest;
+    let end = bytes.len() - format.digest_len();
+    let checksum = match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+    };
+    bytes[end..].copy_from_slice(&checksum);
+}
+
+fn pack_record(fixture: &Fixture, id: ObjectId) -> (usize, usize) {
+    let report = git(
+        fixture.root.path(),
+        &["verify-pack", "-v", fixture.index_path.to_str().unwrap()],
+        b"",
+    );
+    let report = std::str::from_utf8(&report).unwrap();
+    let line = report
+        .lines()
+        .find(|line| line.starts_with(&id.to_string()))
+        .unwrap();
+    let fields: Vec<_> = line.split_whitespace().collect();
+    (fields[4].parse().unwrap(), fields[3].parse().unwrap())
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn open_rejects_index_pack_trailer_mismatch(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let mut index = fs::read(&fixture.index_path).unwrap();
+    let trailer = index.len() - 2 * format.digest_len();
+    index[trailer] ^= 1;
+    rehash_index(format, &mut index);
+    fs::remove_file(&fixture.index_path).unwrap();
+    fs::write(&fixture.index_path, index).unwrap();
+    assert!(
+        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn open_rejects_truncated_pack(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let (offset, _) = pack_record(&fixture, fixture.delta);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(fixture.index_path.with_extension("pack"))
+        .unwrap();
+    file.set_len((offset + format.digest_len()) as u64).unwrap();
+    assert!(
+        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("offset outside pack entries")))
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn corrupt_entry_is_detected_on_read_not_open(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let (offset, length) = pack_record(&fixture, fixture.ordinary);
+    let path = fixture.index_path.with_extension("pack");
+    let mut bytes = fs::read(&path).unwrap();
+    // Damage the zlib checksum, preserving entry boundaries and the pack trailer.
+    bytes[offset + length - 1] ^= 1;
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, bytes).unwrap();
+    let good = fixture
+        .records
+        .iter()
+        .find(|record| record.1 == ObjectKind::Commit)
+        .unwrap();
+    assert!(
+        !pack_git::git_output(
+            fixture.root.path(),
+            &["cat-file", "blob", &fixture.ordinary.to_string()],
+            b""
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        git(
+            fixture.root.path(),
+            &["cat-file", "commit", &good.0.to_string()],
+            b""
+        ),
+        good.2
+    );
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert!(matches!(
+        objects.verify_packs(&std::sync::atomic::AtomicBool::new(false)),
+        Err(ObjectReadError::Corrupt(_))
+    ));
+    assert!(matches!(
+        objects.read(fixture.ordinary, ReadLimits::default()),
+        Err(ObjectReadError::Corrupt(_))
+    ));
+    assert_eq!(
+        objects
+            .read(good.0, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+        good.2
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 4);
+    let mut index = fs::read(&fixture.index_path).unwrap();
+    let width = format.digest_len();
+    let count = fixture.records.len();
+    let position = index[1032..1032 + count * width]
+        .chunks_exact(width)
+        .position(|bytes| bytes == fixture.ordinary.as_bytes())
+        .unwrap();
+    index[1032 + count * width + position * 4] ^= 1;
+    rehash_index(format, &mut index);
+    fs::remove_file(&fixture.index_path).unwrap();
+    fs::write(&fixture.index_path, index).unwrap();
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert!(matches!(
+        objects.read(fixture.delta, ReadLimits::default()),
+        Err(ObjectReadError::Corrupt("entry CRC"))
+    ));
+    assert!(matches!(
+        objects.read(fixture.ordinary, ReadLimits::default()),
+        Err(ObjectReadError::Corrupt("entry CRC"))
+    ));
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn explicit_verification_agrees_with_git_and_is_cancellable(#[case] format: girt::ObjectFormat) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let fixture = Fixture::new(format, true, 4);
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    let cancel = AtomicBool::new(true);
+    assert!(matches!(
+        objects.verify_packs(&cancel),
+        Err(ObjectReadError::Cancelled)
+    ));
+    cancel.store(false, Ordering::Relaxed);
+    objects.verify_packs(&cancel).unwrap();
+    git(
+        fixture.root.path(),
+        &["verify-pack", fixture.index_path.to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        fixture.delta
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn matching_trailers_do_not_replace_whole_pack_verification(#[case] format: girt::ObjectFormat) {
+    use std::sync::atomic::AtomicBool;
+    let fixture = Fixture::new(format, true, 4);
+    let path = fixture.index_path.with_extension("pack");
+    let mut pack = fs::read(&path).unwrap();
+    let mut index = fs::read(&fixture.index_path).unwrap();
+    *pack.last_mut().unwrap() ^= 1;
+    let position = index.len() - format.digest_len() - 1;
+    index[position] ^= 1;
+    rehash_index(format, &mut index);
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, &pack).unwrap();
+    fs::remove_file(&fixture.index_path).unwrap();
+    fs::write(&fixture.index_path, &index).unwrap();
+    let objects = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(fixture.ordinary, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        fixture.ordinary
+    );
+    assert!(matches!(
+        objects.verify_packs(&AtomicBool::new(false)),
+        Err(ObjectReadError::Corrupt("pack checksum"))
+    ));
+    assert!(
+        !pack_git::git_output(
+            fixture.root.path(),
+            &["verify-pack", fixture.index_path.to_str().unwrap()],
+            b""
+        )
+        .status
+        .success()
+    );
+    assert_eq!(fs::read(&path).unwrap(), pack);
+    assert_eq!(fs::read(&fixture.index_path).unwrap(), index);
+}

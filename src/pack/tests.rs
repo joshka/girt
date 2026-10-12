@@ -931,12 +931,14 @@ fn open_file_pair(
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn file_validation_rejects_entry_crc(#[case] format: ObjectFormat) {
+fn explicit_file_verification_rejects_entry_crc(#[case] format: ObjectFormat) {
     let (mut index, data) = ordinary(format);
     index[1032 + format.digest_len()] ^= 1;
     reseal(format, &mut index);
     assert!(matches!(
-        open_file_pair(format, &index, &data),
+        open_file_pair(format, &index, &data)
+            .unwrap()
+            .verify(&std::sync::atomic::AtomicBool::new(false)),
         Err(Error::Corrupt("entry CRC"))
     ));
 }
@@ -944,12 +946,12 @@ fn file_validation_rejects_entry_crc(#[case] format: ObjectFormat) {
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn file_validation_rejects_pack_checksum(#[case] format: ObjectFormat) {
+fn file_open_rejects_damaged_pack_trailer(#[case] format: ObjectFormat) {
     let (index, mut data) = ordinary(format);
     *data.last_mut().unwrap() ^= 1;
     assert!(matches!(
         open_file_pair(format, &index, &data),
-        Err(Error::Corrupt("pack checksum"))
+        Err(Error::Corrupt("index/pack checksum disagreement"))
     ));
 }
 

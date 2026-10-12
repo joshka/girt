@@ -361,7 +361,7 @@ impl IndexedObjects {
                     let entry = &self.entries[child];
                     charge(remaining, entry.length)?;
                     let program = self
-                        .inflate(entry.start, entry.end, entry.length, observer.cancel)
+                        .inflate_range(entry.start, entry.end, entry.length, observer.cancel)
                         .map_err(fetch_read_error)?;
                     let data = apply(
                         base.data(),
@@ -580,6 +580,19 @@ impl Source for IndexedObjects {
     }
     fn inflate(
         &self,
+        entry: &crate::pack::index::Entry,
+        header: &crate::pack::reader::EntryHeader,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<u8>, Error> {
+        self.inflate_range(header.data_start, entry.end, header.length, cancel)
+    }
+    fn base_cache(&self) -> Option<&BaseCache> {
+        Some(&self.cache)
+    }
+}
+impl IndexedObjects {
+    fn inflate_range(
+        &self,
         start: usize,
         end: usize,
         expected: usize,
@@ -602,11 +615,7 @@ impl Source for IndexedObjects {
         }
         Ok(data)
     }
-    fn base_cache(&self) -> Option<&BaseCache> {
-        Some(&self.cache)
-    }
-}
-impl IndexedObjects {
+
     fn io(&self, source: std::io::Error) -> Error {
         Error::Path {
             path: self

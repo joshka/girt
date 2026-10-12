@@ -902,9 +902,10 @@ impl Repository {
     /// Opens bounded file-backed storage with cooperative cancellation.
     ///
     /// Checks cancellation around alternate discovery and bounded index parsing, between directory
-    /// entries, and every 64 KiB during pack validation. Individual filesystem calls cannot be
-    /// interrupted. Run the whole operation on a caller-owned blocking worker when needed.
-    /// On failure all opened artifacts are closed and no files are changed.
+    /// entries and after pack header/trailer checks. Pack bodies are not read during opening.
+    /// Individual filesystem calls cannot be interrupted. Run the whole operation on a caller-owned
+    /// blocking worker when needed. On failure all opened artifacts are closed and no files are
+    /// changed.
     ///
     /// # Errors
     ///
