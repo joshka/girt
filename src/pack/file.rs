@@ -16,6 +16,8 @@ struct Artifact {
     file: Mutex<File>,
     path: PathBuf,
     len: usize,
+    #[cfg(test)]
+    bytes_read: std::sync::atomic::AtomicUsize,
 }
 
 impl Artifact {
@@ -30,10 +32,15 @@ impl Artifact {
             file: Mutex::new(file),
             path: path.to_owned(),
             len,
+            #[cfg(test)]
+            bytes_read: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
     fn read_at(&self, offset: usize, output: &mut [u8]) -> Result<(), Error> {
+        #[cfg(test)]
+        self.bytes_read
+            .fetch_add(output.len(), std::sync::atomic::Ordering::Relaxed);
         let mut file = self.file.lock().unwrap_or_else(|error| error.into_inner());
         file.seek(SeekFrom::Start(offset as u64))
             .map_err(|source| path_error(&self.path, source))?;
@@ -413,6 +420,36 @@ mod publication_tests {
         fs::write(&path, index).unwrap();
         fs::write(path.with_extension("pack"), bytes).unwrap();
         path
+    }
+
+    #[test]
+    fn open_does_not_read_pack_body() {
+        let root = tempfile::tempdir().unwrap();
+        let mut state = 123456789u64;
+        let data: Vec<u8> = (0..2 * 1024 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        let path = pair(root.path(), "large", ObjectFormat::Sha1, &data);
+        let reader = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(reader.pack.len > 1024 * 1024);
+        assert!(
+            reader
+                .pack
+                .bytes_read
+                .load(std::sync::atomic::Ordering::Relaxed)
+                < 1024 * 1024
+        );
     }
 
     #[rstest]
