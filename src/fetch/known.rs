@@ -402,7 +402,7 @@ fn walk(
             }
             enqueue(target, Some(kind), &mut expected, &mut pending, limits)
         };
-        crate::edges::visit(id, &object, edge)?;
+        crate::edges::visit(id, object.kind(), object.data(), edge)?;
         kinds.insert(id, object.kind());
         visit(id, object);
     }

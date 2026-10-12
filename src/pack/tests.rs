@@ -968,3 +968,180 @@ fn file_validation_rejects_pair_disagreement(#[case] format: ObjectFormat) {
         Err(Error::Corrupt("index/pack checksum disagreement"))
     ));
 }
+
+fn open_file(
+    format: ObjectFormat,
+    entries: &[(ObjectId, Vec<u8>)],
+    damage: Option<usize>,
+) -> (tempfile::TempDir, super::FilePack) {
+    let (index, mut data) = fixture(format, entries);
+    if let Some(offset) = damage {
+        data[offset] ^= 0x55;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    (root, pack)
+}
+
+/// A read that skips the identity hash still rejects a damaged entry through its CRC, before any
+/// bytes are returned.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn read_detects_corrupt_entry_without_identity_hash(#[case] format: ObjectFormat) {
+    let payload = b"100644 file\0abcdefghijklmnopqrst".to_vec();
+    let id = format.hash_object(ObjectKind::Tree, &payload);
+    let entries = [(id, entry(2, payload.len(), b"", &payload))];
+    // Damage the last zlib byte, inside the entry, so framing still parses.
+    let (_root, pack) = open_file(format, &entries, Some(12 + entries[0].1.len() - 1));
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(id).unwrap().unwrap();
+    assert!(matches!(
+        pack.read(position, ReadLimits::default(), &cancelled),
+        Err(Error::Corrupt(_))
+    ));
+    assert!(matches!(
+        pack.read_unverified(position, ReadLimits::default(), &cancelled),
+        Err(Error::Corrupt(_))
+    ));
+}
+
+/// An index entry naming the CRC-valid bytes of another object fails a verifying read, while an
+/// unverified walk read returns the stored bytes. Git's `index-pack` would never write it.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn read_of_mislabelled_entry_under_verifying_policy_fails(#[case] format: ObjectFormat) {
+    let claimed = ObjectId::for_blob(format, b"claimed");
+    let entries = [(claimed, entry(3, 6, b"", b"stored"))];
+    let (_root, pack) = open_file(format, &entries, None);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(claimed).unwrap().unwrap();
+    assert!(matches!(
+        pack.read(position, ReadLimits::default(), &cancelled),
+        Err(Error::Corrupt("object identity"))
+    ));
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn read_of_mislabelled_entry_under_trusting_policy_returns_bytes(#[case] format: ObjectFormat) {
+    let claimed = ObjectId::for_blob(format, b"claimed");
+    let base = ObjectId::for_blob(format, b"also claimed");
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (
+            claimed,
+            entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b']),
+        ),
+    ];
+    let (_root, pack) = open_file(format, &entries, None);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(claimed).unwrap().unwrap();
+    let base_position = pack.find(base).unwrap().unwrap();
+    let object = pack
+        .read_unverified(position, ReadLimits::default(), &cancelled)
+        .unwrap();
+    assert_eq!(
+        (object.kind(), object.data()),
+        (ObjectKind::Blob, &b"ab"[..])
+    );
+    // The unverified read cached both entries; verifying reads must still check them.
+    for position in [position, base_position] {
+        assert!(matches!(
+            pack.read(position, ReadLimits::default(), &cancelled),
+            Err(Error::Corrupt("object identity"))
+        ));
+    }
+}
+
+/// A valid zlib stream may delay its first output past the bytes read with the entry header, for
+/// example with empty stored blocks; delta sizes then come from streaming the rest of the entry.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn delta_size_prefix_beyond_header_read_ahead(#[case] format: ObjectFormat) {
+    let program = [1, 2, 2, b'a', b'b'];
+    let mut stream = vec![0x78, 0x01];
+    for _ in 0..1000 {
+        stream.extend_from_slice(&[0, 0, 0, 0xff, 0xff]);
+    }
+    stream.push(1);
+    stream.extend_from_slice(&(program.len() as u16).to_le_bytes());
+    stream.extend_from_slice(&(!(program.len() as u16)).to_le_bytes());
+    stream.extend_from_slice(&program);
+    let (mut a, mut b) = (1u32, 0u32);
+    for byte in program {
+        a = (a + u32::from(byte)) % 65521;
+        b = (b + a) % 65521;
+    }
+    stream.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let base = ObjectId::for_blob(format, b"a");
+    let id = ObjectId::for_blob(format, b"ab");
+    let mut delta = vec![0x70 | program.len() as u8];
+    delta.extend_from_slice(base.as_bytes());
+    delta.extend_from_slice(&stream);
+    assert!(delta.len() > 4096 + 64);
+    let entries = [(base, entry(3, 1, b"", b"a")), (id, delta)];
+    let (_root, pack) = open_file(format, &entries, None);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(id).unwrap().unwrap();
+    let limits = ReadLimits::default();
+    assert_eq!(
+        pack.object_header(position, limits).unwrap(),
+        (ObjectKind::Blob, 2)
+    );
+    assert_eq!(
+        pack.locate(position, limits, &cancelled).unwrap(),
+        (ObjectKind::Blob, 2)
+    );
+    assert_eq!(
+        pack.read(position, limits, &cancelled).unwrap().data(),
+        b"ab"
+    );
+}
+
+/// A tiny entry declaring a 1 TiB payload must fail on its stream, not reserve the declared size.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn oversized_whole_entry_declaration_does_not_reserve_it(#[case] format: ObjectFormat) {
+    let declared = 1usize << 40;
+    let id = ObjectId::for_blob(format, b"x");
+    let entries = [(id, entry(3, declared, b"", b"x"))];
+    let (_root, pack) = open_file(format, &entries, None);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(id).unwrap().unwrap();
+    assert!(matches!(
+        pack.read(position, ReadLimits::trusted(), &cancelled),
+        Err(Error::Corrupt(_))
+    ));
+}
+
+/// A tiny delta declaring a 1 TiB result must fail on its program, not reserve the result.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn oversized_delta_result_declaration_does_not_reserve_it(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"a");
+    let id = ObjectId::for_blob(format, b"ab");
+    // Base size 1, result size 2^40, then a one-byte insertion.
+    let program = [1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x20, 1, b'b'];
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (id, entry(7, program.len(), base.as_bytes(), &program)),
+    ];
+    let (_root, pack) = open_file(format, &entries, None);
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(id).unwrap().unwrap();
+    assert!(matches!(
+        pack.read(position, ReadLimits::trusted(), &cancelled),
+        Err(Error::Corrupt(_))
+    ));
+}

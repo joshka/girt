@@ -1,0 +1,148 @@
+//! Storage-access bounds for the retention walk, observed on a Git-generated, deltified pack.
+use std::io::Write;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, SystemTime};
+
+use crate::pack::counters;
+use crate::retention::RetentionPolicy;
+use crate::{PackLimits, Repository};
+
+fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
+    let mut child = Command::new("git")
+        .current_dir(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
+        .env("GIT_AUTHOR_NAME", "A")
+        .env("GIT_AUTHOR_EMAIL", "a@example.com")
+        .env("GIT_COMMITTER_NAME", "A")
+        .env("GIT_COMMITTER_EMAIL", "a@example.com")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().into()
+}
+
+/// History whose trees and blobs Git stores mostly as deltas, in a single pack.
+fn deltified_history(root: &Path) -> usize {
+    git(root, &["init", "-q", "--initial-branch=main", "."], b"");
+    // Wide directories make each round's trees near copies of the last, so Git deltifies them.
+    for round in 0..24 {
+        for file in 0..60 {
+            if round > 0 && file % 12 != round % 12 {
+                continue;
+            }
+            let directory = root.join(format!("dir{}", file % 3));
+            std::fs::create_dir_all(&directory).unwrap();
+            let content: String = (0..40)
+                .map(|line| format!("file {file} line {line} {}\n", (line == 0) as usize * round))
+                .collect();
+            std::fs::write(directory.join(format!("f{file}")), content).unwrap();
+        }
+        git(root, &["add", "-A"], b"");
+        git(
+            root,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "-m",
+                &format!("r{round}"),
+            ],
+            b"",
+        );
+    }
+    git(
+        root,
+        &[
+            "repack",
+            "-a",
+            "-d",
+            "-f",
+            "-q",
+            "--window=50",
+            "--depth=50",
+        ],
+        b"",
+    );
+    git(root, &["prune-packed"], b"");
+    // Without reflogs the strong and weak root sets are equal, so the plan walks once.
+    std::fs::remove_dir_all(root.join(".git/logs")).unwrap();
+    let count = git(root, &["count-objects", "-v"], b"");
+    let line = count
+        .lines()
+        .find(|line| line.starts_with("in-pack: "))
+        .unwrap();
+    line["in-pack: ".len()..].parse().unwrap()
+}
+
+/// The walk inflates each pack entry at most once (bases come from the delta base cache) and
+/// reads a typical entry's header and stream with a single positioned read.
+#[test]
+fn retention_walk_reads_each_entry_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let entries = deltified_history(dir.path());
+    let listing = git(
+        dir.path(),
+        &["verify-pack", "-v", &{
+            let pack = std::fs::read_dir(dir.path().join(".git/objects/pack"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+                .unwrap();
+            pack.to_string_lossy().into_owned()
+        }],
+        b"",
+    );
+    let deltas = |kind: &str| {
+        listing
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .filter(|fields| fields.len() == 7 && fields[1] == kind)
+            .count()
+    };
+    assert!(
+        deltas("tree") > 24 && deltas("blob") > 24,
+        "fixture must deltify trees and blobs:\n{listing}"
+    );
+    let repository = Repository::open(dir.path()).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        packs: PackLimits::trusted(),
+        ..RetentionPolicy::trusted()
+    };
+    counters::reset();
+    let plan = repository.plan_retention(&policy, &AtomicBool::new(false));
+    assert!(plan.is_complete(), "{:?}", plan.outcome);
+    assert_eq!(plan.reachable.len(), entries);
+    let repeated: Vec<_> = counters::INFLATIONS.with(|map| {
+        map.borrow()
+            .iter()
+            .filter(|(_, count)| **count > 1)
+            .map(|(offset, count)| (*offset, *count))
+            .collect()
+    });
+    assert!(
+        repeated.is_empty(),
+        "entries inflated more than once: {repeated:?}"
+    );
+    // One positioned read covers a typical entry's header and stream; root collection and pack
+    // opening add a few. Seek-and-read in 64-byte header chunks needed almost three per entry.
+    let reads = counters::OS_READS.with(|reads| reads.get());
+    assert!(
+        reads < entries * 3 / 2,
+        "{reads} system reads for {entries} entries"
+    );
+}

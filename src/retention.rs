@@ -18,7 +18,7 @@
 //! The caller supplies [`MaintenanceIsolation`] to exclude external writers and dependent readers
 //! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
 //! a new isolation guard. Read each method's platform and recovery contract before use.
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -40,6 +40,8 @@ mod retire;
 pub use retire::{RetireCause, RetireFailure, RetireReport};
 mod compose;
 mod inputs;
+#[cfg(test)]
+mod walk_tests;
 pub use compose::{MaintenanceCause, MaintenanceFailure, MaintenanceReport};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -797,49 +799,48 @@ fn walk(
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
 ) -> Result<BTreeSet<ObjectId>, String> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
-    let mut reachable = BTreeSet::new();
-    let mut expected = BTreeMap::new();
-    let mut kinds = BTreeMap::new();
+    // Hashed lookups: the walk probes these once or more per edge, on 100k-object histories.
+    let mut seen = HashSet::new();
+    let mut expected = HashMap::new();
+    let mut kinds = HashMap::new();
     let mut bytes = 0u64;
     let mut edges = 0usize;
+    let mut blobs = Vec::new();
     while let Some(id) = pending.pop_front() {
         check(cancel)?;
-        if reachable.contains(&id) {
+        if seen.contains(&id) {
             continue;
         }
-        if reachable.len() >= policy.max_entries {
+        if seen.len() >= policy.max_entries {
             return Err("reachable object limit".into());
         }
-        let (kind, size) = store
-            .locate(id, policy.read, cancel)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("missing reachable object {id}"))?;
-        if expected.get(&id).is_some_and(|expected| *expected != kind) {
-            return Err(format!("wrong reachable kind {id}"));
-        }
-        if kind == ObjectKind::Blob {
-            // An untyped root has no verified parent's kind assertion. Its ID must bind the
-            // blob kind, or a damaged graph header could erase edges and authorize pruning.
-            if roots.contains(&id) {
-                let object = store
-                    .read_controlled(id, policy.read, cancel)
-                    .map_err(|e| e.to_string())?
-                    .ok_or_else(|| format!("missing reachable object {id}"))?;
-                if object.kind() != kind {
-                    return Err(format!("changed root kind {id}"));
-                }
-            }
-            kinds.insert(id, kind);
-            object_info.insert(id, ObjectInfo { kind, size });
-            reachable.insert(id);
+        // Only blobs are located, after the graph walk and in pack order: they add no edges, and
+        // locating them in graph order would read headers scattered across the pack. An edge
+        // to a commit, tree or tag is decoded for its own edges, so it is never located first.
+        if expected.get(&id) == Some(&ObjectKind::Blob) && !roots.contains(&id) {
+            seen.insert(id);
+            blobs.push(id);
             continue;
         }
+        // An untyped root has no verified parent's kind assertion, so its identity-checked read
+        // binds its kind; a damaged graph header could otherwise erase edges and allow pruning.
         let object = store
             .read_controlled(id, policy.read, cancel)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("missing reachable object {id}"))?;
-        if object.kind() != kind {
-            return Err(format!("changed reachable kind {id}"));
+        if expected
+            .get(&id)
+            .is_some_and(|asserted| *asserted != object.kind())
+        {
+            return Err(format!("wrong reachable kind {id}"));
+        }
+        if object.kind() == ObjectKind::Blob {
+            let kind = ObjectKind::Blob;
+            let size = object.data().len() as u64;
+            kinds.insert(id, kind);
+            object_info.insert(id, ObjectInfo { kind, size });
+            seen.insert(id);
+            continue;
         }
         bytes = bytes
             .checked_add(object.data().len() as u64)
@@ -903,8 +904,19 @@ fn walk(
                 size: object.data().len() as u64,
             },
         );
-        reachable.insert(id);
+        seen.insert(id);
     }
+    let located = store
+        .locate_all(blobs, policy.read, cancel)
+        .map_err(|e| e.to_string())?;
+    for (id, located) in located {
+        let (kind, size) = located.ok_or_else(|| format!("missing reachable object {id}"))?;
+        if kind != ObjectKind::Blob {
+            return Err(format!("wrong reachable kind {id}"));
+        }
+        object_info.insert(id, ObjectInfo { kind, size });
+    }
+    let reachable: BTreeSet<_> = seen.into_iter().collect();
     Ok(reachable)
 }
 

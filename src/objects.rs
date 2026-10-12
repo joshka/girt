@@ -48,6 +48,32 @@ impl Object {
     }
 }
 
+/// An identity and, unless absent, its kind and payload size from [`Objects::locate_all`].
+pub(crate) type Located = (ObjectId, Option<(ObjectKind, u64)>);
+
+/// A structurally decoded payload whose identity was not hashed, for internal graph walks only.
+///
+/// Reading one checks everything [`Objects::read`] checks except that the payload hashes to the
+/// requested identity: entry framing, v2 CRCs, zlib termination, declared sizes, delta programs
+/// and [`ReadLimits`]. A walk may follow its edges to select objects. It cannot become an
+/// [`Object`], so its content never reaches a caller, and it must not authorize deleting or
+/// rewriting anything. See `docs/storage-safety.md`.
+#[derive(Debug)]
+pub(crate) struct UnverifiedObject {
+    pub(crate) kind: ObjectKind,
+    pub(crate) data: Vec<u8>,
+}
+
+impl UnverifiedObject {
+    pub(crate) fn kind(&self) -> ObjectKind {
+        self.kind
+    }
+
+    pub(crate) fn data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
 /// Bounds the aggregate pack snapshot across primary and borrowed stores retained by
 /// [`crate::Repository::objects`].
 ///
@@ -106,7 +132,7 @@ impl PackLimits {
 /// result, including intermediate results, before allocating its buffer. It therefore also bounds
 /// retained decoding bytes, but excludes index tables, allocator overhead, traversal bookkeeping,
 /// and fixed zlib scratch space. Loose reads use the smaller of object and decode limits, plus a
-/// small framing allowance. No decoded objects are cached between reads.
+/// small framing allowance. A delta base served from a pack's base cache is not charged again.
 #[derive(Debug, Clone, Copy)]
 pub struct ReadLimits {
     /// Maximum bytes in each object payload (default 64 MiB).
@@ -174,12 +200,13 @@ impl ReadLimits {
 ///
 /// Pack bytes are never retained in full. Bounded index bytes and offset tables stay in memory
 /// so identity lookups avoid repeated file seeks. Each pair pins two handles, shared internally
-/// through `Arc`. Short
-/// seek/read operations serialize on each artifact; simultaneous reads have independent cursors.
-/// Cloning shares pack handles and offset tables, while copying the bounded store topology.
-/// No decoded-object or negative cache is retained. [`PackLimits`] bounds aggregate opening
-/// work, index memory and handles; [`ReadLimits`] bounds each packed decode. Concurrent reads
-/// and caller-owned results multiply memory use. Cancellation is available through
+/// through `Arc`. Reads are positioned, so simultaneous reads share no cursor or lock; a typical
+/// entry's header and compressed bytes come from one read. Cloning shares pack handles, offset
+/// tables and delta base caches, while copying the bounded store topology. Each pack keeps
+/// recently decoded entries, up to 96 MiB, as delta bases; a cached entry is still
+/// identity-checked before it is returned. No negative cache is retained. [`PackLimits`] bounds
+/// aggregate opening work, index memory and handles; [`ReadLimits`] bounds each packed decode.
+/// Concurrent reads and caller-owned results multiply memory use. Cancellation is available through
 /// [`crate::Repository::objects_controlled`] and [`Self::read_controlled`].
 ///
 /// Within each store, loose objects take precedence and are read fresh on each call. Corruption
@@ -406,6 +433,59 @@ impl Objects {
         Ok((id == self.format.hash_object(ObjectKind::Tree, b"")).then_some((ObjectKind::Tree, 0)))
     }
 
+    /// Locates every identity in `ids` as [`Self::locate`] would, visiting packed entries in pack
+    /// order and reading each shared delta-chain header once per batch.
+    ///
+    /// Results pair each identity with its location; their order is unspecified.
+    pub(crate) fn locate_all(
+        &self,
+        ids: impl IntoIterator<Item = ObjectId>,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<Located>, ObjectReadError> {
+        let mut located = Vec::new();
+        let mut packed = Vec::new();
+        'ids: for id in ids {
+            id.require_format(self.format).map_err(crate::Error::from)?;
+            let mut pack_index = 0;
+            for store in &self.stores {
+                check_cancelled(cancel)?;
+                for pack in &store.packs {
+                    if let Some(position) = pack.find(id)? {
+                        packed.push((pack_index, pack.offset(position), position, id));
+                        continue 'ids;
+                    }
+                    pack_index += 1;
+                }
+                match store.loose.locate(id) {
+                    Ok(loose) => {
+                        if loose.1 > limits.max_object_bytes as u64 {
+                            return Err(ObjectReadError::Limit("object bytes"));
+                        }
+                        located.push((id, Some(loose)));
+                        continue 'ids;
+                    }
+                    Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            let empty = id == self.format.hash_object(ObjectKind::Tree, b"");
+            located.push((id, empty.then_some((ObjectKind::Tree, 0))));
+        }
+        packed.sort_unstable();
+        let packs: Vec<_> = self.stores.iter().flat_map(|store| &store.packs).collect();
+        let mut known = (usize::MAX, crate::pack::BaseKinds::new());
+        for (pack, _, position, id) in packed {
+            check_cancelled(cancel)?;
+            if known.0 != pack {
+                known = (pack, crate::pack::BaseKinds::new());
+            }
+            let found = packs[pack].locate_memoized(position, limits, cancel, &mut known.1)?;
+            located.push((id, Some(found)));
+        }
+        Ok(located)
+    }
+
     /// A located blob must not hide a readable graph copy at the same identity. Such a conflict
     /// could otherwise erase edges and let pruning delete that graph's only loose descendants.
     pub(crate) fn check_retention_blob_kinds(
@@ -552,6 +632,49 @@ impl Objects {
 }
 
 impl Objects {
+    /// Reads `id` for a selection walk without hashing a packed payload; see [`UnverifiedObject`].
+    ///
+    /// Store precedence, limits and errors match [`Self::read_controlled`]. Loose objects are
+    /// still identity-checked: their only integrity check is the hash.
+    pub(crate) fn read_unverified(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<UnverifiedObject>, ObjectReadError> {
+        check_cancelled(cancelled)?;
+        let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
+        for store in &self.stores {
+            check_cancelled(cancelled)?;
+            for pack in &store.packs {
+                check_cancelled(cancelled)?;
+                if let Some(position) = pack.find(id)? {
+                    let object = pack.read_unverified(position, limits, cancelled)?;
+                    check_cancelled(cancelled)?;
+                    return Ok(Some(object));
+                }
+            }
+            match store.loose.read_raw(id, loose_limit) {
+                Ok(object) => {
+                    check_cancelled(cancelled)?;
+                    return Ok(Some(UnverifiedObject {
+                        kind: object.kind,
+                        data: object.data,
+                    }));
+                }
+                Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        check_cancelled(cancelled)?;
+        Ok(
+            (id == self.format.hash_object(ObjectKind::Tree, b"")).then(|| UnverifiedObject {
+                kind: ObjectKind::Tree,
+                data: Vec::new(),
+            }),
+        )
+    }
+
     /// Checks physical empty-tree availability, excluding the reader's synthetic fallback.
     pub(crate) fn has_stored_empty_tree(
         &self,

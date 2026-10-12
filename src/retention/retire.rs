@@ -344,38 +344,47 @@ impl Repository {
             let protected_pack =
                 FilePack::open(self.object_format(), &index, &mut pack_budget, cancel)
                     .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-            let ids: Vec<ObjectId> = unverified.iter().copied().collect();
-            for id in ids {
+            let mut found = Vec::new();
+            for &id in &unverified {
                 check(cancel, &report)?;
-                let Some(position) = protected_pack
+                if let Some(position) = protected_pack
                     .find(id)
                     .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
-                else {
-                    continue;
-                };
-                let object = protected_pack
+                {
+                    found.push((protected_pack.offset(position), position, id));
+                }
+            }
+            // Pack order lets the delta base cache serve each base once. `read` hashes the
+            // payload against the identity at `position`, which `find` matched to `id`.
+            found.sort_unstable();
+            for (_, position, id) in found {
+                check(cancel, &report)?;
+                protected_pack
                     .read(position, policy.read, cancel)
                     .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-                if object.id() == id {
-                    unverified.remove(&id);
-                }
+                unverified.remove(&id);
             }
         }
         if let Some(id) = unverified.into_iter().next() {
             return Err(failed(RetireCause::ReplacementMissing(id), report));
         }
+        let mut replaced = Vec::new();
         for id in first.required.difference(&held) {
             check(cancel, &report)?;
             let position = pack
                 .find(*id)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
                 .ok_or_else(|| failed(RetireCause::ReplacementMissing(*id), report.clone()))?;
-            let object = pack
-                .read(position, policy.read, cancel)
+            replaced.push((pack.offset(position), position));
+        }
+        // Every retained object is decoded and identity-checked before anything is unlinked.
+        // `read` hashes each payload against the identity `find` matched; pack order lets the
+        // delta base cache serve each base once instead of rebuilding chains in identity order.
+        replaced.sort_unstable();
+        for (_, position) in replaced {
+            check(cancel, &report)?;
+            pack.read(position, policy.read, cancel)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
-            if object.id() != *id {
-                return Err(failed(RetireCause::ReplacementMissing(*id), report));
-            }
         }
         drop(pack);
         let after = snapshot(&directory, policy.max_entries, cancel)
