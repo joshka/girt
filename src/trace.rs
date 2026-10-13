@@ -155,6 +155,7 @@ pub(crate) fn push_failure(error: &crate::push::PushFailure) -> &'static str {
     use crate::push::PushFailure::*;
     match error {
         Destination(_) => "invalid_input",
+        QuarantineCleanup { source, .. } => io(source),
         Install(error) => fetch(error),
         Reference(error) => reference(error),
         ObjectFormat(_) | Unsupported(_) => "unsupported",

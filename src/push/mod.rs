@@ -63,6 +63,7 @@ mod local_native;
 mod prepared;
 mod progress;
 mod protocol;
+mod quarantine;
 mod types;
 
 pub(crate) use local::send_local_preparing;

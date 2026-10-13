@@ -1121,10 +1121,10 @@ The current R29/R30 command model supports create, update and exact-old deletion
 Each command retains its caller-supplied old ID, so a stale command can be rejected independently
 without turning into an unconditional overwrite. Native local push uses girt storage, not the
 historical receive-pack subprocess described below. It supports both formats, conditional mixed
-commands, receive restrictions, hidden refs and explicit-identity reflogs, but refuses push options
-and hooks. Wire push negotiates report-status-v2 and can retain bounded sideband progress. See
-[R29 evidence](evidence/r29.md) for commands and [R30 evidence](evidence/r30.md) for outcomes and
-remaining limits.
+commands, receive restrictions, hidden refs, explicit-identity reflogs and advertised push options.
+On macOS/Linux it runs supported receive hooks with controlled cancellation. Wire push negotiates
+report-status-v2 and can retain bounded sideband progress. See [R29 evidence](evidence/r29.md) for
+commands and [R30 evidence](evidence/r30.md) for outcomes and remaining limits.
 
 R30 distinguishes a complete acknowledged result from a transport or publication failure. A failed
 first write is not sent. Each ref report marks whether its command packet may have reached the peer;
@@ -1143,8 +1143,32 @@ retains separate reference and log effects on publication failure, so an appende
 not inferred from the ref acknowledgement. Current-branch refuse, ignore and warn modes are
 supported, as are `receive.denyDeleteCurrent`, `receive.denyDeletes`, `receive.denyNonFastForwards`
 and ordered `transfer.hideRefs`/`receive.hideRefs` restrictions. The native adapter refuses
-`updateInstead`, configured hooks, proc-receive execution and other unsupported receive policy
-before mutation. It does not run a Git subprocess or bypass jj's caller-owned pre-push policy.
+`updateInstead`, proc-receive, reference-transaction and push-to-checkout hooks, and other
+unsupported receive policy before mutation. Girt starts supported hooks directly without a Git
+transport subprocess. jj still owns its pre-push policy.
+
+Incoming objects are quarantined during native `pre-receive`, with existing primary objects as an
+alternate. Pre-receive rejection/cancellation preserves primary objects and refs. After acceptance,
+girt publishes the original validated artifact and removes quarantine before `update`; update
+rejection leaves published objects, as observed with Git. Hooks that modify private object storage
+are explicitly unsupported and refuse before publication. Cleanup preserves a replaced quarantine
+directory and reports its path, cleanup error and any earlier operation failure, including uncertain
+published-ref evidence. Pre-receive pushes write the pack twice, into quarantine and primary
+storage. The supported single-pack quarantine inventory is bounded to 16 files/directories and
+pinned by SHA-1/SHA-256 installation tests. Inherited object-directory and alternate environment
+variables are cleared; pre-receive sees primary alternates rather than the caller's environment
+alternates.
+
+Hook pipe/exit waits poll cancellation and deadlines; retained combined stdout/stderr across all
+hooks is bounded by `PushLimits::max_status_bytes`; excess output is discarded while draining
+continues. Successful hooks preserve background work and drain descendant-held pipes to EOF.
+Cancellation, deadlines and errors kill the owned process group and reap its leader.
+Escaped/daemonized descendants are outside this containment
+([issue 58](https://github.com/joshka/girt/issues/58)). Hooks are trusted executable code and can
+mutate storage themselves. Caller exclusion of GC, layout/object-directory replacement and checkout
+changes remains required; path identity checks do not establish hostile-race protection. Hook
+execution is supported on macOS/Linux; other platforms refuse configured hooks before mutation. No
+library signal handler is installed. This does not claim crash durability or full hook parity.
 
 The remainder of this section records the original R13 receive-pack implementation and its
 validation scope; its SHA-1, namespace and process restrictions do not describe the current API.

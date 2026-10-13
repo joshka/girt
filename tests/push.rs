@@ -1134,3 +1134,370 @@ fn non_tip_receiver_boundary_does_not_scan_old_trees() {
         b"",
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn pre_receive_rejection_discards_quarantined_objects() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        &format!(
+            "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 9\ntest \"$GIT_OBJECT_DIRECTORY\" = \"$GIT_QUARANTINE_PATH\" || exit 9\ngit cat-file -e {} || exit 9\nprintf quarantine >hook-observed\nexit 1\n",
+            main(&f)
+        ),
+    );
+    let report = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(b"pre-receive hook declined".to_vec()))
+    );
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"quarantine"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(fs::read_dir(dest.object_dir()).unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn update_hook_observes_published_objects_without_quarantine() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 1\nprintf '%s' \"$GIT_QUARANTINE_PATH\" >quarantine-path\ncat >/dev/null\n",
+    );
+    hook(
+        &dest,
+        "update",
+        "#!/bin/sh\ntest -z \"$GIT_QUARANTINE_PATH\" || exit 1\ntest -z \"$GIT_OBJECT_DIRECTORY\" || exit 1\ntest ! -e \"$(cat quarantine-path)\" || exit 1\ngit cat-file -e \"$3\" || exit 1\nprintf primary >hook-observed\nexit 1\n",
+    );
+    let report = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(b"hook declined".to_vec()))
+    );
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"primary"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_during_pre_receive_leaves_primary_storage_unchanged() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    // A finite hook keeps the reproducing test bounded even before hook cancellation exists.
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\nprintf started >hook-starting\nmv hook-starting hook-observed\nsleep 1\ncat >/dev/null\n",
+    );
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(false);
+    let observed = dest.git_dir().join("hook-observed");
+    let error = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !observed.exists() {
+                assert!(std::time::Instant::now() < end, "hook did not start");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        girt::push::send_local_with_control(
+            dest.git_dir(),
+            &prepared,
+            girt::transport::TransportControl::new(&cancel),
+        )
+        .unwrap_err()
+    });
+    assert!(matches!(error, PushError::NotSent(PushFailure::Cancelled)));
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"started"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn hook_output_limit_truncates_without_aborting_publication() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\nprintf 01234567890123456789\nprintf 01234567890123456789 >&2\ncat >/dev/null\n",
+    );
+    let prepared = PreparedPush::new_local(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", None, main(&f))],
+        &[],
+        PushLimits {
+            max_status_bytes: 30,
+            ..Default::default()
+        },
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
+    assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_receive_creating_objects_is_explicitly_unsupported() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\nprintf hook-created | git hash-object -w --stdin >/dev/null\ncat >/dev/null\n",
+    );
+    let error = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        PushError::NotSent(PushFailure::Unsupported(
+            "pre-receive modified quarantined object storage"
+        ))
+    ));
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(fs::read_dir(dest.object_dir()).unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn accepted_quarantine_can_read_primary_alternates_with_special_path_bytes(
+    #[case] format: girt::ObjectFormat,
+) {
+    let f = Fixture::new(format, true, 4);
+    let root = tempfile::Builder::new()
+        .prefix("girt:quote\"\n")
+        .tempdir()
+        .unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={format}"),
+            ".",
+        ],
+        b"",
+    );
+    let dest = Repository::open(root.path()).unwrap();
+    let old = main(&f);
+    let seed = PreparedPush::new_local(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", None, old)],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    send_local(dest.git_dir(), &seed, &AtomicBool::new(false)).unwrap();
+    let new = next(&f);
+    hook(
+        &dest,
+        "pre-receive",
+        &format!(
+            "#!/bin/sh\ngit cat-file -e {old} || exit 1\ngit cat-file -e {new} || exit 1\ncat >/dev/null\n"
+        ),
+    );
+    let prepared = PreparedPush::new_local(
+        &f.repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/main", Some(old), new)],
+        &[old],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(new));
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_in_post_receive_preserves_published_ref_evidence() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "post-receive",
+        "#!/bin/sh\nprintf started >hook-starting\nmv hook-starting hook-observed\nsleep 1\ncat >/dev/null\n",
+    );
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(false);
+    let observed = dest.git_dir().join("hook-observed");
+    let error = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !observed.exists() {
+                assert!(std::time::Instant::now() < end, "hook did not start");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        send_local(dest.git_dir(), &prepared, &cancel).unwrap_err()
+    });
+    let PushError::Uncertain { cause, report } = error else {
+        panic!("missing published outcome")
+    };
+    assert!(matches!(cause, PushFailure::Cancelled));
+    assert_eq!(report.refs[0].status, Some(Status::Ok));
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
+    git(dest.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[cfg(unix)]
+#[test]
+fn replacement_quarantine_is_preserved_and_cleanup_failure_is_structured() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\nprintf '%s' \"$GIT_QUARANTINE_PATH\" >quarantine-path\nmv \"$GIT_QUARANTINE_PATH\" \"$GIT_DIR/saved-quarantine\"\nmkdir \"$GIT_QUARANTINE_PATH\"\nprintf replacement >\"$GIT_QUARANTINE_PATH/marker\"\ncat >/dev/null\n",
+    );
+    let error = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap_err();
+    let PushError::Uncertain {
+        cause: PushFailure::QuarantineCleanup { failure, .. },
+        ..
+    } = error
+    else {
+        panic!("missing quarantine cleanup failure")
+    };
+    assert!(matches!(
+        failure.as_deref(),
+        Some(PushError::NotSent(PushFailure::Io(_)))
+    ));
+    let path = fs::read_to_string(dest.git_dir().join("quarantine-path")).unwrap();
+    assert_eq!(
+        fs::read(std::path::Path::new(&path).join("marker")).unwrap(),
+        b"replacement"
+    );
+    assert!(dest.git_dir().join("saved-quarantine/pack").is_dir());
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    for native in [false, true] {
+        let (_root, dest) = destination(true);
+        hook(
+            &dest,
+            "post-receive",
+            "#!/bin/sh\nhead -c 5242880 /dev/zero\n(sleep 0.1; printf completed >background-result) &\nexit 0\n",
+        );
+        hook(
+            &dest,
+            "post-update",
+            "#!/bin/sh\nprintf completed >post-update-result\n",
+        );
+        if native {
+            let prepared = PreparedPush::new_local(
+                &f.repo.objects(PackLimits::default()).unwrap(),
+                vec![command("refs/heads/main", None, main(&f))],
+                &[],
+                PushLimits {
+                    max_status_bytes: 30,
+                    ..Default::default()
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let report = girt::push::send_local_with_control(
+                dest.git_dir(),
+                &prepared,
+                girt::transport::TransportControl {
+                    cancel: &AtomicBool::new(false),
+                    deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
+                },
+            )
+            .unwrap();
+            assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);
+        } else {
+            git(
+                f.root.path(),
+                &[
+                    "push",
+                    dest.git_dir().to_str().unwrap(),
+                    "main:refs/heads/main",
+                ],
+                b"",
+            );
+        }
+        assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
+        assert_eq!(
+            fs::read(dest.git_dir().join("background-result")).unwrap(),
+            b"completed"
+        );
+        assert_eq!(
+            fs::read(dest.git_dir().join("post-update-result")).unwrap(),
+            b"completed"
+        );
+    }
+}

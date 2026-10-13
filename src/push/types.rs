@@ -53,7 +53,9 @@ pub struct PushLimits {
     pub max_commands: usize,
     /// Total encoded command and push-option bytes, including flushes (default 16 MiB).
     pub max_command_bytes: usize,
-    /// Status bytes including framing (default 4 MiB).
+    /// Status bytes including framing (default 4 MiB). Native receive hooks share this bound
+    /// for their combined retained stdout/stderr across the whole operation. Excess native hook
+    /// output is discarded while draining continues; truncation does not abort hooks.
     pub max_status_bytes: usize,
     /// Edge occurrences from objects selected for sending, including duplicates (default 4
     /// million). Reading known receiver history has a separate allowance of the same size.
@@ -265,6 +267,20 @@ pub enum PushError {
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PushFailure {
+    /// Private receive storage could not be removed; inspect the retained operation failure and
+    /// report before retrying. Primary publication may already have completed.
+    #[error("receive quarantine cleanup failed")]
+    QuarantineCleanup {
+        /// Private directory whose cleanup was refused or failed; inspect it before removing data.
+        path: std::path::PathBuf,
+        /// Filesystem cleanup failure.
+        #[source]
+        source: std::io::Error,
+        /// Earlier operation failure, if one occurred before cleanup. This may itself be
+        /// [`PushError::Uncertain`] with published refs; inspect its report as well.
+        failure: Option<Box<PushError>>,
+    },
+
     /// Native local destination could not be opened.
     #[error("local destination")]
     Destination(#[source] Box<crate::OpenError>),
