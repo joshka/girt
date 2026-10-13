@@ -224,6 +224,44 @@ impl RetentionPlan {
 }
 
 impl Repository {
+    // This observation never verifies object history and cannot authorize a mutation by itself.
+    fn observe_retention_roots(
+        &self,
+        policy: &RetentionPolicy,
+        cancel: &AtomicBool,
+    ) -> RetentionPlan {
+        let mut plan = RetentionPlan {
+            roots: policy.heads.iter().copied().collect(),
+            strong_roots: policy.heads.iter().copied().collect(),
+            required: BTreeSet::new(),
+            reflog_expiry_candidates: BTreeMap::new(),
+            observed_logs: Vec::new(),
+            object_info: BTreeMap::new(),
+            protected_objects: BTreeSet::new(),
+            reachable: BTreeSet::new(),
+            protected_packs: BTreeSet::new(),
+            alternate_stores: Vec::new(),
+            outcome: RetentionOutcome::Complete,
+        };
+        if policy
+            .heads
+            .iter()
+            .any(|id| id.format() != self.object_format() || id.is_null())
+        {
+            plan.fail("invalid caller head");
+            return plan;
+        }
+        if policy.heads.len() > policy.max_entries {
+            plan.fail("caller head limit");
+            return plan;
+        }
+        if let Err(reason) = collect_roots(self, policy, cancel, &mut plan) {
+            plan.fail(reason);
+            return plan;
+        }
+        plan
+    }
+
     /// Collects conservative retention roots and their reachable object closure.
     ///
     /// Includes caller heads, all live refs, independently discovered histories (including old
@@ -272,33 +310,8 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
-        let mut plan = RetentionPlan {
-            roots: policy.heads.iter().copied().collect(),
-            strong_roots: policy.heads.iter().copied().collect(),
-            required: BTreeSet::new(),
-            reflog_expiry_candidates: BTreeMap::new(),
-            observed_logs: Vec::new(),
-            object_info: BTreeMap::new(),
-            protected_objects: BTreeSet::new(),
-            reachable: BTreeSet::new(),
-            protected_packs: BTreeSet::new(),
-            alternate_stores: Vec::new(),
-            outcome: RetentionOutcome::Complete,
-        };
-        if policy
-            .heads
-            .iter()
-            .any(|id| id.format() != self.object_format() || id.is_null())
-        {
-            plan.fail("invalid caller head");
-            return plan;
-        }
-        if policy.heads.len() > policy.max_entries {
-            plan.fail("caller head limit");
-            return plan;
-        }
-        if let Err(reason) = collect_roots(self, policy, cancel, &mut plan) {
-            plan.fail(reason);
+        let mut plan = self.observe_retention_roots(policy, cancel);
+        if !plan.is_complete() {
             return plan;
         }
         let store = match self.objects_controlled(

@@ -73,13 +73,16 @@ impl Repository {
     /// Removes old unreachable loose objects from this repository's primary store.
     ///
     /// The caller supplies a repository-wide isolation boundary through `isolation`. Inside that
-    /// boundary this operation builds one complete plan, inventories loose entries twice, and
-    /// revalidates root-bearing metadata and storage fingerprints before the first deletion. All
-    /// reflog candidates are retained regardless of the policy's expiry cutoffs; this operation
-    /// does not expire reflogs, repack, or remove packs or alternate storage. It removes only
-    /// regular primary loose files older than `recent_cutoff` whose identities are outside the
-    /// complete reachable closure. This does not depend on R32's additive publication for
-    /// object availability.
+    /// boundary this operation inventories primary loose entries. If none are older than
+    /// `recent_cutoff`, it returns an empty report without validating object history. Otherwise it
+    /// builds one complete plan, inventories loose entries twice, and revalidates root-bearing
+    /// metadata and storage fingerprints before the first deletion. All reflog candidates are
+    /// retained regardless of the policy's expiry cutoffs; this operation does not expire reflogs,
+    /// repack, or remove packs or alternate storage. It removes only regular primary loose files
+    /// older than `recent_cutoff` whose identities are outside the complete reachable closure. This
+    /// does not depend on R32's additive publication for object availability. Files exactly at the
+    /// cutoff are retained; Git's inclusive prune expiry can remove them ([tracking
+    /// issue](https://github.com/joshka/girt/issues/109)).
     ///
     /// A complete scan or matching generations cannot exclude an external Git process. The
     /// isolation implementation must exclude those processes and old readers until the returned
@@ -142,11 +145,17 @@ impl Repository {
         &self,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
-        after_inventory: impl FnOnce(),
+        after_plan: impl FnOnce(),
         after_delete: impl FnMut(),
         remove: impl FnMut(&std::path::Path) -> io::Result<()>,
     ) -> Result<PruneReport, PruneFailure> {
-        self.prune_planned_at(policy, cancel, None, after_inventory, after_delete, remove)
+        self.prune_planned_at(
+            policy,
+            cancel,
+            None,
+            (|| {}, after_plan, after_delete),
+            remove,
+        )
     }
 
     #[cfg(unix)]
@@ -160,8 +169,7 @@ impl Repository {
             policy,
             cancel,
             Some(session),
-            || {},
-            || {},
+            (|| {}, || {}, || {}),
             |path| fs::remove_file(path),
         )?;
         self.finish_prune(report)
@@ -172,10 +180,10 @@ impl Repository {
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
         session: Option<&super::inputs::Session>,
-        after_inventory: impl FnOnce(),
-        mut after_delete: impl FnMut(),
+        checkpoints: (impl FnOnce(), impl FnOnce(), impl FnMut()),
         mut remove: impl FnMut(&std::path::Path) -> io::Result<()>,
     ) -> Result<PruneReport, PruneFailure> {
+        let (before_plan, after_plan, mut after_delete) = checkpoints;
         let mut report = PruneReport::default();
         check(cancel, &report)?;
         // Repository::open refreshes shallow roots and configuration that this handle may have
@@ -186,6 +194,15 @@ impl Repository {
             || current.object_format() != self.object_format()
         {
             return Err(failure(PruneCause::Changed, report));
+        }
+        let observed = candidates(&current, policy, cancel)
+            .map_err(|cause| failure(cause, PruneReport::default()))?;
+        before_plan();
+        if session.is_none() && observed.is_empty() {
+            // Caller isolation holds through this complete inventory. No unlink is possible,
+            // so unvisited history need not supply deletion evidence.
+            check(cancel, &report)?;
+            return Ok(report);
         }
         let owned = if session.is_none() {
             Some(
@@ -205,9 +222,7 @@ impl Repository {
         };
         let session = session.or(owned.as_ref()).expect("retention session");
         let first = &session.plan;
-        let observed = candidates(&current, policy, cancel)
-            .map_err(|cause| failure(cause, PruneReport::default()))?;
-        after_inventory();
+        after_plan();
         check(cancel, &report)?;
         let refreshed = Repository::open(self.git_dir())
             .map_err(|error| failure(PruneCause::Incomplete(error.to_string()), report.clone()))?;
@@ -419,6 +434,42 @@ mod tests {
         assert!(matches!(error.cause, PruneCause::Changed));
         assert!(error.report.deleted.is_empty());
         assert_eq!(git(root.path(), &["cat-file", "-t", &id], b""), "blob");
+    }
+
+    #[test]
+    fn new_loose_root_between_inventory_and_plan_refuses_before_deletion() {
+        let (root, repo, policy) = fixture();
+        let old = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"old candidate",
+        );
+        let cancel = AtomicBool::new(false);
+        let result = repo.prune_planned_at(
+            &policy,
+            &cancel,
+            None,
+            (
+                || {
+                    let added = git(root.path(), &["hash-object", "-w", "--stdin"], b"new root");
+                    git(root.path(), &["update-ref", "refs/tags/added", &added], b"");
+                },
+                || {},
+                || {},
+            ),
+            |path| fs::remove_file(path),
+        );
+        let error = result.unwrap_err();
+        assert!(matches!(error.cause, PruneCause::Changed));
+        assert!(error.report.deleted.is_empty());
+        assert_eq!(
+            git(root.path(), &["cat-file", "blob", "refs/tags/added"], b""),
+            "new root"
+        );
+        assert_eq!(
+            git(root.path(), &["cat-file", "blob", &old], b""),
+            "old candidate"
+        );
     }
 
     #[test]

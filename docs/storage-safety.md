@@ -103,6 +103,14 @@ index once before copying bytes under its names.
 
 ## Fast path contracts
 
+Standalone loose pruning can return without a graph walk only after a complete bounded inventory
+finds no primary loose files older than the cutoff. Standalone reflog expiry can return after a
+complete bounded root observation finds no record older than either possible expiry cutoff. Both
+observations run under caller isolation with refreshed repository metadata. These empty reports
+certify zero changes, not history integrity: unvisited missing or corrupt objects can remain
+undetected. Any possible deletion or rewrite still requires the complete verified retention plan;
+composed maintenance keeps its existing plan and validation contract.
+
 Copied or reused data still counts against caller limits and statistics; skipping them silently
 changes the API.
 
