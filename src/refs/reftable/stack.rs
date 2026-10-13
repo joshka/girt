@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -295,6 +303,11 @@ pub(super) fn expire_logs_with_sync(
         .write_all(&bytes)
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|error| fail(io_error(temporary.path(), error)))?;
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a named temporary file has a basename, and it is ASCII: the numeric prefix, \
+                  tempfile's random portion and the suffix are all ASCII, whatever the ancestors"
+    )]
     let name = temporary
         .path()
         .file_name()
@@ -459,6 +472,10 @@ pub(super) fn publish_with(
     if names.len() >= limits.tables {
         return Err(Error::Limit("stack table count").into());
     }
+    #[expect(
+        clippy::unwrap_used,
+        reason = "tables.list lies inside the reftable directory"
+    )]
     let directory = lock.destination.parent().unwrap();
     let prefix = format!(
         "0x{:012x}-0x{:012x}-",
@@ -472,6 +489,11 @@ pub(super) fn publish_with(
     temporary
         .write_all(bytes)
         .map_err(|error| io_error(temporary.path(), error))?;
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a named temporary file has a basename, and it is ASCII: the numeric prefix, \
+                  tempfile's random portion and the suffix are all ASCII, whatever the ancestors"
+    )]
     let name = temporary
         .path()
         .file_name()
@@ -518,7 +540,9 @@ fn list(bytes: &[u8], limits: StackLimits, path: &Path) -> Result<Vec<String>, R
         {
             return Err(malformed(path, "invalid stack table filename"));
         }
-        let name = std::str::from_utf8(line).unwrap().to_owned();
+        let name = std::str::from_utf8(line)
+            .map_err(|_| malformed(path, "invalid stack table filename"))?
+            .to_owned();
         if !seen.insert(name.clone()) {
             return Err(malformed(path, "duplicate stack table"));
         }

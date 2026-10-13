@@ -1,5 +1,14 @@
 //! Explicit filesystem leaf-link reads, separate from strict reference publication.
 
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
+
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
@@ -74,10 +83,9 @@ impl References<'_> {
                 remaining = remaining
                     .checked_sub(destination.as_os_str().as_encoded_bytes().len())
                     .ok_or(ReferenceError::Limit("reference bytes"))?;
-                path = path
-                    .parent()
-                    .expect("reference path has a parent")
-                    .join(destination);
+                #[expect(clippy::expect_used, reason = "reference paths lie below a root")]
+                let parent = path.parent().expect("reference path has a parent");
+                path = parent.join(destination);
                 hops += 1;
                 continue;
             }
@@ -150,4 +158,5 @@ fn read_bounded(path: &Path, remaining: &mut usize) -> Result<Option<Vec<u8>>, R
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, reason = "test fixtures")]
 mod tests;

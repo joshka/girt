@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use super::{Error, Limits, LogRecord, LogValue, RecordName, RefRecord, Table};
 use crate::refs::{RefName, Target};
 use crate::{ObjectFormat, ObjectId};
@@ -45,16 +53,16 @@ impl Table {
         if footer_start < header.size {
             return Err(bad("overlapping header and footer"));
         }
-        let footer = &bytes[footer_start..];
-        if footer[..header.size] != bytes[..header.size] {
+        let footer = bytes.get(footer_start..).ok_or(bad("footer"))?;
+        if footer.get(..header.size) != bytes.get(..header.size) {
             return Err(bad("header/footer mismatch"));
         }
-        let crc_start = footer.len() - 4;
-        let crc = u32::from_be_bytes(footer[crc_start..].try_into().unwrap());
-        if crc32fast::hash(&footer[..crc_start]) != crc {
+        let (checked, crc) = footer.split_last_chunk::<4>().ok_or(bad("footer"))?;
+        if crc32fast::hash(checked) != u32::from_be_bytes(*crc) {
             return Err(bad("footer checksum"));
         }
-        let mut fields = Cursor::new(&footer[header.size..crc_start], limits);
+        let fields = checked.get(header.size..).ok_or(bad("footer"))?;
+        let mut fields = Cursor::new(fields, limits);
         let ref_index = fields.u64()?;
         let object = fields.u64()?;
         let object_index = fields.u64()?;
@@ -90,20 +98,22 @@ impl Table {
         let mut last_ref = Vec::new();
         let mut last_log = Vec::new();
         while position < footer_start {
-            if bytes[position] == 0 {
+            let kind = *bytes.get(position).ok_or(bad("block header"))?;
+            if kind == 0 {
                 let next = position
                     .checked_add(header.alignment - position % header.alignment.max(1))
                     .ok_or(bad("padding overflow"))?;
                 if header.alignment == 0
                     || next > footer_start
-                    || bytes[position..next].iter().any(|b| *b != 0)
+                    || bytes
+                        .get(position..next)
+                        .is_none_or(|padding| padding.iter().any(|b| *b != 0))
                 {
                     return Err(bad("block padding"));
                 }
                 position = next;
                 continue;
             }
-            let kind = bytes[position];
             let expected = if log_index != 0 && position as u64 >= log_index {
                 b'i'
             } else if (log != 0 && position as u64 >= log) || first_log {
@@ -140,13 +150,20 @@ impl Table {
             };
             if matches!(kind, b'r' | b'o') && header.alignment != 0 {
                 let length = bytes
-                    .get(position + 1..position + 4)
+                    .get(position + 1..)
+                    .and_then(<[u8]>::first_chunk::<3>)
                     .ok_or(bad("block header"))?;
-                if uint24(length) > header.alignment {
+                if uint24(*length) > header.alignment {
                     return Err(bad("block exceeds alignment"));
                 }
             }
-            let block = Block::read(&bytes[position..footer_start], prefix, limits)?;
+            let block = Block::read(
+                bytes
+                    .get(position..footer_start)
+                    .ok_or(bad("block header"))?,
+                prefix,
+                limits,
+            )?;
             let mut cursor = Cursor::new(&block.data, limits);
             let mut key = Vec::new();
             let mut restart = 0;
@@ -183,7 +200,10 @@ impl Table {
                 cursor.end_limit = cursor
                     .position
                     .saturating_add(limits.decoded_bytes - decoded_bytes);
-                let mut next = key[..prefix_len].to_vec();
+                let mut next = key
+                    .get(..prefix_len)
+                    .ok_or(bad("key prefix or length"))?
+                    .to_vec();
                 next.extend_from_slice(cursor.take(suffix_len)?);
                 if !key.is_empty() && next <= key {
                     return Err(bad("record key order"));
@@ -364,8 +384,8 @@ impl Header {
         if cursor.take(4)? != b"REFT" {
             return Err(bad("magic"));
         }
-        let version = cursor.take(1)?[0];
-        let alignment = uint24(cursor.take(3)?);
+        let [version] = cursor.array()?;
+        let alignment = uint24(cursor.array()?);
         let min = cursor.u64()?;
         let max = cursor.u64()?;
         if min > max {
@@ -402,18 +422,22 @@ struct Block {
 
 impl Block {
     fn read(bytes: &[u8], prefix: usize, limits: Limits) -> Result<Self, Error> {
-        let head = bytes.get(..4).ok_or(bad("block header"))?;
-        let length = uint24(&head[1..]);
+        let &[kind, high, middle, low] = bytes.first_chunk::<4>().ok_or(bad("block header"))?;
+        let length = uint24([high, middle, low]);
         if length > limits.block_bytes {
             return Err(Error::Limit("block bytes"));
         }
         let data_len = length.checked_sub(prefix + 4).ok_or(bad("block length"))?;
-        let (data, consumed) = if head[0] == b'g' {
+        let (data, consumed) = if kind == b'g' {
             let mut inflater = flate2::Decompress::new(true);
             // One spare byte distinguishes an exact-sized stream from an oversized expansion.
             let mut output = vec![0; data_len + 1];
             let status = inflater
-                .decompress(&bytes[4..], &mut output, flate2::FlushDecompress::Finish)
+                .decompress(
+                    bytes.get(4..).unwrap_or_default(),
+                    &mut output,
+                    flate2::FlushDecompress::Finish,
+                )
                 .map_err(|_| bad("log compression"))?;
             if status != flate2::Status::StreamEnd || inflater.total_out() != data_len as u64 {
                 return Err(bad("inflated log length"));
@@ -429,21 +453,28 @@ impl Block {
                 4 + data_len,
             )
         };
-        let tail = data.len().checked_sub(2).ok_or(bad("restart count"))?;
-        let count = u16::from_be_bytes(data[tail..].try_into().unwrap()) as usize;
+        let (table, count) = data.split_last_chunk::<2>().ok_or(bad("restart count"))?;
+        let count = u16::from_be_bytes(*count) as usize;
         if count == 0 {
             return Err(bad("empty restart table"));
         }
-        let records_end = tail.checked_sub(count * 3).ok_or(bad("restart table"))?;
-        let restarts: Vec<_> = data[records_end..tail]
+        let records_end = table
+            .len()
+            .checked_sub(count * 3)
+            .ok_or(bad("restart table"))?;
+        let restarts: Vec<_> = table
+            .get(records_end..)
+            .unwrap_or_default()
             .as_chunks::<3>()
             .0
             .iter()
-            .map(|bytes| uint24(bytes))
+            .map(|bytes| uint24(*bytes))
             .collect();
-        if restarts[0] != prefix + 4
-            || restarts.windows(2).any(|pair| pair[0] >= pair[1])
-            || restarts.last().unwrap() >= &(records_end + prefix + 4)
+        if restarts.first() != Some(&(prefix + 4))
+            || !restarts.is_sorted_by(|a, b| a < b)
+            || restarts
+                .last()
+                .is_none_or(|last| *last >= records_end + prefix + 4)
         {
             return Err(bad("restart offsets"));
         }
@@ -499,12 +530,10 @@ fn decode_log(
     kind: u8,
     header: &Header,
 ) -> Result<LogRecord, Error> {
-    let split = key.len().checked_sub(9).ok_or(bad("log key"))?;
-    if key[split] != 0 {
-        return Err(bad("log key separator"));
-    }
-    let name = RecordName::new(&key[..split])?;
-    let update_index = !u64::from_be_bytes(key[split + 1..].try_into().unwrap());
+    let (name, update_index) = key.split_last_chunk::<8>().ok_or(bad("log key"))?;
+    let name = name.strip_suffix(&[0]).ok_or(bad("log key separator"))?;
+    let name = RecordName::new(name)?;
+    let update_index = !u64::from_be_bytes(*update_index);
     // Reflog rewrites observed in Git retain older keys in a newer transaction table.
     if update_index > header.max {
         return Err(bad("log update range"));
@@ -517,7 +546,7 @@ fn decode_log(
             name: cursor.string()?.to_vec(),
             email: cursor.string()?.to_vec(),
             seconds: cursor.varint()?,
-            offset_minutes: super::timezone::decode(cursor.take(2)?.try_into().unwrap()),
+            offset_minutes: super::timezone::decode(cursor.array()?),
             message: cursor.string()?.to_vec(),
         }),
         _ => return Err(Error::Unsupported("log value type")),
@@ -560,14 +589,20 @@ impl<'a> Cursor<'a> {
         self.position = end;
         Ok(result)
     }
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
+        self.take(N)?
+            .first_chunk::<N>()
+            .copied()
+            .ok_or(bad("truncated record"))
+    }
     fn u64(&mut self) -> Result<u64, Error> {
-        Ok(u64::from_be_bytes(self.take(8)?.try_into().unwrap()))
+        Ok(u64::from_be_bytes(self.array()?))
     }
     fn varint(&mut self) -> Result<u64, Error> {
-        let mut byte = self.take(1)?[0];
+        let [mut byte] = self.array()?;
         let mut value = u64::from(byte & 127);
         while byte & 128 != 0 {
-            byte = self.take(1)?[0];
+            [byte] = self.array()?;
             value = value
                 .checked_add(1)
                 .and_then(|v| v.checked_mul(128))
@@ -591,9 +626,36 @@ impl<'a> Cursor<'a> {
     }
 }
 
-fn uint24(bytes: &[u8]) -> usize {
-    (usize::from(bytes[0]) << 16) | (usize::from(bytes[1]) << 8) | usize::from(bytes[2])
+fn uint24([high, middle, low]: [u8; 3]) -> usize {
+    (usize::from(high) << 16) | (usize::from(middle) << 8) | usize::from(low)
 }
 fn bad(reason: &'static str) -> Error {
     Error::Malformed(reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cursor, Error, Header, Limits, decode_log};
+    use crate::ObjectFormat;
+
+    #[test]
+    fn rejects_log_keys_without_separator_and_index() {
+        let header = Header {
+            size: 24,
+            alignment: 0,
+            format: ObjectFormat::Sha1,
+            min: 0,
+            max: u64::MAX,
+        };
+        let mut cursor = Cursor::new(&[], Limits::default());
+        for (key, reason) in [
+            (&b"\0\0\0\0\0\0\0"[..], "log key"),
+            (b"HEAD\x01\0\0\0\0\0\0\0\0", "log key separator"),
+        ] {
+            assert!(matches!(
+                decode_log(&mut cursor, key, 0, &header),
+                Err(Error::Malformed(actual)) if actual == reason
+            ));
+        }
+    }
 }

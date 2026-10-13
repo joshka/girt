@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::path::PathBuf;
 
 use super::store::{malformed, read_optional};
@@ -222,6 +230,10 @@ impl References<'_> {
         } else {
             self.common_dir
         };
+        #[expect(
+            clippy::unwrap_used,
+            reason = "the reference path was joined onto this root"
+        )]
         Ok(root.join("logs").join(path.strip_prefix(root).unwrap()))
     }
 }
@@ -305,11 +317,14 @@ fn parse_line(
             .and_then(|s| ObjectId::from_hex(format, s).ok())
             .ok_or_else(|| malformed(path, "invalid reflog ID"))
     };
-    let old = parse_id(&line[..width])?;
-    let new = parse_id(&line[width + 1..2 * width + 1])?;
-    let rest = &line[2 * width + 2..];
-    let tab = rest.iter().position(|b| *b == b'\t').unwrap_or(rest.len());
-    let identity = &rest[..tab];
+    let field = |range: std::ops::Range<usize>| {
+        line.get(range)
+            .ok_or_else(|| malformed(path, "expected two repository-format reflog IDs"))
+    };
+    let old = parse_id(field(0..width)?)?;
+    let new = parse_id(field(width + 1..2 * width + 1)?)?;
+    let rest = field(2 * width + 2..line.len())?;
+    let (identity, message) = crate::bytes::split_once(rest, b'\t').unwrap_or((rest, &[]));
     let date = crate::IdentityRef::parse(identity)
         .map_err(|_| malformed(path, "invalid reflog identity"))?
         .date_bytes;
@@ -319,9 +334,8 @@ fn parse_line(
         .nth(1)
         .unwrap_or_default();
     if !date.first().is_some_and(u8::is_ascii_whitespace)
-        || zone.len() != 5
-        || !matches!(zone[0], b'+' | b'-')
-        || !zone[1..].iter().all(u8::is_ascii_digit)
+        || !matches!(zone, [b'+' | b'-', digits @ ..]
+            if digits.len() == 4 && digits.iter().all(u8::is_ascii_digit))
     {
         return Err(malformed(path, "invalid reflog date framing"));
     }
@@ -333,7 +347,7 @@ fn parse_line(
                 "reflog identity or numeric date exceeds reader limits",
             )
         })?;
-    let message = rest.get(tab + 1..).unwrap_or_default().to_vec();
+    let message = message.to_vec();
     if identity.contains(&0)
         || identity.contains(&b'\r')
         || message.iter().any(|b| matches!(b, 0 | b'\r'))
@@ -367,6 +381,10 @@ mod tests {
     #[case::nul(b"A <a@b> 1 +0000\tx\0y\n")]
     #[case::cr(b"A <a@b> 1 +0000\tx\ry\n")]
     #[case::missing_separator(b"A <a@b> 1 +0000 message\n")]
+    #[case::sign_only_zone(b"A <a@b> 1 +\tmessage\n")]
+    #[case::short_zone(b"A <a@b> 1 +000\tmessage\n")]
+    #[case::text_zone(b"A <a@b> 1 +00x0\tmessage\n")]
+    #[case::no_identity(b"")]
     fn rejects_malformed_records(#[case] tail: &[u8]) {
         assert!(matches!(
             ReflogEntry::parse(crate::ObjectFormat::Sha1, &record(tail)),

@@ -102,6 +102,20 @@ fn rejects_every_truncated_prefix() {
         .unwrap();
     assert_all_prefixes_fail(&bytes);
 }
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn decodes_every_damaged_block_byte_without_panicking(#[case] format: ObjectFormat) {
+    let bytes = table(format).encode(Limits::default()).unwrap();
+    // The footer checksum covers only the footer, so block damage reaches the block decoder.
+    for position in 0..bytes.len() {
+        for value in [0x00, 0x01, 0x7f, 0x80, 0xff] {
+            let mut damaged = bytes.clone();
+            damaged[position] = value;
+            let _ = Table::decode(&damaged, Limits::default());
+        }
+    }
+}
 fn assert_all_prefixes_fail(bytes: &[u8]) {
     for length in 0..bytes.len() {
         assert!(
@@ -171,4 +185,35 @@ fn rejects_corrupt_compressed_log() {
     let log = u64::from_be_bytes(bytes[footer + 48..footer + 56].try_into().unwrap()) as usize;
     bytes[log + 4] = 0;
     assert!(Table::decode(&bytes, Limits::default()).is_err());
+}
+
+/// Offset just past the first reference block, whose length counts the file header it embeds.
+fn first_block_end(bytes: &[u8], format: ObjectFormat) -> usize {
+    let header = if format == ObjectFormat::Sha1 { 24 } else { 28 };
+    assert_eq!(bytes[header], b'r');
+    let length = &bytes[header + 1..header + 4];
+    usize::from(length[0]) << 16 | usize::from(length[1]) << 8 | usize::from(length[2])
+}
+
+#[rstest]
+#[case::sha1_empty_restarts(ObjectFormat::Sha1, "count", "empty restart table")]
+#[case::sha1_restart_offset(ObjectFormat::Sha1, "offset", "restart offsets")]
+#[case::sha256_empty_restarts(ObjectFormat::Sha256, "count", "empty restart table")]
+#[case::sha256_restart_offset(ObjectFormat::Sha256, "offset", "restart offsets")]
+fn rejects_damaged_restart_table(
+    #[case] format: ObjectFormat,
+    #[case] damage: &str,
+    #[case] reason: &str,
+) {
+    let mut bytes = table(format).encode(Limits::default()).unwrap();
+    let end = first_block_end(&bytes, format);
+    let count = usize::from(u16::from_be_bytes([bytes[end - 2], bytes[end - 1]]));
+    match damage {
+        "count" => bytes[end - 2..end].copy_from_slice(&[0, 0]),
+        _ => bytes[end - 2 - 3 * count..end - 2 - 3 * count + 3].copy_from_slice(&[0, 0, 0]),
+    }
+    assert!(matches!(
+        Table::decode(&bytes, Limits::default()),
+        Err(Error::Malformed(actual)) if actual == reason
+    ));
 }

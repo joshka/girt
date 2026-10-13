@@ -1,4 +1,13 @@
 //! Independent discovery of stored reflog names.
+
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -66,6 +75,7 @@ impl References<'_> {
                     if metadata.is_dir() {
                         pending.push(path);
                     } else if metadata.is_file() {
+                        #[expect(clippy::expect_used, reason = "path was read from directory")]
                         let relative = path
                             .strip_prefix(&directory)
                             .expect("discovered descendant");
