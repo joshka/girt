@@ -15,9 +15,9 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 /// Storage framing is validated; tree, commit, and tag payload syntax is not. Pass [`Self::data`]
 /// to [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`] as appropriate.
 ///
-/// A packed payload may be shared with the reader's delta base cache, so borrowing it through
-/// [`Self::data`] costs no copy. [`Self::into_data`] copies it only while the cache still shares
-/// it.
+/// A packed payload may be shared with the reader's delta base cache, and clones share it too, so
+/// borrowing it through [`Self::data`] costs no copy. [`Self::into_data`] copies it only while
+/// another `Object` or the cache shares it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Object {
     pub(crate) kind: ObjectKind,
@@ -41,7 +41,7 @@ impl Object {
         &self.data
     }
 
-    /// Takes ownership of the payload, copying it if the reader's cache still shares it.
+    /// Takes ownership of the payload, copying it if another `Object` or the cache shares it.
     pub fn into_data(self) -> Vec<u8> {
         Arc::unwrap_or_clone(self.data)
     }

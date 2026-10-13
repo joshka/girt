@@ -287,6 +287,10 @@ pub(crate) fn decode_checked(
         }
         check_cancelled(cancelled)?;
         if let Some(hit) = cache.and_then(|cache| cache.get(position)) {
+            // A payload cached under looser limits must still fit this read's.
+            if hit.data.len() > limits.max_object_bytes {
+                return Err(Error::Limit("object bytes"));
+            }
             if verify && position == requested && !hit.verified {
                 verify_identity(format, hit.kind, &hit.data, source.entry(position)?.id)?;
                 cache
@@ -480,5 +484,58 @@ pub(crate) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u
         if produced == 0 && consumed == 0 {
             return Err(Error::Corrupt("truncated packed zlib stream"));
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn object(data: Vec<u8>) -> Object {
+        Object {
+            kind: ObjectKind::Blob,
+            format: crate::ObjectFormat::Sha1,
+            data: Arc::new(data),
+        }
+    }
+
+    /// Eviction drops only the cache's share: payloads held by callers stay intact, and taking
+    /// one copies rather than aliasing another holder.
+    #[test]
+    fn evicted_payloads_stay_owned_by_their_holders() {
+        let cache = BaseCache::new();
+        let held = object(vec![7; 1024]);
+        let clone = held.clone();
+        cache.insert(0, &held, true);
+        let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
+        for position in 1..=8 {
+            cache.insert_shared(position, ObjectKind::Blob, &filler, true);
+        }
+        assert!(cache.get(0).is_none(), "the oldest entry is evicted");
+        let inner = cache.inner.lock().unwrap();
+        assert!(inner.bytes <= BaseCache::LIMIT);
+        assert_eq!(
+            inner.bytes,
+            inner.entries.values().map(|e| e.data.len()).sum()
+        );
+        drop(inner);
+        let mut taken = held.into_data();
+        taken.fill(0);
+        assert_eq!(clone.data(), &[7; 1024][..]);
+        assert_eq!(clone.into_data(), vec![7; 1024]);
+    }
+
+    /// Payloads up to an eighth of the limit are admitted; larger ones are not.
+    #[test]
+    fn admits_payloads_up_to_an_eighth_of_the_limit() {
+        let cache = BaseCache::new();
+        let largest = Arc::new(vec![0; BaseCache::LIMIT / 8]);
+        let oversized = Arc::new(vec![0; BaseCache::LIMIT / 8 + 1]);
+        cache.insert_shared(0, ObjectKind::Blob, &largest, false);
+        cache.insert_shared(1, ObjectKind::Blob, &oversized, false);
+        assert!(cache.get(0).is_some_and(|hit| !hit.verified));
+        assert!(cache.get(1).is_none());
+        cache.mark_verified(0);
+        assert!(cache.get(0).is_some_and(|hit| hit.verified));
     }
 }
