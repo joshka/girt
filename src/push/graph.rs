@@ -14,12 +14,12 @@
 
 use std::cmp::Reverse;
 use std::collections::hash_map::Entry;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, VecDeque};
 use std::sync::atomic::AtomicBool;
 
 use super::{ForcePolicy, PushCommand, PushFailure as Error, PushLimits};
 use crate::packet::check_cancelled;
-use crate::{Commit, Object, ObjectId, ObjectKind, Objects, ReadLimits};
+use crate::{Commit, IdMap, IdSet, Object, ObjectId, ObjectKind, Objects, ReadLimits};
 
 /// Known commits still painted after the date bound says no sent commit can be reached.
 ///
@@ -108,16 +108,16 @@ struct Walk<'a, F> {
     /// Locally present receiver roots, deduplicated in caller order, and whether an omitted
     /// object relies on each one.
     roots: Vec<(ObjectId, bool)>,
-    known: HashMap<ObjectId, Mark>,
-    commits: HashMap<ObjectId, CommitNode>,
+    known: IdMap<Mark>,
+    commits: IdMap<CommitNode>,
     /// Objects read for sending; entries later found in `known` are dropped by `finish`.
-    selected: HashMap<ObjectId, Object>,
-    blobs: HashSet<ObjectId>,
+    selected: IdMap<Object>,
+    blobs: IdSet,
     /// Kinds required by typed edges to discovered objects that may be sent.
-    expected: HashMap<ObjectId, Option<ObjectKind>>,
+    expected: IdMap<Option<ObjectKind>>,
     /// Non-commit objects from tips and tags, walked after tree marking.
     later: Vec<ObjectId>,
-    visits: HashMap<ObjectId, Visit>,
+    visits: IdMap<Visit>,
     queue: DateQueue,
     /// Queued commits not yet known; the walk may stop when this reaches zero.
     unknown_queued: usize,
@@ -139,13 +139,13 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
             observe,
             reads: 0,
             roots: Vec::new(),
-            known: HashMap::new(),
-            commits: HashMap::new(),
-            selected: HashMap::new(),
-            blobs: HashSet::new(),
-            expected: HashMap::new(),
+            known: IdMap::default(),
+            commits: IdMap::default(),
+            selected: IdMap::default(),
+            blobs: IdSet::default(),
+            expected: IdMap::default(),
             later: Vec::new(),
-            visits: HashMap::new(),
+            visits: IdMap::default(),
             queue: DateQueue::default(),
             unknown_queued: 0,
             processed: Vec::new(),
@@ -221,7 +221,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
     // Receiver roots.
 
     fn mark_roots(&mut self, roots: &[ObjectId]) -> Result<(), Error> {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::default();
         for &id in roots {
             check_cancelled(self.cancel)?;
             if !seen.insert(id) {
@@ -554,7 +554,7 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
     /// Marks trees of known commits whose children will be sent, so shared content is omitted.
     fn mark_boundary_trees(&mut self) -> Result<(), Error> {
         let mut boundary = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::default();
         for index in 0..self.processed.len() {
             let id = self.processed[index];
             if self.rely_on(id) {
@@ -719,8 +719,8 @@ impl<'a, F: FnMut(u64)> Walk<'a, F> {
         const NEW: u8 = 1;
         const OLD: u8 = 2;
         let pending = |id: ObjectId, paint: u8| paint & NEW != 0 && (paint & OLD == 0 || id == old);
-        let mut paints: HashMap<ObjectId, u8> = HashMap::new();
-        let mut queued = HashSet::new();
+        let mut paints: IdMap<u8> = IdMap::default();
+        let mut queued = IdSet::default();
         let mut queue = DateQueue::default();
         let mut open = 0usize;
         let new_date = self.ancestry_commit(new, true)?.expect("required");

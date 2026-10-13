@@ -10,7 +10,7 @@ use super::{
 };
 use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
-use crate::{ObjectFormat, ObjectId};
+use crate::{IdSet, ObjectFormat, ObjectId};
 
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
 #[derive(Debug, Clone)]
@@ -193,7 +193,7 @@ pub fn receive_with_known_depth(
 
 pub(super) struct Negotiation {
     pub(super) wants: Vec<ObjectId>,
-    haves: HashSet<ObjectId>,
+    haves: IdSet,
     multi_ack: bool,
     pub(super) needs_pack: bool,
     shallow: Vec<ObjectId>,
@@ -272,7 +272,7 @@ pub(super) fn request(
         writer.flush()?;
         return Ok(Negotiation {
             wants,
-            haves: HashSet::new(),
+            haves: IdSet::default(),
             multi_ack: false,
             needs_pack: false,
             shallow: known.shallow.clone(),
@@ -317,7 +317,7 @@ pub(super) fn request(
         packet(writer, format!("deepen {depth}\n").as_bytes(), cancel)?;
     }
     put(writer, b"0000", cancel)?;
-    let haves: HashSet<_> = known.haves.iter().take(have_count).copied().collect();
+    let haves: IdSet = known.haves.iter().take(have_count).copied().collect();
     for id in known.haves.iter().take(have_count) {
         packet(writer, format!("have {id}\n").as_bytes(), cancel)?;
     }
@@ -454,11 +454,7 @@ fn read_shallow(
 
 // One batch of at most 32 haves keeps both directions below ordinary pipe capacity. Reading
 // the bounded ACK sequence after done avoids assuming a flush/NAK boundary in single-ACK mode.
-fn read_ack(
-    wire: &mut Wire<'_, impl Read>,
-    haves: &HashSet<ObjectId>,
-    multi_ack: bool,
-) -> Result<(), Error> {
+fn read_ack(wire: &mut Wire<'_, impl Read>, haves: &IdSet, multi_ack: bool) -> Result<(), Error> {
     let mut continued = HashSet::new();
     for _ in 0..=haves.len() {
         let packet = wire
@@ -650,7 +646,7 @@ mod tests {
             &mut wire,
             &Negotiation {
                 wants: vec![id],
-                haves: HashSet::new(),
+                haves: IdSet::default(),
                 multi_ack: false,
                 needs_pack: true,
                 shallow: vec![],
@@ -700,7 +696,7 @@ mod tests {
             cancel: &cancel,
         };
         let id = "1111111111111111111111111111111111111111".parse().unwrap();
-        read_ack(&mut wire, &HashSet::from([id]), multi)
+        read_ack(&mut wire, &IdSet::from_iter([id]), multi)
     }
 
     #[rstest]

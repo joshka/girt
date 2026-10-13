@@ -277,6 +277,7 @@ pub use commit::{
 pub use config::{Config, ConfigError};
 pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
+pub(crate) use object::{IdMap, IdSet, PeerIdMap, PeerIdSet};
 pub use object::{ObjectFormat, ObjectFormatError, ObjectId, ParseObjectIdError, encode_blob};
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadLimits};

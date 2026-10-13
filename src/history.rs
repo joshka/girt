@@ -1,8 +1,10 @@
 //! Bounded ancestry queries over verified loose and packed commit objects.
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::{Commit, CommitError, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits};
+use crate::{
+    Commit, CommitError, IdMap, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits,
+};
 
 /// Resource bounds for one complete history operation.
 ///
@@ -249,7 +251,7 @@ impl Objects {
 
 struct Graph {
     ids: Vec<ObjectId>,
-    positions: HashMap<ObjectId, usize>,
+    positions: IdMap<usize>,
     parents: Vec<Vec<usize>>,
 }
 
@@ -300,7 +302,7 @@ impl Graph {
         let operation = || {
             let mut graph = Self {
                 ids: vec![],
-                positions: HashMap::new(),
+                positions: IdMap::default(),
                 parents: vec![],
             };
             for &root in roots {

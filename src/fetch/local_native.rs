@@ -1,6 +1,6 @@
 //! Native local advertisement and reachable-pack construction.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
@@ -10,7 +10,7 @@ use super::{
 };
 use crate::refs::{RefName, Target};
 use crate::transport::TransportControl;
-use crate::{ObjectId, ObjectKind, PackWriteLimits, Repository, UnverifiedObject};
+use crate::{IdMap, IdSet, ObjectId, ObjectKind, PackWriteLimits, Repository, UnverifiedObject};
 
 #[cfg(test)]
 pub(super) fn receive(
@@ -85,7 +85,7 @@ pub(super) fn receive_depth_observed(
         .map_err(FetchError::Destination)?;
     let advertisement = advertise_store(source, &store, limits, control)?;
     let wants = select(&advertisement);
-    if depth.is_some() && wants.iter().copied().collect::<HashSet<_>>().len() != 1 {
+    if depth.is_some() && wants.iter().copied().collect::<IdSet>().len() != 1 {
         return Err(FetchError::Unsupported("native local depth selection"));
     }
     let empty = KnownHistory::default();
@@ -97,7 +97,7 @@ pub(super) fn receive_depth_observed(
     if wants.len() > limits.max_wants {
         return Err(FetchError::Limit("wants"));
     }
-    let offered: HashSet<_> = advertisement
+    let offered: IdSet = advertisement
         .refs
         .iter()
         .map(|reference| reference.id)
@@ -130,8 +130,8 @@ pub(super) fn receive_depth_observed(
         ));
     }
     let mut pending: VecDeque<_> = wants.iter().copied().map(|id| (id, None)).collect();
-    let mut expected = HashMap::<ObjectId, Option<ObjectKind>>::new();
-    let mut observed = HashMap::<ObjectId, ObjectKind>::new();
+    let mut expected = IdMap::<Option<ObjectKind>>::default();
+    let mut observed = IdMap::<ObjectKind>::default();
     let mut selected = Vec::<ObjectId>::new();
     let mut dependencies = Vec::new();
     let mut shallow = Vec::new();

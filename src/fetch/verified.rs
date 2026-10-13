@@ -1,11 +1,9 @@
 //! Receive-owned evidence for structural walks, never a source of object content.
-use std::collections::HashMap;
-
-use crate::{Object, ObjectId, ObjectKind, ReadLimits};
+use crate::{IdMap, Object, ObjectId, ObjectKind, ReadLimits};
 
 #[derive(Debug, Default)]
 pub(super) struct VerifiedObjects {
-    pub objects: HashMap<ObjectId, VerifiedObject>,
+    pub objects: IdMap<VerifiedObject>,
 }
 
 #[derive(Debug)]

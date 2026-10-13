@@ -340,7 +340,7 @@ mod tests {
         };
         let id = object.id();
         let known = Arc::new(KnownHistory {
-            objects: [(id, object)].into(),
+            objects: crate::IdMap::from_iter([(id, object)]),
             ..Default::default()
         });
         let mut snapshots = Vec::new();
