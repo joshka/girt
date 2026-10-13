@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/joshka/girt/compare/v0.3.4...v0.4.0) - 2026-10-13
+
+### Other
+
+- Open pack indexes with linear structural checks ([#82](https://github.com/joshka/girt/pull/82))
+- Stop verified fast-forward walks at the old tip ([#85](https://github.com/joshka/girt/pull/85))
+- Reuse verified receive evidence in fetch and clone ([#83](https://github.com/joshka/girt/pull/83))
+- Fix Windows HTTP post-send failure assertion ([#79](https://github.com/joshka/girt/pull/79))
+- Generate push deltas against advertised history ([#78](https://github.com/joshka/girt/pull/78))
+- Cut per-entry read cost in walks, retirement and repack ([#77](https://github.com/joshka/girt/pull/77))
+- Answer credential.helper = store natively ([#70](https://github.com/joshka/girt/pull/70))
+- Share retention plans and locate blob edges ([#71](https://github.com/joshka/girt/pull/71))
+
 ## [0.3.4](https://github.com/joshka/girt/compare/v0.3.3...v0.3.4) - 2026-10-12
 
 ### Other
