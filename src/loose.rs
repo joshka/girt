@@ -329,7 +329,7 @@ impl LooseObjects {
         self.write_object(tag.object_format(), ObjectKind::Tag, tag.as_bytes())
     }
 
-    fn write_object(
+    pub(crate) fn write_object(
         &self,
         format: ObjectFormat,
         kind: ObjectKind,

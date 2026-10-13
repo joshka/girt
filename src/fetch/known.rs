@@ -205,6 +205,13 @@ impl KnownHistory {
         self
     }
 
+    /// Lets validation read the store's synthetic empty tree, returning its ID when unstored.
+    ///
+    /// The caller must store the tree before publishing anything that depends on it.
+    pub(crate) fn assume_empty_tree(&mut self) -> Option<ObjectId> {
+        self.missing_empty_tree.take()
+    }
+
     pub(super) fn applies_to(&self, wants: &[ObjectId]) -> bool {
         !self.only_when_all_wants_known || wants.iter().all(|&id| self.complete_kind(id).is_some())
     }
