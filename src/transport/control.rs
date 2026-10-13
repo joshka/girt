@@ -20,7 +20,9 @@ use std::time::Instant;
 /// interruption before then retains its acknowledgements in an uncertain error.
 ///
 /// SSH's owned process starts in a new process group on macOS/Linux and is cleaned up by its
-/// adapter. Native local transfer starts no process or worker. No path is an execution sandbox.
+/// adapter. Native local push similarly owns receive-hook processes on macOS/Linux; native local
+/// fetch starts no process or worker. Hooks are trusted executable code. No path is an execution
+/// sandbox.
 ///
 /// Server stderr is drained and discarded, rather than inherited: a blocked diagnostic sink
 /// must not stall the operation. Fetch sideband progress and push status messages remain available.

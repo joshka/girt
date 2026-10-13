@@ -121,7 +121,20 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     if prepared.commands.is_empty() {
         return Ok(report);
     }
-    let hooks = super::hooks::ReceiveHooks::new(&repository, prepared.options.clone());
+    let hooks = super::hooks::ReceiveHooks::new(
+        &repository,
+        prepared.options.clone(),
+        prepared.limits.max_status_bytes,
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    if ["pre-receive", "update", "post-receive", "post-update"]
+        .iter()
+        .any(|name| hooks.has(name))
+    {
+        return Err(PushError::NotSent(PushFailure::Unsupported(
+            "receive hook execution on this platform",
+        )));
+    }
     for hook in ["proc-receive", "reference-transaction", "push-to-checkout"] {
         if hooks.has(hook) {
             return Err(PushError::NotSent(PushFailure::Unsupported(
@@ -201,7 +214,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
         max_delta_bytes: prepared.limits.read.max_delta_bytes,
         ..FetchLimits::trusted()
     };
-    if !prepared.pack.is_empty() {
+    let (received, unstored_empty_tree) = if !prepared.pack.is_empty() {
         let store = repository.objects(Default::default()).map_err(|error| {
             PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
         })?;
@@ -258,9 +271,120 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             &mut crate::fetch::ValidationObserver::new(control.cancel, &mut |_| {}),
         )
         .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
-        if let Some(id) = unstored_empty_tree
-            && received.dependencies().contains(&id)
+        let unstored_empty_tree =
+            unstored_empty_tree.filter(|id| received.dependencies().contains(id));
+        (Some(received), unstored_empty_tree)
+    } else {
+        (None, None)
+    };
+    let mut quarantine = received
+        .as_ref()
+        .filter(|_| hooks.has("pre-receive"))
+        .map(|_| super::quarantine::Quarantine::new(&repository))
+        .transpose()
+        .map_err(|error| PushError::NotSent(error.into()))?;
+    let pending = report.clone();
+    let result = (|| {
+        if let (Some(received), Some(quarantine)) = (&received, &quarantine) {
+            if unstored_empty_tree.is_some() {
+                quarantine
+                    .repository
+                    .loose_objects()
+                    .write_object(prepared.format, crate::ObjectKind::Tree, b"")
+                    .map_err(|error| {
+                        PushError::NotSent(PushFailure::Io(std::io::Error::other(error)))
+                    })?;
+            }
+            received
+                .install(&quarantine.repository, Default::default(), control.cancel)
+                .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        }
+        let private_inputs = quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.observe())
+            .transpose()
+            .map_err(|error| PushError::NotSent(error.into()))?;
+        report.unpack = Some(Status::Ok);
+        // Like Git, a reference that already has the requested (non-deletion) value is up to date,
+        // whatever the expected value, and isn't part of the update.
+        let null = crate::ObjectId::null(prepared.format);
+        let mut current_values = Vec::with_capacity(prepared.commands.len());
+        for command in &prepared.commands {
+            let current = refs
+                .read(&command.name)
+                .map_err(|error| PushError::Uncertain {
+                    cause: PushFailure::reference(error),
+                    report: Box::new(report.clone()),
+                })?;
+            current_values.push(match current {
+                Some(Target::Direct(id)) => Some(id),
+                _ => None,
+            });
+        }
+        let up_to_date: Vec<bool> = prepared
+            .commands
+            .iter()
+            .zip(&current_values)
+            // Deletions are never up to date: deleting an absent reference still checks its
+            // expected value, as with `git push --force-with-lease`.
+            .map(|(command, current)| !command.deletes() && *current == Some(command.new))
+            .collect();
+        let hook_updates = |selected: &dyn Fn(usize) -> bool| {
+            prepared
+                .commands
+                .iter()
+                .enumerate()
+                .filter(|&(index, _)| selected(index))
+                .map(|(index, command)| super::hooks::HookUpdate {
+                    old: current_values[index].unwrap_or(null),
+                    new: command.new,
+                    name: &command.name,
+                })
+                .collect::<Vec<_>>()
+        };
+        let hook_error = |error: PushFailure, report: &PushReport| PushError::Uncertain {
+            cause: error,
+            report: Box::new(report.clone()),
+        };
+        let (accepted, messages) = hooks
+            .run(
+                "pre-receive",
+                &[],
+                &hook_updates(&|index| !up_to_date[index]),
+                control,
+                quarantine.as_ref().map(|quarantine| quarantine.path()),
+                repository.object_dir(),
+            )
+            .map_err(PushError::NotSent)?;
+        report
+            .progress
+            .extend((!messages.is_empty()).then_some(messages));
+        if !accepted {
+            for (index, reference) in report.refs.iter_mut().enumerate() {
+                if !up_to_date[index] {
+                    reference.status =
+                        Some(Status::Rejected(b"pre-receive hook declined".to_vec()));
+                    reference.rejection_origin = Some(RejectionOrigin::Receiver);
+                } else {
+                    reference.status = Some(Status::Ok);
+                }
+            }
+            return Ok(report);
+        }
+        if let (Some(quarantine), Some(expected)) = (&quarantine, &private_inputs)
+            && quarantine
+                .observe()
+                .map_err(|error| PushError::NotSent(error.into()))?
+                != *expected
         {
+            return Err(PushError::NotSent(PushFailure::Unsupported(
+                "pre-receive modified quarantined object storage",
+            )));
+        }
+        control
+            .check()
+            .map_err(|error| PushError::NotSent(error.into()))?;
+        if unstored_empty_tree.is_some() {
             repository
                 .loose_objects()
                 .write_object(prepared.format, crate::ObjectKind::Tree, b"")
@@ -268,234 +392,205 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                     PushError::NotSent(PushFailure::Io(std::io::Error::other(error)))
                 })?;
         }
-        received
-            .install(&repository, Default::default(), control.cancel)
-            .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
-    }
-    report.unpack = Some(Status::Ok);
-    // Like Git, a reference that already has the requested (non-deletion) value is up to date,
-    // whatever the expected value, and isn't part of the update.
-    let null = crate::ObjectId::null(prepared.format);
-    let mut current_values = Vec::with_capacity(prepared.commands.len());
-    for command in &prepared.commands {
-        let current = refs
-            .read(&command.name)
-            .map_err(|error| PushError::Uncertain {
-                cause: PushFailure::reference(error),
+        if let Some(received) = &received {
+            received
+                .install(&repository, Default::default(), control.cancel)
+                .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        }
+        if let Some(quarantine) = quarantine.take() {
+            let path = quarantine.path().to_owned();
+            quarantine.close().map_err(|source| PushError::Uncertain {
+                cause: PushFailure::QuarantineCleanup {
+                    path,
+                    source,
+                    failure: None,
+                },
                 report: Box::new(report.clone()),
             })?;
-        current_values.push(match current {
-            Some(Target::Direct(id)) => Some(id),
-            _ => None,
-        });
-    }
-    let up_to_date: Vec<bool> = prepared
-        .commands
-        .iter()
-        .zip(&current_values)
-        // Deletions are never up to date: deleting an absent reference still checks its
-        // expected value, as with `git push --force-with-lease`.
-        .map(|(command, current)| !command.deletes() && *current == Some(command.new))
-        .collect();
-    let hook_updates = |selected: &dyn Fn(usize) -> bool| {
-        prepared
-            .commands
-            .iter()
-            .enumerate()
-            .filter(|&(index, _)| selected(index))
-            .map(|(index, command)| super::hooks::HookUpdate {
-                old: current_values[index].unwrap_or(null),
-                new: command.new,
-                name: &command.name,
-            })
-            .collect::<Vec<_>>()
-    };
-    let hook_error = |error: std::io::Error, report: &PushReport| PushError::Uncertain {
-        cause: error.into(),
-        report: Box::new(report.clone()),
-    };
-    let (accepted, messages) = hooks
-        .run(
-            "pre-receive",
-            &[],
-            &hook_updates(&|index| !up_to_date[index]),
-        )
-        .map_err(|error| hook_error(error, &report))?;
-    report
-        .progress
-        .extend((!messages.is_empty()).then_some(messages));
-    if !accepted {
-        for (index, reference) in report.refs.iter_mut().enumerate() {
-            if !up_to_date[index] {
-                reference.status = Some(Status::Rejected(b"pre-receive hook declined".to_vec()));
-                reference.rejection_origin = Some(RejectionOrigin::Receiver);
-            } else {
-                reference.status = Some(Status::Ok);
-            }
         }
-        return Ok(report);
-    }
-    for (index, command) in prepared.commands.iter().enumerate() {
-        if let Err(error) = control.check() {
-            return Err(PushError::Uncertain {
-                cause: error.into(),
-                report: Box::new(report),
-            });
-        }
-        report.refs[index].attempted = true;
-        if up_to_date[index] {
-            report.refs[index].status = Some(Status::Ok);
-            continue;
-        }
-        let old = current_values[index].unwrap_or(null).to_string();
-        let new = command.new.to_string();
-        let (accepted, messages) = hooks
-            .run(
-                "update",
-                &[command.name.as_bytes(), old.as_bytes(), new.as_bytes()],
-                &[],
-            )
-            .map_err(|error| hook_error(error, &report))?;
-        report
-            .progress
-            .extend((!messages.is_empty()).then_some(messages));
-        if !accepted {
-            // As `git-receive-pack` reports it.
-            let mut message = b"error: hook declined to update ".to_vec();
-            message.extend_from_slice(command.name.as_bytes());
-            message.push(b'\n');
-            report.progress.push(message);
-            report.refs[index].status = Some(Status::Rejected(b"hook declined".to_vec()));
-            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-            continue;
-        }
-        if hide.matches(&command.name) {
-            report.refs[index].status = Some(Status::Rejected(b"hidden reference".to_vec()));
-            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-            continue;
-        }
-        let checked_out =
-            is_checked_out(&repository, &command.name, config_inputs).map_err(|error| {
-                PushError::Uncertain {
-                    cause: error,
-                    report: Box::new(report.clone()),
-                }
-            })?;
-        if checked_out {
-            if command.deletes() && deny_delete_current {
-                report.refs[index].status = Some(Status::Rejected(
-                    b"deletion of current branch denied".to_vec(),
-                ));
-                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-                continue;
-            }
-            if !command.deletes() && current_policy == CurrentPolicy::Refuse {
-                report.refs[index].status = Some(Status::Rejected(
-                    b"branch is currently checked out".to_vec(),
-                ));
-                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-                continue;
-            }
-            if !command.deletes() && current_policy == CurrentPolicy::Warn {
-                report
-                    .warnings
-                    .push(b"updating currently checked out branch".to_vec());
-            }
-        }
-        if command.deletes() && deny_deletes {
-            report.refs[index].status = Some(Status::Rejected(b"deletion denied".to_vec()));
-            report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-            continue;
-        }
-        if command.force == super::ForcePolicy::Allow
-            && command.name.as_bytes().starts_with(b"refs/heads/")
-            && let Some(old) = command.expected
-            && !command.deletes()
-            && deny_non_fast_forwards
-        {
-            let objects =
-                repository
-                    .objects(Default::default())
-                    .map_err(|error| PushError::Uncertain {
-                        cause: PushFailure::install(FetchError::Destination(error)),
-                        report: Box::new(report.clone()),
-                    })?;
-            let fast_forward = objects
-                .is_ancestor(old, command.new, crate::HistoryLimits::default())
-                .unwrap_or(false);
-            if !fast_forward {
-                report.refs[index].status = Some(Status::Rejected(b"non-fast-forward".to_vec()));
-                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
-                continue;
-            }
-        }
-        let edit = RefEdit {
-            name: command.name.clone(),
-            dereference: false,
-            target: (!command.deletes()).then_some(Target::Direct(command.new)),
-            expected: command
-                .expected
-                .map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id))),
-            reflog: reflog_policy(&refs, command, log_policy, identity).map_err(|cause| {
-                PushError::Uncertain {
-                    cause,
-                    report: Box::new(report.clone()),
-                }
-            })?,
-        };
-        match refs.transaction(&[edit]) {
-            Ok(outcomes) => {
-                report.refs[index].status = Some(Status::Ok);
-                report.refs[index].effects = outcomes.into_iter().next();
-            }
-            Err(TransactionError::Prepare { source, .. }) => {
-                let (reason, origin) = if matches!(source, ReferenceError::Mismatch { .. }) {
-                    (b"stale old value".to_vec(), RejectionOrigin::ExpectedValue)
-                } else {
-                    (
-                        b"reference storage rejected".to_vec(),
-                        RejectionOrigin::Receiver,
-                    )
-                };
-                report.refs[index].status = Some(Status::Rejected(reason));
-                report.refs[index].rejection_origin = Some(origin);
-            }
-            Err(TransactionError::Publish { source, outcomes }) => {
-                if let Some(effect) = outcomes.into_iter().next() {
-                    if effect.reference == RefOutcome::Published {
-                        report.refs[index].status = Some(Status::Ok);
-                    }
-                    report.refs[index].effects = Some(effect);
-                }
+        for (index, command) in prepared.commands.iter().enumerate() {
+            if let Err(error) = control.check() {
                 return Err(PushError::Uncertain {
-                    cause: PushFailure::reference(source),
+                    cause: error.into(),
                     report: Box::new(report),
                 });
             }
+            report.refs[index].attempted = true;
+            if up_to_date[index] {
+                report.refs[index].status = Some(Status::Ok);
+                continue;
+            }
+            let old = current_values[index].unwrap_or(null).to_string();
+            let new = command.new.to_string();
+            let (accepted, messages) = hooks
+                .run(
+                    "update",
+                    &[command.name.as_bytes(), old.as_bytes(), new.as_bytes()],
+                    &[],
+                    control,
+                    None,
+                    repository.object_dir(),
+                )
+                .map_err(|error| hook_error(error, &report))?;
+            report
+                .progress
+                .extend((!messages.is_empty()).then_some(messages));
+            if !accepted {
+                // As `git-receive-pack` reports it.
+                let mut message = b"error: hook declined to update ".to_vec();
+                message.extend_from_slice(command.name.as_bytes());
+                message.push(b'\n');
+                report.progress.push(message);
+                report.refs[index].status = Some(Status::Rejected(b"hook declined".to_vec()));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                continue;
+            }
+            if hide.matches(&command.name) {
+                report.refs[index].status = Some(Status::Rejected(b"hidden reference".to_vec()));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                continue;
+            }
+            let checked_out =
+                is_checked_out(&repository, &command.name, config_inputs).map_err(|error| {
+                    PushError::Uncertain {
+                        cause: error,
+                        report: Box::new(report.clone()),
+                    }
+                })?;
+            if checked_out {
+                if command.deletes() && deny_delete_current {
+                    report.refs[index].status = Some(Status::Rejected(
+                        b"deletion of current branch denied".to_vec(),
+                    ));
+                    report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                    continue;
+                }
+                if !command.deletes() && current_policy == CurrentPolicy::Refuse {
+                    report.refs[index].status = Some(Status::Rejected(
+                        b"branch is currently checked out".to_vec(),
+                    ));
+                    report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                    continue;
+                }
+                if !command.deletes() && current_policy == CurrentPolicy::Warn {
+                    report
+                        .warnings
+                        .push(b"updating currently checked out branch".to_vec());
+                }
+            }
+            if command.deletes() && deny_deletes {
+                report.refs[index].status = Some(Status::Rejected(b"deletion denied".to_vec()));
+                report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                continue;
+            }
+            if command.force == super::ForcePolicy::Allow
+                && command.name.as_bytes().starts_with(b"refs/heads/")
+                && let Some(old) = command.expected
+                && !command.deletes()
+                && deny_non_fast_forwards
+            {
+                let objects = repository.objects(Default::default()).map_err(|error| {
+                    PushError::Uncertain {
+                        cause: PushFailure::install(FetchError::Destination(error)),
+                        report: Box::new(report.clone()),
+                    }
+                })?;
+                let fast_forward = objects
+                    .is_ancestor(old, command.new, crate::HistoryLimits::default())
+                    .unwrap_or(false);
+                if !fast_forward {
+                    report.refs[index].status =
+                        Some(Status::Rejected(b"non-fast-forward".to_vec()));
+                    report.refs[index].rejection_origin = Some(RejectionOrigin::Receiver);
+                    continue;
+                }
+            }
+            let edit = RefEdit {
+                name: command.name.clone(),
+                dereference: false,
+                target: (!command.deletes()).then_some(Target::Direct(command.new)),
+                expected: command
+                    .expected
+                    .map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id))),
+                reflog: reflog_policy(&refs, command, log_policy, identity).map_err(|cause| {
+                    PushError::Uncertain {
+                        cause,
+                        report: Box::new(report.clone()),
+                    }
+                })?,
+            };
+            match refs.transaction(&[edit]) {
+                Ok(outcomes) => {
+                    report.refs[index].status = Some(Status::Ok);
+                    report.refs[index].effects = outcomes.into_iter().next();
+                }
+                Err(TransactionError::Prepare { source, .. }) => {
+                    let (reason, origin) = if matches!(source, ReferenceError::Mismatch { .. }) {
+                        (b"stale old value".to_vec(), RejectionOrigin::ExpectedValue)
+                    } else {
+                        (
+                            b"reference storage rejected".to_vec(),
+                            RejectionOrigin::Receiver,
+                        )
+                    };
+                    report.refs[index].status = Some(Status::Rejected(reason));
+                    report.refs[index].rejection_origin = Some(origin);
+                }
+                Err(TransactionError::Publish { source, outcomes }) => {
+                    if let Some(effect) = outcomes.into_iter().next() {
+                        if effect.reference == RefOutcome::Published {
+                            report.refs[index].status = Some(Status::Ok);
+                        }
+                        report.refs[index].effects = Some(effect);
+                    }
+                    return Err(PushError::Uncertain {
+                        cause: PushFailure::reference(source),
+                        report: Box::new(report),
+                    });
+                }
+            }
         }
+        let updated =
+            |index: usize| !up_to_date[index] && report.refs[index].status == Some(Status::Ok);
+        let post_updates = hook_updates(&updated);
+        if !post_updates.is_empty() {
+            let (_, messages) = hooks
+                .run(
+                    "post-receive",
+                    &[],
+                    &post_updates,
+                    control,
+                    None,
+                    repository.object_dir(),
+                )
+                .map_err(|error| hook_error(error, &report))?;
+            let names: Vec<&[u8]> = post_updates
+                .iter()
+                .map(|update| update.name.as_bytes())
+                .collect();
+            let (_, update_messages) = hooks
+                .run(
+                    "post-update",
+                    &names,
+                    &[],
+                    control,
+                    None,
+                    repository.object_dir(),
+                )
+                .map_err(|error| hook_error(error, &report))?;
+            report
+                .progress
+                .extend((!messages.is_empty()).then_some(messages));
+            report
+                .progress
+                .extend((!update_messages.is_empty()).then_some(update_messages));
+        }
+        Ok(report)
+    })();
+    match quarantine {
+        Some(quarantine) => quarantine.finish(result, pending),
+        None => result,
     }
-    let updated =
-        |index: usize| !up_to_date[index] && report.refs[index].status == Some(Status::Ok);
-    let post_updates = hook_updates(&updated);
-    if !post_updates.is_empty() {
-        let (_, messages) = hooks
-            .run("post-receive", &[], &post_updates)
-            .map_err(|error| hook_error(error, &report))?;
-        let names: Vec<&[u8]> = post_updates
-            .iter()
-            .map(|update| update.name.as_bytes())
-            .collect();
-        let (_, update_messages) = hooks
-            .run("post-update", &names, &[])
-            .map_err(|error| hook_error(error, &report))?;
-        report
-            .progress
-            .extend((!messages.is_empty()).then_some(messages));
-        report
-            .progress
-            .extend((!update_messages.is_empty()).then_some(update_messages));
-    }
-    Ok(report)
 }
 
 struct HideRules(Vec<(Vec<u8>, bool)>);

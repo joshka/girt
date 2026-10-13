@@ -685,6 +685,13 @@ pub enum OpenError {
 }
 
 impl Repository {
+    /// Internal receive storage shares metadata but owns a separate object directory.
+    pub(crate) fn with_private_object_directory(&self, directory: &Path) -> Self {
+        let mut repository = self.clone();
+        repository.object_dir = directory.to_owned();
+        repository
+    }
+
     /// Returns the on-disk reference backend selected by local repository configuration.
     pub fn reference_backend(&self) -> crate::refs::Backend {
         self.reference_backend

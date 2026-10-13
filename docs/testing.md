@@ -93,6 +93,24 @@ Existing explicit-cutoff callers must migrate both values to
 update. Configured callers select `Configured(ReflogExpiry)`. Modes cannot contradict each other;
 `KeepAll` remains the default. No jj source change is made in this PR.
 
+### Native Receive-Hook Acceptance
+
+[Issue 92](https://github.com/joshka/girt/issues/92) records the Git observations, failure
+inventory, tests-first revision and design choice. `tests/push.rs` exercises private pre-receive
+visibility, rejection cleanup, update visibility after primary publication, cancellation
+synchronized with a hook-start marker, post-receive cancellation with published-ref evidence,
+combined output limits, explicit refusal of hook-written objects and preservation of a replacement
+quarantine directory. Accepted SHA-1/SHA-256 transfers read primary alternates through paths
+containing quotes, colons and newlines, then pass Git fsck. Histories come from original
+Git-generated fixtures.
+
+Process units exercise full stdin/stdout/stderr pipes and a descendant holding output open after its
+leader exits. Fixtures are independently finite if cancellation regresses. Windows selects the
+portable native-transfer suite, including refusal of configured hooks before mutation; supported
+hook execution needs native macOS/Linux evidence. Existing installation, expected-value and
+receive-policy tests remain applicable. Process-group-escaping hooks remain a separate limitation,
+not an acceptance claim for this increment.
+
 ## Required Evidence
 
 - **Behavior:** State what callers can do, supported formats, and explicit exclusions. Reject

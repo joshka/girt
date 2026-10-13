@@ -887,3 +887,178 @@ fn native_push_accepts_history_reaching_unstored_empty_tree(#[case] format: Obje
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[test]
+fn receive_hooks_on_unsupported_platform_refuse_before_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", ObjectFormat::Sha1, Backend::Files);
+    let destination = repository(&root, "destination", ObjectFormat::Sha1, Backend::Files);
+    let id = commit(&source);
+    let path = destination.git_dir().join("hooks/pre-receive");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, b"hook must not execute").unwrap();
+    let prepared = PreparedPush::new_local(
+        &source.objects(PackLimits::default()).unwrap(),
+        vec![PushCommand {
+            name: RefName::new(b"refs/heads/main").unwrap(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let error = send_local(destination.git_dir(), &prepared, &AtomicBool::new(false)).unwrap_err();
+    assert!(matches!(
+        error,
+        PushError::NotSent(PushFailure::Unsupported(
+            "receive hook execution on this platform"
+        ))
+    ));
+    assert!(
+        destination
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(id, Default::default())
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        destination
+            .references()
+            .unwrap()
+            .read(&RefName::new(b"refs/heads/main").unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[cfg(unix)]
+fn git_unstored_empty_tree_commit(
+    repository: &Repository,
+    tree: girt::ObjectId,
+    parent: Option<girt::ObjectId>,
+) -> girt::ObjectId {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .arg("--git-dir")
+        .arg(repository.git_dir())
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "commit-tree",
+            &tree.to_string(),
+        ])
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            repository.git_dir().join("absent-config"),
+        )
+        .env("GIT_AUTHOR_NAME", "Local Test")
+        .env("GIT_AUTHOR_EMAIL", "local@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Local Test")
+        .env("GIT_COMMITTER_EMAIL", "local@example.invalid")
+        .env("GIT_AUTHOR_DATE", "@1700000000 +0000")
+        .env("GIT_COMMITTER_DATE", "@1700000000 +0000")
+        .stdin(std::process::Stdio::null());
+    if let Some(parent) = parent {
+        command.args(["-p", &parent.to_string()]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn pre_receive_rejection_does_not_materialize_unstored_empty_tree(#[case] format: ObjectFormat) {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, Backend::Files);
+    let dest = repository(&root, "destination", format, Backend::Files);
+    let tree = Tree::new(format, vec![]).unwrap().id();
+    let parent = git_unstored_empty_tree_commit(&source, tree, None);
+    let child = git_unstored_empty_tree_commit(&source, tree, Some(parent));
+    let parent_commit = Commit::parse(format, &git_cat_file(&source, parent)).unwrap();
+    let child_commit = Commit::parse(format, &git_cat_file(&source, child)).unwrap();
+    assert_eq!(
+        dest.loose_objects().write_commit(&parent_commit).unwrap(),
+        parent
+    );
+    assert_eq!(
+        dest.loose_objects().write_commit(&child_commit).unwrap(),
+        child
+    );
+    dest.references()
+        .unwrap()
+        .update_without_reflog(
+            &RefName::new(b"refs/heads/main").unwrap(),
+            Target::Direct(child),
+            Expected::Absent,
+        )
+        .unwrap();
+    let hex = tree.to_string();
+    let relative_tree = format!("{}/{}", &hex[..2], &hex[2..]);
+    assert!(!dest.object_dir().join(&relative_tree).exists());
+    let path = dest.git_dir().join("hooks/pre-receive");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, format!("#!/bin/sh\ntest -f \"$GIT_OBJECT_DIRECTORY/{relative_tree}\" || exit 9\ngit cat-file -e {tree} || exit 9\nprintf visible >hook-observed\ncat >/dev/null\nexit 1\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let prepared = PreparedPush::new_local(
+        &source.objects(PackLimits::default()).unwrap(),
+        vec![PushCommand {
+            name: RefName::new(b"refs/heads/copy").unwrap(),
+            expected: None,
+            new: parent,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[child],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(girt::push::Status::Rejected(
+            b"pre-receive hook declined".to_vec()
+        ))
+    );
+    assert_eq!(
+        std::fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"visible"
+    );
+    assert!(!dest.object_dir().join(relative_tree).exists());
+    assert!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new(b"refs/heads/copy").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        dest.references()
+            .unwrap()
+            .read(&RefName::new(b"refs/heads/main").unwrap())
+            .unwrap(),
+        Some(Target::Direct(child))
+    );
+}

@@ -19,7 +19,7 @@ use crate::transport::TransportControl;
 /// Opens an explicit path through [`crate::Repository::open`], checks receiver-history
 /// dependencies, installs the pack, then applies each command with a conditional reference
 /// transaction against its exact expected old value. A stale command rejects independently.
-/// It invokes no Git executable. Like `git-receive-pack`, it runs the destination's
+/// Girt starts hooks directly, without a Git transport executable. It runs the destination's
 /// `pre-receive`, `update`, `post-receive` and `post-update` hooks (honoring `core.hooksPath`) and
 /// returns their output in [`PushReport::progress`]; `proc-receive`, `reference-transaction` and
 /// `push-to-checkout` hooks cause refusal before publication. Current-branch, hidden-ref and
@@ -35,6 +35,23 @@ use crate::transport::TransportControl;
 /// this exclusion. Deletion and non-fast-forward receive restrictions apply. `updateInstead`,
 /// namespace-specific policy and unsupported receive settings refuse before mutation.
 /// Object installation can leave an indexed pack when later refs reject or fail.
+///
+/// On macOS/Linux, incoming objects are private during `pre-receive`, with primary objects
+/// exposed as alternates. Rejection or cancellation there discards incoming objects without
+/// installing them in primary storage. After acceptance, the original validated pack is installed
+/// and quarantine is removed before `update`. Update rejection can leave published objects.
+/// Hooks that add or change quarantined object storage are explicitly unsupported and refuse
+/// before primary publication. A replacement quarantine directory is preserved, with structured
+/// cleanup failure and its path. The caller must exclude concurrent object-directory/layout
+/// replacement; path checks do not provide protection against hostile directory races.
+///
+/// Hook stdin/stdout/stderr and exit waits observe cancellation/deadlines. Combined retained hook
+/// output shares [`super::PushLimits::max_status_bytes`]. One owner kills the hook's process group
+/// and reaps the leader on return, including failure. Descendants that escape that group are
+/// outside this containment. Hooks are trusted programs, can mutate repository data themselves, and
+/// are not an execution sandbox. Hook execution on other platforms refuses before mutation; native
+/// transfers without hooks retain their existing platform support.
+///
 /// # Errors
 ///
 /// Preflight and object installation failures are [`PushError::NotSent`] for ref effects. A
@@ -56,7 +73,8 @@ pub fn send_local(
 ///
 /// # Errors
 ///
-/// Before installation interruption is [`PushError::NotSent`]. After installation it is
+/// Before primary installation, including during pre-receive, interruption is
+/// [`PushError::NotSent`]. After installation it is
 /// [`PushError::Uncertain`], retaining completed per-ref results; unknown refs may have changed.
 /// The cause distinguishes [`super::PushFailure::Cancelled`] and
 /// [`super::PushFailure::Deadline`] from rejection.
@@ -93,7 +111,7 @@ pub struct LocalPushContext<'a> {
 ///
 /// Uses [`send_local_with_control`]'s partial-outcome contract. The supplied configuration is
 /// resolved before any object installation or reference publication. Unsupported receive policy
-/// refuses before mutation; no Git process or hook is invoked.
+/// refuses before any hook or object installation.
 pub fn send_local_with_context(
     destination: impl AsRef<Path>,
     prepared: &PreparedPush,
