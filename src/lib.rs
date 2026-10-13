@@ -236,6 +236,7 @@
 //! attributes, filters, or EOL conversion. Branch switching, sparse checkout, and submodule
 //! operations remain outside this API. Each operation's module and item docs state its narrower
 //! accepted formats, resource limits, and failure effects.
+mod bytes;
 pub mod checkout;
 pub mod clone;
 mod file_policy;

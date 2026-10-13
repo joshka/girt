@@ -168,3 +168,66 @@ fn preserves_noncanonical_identity(#[case] first: &[u8], #[case] second: &[u8]) 
     assert_eq!(objects.write_tree(&tree).unwrap(), tree.id());
     assert_eq!(git(root.path(), &["cat-file", "tree", &hex], b""), payload);
 }
+
+/// Truncated records are rejected by both Git's tree reader and girt, at each delimiter boundary.
+#[rstest]
+#[case::mode_without_space(ObjectFormat::Sha1, b"100644".as_slice(), 0, girt::TreeError::MissingModeDelimiter)]
+#[case::name_without_nul(
+    ObjectFormat::Sha1,
+    b"100644 a",
+    0,
+    girt::TreeError::MissingNameDelimiter
+)]
+#[case::sha1_short_id(
+    ObjectFormat::Sha1,
+    b"100644 a\0",
+    19,
+    girt::TreeError::TruncatedObjectId
+)]
+#[case::sha256_short_id(
+    ObjectFormat::Sha256,
+    b"100644 a\0",
+    31,
+    girt::TreeError::TruncatedObjectId
+)]
+fn rejects_truncated_entries_like_git(
+    #[case] format: ObjectFormat,
+    #[case] record: &[u8],
+    #[case] id_bytes: usize,
+    #[case] expected: girt::TreeError,
+) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "--template=",
+            ".",
+        ],
+        b"",
+    );
+    let payload = [record, &vec![0x81; id_bytes]].concat();
+    let stored = git(
+        root.path(),
+        &["hash-object", "-w", "--literally", "-t", "tree", "--stdin"],
+        &payload,
+    );
+    let hex = std::str::from_utf8(&stored).unwrap().trim();
+    let listed = Command::new("git")
+        .current_dir(root.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.path().join("absent-config"))
+        .args(["ls-tree", hex])
+        .output()
+        .unwrap();
+    assert!(!listed.status.success(), "Git listed a truncated tree");
+
+    let objects = LooseObjects::new(root.path().join("objects"), format);
+    let id = ObjectId::from_hex(format, hex).unwrap();
+    assert!(matches!(
+        objects.read_tree(id, payload.len()),
+        Err(girt::Error::Tree(error)) if error == expected
+    ));
+}

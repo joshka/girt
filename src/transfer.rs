@@ -25,6 +25,15 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroU32;
@@ -919,6 +928,7 @@ impl Repository {
         if options.prune {
             // Pruned references lose their reflogs, as in Git.
             request = request.with_prune();
+            #[expect(clippy::expect_used, reason = "constant reference name is valid")]
             let namespaces = std::iter::once(RefName::new("refs/remotes").expect("valid name"))
                 .chain(options.tag_namespaces.iter().cloned());
             for namespace in namespaces {
@@ -1149,15 +1159,12 @@ impl Repository {
 fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> Option<RefName> {
     use crate::remote::ConfiguredRefspecKind;
     let matches = |pattern: &[u8]| -> Option<Vec<u8>> {
-        match pattern.iter().position(|b| *b == b'*') {
+        match crate::bytes::split_once(pattern, b'*') {
             None => (pattern == name).then(Vec::new),
-            Some(star) => {
-                let (prefix, suffix) = (&pattern[..star], &pattern[star + 1..]);
-                (name.len() >= prefix.len() + suffix.len()
-                    && name.starts_with(prefix)
-                    && name.ends_with(suffix))
-                .then(|| name[prefix.len()..name.len() - suffix.len()].to_vec())
-            }
+            Some((prefix, suffix)) => name
+                .strip_prefix(prefix)?
+                .strip_suffix(suffix)
+                .map(<[u8]>::to_vec),
         }
     };
     let excluded = refspecs.iter().any(|spec| {
@@ -1172,9 +1179,9 @@ fn tracking_ref(refspecs: &[crate::remote::ConfiguredRefspec], name: &[u8]) -> O
         .find_map(|spec| {
             let captured = matches(spec.source()?)?;
             let destination = spec.destination()?;
-            let destination = match destination.iter().position(|b| *b == b'*') {
+            let destination = match crate::bytes::split_once(destination, b'*') {
                 None => destination.to_vec(),
-                Some(star) => [&destination[..star], &captured, &destination[star + 1..]].concat(),
+                Some((prefix, suffix)) => [prefix, &captured, suffix].concat(),
             };
             RefName::new(destination).ok()
         })
@@ -1462,5 +1469,22 @@ mod tests {
         ] {
             assert!(files(text).is_none(), "{text}");
         }
+    }
+
+    #[test]
+    fn tracking_ref_rejects_overlapping_pattern_halves() {
+        use crate::remote::{ConfiguredRefspec, Direction};
+        let refspecs =
+            [
+                ConfiguredRefspec::parse(Direction::Fetch, b"refs/heads/*/x:refs/remotes/o/*")
+                    .unwrap(),
+            ];
+        assert_eq!(tracking_ref(&refspecs, b"refs/heads/x"), None);
+        assert_eq!(
+            tracking_ref(&refspecs, b"refs/heads/a/x")
+                .unwrap()
+                .as_bytes(),
+            b"refs/remotes/o/a"
+        );
     }
 }

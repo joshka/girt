@@ -24,6 +24,17 @@ pub struct IdentityDate {
     pub offset_minutes: i16,
 }
 
+/// Splits an optional sign and at least one decimal digit from the following bytes.
+fn signed_decimal(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+    let sign = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let digits = bytes
+        .get(sign..)?
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    (digits > 0).then(|| bytes.split_at_checked(sign + digits))?
+}
+
 impl<'a> IdentityRef<'a> {
     /// Borrows name, email and date bytes without interpreting the date.
     ///
@@ -31,19 +42,14 @@ impl<'a> IdentityRef<'a> {
     ///
     /// Returns [`CommitError::InvalidSignature`] if either selected bracket is absent.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, CommitError> {
-        let open = bytes
-            .iter()
-            .position(|&b| b == b'<')
-            .ok_or(CommitError::InvalidSignature)?;
-        let close = bytes[open + 1..]
-            .iter()
-            .position(|&b| b == b'>')
-            .map(|i| i + open + 1)
-            .ok_or(CommitError::InvalidSignature)?;
+        let (name, rest) =
+            crate::bytes::split_once(bytes, b'<').ok_or(CommitError::InvalidSignature)?;
+        let (email, date_bytes) =
+            crate::bytes::split_once(rest, b'>').ok_or(CommitError::InvalidSignature)?;
         Ok(Self {
-            name: bytes[..open].trim_ascii_end(),
-            email: &bytes[open + 1..close],
-            date_bytes: &bytes[close + 1..],
+            name: name.trim_ascii_end(),
+            email,
+            date_bytes,
         })
     }
 
@@ -60,28 +66,17 @@ impl<'a> IdentityRef<'a> {
     /// [`CommitError::InvalidDate`]. Raw date bytes remain available after any failure.
     pub fn date(self) -> Result<IdentityDate, CommitError> {
         let bytes = self.date_bytes.trim_ascii_start();
-        let sign = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
-        let end = sign
-            + bytes[sign..]
-                .iter()
-                .take_while(|b| b.is_ascii_digit())
-                .count();
-        if end == sign {
-            return Err(CommitError::InvalidDate);
-        }
-        let seconds = std::str::from_utf8(&bytes[..end])
+        let (seconds, zone) = signed_decimal(bytes).ok_or(CommitError::InvalidDate)?;
+        let seconds = std::str::from_utf8(seconds)
             .ok()
             .and_then(|s| s.parse().ok())
             .ok_or(CommitError::InvalidDate)?;
-        let zone = bytes[end..].trim_ascii_start();
+        let zone = zone.trim_ascii_start();
         if !matches!(zone.first(), Some(b'+' | b'-')) {
             return Err(CommitError::InvalidDate);
         }
-        let end = 1 + zone[1..].iter().take_while(|b| b.is_ascii_digit()).count();
-        if end == 1 {
-            return Err(CommitError::InvalidDate);
-        }
-        let hhmm: i32 = std::str::from_utf8(&zone[..end])
+        let (hhmm, _) = signed_decimal(zone).ok_or(CommitError::InvalidDate)?;
+        let hhmm: i32 = std::str::from_utf8(hhmm)
             .ok()
             .and_then(|s| s.parse().ok())
             .ok_or(CommitError::InvalidDate)?;
@@ -159,6 +154,10 @@ mod tests {
     #[case::unsigned(b"1 0000")]
     #[case::zone_text(b"1 +x000")]
     #[case::zone_overflow(b"1 +99999999999999999999999")]
+    #[case::sign_only(b"-")]
+    #[case::sign_before_zone(b"- +0000")]
+    #[case::zone_sign_only(b"1 +")]
+    #[case::zone_sign_at_end(b"1 -")]
     fn preserves_bytes_after_interpretation_error(#[case] bytes: &[u8]) {
         let input = [b"A\xff<a\xfe>".as_slice(), bytes].concat();
         let identity = IdentityRef::parse(&input).unwrap();
@@ -166,6 +165,18 @@ mod tests {
         assert_eq!(
             (identity.name, identity.email, identity.date_bytes),
             (b"A\xff".as_slice(), b"a\xfe".as_slice(), bytes)
+        );
+    }
+
+    #[rstest]
+    #[case::no_brackets(b"A a 1 +0000".as_slice())]
+    #[case::unclosed(b"A <a 1 +0000")]
+    #[case::open_at_end(b"A <")]
+    #[case::close_before_open(b"A >a< 1 +0000")]
+    fn rejects_identity_without_brackets(#[case] bytes: &[u8]) {
+        assert_eq!(
+            IdentityRef::parse(bytes),
+            Err(CommitError::InvalidSignature)
         );
     }
 }

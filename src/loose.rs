@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
@@ -210,17 +218,10 @@ impl LooseObjects {
             id.require_format(self.format)?;
             let file = File::open(self.object_path(id))?;
             let mut encoded = decompress(file, max_size.saturating_add(32))?;
-            let separator = encoded
-                .iter()
-                .position(|&byte| byte == 0)
+            let (header, content) = crate::bytes::split_once(&encoded, 0)
                 .ok_or(Error::Corrupt("missing header terminator"))?;
-            let header = &encoded[..separator];
-            let space = header
-                .iter()
-                .position(|&byte| byte == b' ')
-                .ok_or(Error::Corrupt("invalid header"))?;
-            let kind = &header[..space];
-            let length = &header[space + 1..];
+            let (kind, length) =
+                crate::bytes::split_once(header, b' ').ok_or(Error::Corrupt("invalid header"))?;
             let kind = match kind {
                 b"blob" => ObjectKind::Blob,
                 b"tree" => ObjectKind::Tree,
@@ -231,7 +232,6 @@ impl LooseObjects {
             if expected_kind.is_some_and(|expected| kind.as_str() != expected) {
                 return Err(Error::UnsupportedObjectType);
             }
-            let content = &encoded[separator + 1..];
             if length != content.len().to_string().as_bytes() {
                 return Err(Error::Corrupt("noncanonical or mismatched length"));
             }
@@ -241,7 +241,8 @@ impl LooseObjects {
             if self.format.hash_object(kind, content) != id {
                 return Err(Error::Corrupt("object identity mismatch"));
             }
-            encoded.drain(..separator + 1);
+            let header_len = encoded.len() - content.len();
+            encoded.drain(..header_len);
             Ok(crate::Object {
                 kind,
                 format: self.format,
@@ -350,7 +351,9 @@ impl LooseObjects {
             ObjectId::null(format).require_format(self.format)?;
             let id = self.format.hash_object(kind, bytes);
             let path = self.object_path(id);
-            let parent = path.parent().expect("object path always has a parent");
+            let parent = path
+                .parent()
+                .ok_or(Error::Corrupt("object path has no parent directory"))?;
             fs::create_dir_all(parent)?;
             let mut temporary = NamedTempFile::new_in(parent)?;
             let mut encoder = ZlibEncoder::new(temporary.as_file_mut(), Compression::default());
@@ -440,7 +443,11 @@ fn decompress(file: File, limit: usize) -> Result<Vec<u8>, Error> {
         if produced > limit.saturating_sub(encoded.len()) {
             return Err(Error::TooLarge);
         }
-        encoded.extend_from_slice(&output[..produced]);
+        encoded.extend_from_slice(
+            output
+                .get(..produced)
+                .ok_or(Error::Corrupt("invalid zlib stream"))?,
+        );
         if status == Status::StreamEnd {
             if !reader.fill_buf()?.is_empty() {
                 return Err(Error::Corrupt("trailing compressed data"));
@@ -470,6 +477,21 @@ mod tests {
         assert!(matches!(
             objects.read_raw(id, 100),
             Err(Error::UnknownObjectType)
+        ));
+    }
+
+    #[rstest::rstest]
+    #[case::no_terminator(b"blob 0".as_slice(), "missing header terminator")]
+    #[case::no_space(b"blob\0", "invalid header")]
+    #[case::empty_header(b"\0", "invalid header")]
+    fn rejects_header_without_terminator_or_space(#[case] encoded: &[u8], #[case] expected: &str) {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = ObjectId::for_blob(ObjectFormat::Sha1, b"");
+        install(&objects, id, encoded);
+        assert!(matches!(
+            objects.read_raw(id, 100),
+            Err(Error::Corrupt(message)) if message == expected
         ));
     }
 

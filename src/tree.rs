@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -118,31 +126,23 @@ impl Tree {
         let mut entries = Vec::new();
 
         while !payload.is_empty() {
-            let space = payload
-                .iter()
-                .position(|&byte| byte == b' ')
-                .ok_or(TreeError::MissingModeDelimiter)?;
-            let mode = EntryMode::parse(&payload[..space])?;
-            payload = &payload[space + 1..];
-
-            let nul = payload
-                .iter()
-                .position(|&byte| byte == 0)
-                .ok_or(TreeError::MissingNameDelimiter)?;
-            let name = &payload[..nul];
-            payload = &payload[nul + 1..];
-
-            let raw_id = payload
-                .get(..format.digest_len())
+            let (mode, rest) =
+                crate::bytes::split_once(payload, b' ').ok_or(TreeError::MissingModeDelimiter)?;
+            let mode = EntryMode::parse(mode)?;
+            let (name, rest) =
+                crate::bytes::split_once(rest, 0).ok_or(TreeError::MissingNameDelimiter)?;
+            let (raw_id, rest) = rest
+                .split_at_checked(format.digest_len())
                 .ok_or(TreeError::TruncatedObjectId)?;
-            let id = ObjectId::from_bytes(format, raw_id).expect("checked digest length");
+            let id =
+                ObjectId::from_bytes(format, raw_id).map_err(|_| TreeError::TruncatedObjectId)?;
 
             entries.push(TreeEntry {
                 mode,
                 name: name.to_vec(),
                 id,
             });
-            payload = &payload[format.digest_len()..];
+            payload = rest;
         }
 
         Ok(Self {
@@ -177,11 +177,7 @@ impl Tree {
     pub fn validate(&self) -> Result<(), TreeError> {
         validate_names(&self.entries)?;
 
-        if self
-            .entries
-            .windows(2)
-            .any(|pair| pair[0].git_cmp(&pair[1]).is_gt())
-        {
+        if !self.entries.is_sorted_by(|a, b| a.git_cmp(b).is_le()) {
             return Err(TreeError::Unsorted);
         }
 
@@ -375,6 +371,18 @@ mod tests {
     // Literal framing plus a fixed identity keeps expected bytes independent of the encoder.
     fn record(prefix: &[u8]) -> Vec<u8> {
         [prefix, &[0x81; 20]].concat()
+    }
+
+    #[rstest]
+    #[case::mode_without_space(b"100644".as_slice(), TreeError::MissingModeDelimiter)]
+    #[case::name_without_nul(b"100644 a", TreeError::MissingNameDelimiter)]
+    #[case::delimiters_at_end(b"100644 \0", TreeError::TruncatedObjectId)]
+    #[case::short_id(&[b"100644 a\0".as_slice(), &[0x81; 19]].concat(), TreeError::TruncatedObjectId)]
+    fn rejects_truncated_entry(#[case] payload: &[u8], #[case] expected: TreeError) {
+        assert_eq!(
+            Tree::parse(crate::ObjectFormat::Sha1, payload),
+            Err(expected)
+        );
     }
 
     #[test]

@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 mod identity;
 mod payload;
 pub use identity::{IdentityDate, IdentityRef};
@@ -117,12 +125,9 @@ impl Commit {
         let mut parents = Vec::new();
         // A short trailing parent-like fragment is metadata, not an incomplete graph edge.
         let mut remaining = payload.len() - first.len();
-        while remaining >= format.digest_len() * 2 + 8
-            && lines
-                .peek()
-                .is_some_and(|line| line.starts_with(b"parent "))
-        {
-            let line = lines.next().expect("peeked parent");
+        while let Some(line) = lines.next_if(|line| {
+            remaining >= format.digest_len() * 2 + 8 && line.starts_with(b"parent ")
+        }) {
             remaining -= line.len();
             parents.push(parse_id(
                 format,
@@ -191,7 +196,7 @@ impl Commit {
             .windows(2)
             .position(|p| p == b"\n\n")
             .unwrap_or(self.payload.len());
-        &self.payload[..end]
+        self.payload.get(..end).unwrap_or_default()
     }
 
     /// Borrows message bytes after the first empty line, or an empty slice if absent.
@@ -199,7 +204,8 @@ impl Commit {
         self.payload
             .windows(2)
             .position(|p| p == b"\n\n")
-            .map_or(&[], |end| &self.payload[end + 2..])
+            .and_then(|end| self.payload.get(end + 2..))
+            .unwrap_or_default()
     }
 
     /// Builds editable construction fields from the imported object.
@@ -233,11 +239,8 @@ impl Commit {
                 }
                 continue;
             }
-            let space = line
-                .iter()
-                .position(|&b| b == b' ')
-                .ok_or(CommitError::InvalidHeader)?;
-            let name = &line[..space];
+            let (name, value) =
+                crate::bytes::split_once(line, b' ').ok_or(CommitError::InvalidHeader)?;
             if matches!(name, b"tree" | b"parent" | b"author" | b"committer") {
                 continue_extra = false;
                 continue;
@@ -245,7 +248,7 @@ impl Commit {
             continue_extra = true;
             extra_headers.push(CommitHeader {
                 name: name.to_vec(),
-                value: line[space + 1..].to_vec(),
+                value: value.to_vec(),
             });
         }
         Ok(CommitFields {

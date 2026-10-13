@@ -138,7 +138,7 @@ fn parse_path(record: &[u8]) -> Result<PathBuf, &'static str> {
 
 fn unquote(record: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut result = Vec::new();
-    let mut input = record[1..].iter().copied();
+    let mut input = record.get(1..).unwrap_or_default().iter().copied();
     while let Some(byte) = input.next() {
         match byte {
             b'"' => {

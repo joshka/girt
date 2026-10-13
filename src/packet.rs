@@ -1,4 +1,13 @@
 //! Shared pkt-line framing; service negotiation belongs to fetch and push.
+
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -58,7 +67,9 @@ impl<R: Read> Wire<'_, R> {
             if read == 0 {
                 return Err(Error::Protocol("truncated pkt-line"));
             }
-            bytes = &mut bytes[read..];
+            bytes = bytes
+                .get_mut(read..)
+                .ok_or(Error::Protocol("reader overran its buffer"))?;
         }
         Ok(())
     }
@@ -73,10 +84,11 @@ impl<R: Read> Wire<'_, R> {
 
 /// Decodes a complete header, including flush, using the shared pkt-line length bounds.
 pub(crate) fn packet_length(header: &[u8; 4]) -> Result<usize, Error> {
-    if !header.iter().all(u8::is_ascii_hexdigit) {
-        return Err(Error::Protocol("pkt-line header"));
-    }
-    let length = usize::from_str_radix(std::str::from_utf8(header).unwrap(), 16).unwrap();
+    let length = std::str::from_utf8(header)
+        .ok()
+        .filter(|digits| digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .and_then(|digits| usize::from_str_radix(digits, 16).ok())
+        .ok_or(Error::Protocol("pkt-line header"))?;
     if length != 0 && !(4..=65520).contains(&length) {
         return Err(Error::Protocol("pkt-line length"));
     }
@@ -109,7 +121,34 @@ pub(crate) fn put(
         if written == 0 {
             return Err(Error::Io(std::io::ErrorKind::WriteZero.into()));
         }
-        bytes = &bytes[written..];
+        bytes = bytes
+            .get(written..)
+            .ok_or(Error::Io(std::io::ErrorKind::InvalidData.into()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::sign(b"+fff", "pkt-line header")]
+    #[case::non_hex(b"zzzz", "pkt-line header")]
+    #[case::non_ascii(b"\xff000", "pkt-line header")]
+    #[case::too_short(b"0003", "pkt-line length")]
+    #[case::too_long(b"fff1", "pkt-line length")]
+    fn rejects_malformed_header(#[case] header: &[u8; 4], #[case] reason: &str) {
+        assert!(matches!(packet_length(header), Err(Error::Protocol(actual)) if actual == reason));
+    }
+
+    #[rstest]
+    #[case::flush(b"0000", 0)]
+    #[case::empty(b"0004", 4)]
+    #[case::upper(b"FFF0", 0xfff0)]
+    fn decodes_valid_header(#[case] header: &[u8; 4], #[case] length: usize) {
+        assert!(matches!(packet_length(header), Ok(actual) if actual == length));
+    }
 }
