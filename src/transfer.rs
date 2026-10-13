@@ -827,10 +827,7 @@ impl Repository {
         };
         let request = || self.fetch_request(options);
         let control = TransportControl::new(&cancel);
-        #[cfg(any(
-            feature = "http",
-            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
-        ))]
+        #[cfg(feature = "http")]
         let mut on_message = |message: &[u8]| {
             callbacks.remote_message(message);
             ControlFlow::Continue(())
