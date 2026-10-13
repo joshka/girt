@@ -1,0 +1,5 @@
+# Parser modules deny panicking access in library code; tests may assert with these freely.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

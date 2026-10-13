@@ -620,10 +620,7 @@ pub(super) fn advertise_with_version(
 }
 
 // Parse arbitrary reference/capability bytes without UTF-8 conversion.
-fn split_byte(bytes: &[u8], byte: u8) -> Option<(&[u8], &[u8])> {
-    let position = bytes.iter().position(|b| *b == byte)?;
-    Some((&bytes[..position], &bytes[position + 1..]))
-}
+use crate::bytes::split_once as split_byte;
 
 fn line(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\n").unwrap_or(bytes)

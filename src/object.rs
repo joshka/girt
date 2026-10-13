@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fmt;
 use std::str::FromStr;
 
@@ -146,7 +154,7 @@ impl ObjectFormat {
                 let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
                 hash.update(object_header(kind.as_str(), bytes.len()).as_bytes());
                 hash.update(bytes);
-                ObjectId::Sha256(hash.finish().as_ref().try_into().unwrap())
+                ObjectId::Sha256(digest(hash))
             }
         }
     }
@@ -180,8 +188,8 @@ impl Hasher {
 
     pub(crate) fn finalize(self) -> ObjectId {
         match self {
-            Self::Sha1(hash) => ObjectId::Sha1(hash.finish().as_ref().try_into().unwrap()),
-            Self::Sha256(hash) => ObjectId::Sha256(hash.finish().as_ref().try_into().unwrap()),
+            Self::Sha1(hash) => ObjectId::Sha1(digest(hash)),
+            Self::Sha256(hash) => ObjectId::Sha256(digest(hash)),
         }
     }
 }
@@ -198,7 +206,19 @@ fn hash_sha1(kind: &str, bytes: &[u8]) -> ObjectId {
     let mut hash = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY);
     hash.update(object_header(kind, bytes.len()).as_bytes());
     hash.update(bytes);
-    ObjectId::Sha1(hash.finish().as_ref().try_into().unwrap())
+    ObjectId::Sha1(digest(hash))
+}
+
+/// Finishes a digest whose algorithm was chosen for an `N`-byte identity.
+#[expect(
+    clippy::expect_used,
+    reason = "SHA-1 and SHA-256 contexts always produce 20 and 32 bytes, matching each caller's N"
+)]
+fn digest<const N: usize>(hash: aws_lc_rs::digest::Context) -> [u8; N] {
+    hash.finish()
+        .as_ref()
+        .try_into()
+        .expect("digest length matches the selected algorithm")
 }
 
 impl fmt::Display for ObjectId {

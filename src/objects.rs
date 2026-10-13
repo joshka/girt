@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 mod alternates;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -328,7 +336,12 @@ impl Objects {
             check_cancelled(cancelled)?;
             let directories = alternates::discover(directory, alternates)?;
             check_cancelled(cancelled)?;
-            let directory = directories[0].clone();
+            let directory = directories
+                .first()
+                .cloned()
+                .ok_or(ObjectReadError::Corrupt(
+                    "object store has no primary directory",
+                ))?;
             let mut budget = limits;
             let mut stores = Vec::new();
             for directory in directories {
@@ -487,6 +500,10 @@ impl Objects {
             if known.0 != pack {
                 known = (pack, crate::pack::BaseKinds::new());
             }
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "pack positions were enumerated from these same stores above"
+            )]
             let found = packs[pack].locate_memoized(position, limits, cancel, &mut known.1)?;
             located.push((id, Some(found)));
         }
@@ -505,7 +522,11 @@ impl Objects {
         if is_blob(self.format.hash_object(ObjectKind::Tree, b"")) {
             return Err(ObjectReadError::Corrupt("blob claims canonical empty tree"));
         }
-        let check_packs = self.stores.len() > 1 || self.stores[0].packs.len() > 1;
+        let check_packs = self.stores.len() > 1
+            || self
+                .stores
+                .first()
+                .is_some_and(|store| store.packs.len() > 1);
         let mut entries = 0;
         for store in &self.stores {
             if check_packs {

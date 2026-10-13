@@ -68,15 +68,9 @@ impl<'a> CommitPayload<'a> {
             if line.starts_with(b" ") {
                 headers.last_mut().ok_or(CommitError::InvalidHeader)?.end = end;
             } else {
-                let space = line
-                    .iter()
-                    .position(|&byte| byte == b' ')
-                    .ok_or(CommitError::InvalidHeader)?;
-                if space == 0
-                    || !line[..space]
-                        .iter()
-                        .all(|byte| (b'!'..=b'~').contains(byte))
-                {
+                let (name, _) =
+                    crate::bytes::split_once(line, b' ').ok_or(CommitError::InvalidHeader)?;
+                if name.is_empty() || !name.iter().all(|byte| (b'!'..=b'~').contains(byte)) {
                     return Err(CommitError::InvalidHeader);
                 }
                 headers.push(start..end);
@@ -104,8 +98,10 @@ impl<'a> CommitPayload<'a> {
                     message_start: end,
                 };
             }
-            if line.starts_with(b" ") && !headers.is_empty() {
-                headers.last_mut().expect("nonempty").end = end;
+            if line.starts_with(b" ")
+                && let Some(header) = headers.last_mut()
+            {
+                header.end = end;
             } else {
                 headers.push(start..end);
             }
@@ -124,6 +120,10 @@ impl<'a> CommitPayload<'a> {
     }
 
     /// Iterates over every header occurrence in original order, including required headers.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "header spans are line boundaries found while scanning self.bytes"
+    )]
     pub fn headers(&self) -> impl ExactSizeIterator<Item = CommitHeaderRef<'a>> + '_ {
         self.headers.iter().map(|span| {
             let raw = &self.bytes[span.clone()];
@@ -147,7 +147,7 @@ impl<'a> CommitPayload<'a> {
 
     /// Borrows bytes after the separator, without adding or removing a final newline.
     pub fn message(&self) -> &'a [u8] {
-        &self.bytes[self.message_start..]
+        self.bytes.get(self.message_start..).unwrap_or_default()
     }
 
     /// Copies the payload except for the selected header occurrences and their continuations.
@@ -161,6 +161,10 @@ impl<'a> CommitPayload<'a> {
     /// Select one occurrence to recover its candidate signing input, or select multiple spans
     /// explicitly when a signing format requires it. This operation does not infer which headers
     /// were signed, verify signatures, or validate decoded fields. The source remains unchanged.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "indices are checked against self.headers, whose spans lie in self.bytes in order"
+    )]
     pub fn without_headers(&self, indices: &[usize]) -> Option<Vec<u8>> {
         let mut indices = indices.to_vec();
         indices.sort_unstable();

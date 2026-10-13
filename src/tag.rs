@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use crate::{CommitError, ObjectId, Signature};
 
 /// An owned SHA-1 or SHA-256 annotated tag object, including its exact original payload.
@@ -149,6 +157,10 @@ impl Tag {
     }
 
     /// Imported tag name bytes, without applying reference-name or construction validation.
+    #[expect(
+        clippy::expect_used,
+        reason = "Tag::parse requires the third physical header to be a tag record"
+    )]
     pub fn name(&self) -> &[u8] {
         self.headers()
             .nth(2)
@@ -162,7 +174,8 @@ impl Tag {
         self.payload
             .windows(2)
             .position(|p| p == b"\n\n")
-            .map_or(&[], |i| &self.payload[i + 2..])
+            .and_then(|i| self.payload.get(i + 2..))
+            .unwrap_or_default()
     }
 
     /// Referenced object identity, without resolving it.
