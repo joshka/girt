@@ -134,6 +134,24 @@ platforms preserve locks and report unsupported removal. Caller exclusion of hos
 replacement remains required. Cleanup does not roll back completed publication, remove persistent
 worktree locks or pack protections, or provide SIGKILL/crash cleanup.
 
+### Native Local Validation Progress Acceptance
+
+[Issue 94](https://github.com/joshka/girt/issues/94) records the failure inventory and design
+choice. `tests/local_transfer_progress.rs` independently generates packed histories with Git,
+compares received entry/delta counts with `git verify-pack -v`, and exercises both object formats.
+Forced local Git transfers establish the receiving/resolving phases; girt reports actual validation
+work rather than Git's text or notification cadence. Public repository callbacks cover fetch, no-op
+fetch and push. Cancellation during decoding and resolution leaves primary objects and references
+unpublished; observer panics unwind before incoming storage publication. Existing import tests cover
+corruption, connectivity, thin bases and resource/depth failures without validation completion.
+
+Native local observers reuse `ValidationProgress`, separate from construction progress and hook
+messages. Completion marks validation, before installation or reference publication; later push
+failure remains possible. No-pack paths emit no validation snapshots. Callbacks run synchronously
+and must return promptly. jj connects `TransferCallbacks::validation_progress` to its receiving and
+resolving UI; lower-level consumers select the explicit validation-observer methods. Existing public
+enums gain no variants. Network transports retain their existing progress interfaces.
+
 ## Required Evidence
 
 - **Behavior:** State what callers can do, supported formats, and explicit exclusions. Reject

@@ -120,6 +120,43 @@ pub fn receive_local_with_known_and_progress(
     )
 }
 
+/// Reads a local source and reports actual pack-entry and delta validation work.
+///
+/// Uses [`receive_local_with_known`]'s storage contract. The synchronous observer receives
+/// [`super::ValidationProgress`], independently of receiver messages. No pack means no snapshots.
+/// Observers must return promptly; set `control.cancel` to request cooperative cancellation.
+/// Completion describes validation, before installation or reference publication. A subsequent
+/// deadline/cancellation check or planning step can still fail the enclosing fetch.
+///
+/// # Errors
+///
+/// Returns [`receive_local_with_known`]'s failures. Failed validation never reports completion.
+///
+/// # Panics
+///
+/// Observer panics unwind normally; this operation has not installed destination storage.
+pub fn receive_local_with_validation_progress(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    validation: impl FnMut(super::ValidationProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_local_observed(
+        source,
+        select,
+        known,
+        None,
+        limits,
+        control,
+        progress,
+        |_| {},
+        validation,
+    )
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "local transfer keeps explicit selection and progress policy"
@@ -134,6 +171,34 @@ pub(super) fn receive_local_with_known_depth_and_progress(
     progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     observe: impl FnMut(super::LocalFetchProgress),
 ) -> Result<ReceivedFetch, FetchError> {
+    receive_local_observed(
+        source,
+        select,
+        known,
+        depth,
+        limits,
+        control,
+        progress,
+        observe,
+        |_| {},
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local transfer keeps explicit progress policy"
+)]
+pub(super) fn receive_local_observed(
+    source: impl AsRef<Path>,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(super::LocalFetchProgress),
+    validation: impl FnMut(super::ValidationProgress),
+) -> Result<ReceivedFetch, FetchError> {
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(
         target: "girt",
@@ -147,8 +212,8 @@ pub(super) fn receive_local_with_known_depth_and_progress(
         control.check()?;
         let source =
             crate::Repository::open(source).map_err(|error| FetchError::Source(Box::new(error)))?;
-        super::local_native::receive_depth(
-            &source, select, known, depth, limits, control, progress, observe,
+        super::local_native::receive_depth_observed(
+            &source, select, known, depth, limits, control, progress, observe, validation,
         )
     };
     #[cfg(feature = "tracing")]

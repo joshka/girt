@@ -27,6 +27,7 @@ pub(super) fn receive(
     )
 }
 
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "local transfer keeps explicit selection and progress policy"
@@ -38,8 +39,36 @@ pub(super) fn receive_depth(
     depth: Option<NonZeroU32>,
     limits: FetchLimits,
     control: TransportControl<'_>,
+    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    observe: impl FnMut(LocalFetchProgress),
+) -> Result<ReceivedFetch, FetchError> {
+    receive_depth_observed(
+        source,
+        select,
+        known,
+        depth,
+        limits,
+        control,
+        progress,
+        observe,
+        |_| {},
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local transfer keeps explicit progress policy"
+)]
+pub(super) fn receive_depth_observed(
+    source: &Repository,
+    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
     mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     mut observe: impl FnMut(LocalFetchProgress),
+    mut validation: impl FnMut(super::ValidationProgress),
 ) -> Result<ReceivedFetch, FetchError> {
     check(control)?;
     if depth.is_some_and(|depth| depth.get() != 1) {
@@ -278,7 +307,7 @@ pub(super) fn receive_depth(
         known,
         shallow,
         super::FetchOptions { limits, depth },
-        &mut super::progress::ValidationObserver::new(control.cancel, &mut |_| {}),
+        &mut super::progress::ValidationObserver::new(control.cancel, &mut validation),
     )?;
     check(control)?;
     observe(LocalFetchProgress::Complete);

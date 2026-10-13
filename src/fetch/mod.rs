@@ -133,7 +133,7 @@ pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
 pub use local::{
     receive_local, receive_local_with_control, receive_local_with_known,
-    receive_local_with_known_and_progress,
+    receive_local_with_known_and_progress, receive_local_with_validation_progress,
 };
 pub(crate) use progress::ValidationObserver;
 pub use protocol::{

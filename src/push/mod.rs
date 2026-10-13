@@ -66,10 +66,10 @@ mod protocol;
 mod quarantine;
 mod types;
 
-pub(crate) use local::send_local_preparing;
+pub(crate) use local::send_local_preparing_observed;
 pub use local::{
     LocalPushContext, send_local, send_local_with_context, send_local_with_control,
-    send_local_with_identity,
+    send_local_with_identity, send_local_with_progress,
 };
 pub use prepared::PreparedPush;
 pub use progress::PreparationProgress;

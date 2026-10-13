@@ -54,6 +54,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
     identity: Option<&Signature>,
     config_inputs: &ConfigInputs,
     prepare: impl FnOnce(&LocalAdvertisement<'_>) -> Result<P, PushFailure>,
+    mut validation: impl FnMut(crate::fetch::ValidationProgress),
 ) -> Result<PushReport, PushError> {
     control
         .check()
@@ -268,7 +269,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 limits,
                 depth: None,
             },
-            &mut crate::fetch::ValidationObserver::new(control.cancel, &mut |_| {}),
+            &mut crate::fetch::ValidationObserver::new(control.cancel, &mut validation),
         )
         .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         let unstored_empty_tree =

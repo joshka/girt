@@ -143,7 +143,7 @@ jobs:
           Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
           Write-Output "Temporary directory: $env:TEMP"
       - name: Native local transfer
-        run: cargo +stable test --locked --no-default-features --test local_native --test transfer_reuse --test push_deltas
+        run: cargo +stable test --locked --no-default-features --test local_native --test transfer_reuse --test push_deltas --test local_transfer_progress
       - name: Core-only library
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library

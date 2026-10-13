@@ -1,4 +1,4 @@
-//! Local fetch construction and validation work, separate from receiver sideband messages.
+//! Local fetch construction and fetch/push validation work, separate from receiver messages.
 use std::sync::atomic::AtomicBool;
 
 /// Completed work while constructing a fetch from a local repository.
@@ -25,7 +25,7 @@ pub enum LocalFetchProgress {
     Complete,
 }
 
-/// A snapshot of completed local fetch-validation work.
+/// A snapshot of completed pack-validation work for a fetch or native local push.
 ///
 /// Counts describe pack processing after network download, not network byte transfer. Object and
 /// delta counters never decrease during one validation; delta totals become known only after all
