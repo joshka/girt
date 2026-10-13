@@ -11,6 +11,22 @@
 //!
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
 //! separate. No operation reads or mutates process-global environment.
+//!
+//! # Example
+//!
+//! Section and key names compare case-insensitively; the last occurrence of a scalar wins, and a
+//! key without `=` is an implicit true:
+//!
+//! ```
+//! use girt::Config;
+//!
+//! let config = Config::parse(b"[core]\n\tbare = false\n[Core]\n\tBare = true\n\tquiet\n")?;
+//! assert_eq!(config.value("core", None, "bare"), Some(Some(&b"true"[..])));
+//! assert_eq!(config.boolean("core", None, "bare")?, Some(true));
+//! assert_eq!(config.value("core", None, "quiet"), Some(None));
+//! assert_eq!(config.boolean("core", None, "quiet")?, Some(true));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 #![warn(
     clippy::unwrap_used,
