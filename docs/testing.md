@@ -119,11 +119,15 @@ compares SIGINT cleanup during Git's index-info stdin wait. It verifies unchange
 foreign/replacement lock preservation, stale-guard refusal, idempotence and Git readability while
 cleanup races index publication/drop. Fault tests cover acquisition/registration and publication
 checkpoints, nested operations, reference/reflog/packed-ref/reftable lock topologies, reentrant
-callback refusal and path-specific inspection failures.
+callback refusal, path-specific inspection failures, shallow/credential stale-guard refusal and a
+Git-generated worktree repair checkpoint between link replacements. The writer and identity pin
+share a single descriptor. A Git-generated fixture checks cleanup cancellation of a pending
+packed-ref wait without stealing the foreign lock.
 
 `girt::locks::cleanup` runs in normal thread context. jj must request cancellation, stop admitting
-work and wake/join writers before cleanup; raw signal handlers must delegate to normal context.
-Cleanup waits for active lock operations and invalidates surviving guards before releasing locks.
+work, wake writers, call cleanup, then join cancelled writers; raw signal handlers must delegate to
+normal context. Cleanup waits for active lock operations and invalidates surviving Unix guards
+before releasing locks. Unsupported platforms retain guard validity for ordinary Drop/abort.
 Existing public error enums gain no variants. Unix uses pinned device/inode identities; other
 platforms preserve locks and report unsupported removal. Caller exclusion of hostile path/parent
 replacement remains required. Cleanup does not roll back completed publication, remove persistent

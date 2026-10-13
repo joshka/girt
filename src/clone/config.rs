@@ -43,13 +43,15 @@ fn quoted(output: &mut Vec<u8>, bytes: &[u8]) {
 // It is not a general editor and never merges another writer's changes.
 pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Result<()> {
     let _lock_operation = crate::locks::operation();
-    let lock = repo.git_dir().join("config.lock");
+    let lock = std::path::absolute(repo.git_dir().join("config.lock"))?;
     let destination = repo.git_dir().join("config");
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&lock)?;
-    let cleanup = crate::locks::Guard::new(&lock, &file)?;
+    let identity = crate::locks::capture_identity(&lock, &file)?;
+    let mut file = crate::locks::SharedFile::from(file);
+    let cleanup = crate::locks::Guard::new(&lock, &file, identity);
     let result = (|| {
         if fs::read(&destination)? != initial_config(kind) {
             return Err(io::Error::other(

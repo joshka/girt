@@ -1,5 +1,5 @@
 //! Conditional publication of Git's shared shallow boundary file.
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -24,7 +24,7 @@ pub enum FetchShallowError {
 pub(super) struct Lock {
     path: PathBuf,
     lock_path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     #[cfg(unix)]
     identity: fs::Metadata,
     old: Vec<ObjectId>,
@@ -40,7 +40,7 @@ impl Lock {
     ) -> Result<Self, FetchShallowError> {
         let _lock_operation = crate::locks::operation();
         let path = common_dir.join("shallow");
-        let lock_path = common_dir.join("shallow.lock");
+        let lock_path = std::path::absolute(common_dir.join("shallow.lock"))?;
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(windows)]
@@ -49,9 +49,9 @@ impl Lock {
             options.share_mode(3); // Keep the held lock unreplaceable on Windows.
         }
         let file = options.open(&lock_path)?;
-        #[cfg(unix)]
-        let identity = file.metadata()?;
-        let cleanup = crate::locks::Guard::new(&lock_path, &file)?;
+        let identity = crate::locks::capture_identity(&lock_path, &file)?;
+        let file = crate::locks::SharedFile::from(file);
+        let cleanup = crate::locks::Guard::new(&lock_path, &file, identity.clone());
         let lock = Self {
             cleanup,
             path,
@@ -149,5 +149,32 @@ mod tests {
             fs::read(root.path().join("shallow.lock")).unwrap(),
             b"foreign"
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_invalidates_shallow_publication_without_changing_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let old = ObjectId::for_blob(ObjectFormat::Sha1, b"original root");
+        let new = ObjectId::for_blob(ObjectFormat::Sha1, b"new root");
+        let path = directory.join("shallow");
+        let bytes = format!("{old}\n");
+        fs::write(&path, &bytes).unwrap();
+        let mut lock = Lock::acquire(
+            &directory,
+            ObjectFormat::Sha1,
+            &[old],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::locks::cleanup_under(&directory)
+                .unwrap()
+                .removed
+                .len(),
+            1
+        );
+        assert!(lock.publish(&[new]).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), bytes);
     }
 }

@@ -315,7 +315,7 @@ fn lines(contents: &[u8]) -> impl Iterator<Item = &[u8]> {
 struct Lock {
     file: PathBuf,
     lock: PathBuf,
-    handle: Option<std::fs::File>,
+    handle: Option<crate::locks::SharedFile>,
     cleanup: crate::locks::Guard,
 }
 
@@ -329,7 +329,7 @@ impl Lock {
         };
         let mut lock = file.as_os_str().to_owned();
         lock.push(".lock");
-        let lock = PathBuf::from(lock);
+        let lock = std::path::absolute(PathBuf::from(lock)).map_err(write_error)?;
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         // New files are owner-only. A rewrite keeps stricter existing bits (such as 0400) and,
@@ -344,7 +344,9 @@ impl Lock {
             options.mode(mode);
         }
         let handle = options.open(&lock).map_err(write_error)?;
-        let cleanup = crate::locks::Guard::new(&lock, &handle).map_err(write_error)?;
+        let identity = crate::locks::capture_identity(&lock, &handle).map_err(write_error)?;
+        let handle = crate::locks::SharedFile::from(handle);
+        let cleanup = crate::locks::Guard::new(&lock, &handle, identity);
         Ok(Self {
             file,
             lock,
@@ -652,5 +654,23 @@ mod tests {
             .unwrap();
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o400);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_invalidates_credential_rewrite_and_preserves_original() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        let path = directory.join("credentials");
+        std::fs::write(&path, b"original credential fixture").unwrap();
+        let lock = Lock::acquire(&path).unwrap();
+        assert_eq!(
+            crate::locks::cleanup_under(&directory)
+                .unwrap()
+                .removed
+                .len(),
+            1
+        );
+        assert!(lock.commit(b"replacement").is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"original credential fixture");
     }
 }

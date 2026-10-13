@@ -783,13 +783,15 @@ pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
 pub(super) struct Lock {
     pub(super) destination: PathBuf,
     path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     identity: fs::Metadata,
     cleanup: crate::locks::Guard,
 }
 impl Lock {
     pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
         let _lock_operation = crate::locks::operation();
+        let destination =
+            std::path::absolute(&destination).map_err(|source| io_error(&destination, source))?;
         check_path(&destination)?;
         #[expect(
             clippy::unwrap_used,
@@ -816,13 +818,15 @@ impl Lock {
                 io_error(&path, source)
             }
         })?;
-        let cleanup =
-            crate::locks::Guard::new(&path, &file).map_err(|source| io_error(&path, source))?;
+        let identity = crate::locks::capture_identity(&path, &file)
+            .map_err(|source| io_error(&path, source))?;
+        let file = crate::locks::SharedFile::from(file);
+        let cleanup = crate::locks::Guard::new(&path, &file, identity.clone());
         Ok(Self {
             destination,
             cleanup,
             path: path.clone(),
-            identity: file.metadata().map_err(|source| io_error(&path, source))?,
+            identity,
             file: Some(file),
         })
     }
@@ -1074,7 +1078,7 @@ mod tests {
         let path = repo.git_dir().join("HEAD");
         let mut lock = Lock::acquire(path.clone()).unwrap();
         // A read-only handle injects a deterministic write failure without chmod/root assumptions.
-        lock.file = Some(File::open(&lock.path).unwrap());
+        lock.file = Some(File::open(&lock.path).unwrap().into());
         assert!(lock.publish(&Target::Direct(id())).is_err());
         drop(lock);
         assert_eq!(fs::read(path).unwrap(), b"ref: refs/heads/main\n");
@@ -1320,7 +1324,7 @@ mod interrupt_cleanup_tests {
     use super::*;
 
     #[test]
-    fn cleanup_invalidates_all_reference_lock_topologies_before_publication() {
+    fn cleanup_covers_reference_lock_topologies_without_changing_destinations() {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().canonicalize().unwrap();
         for name in [
@@ -1338,8 +1342,20 @@ mod interrupt_cleanup_tests {
             assert_eq!(report.removed.len(), 1);
             #[cfg(not(unix))]
             assert_eq!(report.failures.len(), 1);
+            #[cfg(unix)]
             assert!(lock.publish_retaining_lock(b"unsafe replacement").is_err());
+            #[cfg(not(unix))]
+            assert!(lock.check_owned().is_ok());
             assert_eq!(fs::read(destination).unwrap(), b"published bytes");
+            #[cfg(not(unix))]
+            {
+                let path = lock.path.clone();
+                drop(lock);
+                assert!(
+                    !path.exists(),
+                    "unsupported cleanup must preserve ordinary Drop"
+                );
+            }
         }
     }
 }

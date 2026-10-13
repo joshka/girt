@@ -31,7 +31,7 @@ use crate::Repository;
 pub struct ConfigEdit {
     destination: PathBuf,
     lock_path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     original: Option<Vec<u8>>,
     lock_identity: fs::Metadata,
     cleanup: crate::locks::Guard,
@@ -120,7 +120,8 @@ impl ConfigEdit {
         );
 
         let operation = || {
-            let destination = path.as_ref().to_path_buf();
+            let destination = std::path::absolute(path.as_ref())
+                .map_err(|source| io_error("resolve config path", path.as_ref(), source))?;
             let mut lock_name = destination.as_os_str().to_os_string();
             lock_name.push(".lock");
             let lock_path = PathBuf::from(lock_name);
@@ -143,8 +144,8 @@ impl ConfigEdit {
                     io::Error::other("cannot safely remove lock without its file identity"),
                 )),
             })?;
-            let cleanup = crate::locks::Guard::new(&lock_path, &file)
-                .map_err(|source| io_error("register lock", &lock_path, source))?;
+            let file = crate::locks::SharedFile::from(file);
+            let cleanup = crate::locks::Guard::new(&lock_path, &file, lock_identity.clone());
             let mut edit = ConfigEdit {
                 destination,
                 lock_path,
@@ -517,7 +518,7 @@ mod tests {
         fs::write(&path, b"#original").unwrap();
         let mut edit = ConfigEdit::open(&path, 1024).unwrap();
         edit.document_mut().append("x", None, "a", b"new").unwrap();
-        edit.file = Some(File::open(&edit.lock_path).unwrap());
+        edit.file = Some(File::open(&edit.lock_path).unwrap().into());
         assert!(matches!(
             edit.commit(),
             Err(EditError::Io {

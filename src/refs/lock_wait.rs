@@ -57,12 +57,21 @@ impl Lock {
         wait: LockWait,
         cancel: &AtomicBool,
     ) -> Result<Self, ReferenceError> {
+        let generation = crate::locks::wait_generation();
         let started = Instant::now();
         let mut delay = Duration::from_millis(1);
         loop {
             check_cancelled(cancel)?;
+            if crate::locks::wait_generation() != generation {
+                return Err(ReferenceError::Cancelled);
+            }
             let error = match Self::acquire(destination.clone()) {
-                Ok(lock) => return Ok(lock),
+                Ok(lock) => {
+                    if crate::locks::wait_generation() != generation {
+                        return Err(ReferenceError::Cancelled);
+                    }
+                    return Ok(lock);
+                }
                 Err(error @ ReferenceError::Locked(_)) => error,
                 Err(error) => return Err(error),
             };
@@ -79,6 +88,9 @@ impl Lock {
             };
             std::thread::sleep(sleep);
             check_cancelled(cancel)?;
+            if crate::locks::wait_generation() != generation {
+                return Err(ReferenceError::Cancelled);
+            }
             if let LockWait::For(budget) = wait
                 && started.elapsed() >= budget
             {

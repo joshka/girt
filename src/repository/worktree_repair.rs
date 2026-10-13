@@ -82,6 +82,7 @@ impl RepositoryLocation {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn prepare_worktree_repair(&self) -> Result<WorktreeRepair, WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let source = self
             .inferred_worktree
             .as_ref()
@@ -132,6 +133,15 @@ impl WorktreeRepair {
     /// before replacement. Later I/O errors report paths already written; a temporary repair file
     /// may remain. Preserve the source checkout and registration for recovery on failure.
     pub fn repair(self, checkout: impl AsRef<Path>) -> Result<(), WorktreeAdminError> {
+        self.repair_with(checkout, || {})
+    }
+
+    fn repair_with(
+        self,
+        checkout: impl AsRef<Path>,
+        after_forward: impl FnOnce(),
+    ) -> Result<(), WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let checkout =
             fs::canonicalize(checkout.as_ref()).map_err(|_| uncertain(checkout.as_ref()))?;
         directory(&checkout)?;
@@ -155,6 +165,7 @@ impl WorktreeRepair {
         let mut written = Vec::new();
         let forward_bytes = gitfile_line(&forward);
         replace(&gitfile, &forward_bytes, &mut written)?;
+        after_forward();
         // Report the published forward link if revalidation fails before the second replacement.
         let recheck = || -> Result<(), WorktreeAdminError> {
             self.check_captured()?;
@@ -253,4 +264,73 @@ fn validate_repair_path(path: &Path) -> Result<(), WorktreeAdminError> {
         return Err(WorktreeAdminError::Path(path.into()));
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_cannot_release_admin_lock_between_repair_replacements() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().canonicalize().unwrap();
+        let main = root_path.join("main");
+        fs::create_dir(&main).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&main)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", root_path.join("absent"))
+                .env("GIT_AUTHOR_NAME", "Cleanup Fixture")
+                .env("GIT_AUTHOR_EMAIL", "cleanup@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Cleanup Fixture")
+                .env("GIT_COMMITTER_EMAIL", "cleanup@example.invalid")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        };
+        git(&["init", "-q", "--template="]);
+        git(&["commit", "--allow-empty", "-qm", "original repair fixture"]);
+        let source = root_path.join("source");
+        git(&["worktree", "add", "--detach", source.to_str().unwrap()]);
+        let location = RepositoryLocation::at_git_dir(source.join(".git")).unwrap();
+        let repair = location.prepare_worktree_repair().unwrap();
+        let registration = repair.registration.clone();
+        let destination = root_path.join("destination");
+        fs::create_dir(&destination).unwrap();
+        fs::hard_link(source.join(".git"), destination.join(".git")).unwrap();
+        let (checkpoint, reached) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let (cleaned, done) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(move || {
+                repair.repair_with(&destination, || {
+                    checkpoint.send(()).unwrap();
+                    resume.recv().unwrap();
+                })
+            });
+            reached.recv().unwrap();
+            let cleaner = scope.spawn(|| {
+                let report = crate::locks::cleanup_under(&registration).unwrap();
+                cleaned.send(()).unwrap();
+                report
+            });
+            assert!(
+                done.recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            assert!(registration.join("girt-admin.lock").is_file());
+            release.send(()).unwrap();
+            worker.join().unwrap().unwrap();
+            assert!(cleaner.join().unwrap().failures.is_empty());
+        });
+        assert!(!registration.join("girt-admin.lock").exists());
+        assert!(
+            fs::read_to_string(registration.join("gitdir"))
+                .unwrap()
+                .contains("destination")
+        );
+    }
 }

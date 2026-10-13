@@ -128,6 +128,7 @@ impl ColocationEdit<'_> {
         reflog: Reflog,
         after_index: impl FnOnce(),
     ) -> Result<Vec<RefEditOutcome>, ColocationError> {
+        let _lock_operation = crate::locks::operation();
         let refs = match self.repository.references() {
             Ok(refs) => refs,
             Err(source) => {

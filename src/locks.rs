@@ -1,9 +1,10 @@
 //! Caller-controlled release of this process's transient girt lock files.
 //!
 //! Call [`cleanup`] during shutdown in normal thread context, after requesting cancellation and
-//! preventing new work. A caller-owned signal callback thread can do this; a raw POSIX signal
-//! trampoline cannot. Girt installs no signal handlers. Cleanup waits for active lock operations,
-//! invalidates live guards and removes only files whose registered identity still matches.
+//! preventing new work. Cleanup also cancels pending reference lock waits. A caller-owned signal
+//! callback thread can do this; a raw POSIX signal trampoline cannot. Girt installs no signal
+//! handlers. Cleanup waits for active lock operations, invalidates live guards and removes only
+//! files whose registered identity still matches.
 //!
 //! Completed publication is never rolled back. Surviving guards refuse publication after cleanup;
 //! another acquisition after cleanup is allowed. The caller must exclude hostile lock-path and
@@ -11,17 +12,19 @@
 //! non-cooperating writer. SIGKILL, process crashes and power loss cannot run this API.
 //!
 //! Unix uses device/inode identities. Other platforms preserve registered locks and report an
-//! unsupported cleanup failure. Persistent worktree `locked` markers and pack `.keep` protections
-//! are not transient locks and are never registered.
+//! unsupported cleanup failure, retaining guard validity for ordinary Drop/abort. Persistent
+//! worktree `locked` markers and pack `.keep` protections are not transient locks and are never
+//! registered.
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, Weak};
 
 static GATE: RwLock<()> = RwLock::new(());
+static WAIT_GENERATION: AtomicUsize = AtomicUsize::new(0);
 static REGISTRY: std::sync::LazyLock<Mutex<HashMap<usize, Weak<Registration>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 thread_local! { static DEPTH: Cell<usize> = const { Cell::new(0) }; }
@@ -50,14 +53,15 @@ pub struct CleanupFailure {
     pub source: io::Error,
 }
 
-/// Invalidates all live registered guards and releases their identity-matched transient locks.
+/// Releases Unix identity-matched transient locks and invalidates their live registered guards.
 ///
 /// This process-wide operation includes index/config edits, refs/reflogs/reftable, shallow
 /// metadata, clone config, credentials and worktree administration mutexes. It does not scan for
-/// stale locks. Active acquisition/publication/drop operations finish before cleanup; a blocked
-/// lock wait must first be cancelled by the caller. Retained edits may still own open file handles,
-/// but cannot subsequently publish. Partial ref/worktree effects completed before cleanup remain
-/// completed.
+/// stale locks. Cleanup cancels pending reference lock waits before waiting for active publication
+/// and drop operations. On Unix, retained edits may still own open handles but cannot subsequently
+/// publish. Unsupported platforms preserve guard validity for ordinary Drop/abort. Partial effects
+/// completed before cleanup remain completed; new work after cleanup must be excluded by the
+/// caller.
 ///
 /// # Errors
 ///
@@ -68,9 +72,10 @@ pub struct CleanupFailure {
 /// ```no_run
 /// # use std::sync::atomic::{AtomicBool, Ordering};
 /// # let cancel = AtomicBool::new(false);
-/// // In a normal shutdown callback, first stop admitting work and wake/join writers.
+/// // In a normal shutdown callback, first stop admitting work and wake writers.
 /// cancel.store(true, Ordering::Relaxed);
 /// let report = girt::locks::cleanup()?;
+/// // Join cancelled writers before exiting; retain failures for manual recovery.
 /// for failure in report.failures {
 ///     eprintln!(
 ///         "lock cleanup failed at {:?}: {}",
@@ -80,20 +85,27 @@ pub struct CleanupFailure {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn cleanup() -> io::Result<CleanupReport> {
-    cleanup_matching(|_| true)
+    cleanup_matching(|_| true, true)
 }
 
 #[cfg(test)]
 pub(crate) fn cleanup_under(root: &std::path::Path) -> io::Result<CleanupReport> {
-    cleanup_matching(|path| path.starts_with(root))
+    cleanup_matching(|path| path.starts_with(root), false)
 }
 
-fn cleanup_matching(select: impl Fn(&std::path::Path) -> bool) -> io::Result<CleanupReport> {
+fn cleanup_matching(
+    select: impl Fn(&std::path::Path) -> bool,
+    cancel_waits: bool,
+) -> io::Result<CleanupReport> {
     if DEPTH.with(|depth| depth.get() != 0) {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,
             "cleanup inside a lock operation",
         ));
+    }
+    // Wake pending reference lock waits before waiting for an active publisher's read gate.
+    if cancel_waits {
+        WAIT_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
     let _exclusive = GATE.write().unwrap_or_else(|poison| poison.into_inner());
     let registrations = {
@@ -105,11 +117,16 @@ fn cleanup_matching(select: impl Fn(&std::path::Path) -> bool) -> io::Result<Cle
     };
     let mut report = CleanupReport::default();
     for registration in registrations {
-        if !select(&registration.path) || !registration.active.swap(false, Ordering::Relaxed) {
+        if !select(&registration.path) || !registration.active.load(Ordering::Relaxed) {
             continue;
         }
+        #[cfg(unix)]
+        registration.active.store(false, Ordering::Relaxed);
         match registration.remove_owned() {
-            Ok(true) => report.removed.push(registration.path.clone()),
+            Ok(true) => {
+                registration.active.store(false, Ordering::Relaxed);
+                report.removed.push(registration.path.clone());
+            }
             Ok(false) => report.preserved.push(registration.path.clone()),
             Err(source) => report.failures.push(CleanupFailure {
                 path: registration.path.clone(),
@@ -118,6 +135,61 @@ fn cleanup_matching(select: impl Fn(&std::path::Path) -> bool) -> io::Result<Cle
         }
     }
     Ok(report)
+}
+
+pub(crate) fn wait_generation() -> usize {
+    WAIT_GENERATION.load(Ordering::Relaxed)
+}
+
+/// Shares one OS handle between its writer and the Unix identity pin; cloning never duplicates a
+/// descriptor. Windows registrations do not pin a handle, preserving existing delete-sharing rules.
+#[derive(Clone, Debug)]
+pub(crate) struct SharedFile(Arc<File>);
+
+impl From<File> for SharedFile {
+    fn from(file: File) -> Self {
+        Self(Arc::new(file))
+    }
+}
+
+impl std::ops::Deref for SharedFile {
+    type Target = File;
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl std::io::Write for SharedFile {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut file = self.0.as_ref();
+        std::io::Write::write(&mut file, bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut file = self.0.as_ref();
+        std::io::Write::flush(&mut file)
+    }
+}
+
+/// An identity failure cannot authorize unlinking the file. Keep the original cause and name
+/// the lock requiring manual recovery, rather than returning a context-free metadata error.
+#[derive(Debug, thiserror::Error)]
+#[error("lock identity unavailable at {path:?}; cleanup refused")]
+struct IdentityFailure {
+    path: PathBuf,
+    #[source]
+    source: io::Error,
+}
+
+pub(crate) fn capture_identity(path: &std::path::Path, file: &File) -> io::Result<fs::Metadata> {
+    file.metadata().map_err(|source| {
+        io::Error::new(
+            source.kind(),
+            IdentityFailure {
+                path: path.to_owned(),
+                source,
+            },
+        )
+    })
 }
 
 /// Serializes acquisition, publication and destruction against caller cleanup. Nested library
@@ -154,18 +226,21 @@ struct Registration {
     path: PathBuf,
     identity: fs::Metadata,
     #[cfg(unix)]
-    _pinned: File,
+    _pinned: SharedFile,
     active: AtomicBool,
 }
 
 impl Guard {
     /// The caller holds an operation guard across exclusive creation and registration.
-    pub(crate) fn new(path: &std::path::Path, file: &File) -> io::Result<Self> {
+    pub(crate) fn new(path: &std::path::Path, file: &SharedFile, identity: fs::Metadata) -> Self {
+        debug_assert!(path.is_absolute());
+        #[cfg(not(unix))]
+        let _ = file;
         let registration = Arc::new(Registration {
-            path: std::path::absolute(path)?,
-            identity: file.metadata()?,
+            path: path.to_owned(),
+            identity,
             #[cfg(unix)]
-            _pinned: file.try_clone()?,
+            _pinned: file.clone(),
             active: AtomicBool::new(true),
         });
         let mut registry = REGISTRY.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -173,7 +248,7 @@ impl Guard {
             Arc::as_ptr(&registration) as usize,
             Arc::downgrade(&registration),
         );
-        Ok(Self(registration))
+        Self(registration)
     }
 
     pub(crate) fn check_path(&self) -> io::Result<()> {
@@ -238,6 +313,11 @@ impl Registration {
     #[cfg(not(unix))]
     fn remove_owned(&self) -> io::Result<bool> {
         let _ = &self.identity;
+        match fs::symlink_metadata(&self.path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error),
+            Ok(_) => {}
+        }
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "owned lock cleanup identity on this platform",
@@ -269,7 +349,9 @@ mod tests {
                 created.send(()).unwrap();
                 wait.recv().unwrap();
                 let _nested = operation();
-                let guard = Guard::new(path_ref, &file).unwrap();
+                let identity = file.metadata().unwrap();
+                let file = SharedFile::from(file);
+                let guard = Guard::new(path_ref, &file, identity);
                 // Keep the registration alive after the operation releases the acquisition gate.
                 guard
             });
@@ -318,7 +400,9 @@ mod failure_tests {
             .unwrap();
         let guard = {
             let _operation = operation();
-            Guard::new(&path, &file).unwrap()
+            let identity = file.metadata().unwrap();
+            let file = SharedFile::from(file);
+            Guard::new(&path, &file, identity)
         };
         fs::rename(&parent, root.path().join("saved-parent")).unwrap();
         fs::write(&parent, b"foreign parent replacement").unwrap();
@@ -328,5 +412,28 @@ mod failure_tests {
         assert!(guard.check().is_err());
         assert!(root.path().join("saved-parent/owned.lock").is_file());
         assert_eq!(fs::read(parent).unwrap(), b"foreign parent replacement");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod handle_tests {
+    use std::os::fd::AsRawFd;
+
+    use super::*;
+
+    #[test]
+    fn identity_pin_shares_the_writers_single_descriptor() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("owned.lock");
+        let raw = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let identity = raw.metadata().unwrap();
+        let file = SharedFile::from(raw);
+        let _operation = operation();
+        let guard = Guard::new(&path, &file, identity);
+        assert_eq!(file.as_raw_fd(), guard.0._pinned.as_raw_fd());
     }
 }

@@ -289,7 +289,7 @@ fn write_failure_preserves_original(#[case] format: crate::ObjectFormat) {
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     // A read-only descriptor injects failure without permission/root assumptions.
     drop(edit.file.take());
-    edit.file = Some(File::open(&edit.lock_path).unwrap());
+    edit.file = Some(File::open(&edit.lock_path).unwrap().into());
     assert!(matches!(
         edit.commit(),
         Err(StorageError::Io {
@@ -560,7 +560,7 @@ fn specialized_publication_faults_and_recovery(
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     edit.replace_entries(vec![]).unwrap();
     drop(edit.file.take());
-    edit.file = Some(File::open(&edit.lock_path).unwrap());
+    edit.file = Some(File::open(&edit.lock_path).unwrap().into());
     assert!(matches!(
         edit.commit(),
         Err(StorageError::Io {

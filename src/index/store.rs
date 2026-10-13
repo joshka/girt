@@ -111,7 +111,7 @@ impl LeafSnapshot {
 pub struct IndexEdit {
     destination: PathBuf,
     lock_path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     original: Option<Vec<u8>>,
     leaf: Option<LeafSnapshot>,
     shared: Option<(PathBuf, Vec<u8>)>,
@@ -396,8 +396,8 @@ impl IndexEdit {
                     io::Error::other("cannot safely remove lock without its file identity"),
                 )),
             })?;
-            let cleanup = crate::locks::Guard::new(&lock_path, &file)
-                .map_err(|source| io_error("register lock", &lock_path, source))?;
+            let file = crate::locks::SharedFile::from(file);
+            let cleanup = crate::locks::Guard::new(&lock_path, &file, lock_identity.clone());
             let mut edit = IndexEdit {
                 destination,
                 lock_path,

@@ -139,3 +139,38 @@ fn cleanup_racing_index_publication_or_drop_preserves_git_readability() {
         }
     }
 }
+
+#[test]
+fn cleanup_cancels_a_pending_packed_ref_wait_without_stealing_the_lock() {
+    let _serial = CLEANUP_TEST.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--template=", "-q"]);
+    let repo = girt::Repository::open(root.path()).unwrap();
+    let lock = repo.git_dir().join("packed-refs.lock");
+    std::fs::write(&lock, b"foreign owner").unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let references = repo.references().unwrap();
+            let objects = repo.objects(girt::PackLimits::default()).unwrap();
+            started.send(()).unwrap();
+            references.pack(
+                &objects,
+                girt::refs::PackRefsOptions {
+                    // Bounded independently if cancellation regresses.
+                    lock_wait: girt::refs::LockWait::For(Duration::from_secs(2)),
+                    ..girt::refs::PackRefsOptions::ALL
+                },
+            )
+        });
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(girt::locks::cleanup().unwrap().failures.is_empty());
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            girt::refs::PackRefsError::Reference(girt::refs::ReferenceError::Cancelled)
+        ));
+    });
+    assert_eq!(std::fs::read(lock).unwrap(), b"foreign owner");
+}

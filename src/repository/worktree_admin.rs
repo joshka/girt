@@ -65,16 +65,24 @@ impl Drop for AdminLock {
 
 pub(super) fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError> {
     let _lock_operation = crate::locks::operation();
-    let path = registration.join("girt-admin.lock");
+    let path = std::path::absolute(registration.join("girt-admin.lock")).map_err(|source| {
+        WorktreeAdminError::Io {
+            path: registration.to_owned(),
+            written: Vec::new(),
+            source,
+        }
+    })?;
     match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(file) => {
-            let cleanup = crate::locks::Guard::new(&path, &file).map_err(|source| {
+            let identity = crate::locks::capture_identity(&path, &file).map_err(|source| {
                 WorktreeAdminError::Io {
                     path: path.clone(),
                     written: Vec::new(),
                     source,
                 }
             })?;
+            let file = crate::locks::SharedFile::from(file);
+            let cleanup = crate::locks::Guard::new(&path, &file, identity);
             Ok(AdminLock { path, cleanup })
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
