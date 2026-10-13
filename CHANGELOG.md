@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/joshka/girt/compare/v0.6.1...v0.6.2) - 2026-10-13
+
+### Other
+
+- Expose caller-controlled lock cleanup ([#137](https://github.com/joshka/girt/pull/137))
+
 ## [0.6.1](https://github.com/joshka/girt/compare/v0.6.0...v0.6.1) - 2026-10-13
 
 ### Other
