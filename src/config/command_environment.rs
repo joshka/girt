@@ -94,8 +94,8 @@ impl Config {
                 .checked_sub(ASSIGNMENT_BYTES)
                 .ok_or_else(|| error(line, "environment byte limit"))?;
             let mut key = quoted(&mut rest, line)?;
-            let value = if rest.first() == Some(&b'=') {
-                rest = &rest[1..];
+            let value = if let Some(after) = rest.strip_prefix(b"=") {
+                rest = after;
                 Some(if rest.first() == Some(&b'\'') {
                     quoted(&mut rest, line)?
                 } else {
@@ -108,7 +108,7 @@ impl Config {
             } else {
                 None
             };
-            if !rest.is_empty() && !rest[0].is_ascii_whitespace() {
+            if rest.first().is_some_and(|byte| !byte.is_ascii_whitespace()) {
                 return Err(error(line, "invalid command environment quoting"));
             }
             append_assignment(&mut config, &key, value, line)?;
@@ -125,25 +125,15 @@ fn error(line: usize, reason: &'static str) -> ConfigError {
 /// Decode Git's single-quote encoding, including escaped quote and bang between quoted spans.
 fn quoted(input: &mut &[u8], line: usize) -> Result<Vec<u8>, ConfigError> {
     let invalid = || error(line, "invalid command environment quoting");
-    if input.first() != Some(&b'\'') {
-        return Err(invalid());
-    }
-    let mut rest = &input[1..];
+    let mut rest = input.strip_prefix(b"'").ok_or_else(invalid)?;
     let mut value = Vec::new();
     loop {
-        let end = rest
-            .iter()
-            .position(|&byte| byte == b'\'')
-            .ok_or_else(invalid)?;
-        value.extend_from_slice(&rest[..end]);
-        rest = &rest[end + 1..];
-        if rest.len() >= 3
-            && rest[0] == b'\\'
-            && matches!(rest[1], b'\'' | b'!')
-            && rest[2] == b'\''
-        {
-            value.push(rest[1]);
-            rest = &rest[3..];
+        let (span, after) = crate::bytes::split_once(rest, b'\'').ok_or_else(invalid)?;
+        value.extend_from_slice(span);
+        rest = after;
+        if let [b'\\', escaped @ (b'\'' | b'!'), b'\'', after @ ..] = rest {
+            value.push(*escaped);
+            rest = after;
         } else {
             *input = rest;
             return Ok(value);
@@ -158,13 +148,7 @@ fn append_assignment(
     line: usize,
 ) -> Result<(), ConfigError> {
     let invalid = || error(line, "invalid command environment key or value");
-    let first = key
-        .iter()
-        .position(|&byte| byte == b'.')
-        .ok_or_else(invalid)?;
-    let last = key.iter().rposition(|&byte| byte == b'.').unwrap();
-    let section = &key[..first];
-    let name = &key[last + 1..];
+    let (section, subsection, name) = crate::bytes::config_key(key).ok_or_else(invalid)?;
     if section.is_empty()
         || !section
             .iter()
@@ -178,7 +162,7 @@ fn append_assignment(
     {
         return Err(invalid());
     }
-    let subsection = (first != last).then(|| key[first + 1..last].to_vec());
+    let subsection = subsection.map(<[u8]>::to_vec);
     let index = config.entries.len();
     config.occurrences.push(SectionOccurrence {
         name: SectionName {

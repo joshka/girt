@@ -29,30 +29,21 @@ impl Pattern {
     pub fn parse(raw: &[u8], case: Case) -> Option<Self> {
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         let raw = raw.split(|b| *b == 0).next().unwrap_or_default();
-        let mut end = raw.len();
-        while end > 0 && raw[end - 1] == b' ' {
-            let escapes = raw[..end - 1]
-                .iter()
-                .rev()
-                .take_while(|b| **b == b'\\')
-                .count();
+        let mut bytes = raw;
+        while let Some(before) = bytes.strip_suffix(b" ") {
+            let escapes = before.iter().rev().take_while(|b| **b == b'\\').count();
             if escapes % 2 == 1 {
                 break;
             }
-            end -= 1;
+            bytes = before;
         }
-        let mut bytes = &raw[..end];
-        if bytes.is_empty() || bytes[0] == b'#' {
+        if bytes.is_empty() || bytes.starts_with(b"#") {
             return None;
         }
-        let negative = bytes[0] == b'!';
-        if negative {
-            bytes = &bytes[1..];
-        }
+        let negative = bytes.starts_with(b"!");
+        bytes = bytes.strip_prefix(b"!").unwrap_or(bytes);
         let directory = bytes.ends_with(b"/");
-        if directory {
-            bytes = &bytes[..bytes.len() - 1];
-        }
+        bytes = bytes.strip_suffix(b"/").unwrap_or(bytes);
         let anchored = bytes.contains(&b'/');
         bytes = bytes.strip_prefix(b"/").unwrap_or(bytes);
         let expression = compile(bytes, case).unwrap_or(Expression::Invalid);
@@ -118,8 +109,8 @@ fn compile(pattern: &[u8], case: Case) -> Option<Expression> {
     }
     let mut tokens = Vec::new();
     let mut pos = 0;
-    while pos < pattern.len() {
-        let token = match pattern[pos] {
+    while let Some(&byte) = pattern.get(pos) {
+        let token = match byte {
             b'\\' => {
                 pos += 1;
                 Token::Byte(*pattern.get(pos)?)
@@ -130,11 +121,10 @@ fn compile(pattern: &[u8], case: Case) -> Option<Expression> {
                 while pattern.get(pos + 1) == Some(&b'*') {
                     pos += 1;
                 }
+                let after = pattern.get(pos + 1..).unwrap_or_default();
                 let recursive = pos > start
-                    && (start == 0 || pattern[start - 1] == b'/')
-                    && (pos + 1 == pattern.len()
-                        || pattern[pos + 1] == b'/'
-                        || pattern[pos + 1..].starts_with(b"\\/"));
+                    && (start == 0 || pattern.get(start - 1) == Some(&b'/'))
+                    && (after.is_empty() || after.starts_with(b"/") || after.starts_with(b"\\/"));
                 if recursive && pattern.get(pos + 1) == Some(&b'/') {
                     pos += 1;
                     Token::Directories
@@ -154,21 +144,22 @@ fn compile(pattern: &[u8], case: Case) -> Option<Expression> {
         tokens.push(token);
         pos += 1;
     }
-    if tokens.iter().all(|t| matches!(t, Token::Byte(_))) {
-        let literal = tokens
-            .into_iter()
-            .map(|t| match t {
-                Token::Byte(b) => b,
-                _ => unreachable!(),
-            })
-            .collect();
-        Some(Expression::Literal(literal))
-    } else {
-        Some(Expression::Glob(tokens))
-    }
+    let literal: Option<Vec<u8>> = tokens
+        .iter()
+        .map(|token| match token {
+            Token::Byte(byte) => Some(*byte),
+            _ => None,
+        })
+        .collect();
+    Some(literal.map_or(Expression::Glob(tokens), Expression::Literal))
 }
 
 /// Two reusable rows bound memory to O(path length). Each token visits each path byte once.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "rows have text.len() + 1 cells indexed by 0..=text.len(); byte / 64 selects one of \
+              the four class words"
+)]
 fn glob(tokens: &[Token], text: &[u8], case: Case) -> bool {
     let mut previous = vec![false; text.len() + 1];
     let mut next = vec![false; text.len() + 1];
@@ -204,7 +195,7 @@ fn glob(tokens: &[Token], text: &[u8], case: Case) -> bool {
                             byte != b'/'
                                 && bits[usize::from(byte) / 64] & (1u64 << (byte % 64)) != 0
                         }
-                        _ => unreachable!(),
+                        Token::Star | Token::Recursive | Token::Directories => false,
                     };
                     next[i] = previous[i - 1] && matched;
                 }
@@ -228,15 +219,21 @@ fn class(pattern: &[u8], mut pos: usize, case: Case) -> Option<([u64; 4], usize)
             return Some((bits, pos));
         }
         first = false;
-        if pattern[pos..].starts_with(b"[:") {
-            let end = pos + 2 + pattern[pos + 2..].windows(2).position(|s| s == b":]")?;
-            let predicate = named_class(&pattern[pos + 2..end])?;
+        let rest = pattern.get(pos..).unwrap_or_default();
+        // As in Git, `[:` names a class only when the first `]` after it follows a `:` other
+        // than the opening one; otherwise the `[` is an ordinary member.
+        if let Some((name, after)) = rest
+            .strip_prefix(b"[:")
+            .and_then(|body| crate::bytes::split_once(body, b']'))
+            .and_then(|(name, after)| Some((name.strip_suffix(b":")?, after)))
+        {
+            let predicate = named_class(name)?;
             for b in 0..=u8::MAX {
                 if predicate(b) {
                     insert(&mut bits, b, case);
                 }
             }
-            pos = end + 2;
+            pos = pattern.len() - after.len();
         } else {
             let (low, next) = class_byte(pattern, pos)?;
             pos = next;
@@ -259,6 +256,10 @@ fn class_byte(pattern: &[u8], mut pos: usize) -> Option<(u8, usize)> {
     }
     Some((*pattern.get(pos)?, pos + 1))
 }
+#[expect(
+    clippy::indexing_slicing,
+    reason = "byte / 64 selects one of the four words"
+)]
 fn insert(bits: &mut [u64; 4], byte: u8, case: Case) {
     bits[usize::from(byte) / 64] |= 1u64 << (byte % 64);
     if case == Case::AsciiInsensitive {

@@ -166,7 +166,7 @@ impl Config {
                         {
                             parser.take();
                         }
-                        subsection = Some(parser.bytes[start..parser.pos].to_ascii_lowercase());
+                        subsection = Some(parser.since(start).to_ascii_lowercase());
                     }
                     let separated = matches!(parser.peek(), Some(b' ' | b'\t'));
                     parser.space();
@@ -248,7 +248,7 @@ impl Config {
                     }
                     occurrences
                         .last_mut()
-                        .expect("section checked above")
+                        .ok_or_else(|| parser.error("variable outside section"))?
                         .entries
                         .push(entries.len());
                     entries.push(Entry {
@@ -504,7 +504,7 @@ struct Parser<'a> {
     line: usize,
     value_end: usize,
 }
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     fn peek(&self) -> Option<u8> {
         match self.bytes.get(self.pos).copied() {
             Some(b'\r') if self.bytes.get(self.pos + 1) == Some(&b'\n') => Some(b'\n'),
@@ -552,7 +552,11 @@ impl Parser<'_> {
         if start == self.pos {
             return Err(self.error("empty name"));
         }
-        Ok(self.bytes[start..self.pos].to_vec())
+        Ok(self.since(start).to_vec())
+    }
+    /// Bytes consumed since `start`, a position this parser previously reached.
+    fn since(&self, start: usize) -> &'a [u8] {
+        self.bytes.get(start..self.pos).unwrap_or_default()
     }
     fn value(&mut self) -> Result<Vec<u8>, ConfigError> {
         self.space();
