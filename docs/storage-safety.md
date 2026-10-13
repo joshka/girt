@@ -103,13 +103,18 @@ Native local push can establish additional complete commit boundaries by followi
 parent edges from existing reference roots. Discovery targets external commit dependencies in the
 verified received pack and stops at shallow roots. A verified complete base commit's tree and its
 verified direct subtrees can also establish boundaries for unchanged subtrees in received trees.
-Commit dates only order the search; they never prove reachability. Discovery examines at most 256
-ancestors and 4096 root seeds, with 1 MiB per proof object and 64 MiB total proof payload. Unproven
-objects still require the ordinary complete connectivity walk. Mere stored-object presence supplies
-no completeness evidence. Deep or skewed histories may use that slower fallback and reject old
-corruption that Git would leave unvisited. Referenced history is trusted complete, so this operation
-does not replace `git fsck`. Dependency reads, synchronized pack publication and conditional ref
-updates remain.
+Commit dates only order the search; they never prove reachability. Discovery considers every
+verified reference root and has no internal ancestor-depth cutoff. External targets are deduplicated
+before discovery. Caller-configured `max_known_objects`, `max_known_edges` and `max_known_bytes`
+limit discovery work; proof reads retain the 1 MiB per-object and decoding limits. Native local
+receive selects trusted aggregate limits rather than the lower-level `FetchLimits` default totals,
+so discovery can visit the complete referenced commit graph. Direct subtree discovery examines at
+most 256 subtrees per proven base; remaining subtrees use ordinary verification. Unproven objects
+still require the complete connectivity walk. Mere stored-object presence supplies no completeness
+evidence. Explicit resource limits, unreadable proof objects or skewed search order can still leave
+a branch unproven and reject old corruption that Git would leave unvisited. Referenced history is
+trusted complete, so this operation does not replace `git fsck`. Dependency reads, synchronized pack
+publication and conditional ref updates remain.
 
 Fetch may reuse kind, size and typed-edge evidence recorded from identity-checked received objects.
 This evidence is owned by that receive result and never supplies object content. Before a

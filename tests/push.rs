@@ -1501,3 +1501,273 @@ fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
         );
     }
 }
+
+/// A stale bookmark must stop at its proven base, even beyond the former discovery cap.
+#[rstest]
+#[case::intact(false)]
+#[case::old_tree_absent(true)]
+fn deep_receiver_boundary_matches_git(#[case] remove_old_tree: bool) {
+    let (source, repo, ids) = deep_push_history();
+    let (_root, dest) = receiver_with(&source, ids[1001]);
+    let (_git_root, git_dest) = receiver_with(&source, ids[1001]);
+    unpack_receiver(&dest);
+    unpack_receiver(&git_dest);
+    remove_deep_old_tree(&source, &dest, remove_old_tree);
+    remove_deep_old_tree(&source, &git_dest, remove_old_tree);
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, ids[1002])],
+        &[ids[1001]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            git_dest.git_dir().to_str().unwrap(),
+            "c1002:refs/heads/git-new",
+        ],
+        b"",
+    );
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(ids[1002]));
+    verify_deep_receiver(&dest, remove_old_tree);
+}
+
+fn deep_push_history() -> (tempfile::TempDir, Repository, Vec<ObjectId>) {
+    let mut spec = String::from("@100");
+    for index in 1..=1001 {
+        spec += &format!(" {}@{}", index - 1, 100 + index);
+    }
+    // c1001 is master; c1 is master~1000, and c1002 forks from it.
+    spec += " 1@1200";
+    let fixture = import(&spec);
+    git(
+        fixture.0.path(),
+        &[
+            "update-ref",
+            "refs/heads/master",
+            &fixture.2[1001].to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(
+        git(fixture.0.path(), &["rev-parse", "master~1000"], b""),
+        format!("{}\n", fixture.2[1]).as_bytes()
+    );
+    fixture
+}
+
+fn unpack_receiver(dest: &Repository) {
+    let pack_dir = dest.object_dir().join("pack");
+    for entry in std::fs::read_dir(&pack_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "pack")
+        {
+            let bytes = std::fs::read(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::fs::remove_file(path.with_extension("idx")).unwrap();
+            git(dest.git_dir(), &["unpack-objects", "-q"], &bytes);
+        }
+    }
+}
+
+fn remove_deep_old_tree(source: &tempfile::TempDir, dest: &Repository, remove: bool) {
+    if remove {
+        let tree = String::from_utf8(git(source.path(), &["rev-parse", "c0^{tree}"], b"")).unwrap();
+        let tree = tree.trim();
+        std::fs::remove_file(dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
+    }
+}
+
+fn verify_deep_receiver(dest: &Repository, old_tree_absent: bool) {
+    if !old_tree_absent {
+        git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+    }
+}
+
+#[test]
+fn non_tip_receiver_boundary_in_alternate() {
+    let (source, repo, ids) = import("@100 0@200 1@300 1@400");
+    let (_root, dest) = receiver_with(&source, ids[2]);
+    let alternate = tempfile::tempdir().unwrap();
+    let alternate_objects = alternate.path().join("objects");
+    std::fs::rename(dest.object_dir(), &alternate_objects).unwrap();
+    std::fs::create_dir_all(dest.object_dir().join("info")).unwrap();
+    std::fs::write(
+        dest.object_dir().join("info/alternates"),
+        format!("{}\n", alternate_objects.display()),
+    )
+    .unwrap();
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, ids[3])],
+        &[ids[2]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(ids[3]));
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+}
+
+/// Every valid receiver root participates, including the last root in object-ID order.
+#[test]
+fn receiver_boundary_after_4096_roots_matches_git() {
+    let (source, repo, roots, base, new) = many_ref_history();
+    let (_destination_root, dest) = destination(true);
+    git(
+        source.path(),
+        &["push", "--quiet", dest.git_dir().to_str().unwrap(), "--all"],
+        b"",
+    );
+    let (_git_root, git_dest) = destination(true);
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            git_dest.git_dir().to_str().unwrap(),
+            "--all",
+        ],
+        b"",
+    );
+    unpack_receiver(&dest);
+    unpack_receiver(&git_dest);
+    let tree = String::from_utf8(git(
+        source.path(),
+        &["rev-parse", &format!("{base}^{{tree}}")],
+        b"",
+    ))
+    .unwrap();
+    let tree = tree.trim();
+    std::fs::remove_file(dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
+    std::fs::remove_file(git_dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, new)],
+        &roots,
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            git_dest.git_dir().to_str().unwrap(),
+            &format!("{new}:refs/heads/git-new"),
+        ],
+        b"",
+    );
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(new));
+}
+
+fn many_ref_history() -> (
+    tempfile::TempDir,
+    Repository,
+    Vec<ObjectId>,
+    ObjectId,
+    ObjectId,
+) {
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--bare", "--template=", "."], b"");
+    let mut stream = String::new();
+    for index in 0..4100 {
+        let contents = format!("root {index}\n");
+        stream += &format!(
+            "commit refs/heads/r{index}\nmark :{}\ncommitter A <a@example.com> 100 +0000\ndata {}\n{contents}deleteall\nM 100644 inline f\ndata {}\n{contents}",
+            index + 1,
+            contents.len(),
+            contents.len()
+        );
+        stream += &format!(
+            "commit refs/heads/r{index}\ncommitter A <a@example.com> 200 +0000\ndata 4\ntip\nfrom :{}\n",
+            index + 1
+        );
+    }
+    git(root.path(), &["fast-import", "--quiet"], stream.as_bytes());
+    let mut roots: Vec<ObjectId> = String::from_utf8(git(
+        root.path(),
+        &["for-each-ref", "--format=%(objectname)", "refs/heads"],
+        b"",
+    ))
+    .unwrap()
+    .lines()
+    .map(|line| line.parse().unwrap())
+    .collect();
+    roots.sort_unstable();
+    let last = roots.last().unwrap();
+    let base: ObjectId =
+        String::from_utf8(git(root.path(), &["rev-parse", &format!("{last}~1")], b""))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+    let empty = String::from_utf8(git(root.path(), &["mktree"], b"")).unwrap();
+    let new = String::from_utf8(git(
+        root.path(),
+        &["commit-tree", empty.trim(), "-p", &base.to_string()],
+        b"new\n",
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo, roots, base, new)
+}
+
+#[cfg(unix)]
+#[test]
+fn deep_receiver_boundary_with_quarantine() {
+    let (source, repo, ids) = deep_push_history();
+    let (_root, dest) = receiver_with(&source, ids[1001]);
+    hook(
+        &dest,
+        "pre-receive",
+        &format!(
+            "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 9\ngit cat-file -e {} || exit 9\nprintf quarantine >hook-observed\ncat >/dev/null\n",
+            ids[1002]
+        ),
+    );
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, ids[1002])],
+        &[ids[1001]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(ids[1002]));
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"quarantine"
+    );
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+}
