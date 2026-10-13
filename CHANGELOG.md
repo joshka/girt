@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/joshka/girt/compare/v0.6.0...v0.6.1) - 2026-10-13
+
+### Other
+
+- remove deep push connectivity cliff ([#128](https://github.com/joshka/girt/pull/128))
+
 ## [0.6.0](https://github.com/joshka/girt/compare/v0.5.0...v0.6.0) - 2026-10-13
 
 ### Other
