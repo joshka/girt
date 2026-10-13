@@ -47,6 +47,8 @@ fn git(path: &Path, args: &[&str]) -> Vec<u8> {
         }
     }
     let output = command
+        // Only the fixture's explicit repack may change its pack/index layout.
+        .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
         .arg("-C")
         .arg(path)
         .args(args.iter())
