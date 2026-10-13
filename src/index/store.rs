@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -531,16 +539,15 @@ impl IndexEdit {
                     .cmp(&entry.path)
                     .then(candidate.stage.cmp(&entry.stage))
             });
-            if let Ok(position) = found {
-                let previous = &old[position];
-                if previous.id == entry.id
-                    && previous.mode == entry.mode
-                    && previous.assume_valid == entry.assume_valid
-                    && previous.intent_to_add == entry.intent_to_add
-                    && previous.skip_worktree == entry.skip_worktree
-                {
-                    entry.stat = previous.stat;
-                }
+            if let Ok(position) = found
+                && let Some(previous) = old.get(position)
+                && previous.id == entry.id
+                && previous.mode == entry.mode
+                && previous.assume_valid == entry.assume_valid
+                && previous.intent_to_add == entry.intent_to_add
+                && previous.skip_worktree == entry.skip_worktree
+            {
+                entry.stat = previous.stat;
             }
         }
         self.replace_entries(entries)
@@ -847,6 +854,10 @@ impl IndexEdit {
             })?;
         self.check_original()?;
         self.write_lock(&bytes)?;
+        #[expect(
+            clippy::expect_used,
+            reason = "the guard holds its file until publication"
+        )]
         let file = self.file.as_ref().expect("unpublished guard owns its file");
         options
             .shared_permissions
@@ -902,6 +913,10 @@ impl IndexEdit {
     }
 
     fn write_lock(&mut self, bytes: &[u8]) -> Result<(), StorageError> {
+        #[expect(
+            clippy::expect_used,
+            reason = "the guard holds its file until publication"
+        )]
         let file = self.file.as_mut().expect("unpublished guard owns its file");
         file.write_all(bytes)
             .map_err(|source| io_error("write lock", &self.lock_path, source))?;
@@ -1004,6 +1019,7 @@ fn io_error(operation: &'static str, path: &Path, source: io::Error) -> StorageE
 }
 
 #[cfg(test)]
+#[allow(clippy::unreachable, reason = "tests assert on unexpected variants")]
 mod tests;
 
 fn with_cleanup(operation: StorageError, cleanup: Result<(), StorageError>) -> StorageError {
@@ -1017,4 +1033,5 @@ fn with_cleanup(operation: StorageError, cleanup: Result<(), StorageError>) -> S
 }
 
 #[cfg(test)]
+#[allow(clippy::unreachable, reason = "tests assert on unexpected variants")]
 mod options_tests;

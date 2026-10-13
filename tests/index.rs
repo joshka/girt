@@ -1399,3 +1399,116 @@ fn orphan_creation_missing_selected_split_dependency_precedes_registration(
     assert!(!repo.common_dir().join("worktrees").exists());
     assert!(!root.path().join("linked").exists());
 }
+
+fn resign(format: girt::ObjectFormat, content: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+    let checksum = match format {
+        girt::ObjectFormat::Sha1 => sha1::Sha1::digest(content).to_vec(),
+        girt::ObjectFormat::Sha256 => sha2::Sha256::digest(content).to_vec(),
+    };
+    [content, &checksum].concat()
+}
+
+fn git_lists(root: &Path) -> bool {
+    command(root, &["ls-files", "--stage"])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+/// An index cut inside its first entry, with a recomputed checksum, fails in girt at every cut.
+///
+/// Git is not an oracle here: it does not bound entries by the checksum, so it decodes the missing
+/// fields from checksum bytes. Observed with Git 2.56, it lists a garbage path for some cuts and
+/// rejects others by chance, since the checksum covers per-run stat data. girt fails closed.
+#[rstest]
+#[case::sha1_identity(girt::ObjectFormat::Sha1, 63)]
+#[case::sha1_flags(girt::ObjectFormat::Sha1, 64)]
+#[case::sha1_path(girt::ObjectFormat::Sha1, 73)]
+#[case::sha256_identity(girt::ObjectFormat::Sha256, 64)]
+#[case::sha256_path(girt::ObjectFormat::Sha256, 85)]
+fn truncated_entry_fails_without_reading_the_checksum(
+    #[case] format: girt::ObjectFormat,
+    #[case] cut: usize,
+) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let path = repo.git_dir().join("index");
+    let bytes = resign(format, &fs::read(&path).unwrap()[..cut]);
+    assert!(matches!(
+        Index::parse(format, &bytes, Limits::default()),
+        Err(girt::index::Error::Malformed {
+            reason: "entry count exceeds available bytes",
+            ..
+        })
+    ));
+    fs::write(&path, &bytes).unwrap();
+    assert!(matches!(
+        repo.edit_index(Limits::default()),
+        Err(StorageError::Format { .. })
+    ));
+}
+
+/// A split index whose link bitmaps are cut short fails in Git and in girt.
+#[rstest]
+#[case::sha1_delete_header(girt::ObjectFormat::Sha1, 4)]
+#[case::sha1_delete_word(girt::ObjectFormat::Sha1, 11)]
+#[case::sha1_replace_pointer(girt::ObjectFormat::Sha1, usize::MAX)]
+#[case::sha256_delete_header(girt::ObjectFormat::Sha256, 4)]
+#[case::sha256_delete_word(girt::ObjectFormat::Sha256, 11)]
+#[case::sha256_replace_pointer(girt::ObjectFormat::Sha256, usize::MAX)]
+fn truncated_link_bitmap_fails_like_git(#[case] format: girt::ObjectFormat, #[case] kept: usize) {
+    let (_root, repo) = split_fixture(format);
+    let path = repo.git_dir().join("index");
+    let original = fs::read(&path).unwrap();
+    let content = &original[..original.len() - format.digest_len()];
+    let at = content.windows(4).position(|w| w == b"link").unwrap();
+    let length = u32::from_be_bytes(content[at + 4..at + 8].try_into().unwrap()) as usize;
+    // Keep the shared identity plus `kept` bitmap bytes; usize::MAX drops the final three bytes.
+    let kept = if kept == usize::MAX {
+        length - 3
+    } else {
+        format.digest_len() + kept
+    };
+    let damaged = [
+        &content[..at + 4],
+        &(kept as u32).to_be_bytes(),
+        &content[at + 8..at + 8 + kept],
+        &content[at + 8 + length..],
+    ]
+    .concat();
+    fs::write(&path, resign(format, &damaged)).unwrap();
+    assert!(
+        !git_lists(repo.worktree().unwrap()),
+        "Git listed a truncated link"
+    );
+    assert!(matches!(
+        repo.edit_index(Limits::default()),
+        Err(StorageError::Format { .. })
+    ));
+}
+
+/// Git ignores a cached-tree extension cut short before the checksum; girt rejects it because the
+/// declared length exceeds the file. This records an intentional, fail-closed difference.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn truncated_tree_extension_is_rejected_where_git_ignores_it(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    seed(&repo);
+    let path = repo.git_dir().join("index");
+    let original = fs::read(&path).unwrap();
+    let content = &original[..original.len() - format.digest_len()];
+    let damaged = [content, b"TREE", &6u32.to_be_bytes(), b"\0\0"].concat();
+    let bytes = resign(format, &damaged);
+    fs::write(&path, &bytes).unwrap();
+    assert!(git_lists(repo.worktree().unwrap()));
+    assert!(matches!(
+        Index::parse(format, &bytes, Limits::default()),
+        Err(girt::index::Error::Malformed {
+            reason: "truncated extension payload",
+            ..
+        })
+    ));
+}

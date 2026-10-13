@@ -669,3 +669,48 @@ fn make_standalone_leaves_standalone_caches_byte_exact() {
     index.make_standalone(Limits::default()).unwrap();
     assert_eq!(index.encode(Limits::default()).unwrap(), bytes);
 }
+#[rstest]
+#[case::v2(Version::V2)]
+#[case::v3(Version::V3)]
+#[case::v4(Version::V4)]
+fn rejects_every_resigned_truncation(#[case] version: Version) {
+    let mut entries = vec![entry(b"a/b", Stage::Normal), entry(b"a/c", Stage::Normal)];
+    entries[1].skip_worktree = version != Version::V2;
+    let mut index = Index::new(crate::ObjectFormat::Sha1, entries, Limits::default()).unwrap();
+    index.set_version(version, Limits::default()).unwrap();
+    let full = index.encode(Limits::default()).unwrap();
+    let content = full.len() - 20;
+    let mut header_only = full[..12].to_vec();
+    header_only.extend_from_slice(&[0; 20]);
+    resign(&mut header_only);
+    assert_eq!(
+        Index::parse(crate::ObjectFormat::Sha1, &header_only, Limits::default()),
+        Err(Error::Malformed {
+            offset: 8,
+            reason: "entry count exceeds available bytes"
+        })
+    );
+    for length in 12..content {
+        let mut bytes = full[..length].to_vec();
+        bytes.extend_from_slice(&[0; 20]);
+        resign(&mut bytes);
+        assert!(
+            Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()).is_err(),
+            "accepted {length} of {content} bytes"
+        );
+    }
+}
+#[rstest]
+#[case::header(4, "truncated extension header")]
+#[case::payload(10, "truncated extension payload")]
+fn rejects_truncated_extension(#[case] kept: usize, #[case] reason: &str) {
+    let mut bytes = extension(b"TREE", b"opaque");
+    let end = bytes.len() - 20 - (14 - kept);
+    bytes.truncate(end);
+    bytes.extend_from_slice(&[0; 20]);
+    resign(&mut bytes);
+    assert!(matches!(
+        Index::parse(crate::ObjectFormat::Sha1, &bytes, Limits::default()),
+        Err(Error::Malformed { reason: actual, .. }) if actual == reason
+    ));
+}
