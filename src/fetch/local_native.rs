@@ -164,7 +164,7 @@ pub(super) fn receive_depth(
         let object = if object_kind == ObjectKind::Blob {
             UnverifiedObject {
                 kind: object_kind,
-                data: Vec::new(),
+                data: Default::default(),
             }
         } else {
             store

@@ -138,14 +138,7 @@ impl BaseCache {
     }
 
     pub(crate) fn insert(&self, position: usize, object: &Object, verified: bool) {
-        if object.data.len() <= Self::LIMIT / 8 {
-            self.insert_owned(position, object.clone(), verified);
-        }
-    }
-
-    /// Indexing can transfer a decoded payload into the cache instead of copying it.
-    pub(crate) fn insert_owned(&self, position: usize, object: Object, verified: bool) {
-        self.insert_shared(position, object.kind, &Arc::new(object.data), verified);
+        self.insert_shared(position, object.kind, &object.data, verified);
     }
 
     /// Shares a decoded payload with the cache without copying it.
@@ -281,13 +274,23 @@ pub(crate) fn decode_checked(
     let mut seen = HashSet::new();
     let cache = source.base_cache();
     let requested = position;
-    // Bases stay shared with the cache; only the returned payload is copied out of it.
+    // Bases are cached for later reads. A requested blob is returned without being cached: large
+    // payloads would evict bases that later reads share; measured on the large fixture, caching
+    // them cost more re-inflation than it saved. Requested commits, trees and tags stay cached,
+    // since walks often read their delta children next.
+    let retain =
+        |position: usize, kind: ObjectKind| position != requested || kind != ObjectKind::Blob;
+    // Payloads are shared with the cache, never copied out of it.
     let (kind, mut data) = loop {
         if !seen.insert(position) {
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
         if let Some(hit) = cache.and_then(|cache| cache.get(position)) {
+            // A payload cached under looser limits must still fit this read's.
+            if hit.data.len() > limits.max_object_bytes {
+                return Err(Error::Limit("object bytes"));
+            }
             if verify && position == requested && !hit.verified {
                 verify_identity(format, hit.kind, &hit.data, source.entry(position)?.id)?;
                 cache
@@ -340,7 +343,7 @@ pub(crate) fn decode_checked(
                 verify_identity(format, kind, &data, entry.id)?;
             }
             let data = Arc::new(data);
-            if let Some(cache) = cache {
+            if let Some(cache) = cache.filter(|_| retain(position, kind)) {
                 cache.insert_shared(position, kind, &data, verified);
             }
             break (kind, data);
@@ -354,11 +357,11 @@ pub(crate) fn decode_checked(
         if check_identity {
             verify_identity(format, kind, &data, source.entry(position)?.id)?;
         }
-        if let Some(cache) = cache {
+        if let Some(cache) = cache.filter(|_| retain(position, kind)) {
             cache.insert_shared(position, kind, &data, verified);
         }
     }
-    let data = Arc::try_unwrap(data).unwrap_or_else(|shared| shared.as_ref().clone());
+    // The payload stays shared with the cache; callers copy it only to take ownership.
     Ok(Object { kind, data, format })
 }
 
@@ -481,5 +484,58 @@ pub(crate) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u
         if produced == 0 && consumed == 0 {
             return Err(Error::Corrupt("truncated packed zlib stream"));
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn object(data: Vec<u8>) -> Object {
+        Object {
+            kind: ObjectKind::Blob,
+            format: crate::ObjectFormat::Sha1,
+            data: Arc::new(data),
+        }
+    }
+
+    /// Eviction drops only the cache's share: payloads held by callers stay intact, and taking
+    /// one copies rather than aliasing another holder.
+    #[test]
+    fn evicted_payloads_stay_owned_by_their_holders() {
+        let cache = BaseCache::new();
+        let held = object(vec![7; 1024]);
+        let clone = held.clone();
+        cache.insert(0, &held, true);
+        let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
+        for position in 1..=8 {
+            cache.insert_shared(position, ObjectKind::Blob, &filler, true);
+        }
+        assert!(cache.get(0).is_none(), "the oldest entry is evicted");
+        let inner = cache.inner.lock().unwrap();
+        assert!(inner.bytes <= BaseCache::LIMIT);
+        assert_eq!(
+            inner.bytes,
+            inner.entries.values().map(|e| e.data.len()).sum()
+        );
+        drop(inner);
+        let mut taken = held.into_data();
+        taken.fill(0);
+        assert_eq!(clone.data(), &[7; 1024][..]);
+        assert_eq!(clone.into_data(), vec![7; 1024]);
+    }
+
+    /// Payloads up to an eighth of the limit are admitted; larger ones are not.
+    #[test]
+    fn admits_payloads_up_to_an_eighth_of_the_limit() {
+        let cache = BaseCache::new();
+        let largest = Arc::new(vec![0; BaseCache::LIMIT / 8]);
+        let oversized = Arc::new(vec![0; BaseCache::LIMIT / 8 + 1]);
+        cache.insert_shared(0, ObjectKind::Blob, &largest, false);
+        cache.insert_shared(1, ObjectKind::Blob, &oversized, false);
+        assert!(cache.get(0).is_some_and(|hit| !hit.verified));
+        assert!(cache.get(1).is_none());
+        cache.mark_verified(0);
+        assert!(cache.get(0).is_some_and(|hit| hit.verified));
     }
 }

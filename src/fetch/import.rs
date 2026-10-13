@@ -184,7 +184,7 @@ impl Imported {
                     let object = Object {
                         format,
                         kind,
-                        data: payload,
+                        data: payload.into(),
                     };
                     let id = object.id();
                     if objects.identities.insert(id, position).is_some() {
@@ -194,7 +194,7 @@ impl Imported {
                         .verified
                         .objects
                         .insert(id, super::verified::VerifiedObject::new(id, &object));
-                    objects.cache.insert_owned(position, object, true);
+                    objects.cache.insert(position, &object, true);
                     Some((id, 0, kind))
                 } else {
                     None
@@ -438,7 +438,7 @@ impl IndexedObjects {
                     let object = Object {
                         format: self.format,
                         kind,
-                        data,
+                        data: data.into(),
                     };
                     let id = object.id();
                     if self.identities.insert(id, child).is_some() {
@@ -448,7 +448,7 @@ impl IndexedObjects {
                     self.verified
                         .objects
                         .insert(id, super::verified::VerifiedObject::new(id, &object));
-                    self.cache.insert_owned(child, object, true);
+                    self.cache.insert(child, &object, true);
                     resolved += 1;
                     observer.resolved_delta();
                     ready.push_back(child);
@@ -946,7 +946,7 @@ mod tests {
         let base = Object {
             format,
             kind: ObjectKind::Blob,
-            data: b"external".to_vec(),
+            data: b"external".to_vec().into(),
         };
         assert!(matches!(
             imported
@@ -1261,7 +1261,7 @@ mod tests {
         let base = Object {
             format,
             kind: ObjectKind::Blob,
-            data: b"one".to_vec(),
+            data: b"one".to_vec().into(),
         };
         let base_id = base.id();
         let thin = pack(format, &[entry(7, base_id.as_bytes(), b"\x03\x03\x03two")]);
@@ -1295,7 +1295,7 @@ mod tests {
         let corrupt = Object {
             format,
             kind: ObjectKind::Blob,
-            data: b"bad".to_vec(),
+            data: b"bad".to_vec().into(),
         };
         let known = HashMap::from([(id, corrupt)]);
         assert!(matches!(
@@ -1538,7 +1538,7 @@ mod git_format_tests {
             Object {
                 format,
                 kind: ObjectKind::Blob,
-                data: base,
+                data: base.into(),
             },
         )]);
         let imported = Imported::read_with_known(

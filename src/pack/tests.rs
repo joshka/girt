@@ -1145,3 +1145,85 @@ fn oversized_delta_result_declaration_does_not_reserve_it(#[case] format: Object
         Err(Error::Corrupt(_))
     ));
 }
+
+/// Bases and requested commits, trees and tags stay cached; a requested blob does not, so a
+/// large payload cannot evict bases that later reads share.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn caches_bases_and_requested_non_blobs(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"a");
+    let child = ObjectId::for_blob(format, b"ab");
+    let tree = format.hash_object(ObjectKind::Tree, b"");
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (child, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
+        (tree, entry(2, 0, b"", b"")),
+    ];
+    let (index, data) = fixture(format, &entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    let read = |id| {
+        pack.read(
+            pack.find(id).unwrap().unwrap(),
+            ReadLimits::default(),
+            &cancelled,
+        )
+        .unwrap()
+        .into_data()
+    };
+    let inflations = |id| {
+        let offset = pack.offset(pack.find(id).unwrap().unwrap());
+        super::counters::INFLATIONS.with(|map| map.borrow().get(&offset).copied().unwrap_or(0))
+    };
+    super::counters::reset();
+    for _ in 0..2 {
+        assert_eq!(read(child), b"ab");
+        assert_eq!(read(base), b"a");
+        assert_eq!(read(tree), b"");
+    }
+    assert_eq!(inflations(base), 1, "base is cached while reconstructing");
+    assert_eq!(inflations(child), 2, "requested blob is not cached");
+    assert_eq!(inflations(tree), 1, "requested tree is cached");
+}
+
+/// A payload cached by a read with loose limits is still held to a later read's object bound,
+/// whether it is the requested object or a base.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn cached_payloads_respect_later_object_limits(#[case] format: ObjectFormat) {
+    let tree = format.hash_object(ObjectKind::Tree, b"xyz");
+    let base = ObjectId::for_blob(format, b"abc");
+    let child = ObjectId::for_blob(format, b"ab");
+    let entries = [
+        (tree, entry(2, 3, b"", b"xyz")),
+        (base, entry(3, 3, b"", b"abc")),
+        (child, entry(7, 4, base.as_bytes(), &[3, 2, 0x90, 2])),
+    ];
+    let (index, data) = fixture(format, &entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    let read = |id, max_object_bytes| {
+        let limits = ReadLimits {
+            max_object_bytes,
+            ..ReadLimits::default()
+        };
+        pack.read(pack.find(id).unwrap().unwrap(), limits, &cancelled)
+    };
+    assert_eq!(read(tree, 3).unwrap().data(), b"xyz");
+    assert_eq!(read(child, 3).unwrap().data(), b"ab");
+    assert!(matches!(read(tree, 2), Err(Error::Limit("object bytes"))));
+    assert!(matches!(read(child, 2), Err(Error::Limit("object bytes"))));
+    assert_eq!(read(tree, 3).unwrap().data(), b"xyz");
+}

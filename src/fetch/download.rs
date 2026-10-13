@@ -169,7 +169,7 @@ mod tests {
         let object = crate::Object {
             format,
             kind,
-            data: data.to_vec(),
+            data: data.to_vec().into(),
         };
         let id = object.id();
         let mut pack = Vec::new();
@@ -336,7 +336,7 @@ mod tests {
         let object = crate::Object {
             format,
             kind: ObjectKind::Blob,
-            data: b"object".to_vec(),
+            data: b"object".to_vec().into(),
         };
         let id = object.id();
         let known = Arc::new(KnownHistory {

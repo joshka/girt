@@ -227,7 +227,7 @@ mod tests {
         Object {
             format,
             kind: ObjectKind::Tag,
-            data: tag.encode(),
+            data: tag.encode().into(),
         }
     }
 
