@@ -222,11 +222,9 @@ impl References<'_> {
         lock.publish_synced(&encode(&records))?;
         report.rewritten = true;
         report.packed = packed_loose.len();
-        if let Err(source) = checkpoint(Checkpoint::Published).and_then(|()| {
-            #[cfg(unix)]
-            super::store::sync_directory(self.common_dir)?;
-            Ok(())
-        }) {
+        if let Err(source) =
+            checkpoint(Checkpoint::Published).and_then(|()| confirm_rename(self.common_dir))
+        {
             return Err(PackRefsError::Unconfirmed {
                 report: Box::new(report),
                 source,
@@ -319,6 +317,20 @@ fn component_bytes(name: &std::ffi::OsStr) -> Option<Vec<u8>> {
 #[cfg(not(unix))]
 fn component_bytes(name: &std::ffi::OsStr) -> Option<Vec<u8>> {
     name.to_str().map(|name| name.as_bytes().to_vec())
+}
+
+/// Makes the `packed-refs` rename in `directory` durable before loose copies are retired.
+#[cfg(unix)]
+fn confirm_rename(directory: &std::path::Path) -> Result<(), ReferenceError> {
+    super::store::sync_directory(directory)
+}
+
+/// Unreachable in practice: [`References::pack`] refuses non-Unix hosts before publishing.
+#[cfg(not(unix))]
+fn confirm_rename(_: &std::path::Path) -> Result<(), ReferenceError> {
+    Err(ReferenceError::Unsupported(
+        "durable packed-refs replacement on this platform",
+    ))
 }
 
 /// Peel result for one record.
