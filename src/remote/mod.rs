@@ -26,6 +26,41 @@
 //!
 //! See `examples/remote_plan.rs` for configuration, advertisement selection and push-command
 //! planning. [`crate::fetch::FetchRequest`] composes fetch refspecs with transport and publication.
+//!
+//! # Example
+//!
+//! Map local tips through a remote's configured fetch refspec. Mapping is pure: it reads no
+//! storage and contacts no server.
+//!
+//! ```
+//! use girt::Config;
+//! use girt::refs::RefName;
+//! use girt::remote::{RefSource, Remote};
+//!
+//! let config = Config::parse(
+//!     b"[remote \"origin\"]\n\
+//!       url = https://example.invalid/project\n\
+//!       fetch = +refs/heads/*:refs/remotes/origin/*\n",
+//! )?;
+//! let origin = Remote::find(&config, b"origin")?.expect("origin is configured");
+//! assert_eq!(
+//!     origin.fetch_url(),
+//!     Some(&b"https://example.invalid/project"[..])
+//! );
+//!
+//! let id = girt::ObjectFormat::Sha1.hash_object(girt::ObjectKind::Commit, b"example");
+//! let sources = [RefSource {
+//!     name: RefName::new("refs/heads/main")?,
+//!     id,
+//! }];
+//! let mappings = origin.fetch_refspecs().map(&sources)?;
+//! assert_eq!(
+//!     mappings[0].destination,
+//!     Some(RefName::new("refs/remotes/origin/main")?)
+//! );
+//! assert!(mappings[0].force);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod config;
 mod configured_refspec;

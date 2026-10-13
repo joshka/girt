@@ -20,6 +20,58 @@
 //!
 //! [`References::imported_reflog`] reads bounded imported history. [`ImportedRecord`] preserves raw
 //! data and separates [`ImportedRecord::fields`] from canonical append validation.
+//!
+//! # Example
+//!
+//! Publish a first commit through `HEAD` onto the unborn `main` branch, then resolve it. The
+//! transaction checks every expected value before publishing anything:
+//!
+//! ```
+//! use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+//! use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+//!
+//! let directory = tempfile::tempdir()?;
+//! let repository = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("repo.git"),
+//!     InitKind::Bare,
+//! )?;
+//! let loose = repository.loose_objects();
+//! let person = Signature {
+//!     name: b"A. Writer".to_vec(),
+//!     email: b"writer@example.com".to_vec(),
+//!     seconds: 1_700_000_000,
+//!     offset_minutes: 0,
+//! };
+//! let commit = loose.write_commit(&Commit::new(CommitFields {
+//!     tree: loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?,
+//!     parents: vec![],
+//!     author: person.clone(),
+//!     committer: person.clone(),
+//!     extra_headers: vec![],
+//!     message: b"Initial commit\n".to_vec(),
+//! })?)?;
+//!
+//! let references = repository.references()?;
+//! let head = RefName::new("HEAD")?;
+//! references.transaction(&[RefEdit {
+//!     name: head.clone(),
+//!     dereference: true,
+//!     target: Some(Target::Direct(commit)),
+//!     expected: Expected::Absent,
+//!     reflog: Reflog::Append {
+//!         committer: person,
+//!         message: b"commit (initial)".to_vec(),
+//!     },
+//! }])?;
+//!
+//! let main = RefName::new("refs/heads/main")?;
+//! assert_eq!(references.read(&main)?, Some(Target::Direct(commit)));
+//! let resolved = references.resolve(&head, 5)?;
+//! assert_eq!((resolved.name, resolved.id), (main.clone(), Some(commit)));
+//! assert_eq!(references.reflog(&main)?.map(|log| log.len()), Some(1));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod enumerate;
 mod imported;
