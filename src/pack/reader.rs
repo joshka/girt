@@ -516,7 +516,7 @@ mod cache_tests {
         assert!(inner.bytes <= BaseCache::LIMIT);
         assert_eq!(
             inner.bytes,
-            inner.entries.values().map(|e| e.data.len()).sum()
+            inner.entries.values().map(|e| e.data.len()).sum::<usize>()
         );
         drop(inner);
         let mut taken = held.into_data();

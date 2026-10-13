@@ -1786,9 +1786,14 @@ fn receiver_git(path: &std::path::Path, args: &[&str], input: &[u8]) -> Vec<u8> 
 
 /// A malformed transfer cannot turn arbitrary destination possession into complete history.
 #[rstest]
-#[case::missing_parent(false)]
-#[case::incomplete_stored_parent(true)]
-fn local_receiver_rejects_missing_history(#[case] retain_parent: bool) {
+#[case::missing_parent("main", "independent", "main^{tree}")]
+#[case::incomplete_stored_parent("main~1", "independent", "main^{tree}")]
+#[case::incomplete_stored_child("main^{tree}", "main~1", "main~1^{tree}")]
+fn local_receiver_rejects_missing_history(
+    #[case] missing_revision: &str,
+    #[case] live_revision: &str,
+    #[case] new_tree_revision: &str,
+) {
     let root = tempfile::tempdir().unwrap();
     receiver_git(root.path(), &["init", "--bare", "--template=", "."], b"");
     receiver_git(root.path(), &["fast-import", "--quiet"],
@@ -1801,11 +1806,12 @@ fn local_receiver_rejects_missing_history(#[case] retain_parent: bool) {
             .parse()
             .unwrap();
     let tree = receiver_git(root.path(), &["rev-parse", "main^{tree}"], b"");
+    let new_tree = receiver_git(root.path(), &["rev-parse", new_tree_revision], b"");
     let new: ObjectId = std::str::from_utf8(&receiver_git(
         root.path(),
         &[
             "commit-tree",
-            std::str::from_utf8(&tree).unwrap().trim(),
+            std::str::from_utf8(&new_tree).unwrap().trim(),
             "-p",
             &old.to_string(),
         ],
@@ -1831,14 +1837,48 @@ fn local_receiver_rejects_missing_history(#[case] retain_parent: bool) {
         &["update-ref", "-d", "refs/heads/main"],
         b"",
     );
-    let missing = if retain_parent {
-        std::str::from_utf8(&receiver_git(root.path(), &["rev-parse", "main~1"], b""))
-            .unwrap()
-            .trim()
-            .to_owned()
-    } else {
-        old.to_string()
-    };
+    // Keep an independent live reference while the omitted parent remains unreferenced.
+    let independent: ObjectId = std::str::from_utf8(&receiver_git(
+        root.path(),
+        &["commit-tree", std::str::from_utf8(&tree).unwrap().trim()],
+        b"independent\n",
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    receiver_git(
+        root.path(),
+        &[
+            "update-ref",
+            "refs/heads/independent",
+            &independent.to_string(),
+        ],
+        b"",
+    );
+    let live = String::from_utf8(receiver_git(
+        root.path(),
+        &["rev-parse", live_revision],
+        b"",
+    ))
+    .unwrap();
+    receiver_git(
+        root.path(),
+        &[
+            "push",
+            destination.path().to_str().unwrap(),
+            &format!("{}:refs/heads/live", live.trim()),
+        ],
+        b"",
+    );
+    let missing = String::from_utf8(receiver_git(
+        root.path(),
+        &["rev-parse", missing_revision],
+        b"",
+    ))
+    .unwrap();
+    let missing = missing.trim();
+    let missing_id: ObjectId = missing.parse().unwrap();
     std::fs::remove_file(
         destination
             .path()
@@ -1859,7 +1899,29 @@ fn local_receiver_rejects_missing_history(#[case] retain_parent: bool) {
     let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
     assert!(matches!(
         result,
-        Err(PushError::NotSent(PushFailure::Install(_)))
+        Err(PushError::NotSent(PushFailure::Install(error)))
+            if matches!(*error, crate::fetch::FetchError::Missing(id) if id == missing_id)
     ));
-    assert!(!destination.path().join("refs/tags/tip").exists());
+    let mut request = prepared.request.clone();
+    prepared
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut request)
+        .unwrap();
+    let git_report = receiver_git(
+        destination.path(),
+        &["receive-pack", "--stateless-rpc", "."],
+        &request,
+    );
+    assert!(String::from_utf8_lossy(&git_report).contains("ng refs/tags/tip"));
+    assert_eq!(
+        Repository::open(destination.path())
+            .unwrap()
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/tip").unwrap())
+            .unwrap(),
+        None
+    );
 }

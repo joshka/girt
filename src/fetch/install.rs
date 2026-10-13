@@ -10,6 +10,21 @@ use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
 use crate::{ObjectId, Repository};
 
+/// Fetch borrows caller evidence; local receive owns evidence it may extend before connectivity.
+enum ValidationHistory<'a> {
+    Fetch(&'a KnownHistory),
+    LocalPush(KnownHistory),
+}
+
+impl ValidationHistory<'_> {
+    fn known(&self) -> &KnownHistory {
+        match self {
+            Self::Fetch(history) => history,
+            Self::LocalPush(history) => history,
+        }
+    }
+}
+
 /// A validated protocol response with resolved delta bases and selected-tip connectivity.
 ///
 /// Owns a temporary pack file and generated index, but no repository files. Drop it to discard a
@@ -156,6 +171,46 @@ impl ReceivedFetch {
         options: super::FetchOptions,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<Self, FetchError> {
+        Self::validate_with_history(
+            advertisement,
+            wants,
+            pack,
+            ValidationHistory::Fetch(known),
+            shallow,
+            options,
+            observer,
+        )
+    }
+
+    pub(crate) fn validate_local_push(
+        advertisement: Advertisement,
+        wants: Vec<ObjectId>,
+        pack: impl Into<Bytes>,
+        known: KnownHistory,
+        shallow: Vec<ObjectId>,
+        options: super::FetchOptions,
+        observer: &mut ValidationObserver<'_>,
+    ) -> Result<Self, FetchError> {
+        Self::validate_with_history(
+            advertisement,
+            wants,
+            pack,
+            ValidationHistory::LocalPush(known),
+            shallow,
+            options,
+            observer,
+        )
+    }
+
+    fn validate_with_history(
+        advertisement: Advertisement,
+        wants: Vec<ObjectId>,
+        pack: impl Into<Bytes>,
+        mut known: ValidationHistory<'_>,
+        shallow: Vec<ObjectId>,
+        options: super::FetchOptions,
+        observer: &mut ValidationObserver<'_>,
+    ) -> Result<Self, FetchError> {
         let super::FetchOptions { limits, depth } = options;
         let cancel = observer.cancel;
         let format = advertisement.object_format()?;
@@ -164,10 +219,27 @@ impl ReceivedFetch {
             pack = Bytes::temporary()?;
             pack.append(&data)?;
         }
-        let mut imported = Imported::read_owned(format, pack, known, limits, observer)?;
+        let mut imported = Imported::read_owned(format, pack, known.known(), limits, observer)?;
+        if let ValidationHistory::LocalPush(history) = &mut known {
+            let targets: Vec<_> = imported
+                .objects
+                .verified
+                .objects
+                .values()
+                .filter_map(|object| object.edges.as_ref())
+                .flatten()
+                .filter(|(id, kind)| {
+                    *kind == crate::ObjectKind::Commit
+                        && !imported.objects.verified.objects.contains_key(id)
+                })
+                .map(|(id, _)| *id)
+                .take(super::known::DISCOVERY_ANCESTORS + 1)
+                .collect();
+            history.discover_ancestors(&targets, limits, cancel)?;
+        }
         let mut dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
-            known,
+            known.known(),
             &wants,
             &shallow,
             limits,
@@ -177,10 +249,10 @@ impl ReceivedFetch {
         if depth.is_some()
             && !dependencies.is_empty()
             && !imported.objects.is_empty()
-            && known.store.is_none()
+            && known.known().store.is_none()
         {
             objects += dependencies.len();
-            materialize_dependencies(&mut imported, known, &dependencies, cancel)?;
+            materialize_dependencies(&mut imported, known.known(), &dependencies, cancel)?;
             imported.objects.record_read_costs()?;
             dependencies.clear();
         }

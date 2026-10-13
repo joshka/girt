@@ -1107,7 +1107,7 @@ fn non_tip_receiver_boundary_does_not_scan_old_trees() {
     let (_root, dest) = receiver_with(&source, ids[2]);
     let old_tree = String::from_utf8(git(source.path(), &["rev-parse", "c0^{tree}"], b"")).unwrap();
     let old_tree = old_tree.trim();
-    fs::remove_file(dest.object_dir().join(&old_tree[..2]).join(&old_tree[2..])).unwrap();
+    std::fs::remove_file(dest.object_dir().join(&old_tree[..2]).join(&old_tree[2..])).unwrap();
     // The new commit forks from c1, which is not an advertised tip.
     let prepared = PreparedPush::new_excluding(
         &repo.objects(PackLimits::default()).unwrap(),
