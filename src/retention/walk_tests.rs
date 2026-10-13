@@ -18,6 +18,8 @@ fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
         .env("GIT_AUTHOR_EMAIL", "a@example.com")
         .env("GIT_COMMITTER_NAME", "A")
         .env("GIT_COMMITTER_EMAIL", "a@example.com")
+        .env("GIT_AUTHOR_DATE", "@1700000000 +0000")
+        .env("GIT_COMMITTER_DATE", "@1700000000 +0000")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -67,6 +69,8 @@ fn deltified_history(root: &Path) -> usize {
     git(
         root,
         &[
+            "-c",
+            "pack.threads=1",
             "repack",
             "-a",
             "-d",

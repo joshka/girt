@@ -2860,7 +2860,20 @@ fn recent_loose_candidate_is_preserved_without_a_history_walk() {
         recent_cutoff: SystemTime::UNIX_EPOCH,
         ..Default::default()
     };
-    git(root.path(), &["prune", "--expire=@0"], b"");
+    // Git 2.55 still walks damaged roots when recent loose objects exist. Use a healthy
+    // independently generated history for its retention oracle, then test girt's no-op contract.
+    let (oracle, _, _, _) = fixture();
+    let oracle_id = git(
+        oracle.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"recent only copy",
+    );
+    git(oracle.path(), &["prune", "--expire=never"], b"");
+    assert_eq!(oracle_id, id);
+    assert_eq!(
+        git(oracle.path(), &["cat-file", "blob", &id], b""),
+        "recent only copy"
+    );
     let report = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
