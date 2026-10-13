@@ -134,8 +134,10 @@ fn composed_maintenance_expires_replaces_and_prunes(#[case] format: &str) {
     assert!(orphan_path.exists());
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_before: Some(4_000_000_000),
-        reflog_expire_unreachable_before: Some(4_000_000_000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: Some(4_000_000_000),
+            disconnected_before: Some(4_000_000_000),
+        },
         ..Default::default()
     };
     let result = repo
@@ -225,7 +227,10 @@ fn composed_reftable_maintenance_preserves_live_git_objects(#[case] format: &str
     );
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_unreachable_before: Some(4_000_000_000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(4_000_000_000),
+        },
         ..Default::default()
     };
     let report = repository
@@ -389,7 +394,10 @@ fn isolated_files_reflog_expiry_preserves_live_git_objects(#[case] format: &str)
     let path = root.path().join("logs/refs/heads/deleted");
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_unreachable_before: Some(1700000001),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(1700000001),
+        },
         ..Default::default()
     };
     let report = repo
@@ -432,7 +440,10 @@ fn reflog_expiry_refuses_without_isolation() {
     let path = root.path().join("logs/refs/heads/deleted");
     let before = fs::read(&path).unwrap();
     let policy = RetentionPolicy {
-        reflog_expire_unreachable_before: Some(1700000001),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(1700000001),
+        },
         ..Default::default()
     };
     let error = repo
@@ -540,7 +551,10 @@ fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
         .unwrap();
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_unreachable_before: Some(4_000_000_000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(4_000_000_000),
+        },
         ..Default::default()
     };
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
@@ -1089,7 +1103,10 @@ fn expiry_candidates_do_not_remove_live_or_reflog_observation() {
     let (_root, repo, first, second) = fixture();
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_unreachable_before: Some(1700000001),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(1700000001),
+        },
         ..Default::default()
     };
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
@@ -1128,8 +1145,10 @@ fn expiry_positions_distinguish_private_heads_and_dedupe_shared_logs(#[case] for
     fs::write(linked.git_dir().join("logs/HEAD"), &record).unwrap();
     let policy = RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_before: Some(1700000001),
-        reflog_expire_unreachable_before: Some(1700000001),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: Some(1700000001),
+            disconnected_before: Some(1700000001),
+        },
         ..Default::default()
     };
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
@@ -1845,8 +1864,10 @@ fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
 fn gc_policy() -> RetentionPolicy {
     RetentionPolicy {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expire_before: Some(1_800_000_000),
-        reflog_expire_unreachable_before: Some(1_800_000_000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: Some(1_800_000_000),
+            disconnected_before: Some(1_800_000_000),
+        },
         ..RetentionPolicy::default()
     }
 }
@@ -2105,7 +2126,10 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
         &mut FixtureIsolation,
         &RetentionPolicy {
             recent_cutoff: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
-            reflog_expire_before: Some(1_600_000_000),
+            reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+                live_before: Some(1_600_000_000),
+                disconnected_before: Some(1_800_000_000),
+            },
             ..gc_policy()
         },
         &AtomicBool::new(false),
@@ -2248,8 +2272,10 @@ fn recent_pack_does_not_classify_unreachable_history_as_live(#[case] format: &st
     );
     let plan = repo.plan_retention(
         &RetentionPolicy {
-            reflog_expire_before: Some(1_600_000_000),
-            reflog_expire_unreachable_before: Some(1_800_000_000),
+            reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+                live_before: Some(1_600_000_000),
+                disconnected_before: Some(1_800_000_000),
+            },
             ..RetentionPolicy::default()
         },
         &AtomicBool::new(false),
@@ -2756,8 +2782,10 @@ fn expiry_at_cutoff_does_not_audit_history(#[case] format: &str) {
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     let policy = RetentionPolicy {
-        reflog_expire_before: Some(1700000000),
-        reflog_expire_unreachable_before: Some(1700000000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: Some(1700000000),
+            disconnected_before: Some(1700000000),
+        },
         ..Default::default()
     };
     let report = repo
@@ -2774,7 +2802,10 @@ fn eligible_expiry_with_missing_history_refuses_without_rewrite() {
     let path = root.path().join("logs/refs/heads/main");
     let before = fs::read(&path).unwrap();
     let policy = RetentionPolicy {
-        reflog_expire_unreachable_before: Some(1700000001),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: None,
+            disconnected_before: Some(1700000001),
+        },
         ..Default::default()
     };
     let error = repo
@@ -2928,8 +2959,10 @@ fn reftable_noop_expiry_preserves_missing_history_stack(#[case] format: &str) {
     let path = root.path().join("reftable/tables.list");
     let before = fs::read(&path).unwrap();
     let policy = RetentionPolicy {
-        reflog_expire_before: Some(1700000000),
-        reflog_expire_unreachable_before: Some(1700000000),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+            live_before: Some(1700000000),
+            disconnected_before: Some(1700000000),
+        },
         ..Default::default()
     };
     let report = repo
@@ -2987,14 +3020,40 @@ fn loose_cutoff_equality_is_conservative_relative_to_git() {
 
 #[cfg(unix)]
 #[rstest::rstest]
-#[case::never("sha1", "never", "never")]
-#[case::expire_all("sha1", "now", "never")]
-#[case::unreachable_only("sha1", "never", "now")]
-#[case::sha256("sha256", "now", "never")]
+#[case::never("sha1", "never", "never", b"", "refs/heads/main")]
+#[case::expire_all("sha1", "now", "never", b"", "refs/heads/main")]
+#[case::unreachable_only("sha1", "never", "now", b"", "refs/heads/main")]
+#[case::sha256("sha256", "now", "never", b"", "refs/heads/main")]
+#[case::partial_general(
+    "sha1",
+    "now",
+    "now",
+    b"[gc \"refs/heads/*\"]\nreflogExpire=never\n",
+    "refs/heads/main"
+)]
+#[case::partial_unreachable(
+    "sha1",
+    "now",
+    "now",
+    b"[gc \"refs/*\"]\nreflogExpireUnreachable=never\n",
+    "refs/heads/main"
+)]
+#[case::first_match("sha1", "now", "now", b"[gc \"refs/*\"]\nreflogExpire=never\n[gc \"refs/heads/*\"]\nreflogExpire=now\nreflogExpireUnreachable=now\n", "refs/heads/nested/topic")]
+#[case::duplicate(
+    "sha1",
+    "now",
+    "now",
+    b"[gc \"refs/*\"]\nreflogExpire=now\nreflogExpire=never\n",
+    "refs/heads/main"
+)]
+#[case::stash("sha1", "now", "now", b"", "refs/stash")]
+#[case::false_value("sha1", "false", "false", b"", "refs/heads/main")]
 fn configured_expiry_keeps_the_same_records_as_git(
     #[case] format: &str,
     #[case] general: &str,
     #[case] unreachable: &str,
+    #[case] extra: &[u8],
+    #[case] reference: &str,
 ) {
     let (root, _, first, second) = fixture_format(format);
     git(root.path(), &["config", "gc.reflogExpire", general], b"");
@@ -3003,29 +3062,38 @@ fn configured_expiry_keeps_the_same_records_as_git(
         &["config", "gc.reflogExpireUnreachable", unreachable],
         b"",
     );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(root.path().join("config"))
+        .unwrap()
+        .write_all(extra)
+        .unwrap();
     git(
         root.path(),
         &[
             "update-ref",
+            "-m",
+            "forward",
             "--create-reflog",
-            "refs/heads/main",
+            reference,
             &second.to_string(),
         ],
         b"",
     );
     git(
         root.path(),
-        &["update-ref", "refs/heads/main", &first.to_string()],
+        &["update-ref", "-m", "back", reference, &first.to_string()],
         b"",
     );
-    let log = root.path().join("logs/refs/heads/main");
+    let log = root.path().join("logs").join(reference);
     let original = fs::read(&log).unwrap();
-    git(root.path(), &["reflog", "expire", "refs/heads/main"], b"");
+    git(root.path(), &["reflog", "expire", reference], b"");
     let expected = fs::read(&log).unwrap();
     fs::write(&log, original).unwrap();
     let repository = Repository::open(root.path()).unwrap();
     let policy = RetentionPolicy {
-        configured_reflog_expiry: Some(
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
             girt::retention::ReflogExpiry::from_config(repository.config(), 1_800_000_000).unwrap(),
         ),
         ..Default::default()
@@ -3046,4 +3114,166 @@ fn configured_expiry_keeps_the_same_records_as_git(
             .read_commit(second, usize::MAX)
             .is_ok()
     );
+}
+
+#[cfg(unix)]
+fn git_expire_with_sources(root: &Path, system: &Path, global: &Path) {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .current_dir(root)
+        .env("GIT_CONFIG_SYSTEM", system)
+        .env("GIT_CONFIG_GLOBAL", global)
+        .args(["reflog", "expire", "refs/heads/main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::global_first(
+    b"[gc \"refs/*\"]\nreflogExpire=never\n[include]\npath=included\n",
+    b"[gc \"refs/heads/*\"]\nreflogExpire=now\nreflogExpireUnreachable=now\n",
+    b"[gc \"refs/heads/*\"]\nreflogExpire=now\nreflogExpireUnreachable=now\n"
+)]
+#[case::local_last_same_pattern(
+    b"[gc \"refs/*\"]\nreflogExpire=now\nreflogExpireUnreachable=now\n[include]\npath=included\n",
+    b"[gc \"refs/*\"]\nreflogExpire=never\n",
+    b"[gc \"refs/*\"]\nreflogExpire=now\n"
+)]
+#[case::include_first(
+    b"[include]\npath=included\n",
+    b"[gc \"refs/*\"]\nreflogExpireUnreachable=never\n",
+    b"[gc \"refs/heads/*\"]\nreflogExpire=now\nreflogExpireUnreachable=now\n"
+)]
+fn layered_expiry_keeps_the_same_records_as_git(
+    #[case] global_bytes: &[u8],
+    #[case] included_bytes: &[u8],
+    #[case] local_bytes: &[u8],
+) {
+    use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+    let (root, _, first, second) = fixture_format("sha1");
+    let system = root.path().join("system");
+    let global = root.path().join("global");
+    fs::write(
+        &system,
+        b"[gc]\nreflogExpire=now\nreflogExpireUnreachable=now\n",
+    )
+    .unwrap();
+    fs::write(&global, global_bytes).unwrap();
+    fs::write(root.path().join("included"), included_bytes).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(root.path().join("config"))
+        .unwrap()
+        .write_all(local_bytes)
+        .unwrap();
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "forward",
+            "--create-reflog",
+            "refs/heads/main",
+            &second.to_string(),
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "-m",
+            "back",
+            "refs/heads/main",
+            &first.to_string(),
+        ],
+        b"",
+    );
+    let log = root.path().join("logs/refs/heads/main");
+    let original = fs::read(&log).unwrap();
+    git_expire_with_sources(root.path(), &system, &global);
+    let expected = fs::read(&log).unwrap();
+    fs::write(&log, original).unwrap();
+    // Caller order deliberately differs from scope order; resolution must still match Git.
+    let inputs = ConfigInputs {
+        files: vec![
+            ConfigFile {
+                path: global,
+                scope: ConfigScope::Global,
+                optional: false,
+            },
+            ConfigFile {
+                path: system,
+                scope: ConfigScope::System,
+                optional: false,
+            },
+        ],
+        ..Default::default()
+    };
+    let repository = Repository::open_with_config(root.path(), &inputs).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
+            girt::retention::ReflogExpiry::from_config(repository.config(), 1_800_000_000).unwrap(),
+        ),
+        ..Default::default()
+    };
+    repository
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(fs::read(log).unwrap(), expected);
+    assert!(
+        repository
+            .loose_objects()
+            .read_commit(first, usize::MAX)
+            .is_ok()
+    );
+    assert!(
+        repository
+            .loose_objects()
+            .read_commit(second, usize::MAX)
+            .is_ok()
+    );
+}
+
+// Pattern policy disables both expiry rules here, despite the global expire-all setting.
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn configured_noop_expiry_does_not_audit_missing_history(#[case] format: &str) {
+    let (root, _) = missing_packed_history(format);
+    git(root.path(), &["config", "gc.reflogExpire", "now"], b"");
+    git(
+        root.path(),
+        &["config", "gc.refs/heads/*.reflogExpire", "never"],
+        b"",
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let path = root.path().join("logs/refs/heads/main");
+    let before = fs::read(&path).unwrap();
+    git(root.path(), &["reflog", "expire", "refs/heads/main"], b"");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let policy = RetentionPolicy {
+        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
+            girt::retention::ReflogExpiry::from_config(repo.config(), 1_800_000_000).unwrap(),
+        ),
+        ..Default::default()
+    };
+    let report = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), before);
 }
