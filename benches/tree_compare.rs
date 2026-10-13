@@ -1,3 +1,5 @@
+//! Benchmarks tree comparison across tree shapes.
+
 use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;

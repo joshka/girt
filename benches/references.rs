@@ -1,3 +1,5 @@
+//! Benchmarks loose reference reads and HEAD resolution.
+
 use std::hint::black_box;
 use std::time::Duration;
 

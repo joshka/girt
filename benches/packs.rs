@@ -1,3 +1,5 @@
+//! Benchmarks opening pack snapshots and indexed reads from packed storage.
+
 use std::hint::black_box;
 use std::time::Duration;
 

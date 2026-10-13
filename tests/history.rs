@@ -1,3 +1,5 @@
+//! Checks commit history queries against the Git executable.
+
 use girt::{HistoryError, HistoryLimits, ObjectId};
 use rstest::rstest;
 #[path = "support/history_git.rs"]

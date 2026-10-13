@@ -1,3 +1,5 @@
+//! Benchmarks commit history walks over linear and merge-heavy graphs.
+
 use std::hint::black_box;
 use std::time::Duration;
 

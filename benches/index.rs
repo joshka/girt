@@ -1,3 +1,5 @@
+//! Benchmarks index parsing and encoding across versions and entry counts.
+
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

@@ -340,7 +340,9 @@ impl CredentialSession {
 /// A field requested by the application-owned prompt callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
+    /// The account name for the endpoint.
     Username,
+    /// The secret for the endpoint and previously chosen username.
     Password,
 }
 

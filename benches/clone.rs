@@ -1,3 +1,5 @@
+//! Benchmarks preparing clone requests.
+
 use std::hint::black_box;
 use std::time::Duration;
 

@@ -1,3 +1,5 @@
+//! Benchmarks pack transfer for fetch: native local import and protocol pack receipt.
+
 use std::hint::black_box;
 use std::io;
 use std::ops::ControlFlow;

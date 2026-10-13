@@ -1,3 +1,5 @@
+//! Benchmarks the fetch workflow from preparation through installation and publication.
+
 use std::hint::black_box;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;

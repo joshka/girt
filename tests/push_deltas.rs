@@ -1,3 +1,5 @@
+//! Checks that pushes delta-compress against advertised bases and that Git accepts the result.
+
 #[cfg(feature = "http")]
 #[path = "support/http_git.rs"]
 mod http_git;
