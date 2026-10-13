@@ -1145,3 +1145,49 @@ fn oversized_delta_result_declaration_does_not_reserve_it(#[case] format: Object
         Err(Error::Corrupt(_))
     ));
 }
+
+/// Bases and requested commits, trees and tags stay cached; a requested blob does not, so a
+/// large payload cannot evict bases that later reads share.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn caches_bases_and_requested_non_blobs(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"a");
+    let child = ObjectId::for_blob(format, b"ab");
+    let tree = format.hash_object(ObjectKind::Tree, b"");
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (child, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
+        (tree, entry(2, 0, b"", b"")),
+    ];
+    let (index, data) = fixture(format, &entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    let read = |id| {
+        pack.read(
+            pack.find(id).unwrap().unwrap(),
+            ReadLimits::default(),
+            &cancelled,
+        )
+        .unwrap()
+        .into_data()
+    };
+    let inflations = |id| {
+        let offset = pack.offset(pack.find(id).unwrap().unwrap());
+        super::counters::INFLATIONS.with(|map| map.borrow().get(&offset).copied().unwrap_or(0))
+    };
+    super::counters::reset();
+    for _ in 0..2 {
+        assert_eq!(read(child), b"ab");
+        assert_eq!(read(base), b"a");
+        assert_eq!(read(tree), b"");
+    }
+    assert_eq!(inflations(base), 1, "base is cached while reconstructing");
+    assert_eq!(inflations(child), 2, "requested blob is not cached");
+    assert_eq!(inflations(tree), 1, "requested tree is cached");
+}

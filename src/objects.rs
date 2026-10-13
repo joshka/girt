@@ -14,11 +14,15 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 ///
 /// Storage framing is validated; tree, commit, and tag payload syntax is not. Pass [`Self::data`]
 /// to [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`] as appropriate.
+///
+/// A packed payload may be shared with the reader's delta base cache, so borrowing it through
+/// [`Self::data`] costs no copy. [`Self::into_data`] copies it only while the cache still shares
+/// it.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Object {
     pub(crate) kind: ObjectKind,
     pub(crate) format: ObjectFormat,
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: Arc<Vec<u8>>,
 }
 
 impl Object {
@@ -37,9 +41,9 @@ impl Object {
         &self.data
     }
 
-    /// Takes ownership of the payload buffer.
+    /// Takes ownership of the payload, copying it if the reader's cache still shares it.
     pub fn into_data(self) -> Vec<u8> {
-        self.data
+        Arc::unwrap_or_clone(self.data)
     }
 
     /// Hashes the kind, canonical header, and payload.
@@ -61,7 +65,7 @@ pub(crate) type Located = (ObjectId, Option<(ObjectKind, u64)>);
 #[derive(Debug)]
 pub(crate) struct UnverifiedObject {
     pub(crate) kind: ObjectKind,
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: Arc<Vec<u8>>,
 }
 
 impl UnverifiedObject {
@@ -631,7 +635,7 @@ impl Objects {
                 return Ok(Some(Object {
                     kind: ObjectKind::Tree,
                     format: self.format,
-                    data: Vec::new(),
+                    data: Arc::default(),
                 }));
             }
             Ok(None)
@@ -686,7 +690,7 @@ impl Objects {
         Ok(
             (id == self.format.hash_object(ObjectKind::Tree, b"")).then(|| UnverifiedObject {
                 kind: ObjectKind::Tree,
-                data: Vec::new(),
+                data: Arc::default(),
             }),
         )
     }

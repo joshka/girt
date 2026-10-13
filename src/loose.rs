@@ -147,7 +147,9 @@ impl LooseObjects {
         max_size: usize,
         expected_kind: &str,
     ) -> Result<Vec<u8>, Error> {
-        Ok(self.decode_raw(id, max_size, Some(expected_kind))?.data)
+        Ok(self
+            .decode_raw(id, max_size, Some(expected_kind))?
+            .into_data())
     }
 
     pub(crate) fn read_raw(&self, id: ObjectId, max_size: usize) -> Result<crate::Object, Error> {
@@ -245,7 +247,7 @@ impl LooseObjects {
             Ok(crate::Object {
                 kind,
                 format: self.format,
-                data: encoded,
+                data: encoded.into(),
             })
         };
         #[cfg(feature = "tracing")]

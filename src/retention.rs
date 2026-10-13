@@ -931,7 +931,7 @@ fn canonical_empty_tree(id: ObjectId) -> Option<Object> {
     let empty = Object {
         kind: ObjectKind::Tree,
         format: id.format(),
-        data: Vec::new(),
+        data: Default::default(),
     };
     (id == empty.id()).then_some(empty)
 }

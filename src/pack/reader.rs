@@ -138,14 +138,7 @@ impl BaseCache {
     }
 
     pub(crate) fn insert(&self, position: usize, object: &Object, verified: bool) {
-        if object.data.len() <= Self::LIMIT / 8 {
-            self.insert_owned(position, object.clone(), verified);
-        }
-    }
-
-    /// Indexing can transfer a decoded payload into the cache instead of copying it.
-    pub(crate) fn insert_owned(&self, position: usize, object: Object, verified: bool) {
-        self.insert_shared(position, object.kind, &Arc::new(object.data), verified);
+        self.insert_shared(position, object.kind, &object.data, verified);
     }
 
     /// Shares a decoded payload with the cache without copying it.
@@ -281,7 +274,13 @@ pub(crate) fn decode_checked(
     let mut seen = HashSet::new();
     let cache = source.base_cache();
     let requested = position;
-    // Bases stay shared with the cache; only the returned payload is copied out of it.
+    // Bases are cached for later reads. A requested blob is returned without being cached: large
+    // payloads would evict bases that later reads share; measured on the large fixture, caching
+    // them cost more re-inflation than it saved. Requested commits, trees and tags stay cached,
+    // since walks often read their delta children next.
+    let retain =
+        |position: usize, kind: ObjectKind| position != requested || kind != ObjectKind::Blob;
+    // Payloads are shared with the cache, never copied out of it.
     let (kind, mut data) = loop {
         if !seen.insert(position) {
             return Err(Error::DeltaCycle);
@@ -340,7 +339,7 @@ pub(crate) fn decode_checked(
                 verify_identity(format, kind, &data, entry.id)?;
             }
             let data = Arc::new(data);
-            if let Some(cache) = cache {
+            if let Some(cache) = cache.filter(|_| retain(position, kind)) {
                 cache.insert_shared(position, kind, &data, verified);
             }
             break (kind, data);
@@ -354,11 +353,11 @@ pub(crate) fn decode_checked(
         if check_identity {
             verify_identity(format, kind, &data, source.entry(position)?.id)?;
         }
-        if let Some(cache) = cache {
+        if let Some(cache) = cache.filter(|_| retain(position, kind)) {
             cache.insert_shared(position, kind, &data, verified);
         }
     }
-    let data = Arc::try_unwrap(data).unwrap_or_else(|shared| shared.as_ref().clone());
+    // The payload stays shared with the cache; callers copy it only to take ownership.
     Ok(Object { kind, data, format })
 }
 

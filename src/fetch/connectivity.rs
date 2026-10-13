@@ -230,7 +230,7 @@ mod tests {
     fn object(kind: ObjectKind, data: Vec<u8>) -> Object {
         Object {
             kind,
-            data,
+            data: data.into(),
             format: crate::ObjectFormat::Sha1,
         }
     }

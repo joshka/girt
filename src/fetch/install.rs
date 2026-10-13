@@ -558,7 +558,7 @@ mod shallow_tests {
         let object = crate::Object {
             format,
             kind: crate::ObjectKind::Blob,
-            data: b"owned local payload".to_vec(),
+            data: b"owned local payload".to_vec().into(),
         };
         let id = object.id();
         let known = KnownHistory {
