@@ -252,13 +252,8 @@ impl Config {
                 .ok_or_else(|| error("missing environment key"))?;
             let value = get(&format!("GIT_CONFIG_VALUE_{index}"))
                 .ok_or_else(|| error("missing environment value"))?;
-            let first = key
-                .iter()
-                .position(|b| *b == b'.')
-                .ok_or_else(|| error("invalid environment key"))?;
-            let last = key.iter().rposition(|b| *b == b'.').unwrap();
-            let section = &key[..first];
-            let name = &key[last + 1..];
+            let (section, subsection, name) =
+                crate::bytes::config_key(&key).ok_or_else(|| error("invalid environment key"))?;
             if section.is_empty()
                 || !section
                     .iter()
@@ -273,14 +268,14 @@ impl Config {
             occurrences.push(SectionOccurrence {
                 name: SectionName {
                     section: section.to_vec(),
-                    subsection: (first != last).then(|| key[first + 1..last].to_vec()),
+                    subsection: subsection.map(<[u8]>::to_vec),
                 },
                 start: index,
                 entries: vec![index],
             });
             entries.push(Entry {
                 section: section.to_vec(),
-                subsection: (first != last).then(|| key[first + 1..last].to_vec()),
+                subsection: subsection.map(<[u8]>::to_vec),
                 name: name.to_vec(),
                 value: Some(value),
                 line,
@@ -444,6 +439,11 @@ impl<'a> Resolver<'a> {
         result
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "Config::parse records occurrence members below entries.len(); owners and mapped \
+                  are sized to this file's entries and occurrences; first_entry was output.len()"
+    )]
     fn entries(
         &mut self,
         config: &Config,
@@ -495,8 +495,7 @@ impl<'a> Resolver<'a> {
         let mut mapped = Vec::new();
         let mut headers = config.occurrences.iter().peekable();
         for index in 0..=config.entries.len() {
-            while headers.peek().is_some_and(|header| header.start == index) {
-                let header = headers.next().expect("peeked header");
+            while let Some(header) = headers.next_if(|header| header.start == index) {
                 let location = SourceLocation {
                     path: path.map(Path::to_path_buf),
                     line: 1,
@@ -685,11 +684,9 @@ impl<'a> Resolver<'a> {
             context.home.clone().map(|home| (home, rest))
         } else if let Some(rest) = bytes.strip_prefix(b"%(prefix)/") {
             context.prefix.clone().map(|prefix| (prefix, rest))
-        } else if bytes.starts_with(b"~") {
-            match bytes.iter().position(|b| *b == b'/') {
-                Some(slash) => self
-                    .named_home(&bytes[1..slash], location)?
-                    .map(|home| (home, &bytes[slash + 1..])),
+        } else if let Some(user) = bytes.strip_prefix(b"~") {
+            match crate::bytes::split_once(user, b'/') {
+                Some((name, rest)) => self.named_home(name, location)?.map(|home| (home, rest)),
                 None => None,
             }
         } else {
@@ -751,6 +748,10 @@ impl<'a> Resolver<'a> {
             .checked_add(name.len())
             .filter(|total| *total <= self.inputs.limits.bytes)
             .ok_or_else(|| self.error(location, ResolveFailure::Limit("user home cache bytes")))?;
+        #[expect(
+            clippy::expect_used,
+            reason = "named_home is only called with a lookup"
+        )]
         let home = self.user_home_lookup.as_mut().expect("lookup present")(name);
         let retained_bytes = names_bytes
             .checked_add(

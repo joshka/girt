@@ -11,6 +11,15 @@
 //!
 //! [`crate::Repository::open_with_config`] adds repository sources while keeping format bootstrap
 //! separate. No operation reads or mutates process-global environment.
+
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 mod command_environment;
 mod decoded;
 pub use decoded::{DecodedEntry, DecodedSection};

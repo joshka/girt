@@ -86,6 +86,10 @@ impl Document {
         (0..self.layout.sections.len()).map(|ordinal| self.section_at(ordinal))
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "callers pass ordinals below layout.sections.len()"
+    )]
     fn section_at(&self, ordinal: usize) -> DocumentSection<'_> {
         let section = &self.layout.sections[ordinal];
         let next_header = self
@@ -132,6 +136,10 @@ impl Document {
     /// assert_eq!(document.config().entries().len(), 1);
     /// # Ok::<(), girt::ConfigError>(())
     /// ```
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "ordinals are checked above; entry ranges come from the parsed layout"
+    )]
     pub fn remove_sections(&mut self, ordinals: &[usize]) -> Result<(), ConfigError> {
         if ordinals
             .iter()
@@ -166,6 +174,10 @@ impl Document {
     /// # Errors
     ///
     /// Invalid indices or NUL values fail without changing the document.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "layout.entries parallels config.entries, checked by get above"
+    )]
     pub fn set_value(&mut self, occurrence: usize, value: &[u8]) -> Result<(), ConfigError> {
         let entry = self
             .config
@@ -207,6 +219,10 @@ impl Document {
     ///
     /// Invalid section/key names, NUL bytes or newlines in subsections leave the document
     /// unchanged.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "last and its entries index the parsed layout, whose spans lie in self.bytes"
+    )]
     pub fn append(
         &mut self,
         section: &str,
@@ -402,6 +418,10 @@ fn validate_variable_name(name: &str) -> Result<(), ConfigError> {
 }
 
 /// Extends a removed span to its whole physical line when nothing but whitespace would remain.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "callers pass a parsed span of bytes, so both line edges lie within bytes"
+)]
 fn whole_blank_line(bytes: &[u8], range: Range<usize>) -> Range<usize> {
     let line_start = bytes[..range.start]
         .iter()

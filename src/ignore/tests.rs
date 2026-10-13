@@ -209,3 +209,26 @@ fn case_policy_includes_source_prefix_without_unicode_folding() {
     assert_eq!(rules.check(b"dir/\xc3\xa4", false).unwrap(), None);
     assert_eq!(rules.check(b"directory/a", false).unwrap(), None);
 }
+/// Degenerate patterns in `a/.gitignore`, with the paths `git check-ignore --no-index` ignores
+/// (observed with Git 2.56).
+#[rstest]
+#[case::bang(b"!".as_slice(), &[][..])]
+#[case::slash(b"/", &[])]
+#[case::bang_slash(b"!/", &[])]
+#[case::escaped_space(b"\\ ", &[b"a/ ".as_slice()])]
+#[case::trailing_escape(b"a\\", &[])]
+#[case::open_class(b"[", &[])]
+#[case::open_named_class(b"[[:", &[])]
+#[case::unclosed_name_is_literal(b"[[:alpha]", &[b"a/[".as_slice()])]
+#[case::empty_named_class(b"[[::]]", &[])]
+#[case::stars(b"**", &[b"a/b".as_slice(), b"a/[", b"a/ ", b"a/b/c"])]
+#[case::escaped_slash_after_stars(b"a/**\\/b", &[])]
+fn degenerate_patterns_match_like_git(#[case] pattern: &[u8], #[case] ignored: &[&[u8]]) {
+    let mut rules = Ignore::new(Case::Sensitive, Limits::default());
+    rules.add(Source::Directory(b"a"), pattern).unwrap();
+    let actual: Vec<&[u8]> = [&b"a/b"[..], b"a/[", b"a/ ", b"a/b/c"]
+        .into_iter()
+        .filter(|path| rules.check(path, false).unwrap().is_some_and(|m| m.ignored))
+        .collect();
+    assert_eq!(actual, ignored);
+}

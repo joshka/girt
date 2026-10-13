@@ -46,6 +46,16 @@ fn command_environment_rejects_invalid(#[case] input: &[u8]) {
     assert!(decode(input, 1, 4096).is_err());
 }
 
+#[rstest]
+#[case::lone_quote(b"'".as_slice(), "invalid command environment quoting")]
+#[case::escape_at_end(b"'fixture.value=x'\\", "invalid command environment quoting")]
+#[case::escape_without_reopen(b"'fixture.value=x'\\'", "invalid command environment quoting")]
+#[case::bang_without_reopen(b"'fixture.value=x'\\!", "invalid command environment quoting")]
+#[case::dots_only(b"'.=x'", "invalid command environment key or value")]
+fn command_environment_reports_quoting_and_key_reasons(#[case] input: &[u8], #[case] reason: &str) {
+    assert!(matches!(decode(input, 1, 4096), Err(error) if error.reason == reason));
+}
+
 #[test]
 fn command_environment_preserves_sections_and_runtime_provenance() {
     let environment = Config::from_command_environment(

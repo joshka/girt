@@ -99,7 +99,9 @@ impl Config {
                 .ok_or_else(|| error("section metadata bytes"))?;
             let start = config.entries.len();
             for entry in section.entries {
-                if !valid_name(&entry.name) || !entry.name[0].is_ascii_alphabetic() {
+                if !valid_name(&entry.name)
+                    || !entry.name.first().is_some_and(u8::is_ascii_alphabetic)
+                {
                     return Err(error("invalid decoded variable name"));
                 }
                 if config.entries.len() >= limits.entries {

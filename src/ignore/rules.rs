@@ -207,6 +207,10 @@ impl Ignore {
     ///
     /// Returns [`Error::Path`] for invalid paths and [`Error::Limit`] for path/work exhaustion.
     /// There are no side effects or partial decisions. Each call receives a fresh work budget.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "each end is the position of a `/` in path"
+    )]
     pub fn check(&self, path: &[u8], is_directory: bool) -> Result<Option<Match>, Error> {
         validate_path(path, false, self.limits.path_bytes)?;
         let mut work = self.limits.work;
@@ -297,5 +301,6 @@ fn relative<'a>(path: &'a [u8], base: &[u8], case: Case) -> Option<&'a [u8]> {
         Case::Sensitive => prefix == base,
         Case::AsciiInsensitive => prefix.eq_ignore_ascii_case(base),
     };
+    #[expect(clippy::indexing_slicing, reason = "path has a `/` at base.len()")]
     (equal && path.get(base.len()) == Some(&b'/')).then(|| &path[base.len() + 1..])
 }

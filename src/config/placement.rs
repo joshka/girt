@@ -35,12 +35,21 @@ impl SectionPlacement {
         }
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "owners are occurrence ordinals of the parent file, which sized children"
+    )]
     pub(super) fn included(&mut self, owner: usize, sections: Range<usize>) {
         if !sections.is_empty() {
             self.children[owner].push(sections);
         }
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::expect_used,
+        reason = "resolution records each section and entry after the first indices exactly once"
+    )]
     pub(super) fn apply(
         self,
         parents: Vec<usize>,

@@ -147,6 +147,7 @@ impl ConfigEdit {
                 lock_identity,
                 file: Some(file),
                 original: None,
+                #[expect(clippy::expect_used, reason = "empty input is a valid configuration")]
                 document: Document::parse(b"").expect("empty configuration"),
                 max_bytes,
                 published: false,
@@ -165,13 +166,11 @@ impl ConfigEdit {
                                 io_error("read source permissions", &edit.destination, source)
                             })?
                             .permissions();
-                        edit.file
-                            .as_ref()
-                            .expect("acquired lock")
-                            .set_permissions(permissions)
-                            .map_err(|source| {
-                                io_error("preserve source permissions", &edit.lock_path, source)
-                            })?;
+                        #[expect(clippy::expect_used, reason = "the edit holds its lock file")]
+                        let file = edit.file.as_ref().expect("acquired lock");
+                        file.set_permissions(permissions).map_err(|source| {
+                            io_error("preserve source permissions", &edit.lock_path, source)
+                        })?;
                     }
                 }
                 Ok(())
@@ -336,6 +335,10 @@ impl ConfigEdit {
     }
 
     fn write_lock(&mut self, bytes: &[u8]) -> Result<(), EditError> {
+        #[expect(
+            clippy::expect_used,
+            reason = "the guard holds its file until publication"
+        )]
         let file = self.file.as_mut().expect("unpublished guard owns its file");
         file.write_all(bytes)
             .map_err(|source| io_error("write lock", &self.lock_path, source))?;

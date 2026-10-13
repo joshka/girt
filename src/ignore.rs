@@ -28,6 +28,15 @@
 //! # Ok::<(), girt::ignore::Error>(())
 //! ```
 
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
+
 mod pattern;
 mod rules;
 
