@@ -221,7 +221,7 @@ impl ReceivedFetch {
         }
         let mut imported = Imported::read_owned(format, pack, known.known(), limits, observer)?;
         if let ValidationHistory::LocalPush(history) = &mut known {
-            let targets: std::collections::HashSet<_> = imported
+            let mut targets: Vec<_> = imported
                 .objects
                 .verified
                 .objects
@@ -234,7 +234,8 @@ impl ReceivedFetch {
                 })
                 .map(|(id, _)| *id)
                 .collect();
-            let targets: Vec<_> = targets.into_iter().collect();
+            targets.sort_unstable();
+            targets.dedup();
             history.discover_ancestors(&targets, limits, cancel)?;
         }
         let mut dependencies = connectivity::validate_with_boundaries(

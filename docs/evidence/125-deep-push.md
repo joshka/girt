@@ -51,7 +51,50 @@ Maximum process RSS across six samples, in MiB.
 | 131k-1000                | 32.2  | 34.3   | 19.8 |
 | git-git-1000-master-only | 469.7 | 78.9   | 32.2 |
 
-The change still uses approximately 3× Git's RSS on git/git. Memory parity remains unresolved.
+The change still uses approximately 3× Git's RSS on git/git. Memory parity remains unresolved and is
+tracked in [issue 134](https://github.com/joshka/girt/issues/134).
+
+## Review workloads
+
+After [the cross-provider review](https://github.com/joshka/girt/pull/128#issuecomment-6148560810),
+two supplementary git/git workloads were measured once per tool under the shared lock on the same
+platform with warm caches. Pre-change main is `e273ef64`; the review-fix production code is
+`f440ef9f`. Order was Git–main–change. One-minute load was 2.3–2.5. All six supplementary receivers
+preserve existing refs and object-file names/sizes and pass `git fsck --strict --no-reflogs`. These
+are single observations (`n = 1`), not estimates of medians/ranges or statistical parity. Raw
+samples are in
+[125-deep-push-review.json](125-deep-push-review.json).
+
+The unreachable-base case creates a Git commit on `master~1000`, stores it in the receiver, creates
+a bookmark for it and force-moves that bookmark to master. Setup asserts that the old commit is
+physically readable but absent from `git rev-list --all`. Ten new commits fork from it. Discovery
+cannot prove that target from existing refs; ordinary connectivity verification still verifies its
+unreferenced history. This intact case does not reproduce the 50-second fallback of the original
+master-only workload.
+
+The high-ref case keeps master and creates 49,999 distinct Git-generated commits, each with master
+as its parent. It packs all 50,000 refs and asserts 50,000 distinct tips. The new stack forks from
+`master~1`, matching the review's parent-of-one-tip scenario. Setup, ref packing and release builds
+are outside the lock.
+
+| Workload         | Main time | Change time | Git time | Main RSS  | Change RSS | Git RSS  |
+| ---------------- | --------- | ----------- | -------- | --------- | ---------- | -------- |
+| Unreachable base | 0.352 s   | 0.594 s     | 0.260 s  | 85.1 MiB  | 81.9 MiB   | 30.9 MiB |
+| 50,000 refs      | 52.730 s  | 0.820 s     | 0.846 s  | 545.9 MiB | 160.4 MiB  | 67.0 MiB |
+
+The unreachable-base sample shows added discovery cost (1.69× main and 2.28× Git). It is outside the
+reachable-base time acceptance claim; [issue 135](https://github.com/joshka/girt/issues/135) tracks
+that cost without restoring an internal ancestor cutoff. The high-ref sample is 0.97× Git time, with
+2.40× Git RSS. Upfront root reads remain; this measurement does not establish all high-ref workloads
+as within budget. Memory remains tracked in
+[issue 134](https://github.com/joshka/girt/issues/134).
+
+[The supplementary harness](../../benches/deep_push_review.py) reproduces both cases with the
+original driver source. Use its `prepare --fixture /path/to/gitgit.git --output target/review-push`
+stage before taking the shared lock, then its `run` stage with `--main-driver` and `--change-driver`
+inside the lock. Each sample requires a fresh prepared receiver; rerunning on a published bookmark
+is rejected. The bookkeeping fixes inspect the two neighboring sorted dates with binary search,
+collect external targets once into a sorted/deduplicated vector, and leave proof checks unchanged.
 
 ## Proof and validation
 

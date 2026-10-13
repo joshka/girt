@@ -85,8 +85,14 @@ struct Ancestor {
 
 impl Ancestor {
     fn prioritized(self, dates: &[i64]) -> Reverse<(u64, Self)> {
-        let distance = dates
-            .iter()
+        // Dates are sorted by discovery. Only the neighbors of this insertion point can
+        // be nearest; neither the dates nor this priority establish an ancestry edge.
+        let index = dates.partition_point(|&date| date < self.seconds);
+        let previous = dates[..index].last();
+        let next = dates.get(index);
+        let distance = previous
+            .into_iter()
+            .chain(next)
             .map(|&date| self.seconds.abs_diff(date))
             .min()
             .unwrap_or(0);
@@ -290,6 +296,8 @@ impl KnownHistory {
         let mut remaining = limits.max_known_objects;
         let mut edges = limits.max_known_edges;
         for id in roots {
+            // Seeds share the caller's object budget. Too many roots leave discovery
+            // incomplete, so ordinary connectivity verification supplies the proof.
             if remaining == 0 {
                 return Ok(());
             }
