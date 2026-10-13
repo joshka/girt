@@ -1784,6 +1784,36 @@ fn receiver_git(path: &std::path::Path, args: &[&str], input: &[u8]) -> Vec<u8> 
     output.stdout
 }
 
+fn unpack_receiver_history(root: &std::path::Path) {
+    for entry in std::fs::read_dir(root.join("objects/pack")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "pack")
+        {
+            let bytes = std::fs::read(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::fs::remove_file(path.with_extension("idx")).unwrap();
+            receiver_git(root, &["unpack-objects", "-q"], &bytes);
+        }
+    }
+}
+
+fn deepen_receiver_history(root: &std::path::Path, depth: usize) {
+    let base = String::from_utf8(receiver_git(root, &["rev-parse", "main"], b"")).unwrap();
+    let mut stream = String::new();
+    for index in 0..depth {
+        stream += &format!(
+            "commit refs/heads/main\ncommitter A <a@example.com> {} +0000\ndata 5\ndeep\n",
+            300 + index
+        );
+        if index == 0 {
+            stream += &format!("from {}\n", base.trim());
+        }
+    }
+    receiver_git(root, &["fast-import", "--quiet"], stream.as_bytes());
+}
+
 /// A malformed transfer cannot turn arbitrary destination possession into complete history.
 #[rstest]
 #[case::missing_parent("main", "independent", "main^{tree}")]
@@ -1794,10 +1824,52 @@ fn local_receiver_rejects_missing_history(
     #[case] live_revision: &str,
     #[case] new_tree_revision: &str,
 ) {
+    let (destination, prepared, missing_id) =
+        incomplete_receiver_history(missing_revision, live_revision, new_tree_revision, 0);
+    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(PushFailure::Install(error)))
+            if matches!(*error, crate::fetch::FetchError::Missing(id) if id == missing_id)
+    ));
+    let mut request = prepared.request.clone();
+    prepared
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut request)
+        .unwrap();
+    let git_report = receiver_git(
+        destination.path(),
+        &["receive-pack", "--stateless-rpc", "."],
+        &request,
+    );
+    assert!(
+        String::from_utf8_lossy(&git_report).contains("ng refs/tags/tip"),
+        "Git receive-pack report: {}",
+        String::from_utf8_lossy(&git_report)
+    );
+    assert_eq!(
+        Repository::open(destination.path())
+            .unwrap()
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/tip").unwrap())
+            .unwrap(),
+        None
+    );
+}
+fn incomplete_receiver_history(
+    missing_revision: &str,
+    live_revision: &str,
+    new_tree_revision: &str,
+    depth: usize,
+) -> (tempfile::TempDir, PreparedPush, ObjectId) {
     let root = tempfile::tempdir().unwrap();
     receiver_git(root.path(), &["init", "--bare", "--template=", "."], b"");
     receiver_git(root.path(), &["fast-import", "--quiet"],
         b"commit refs/heads/main\nmark :1\ncommitter A <a@example.com> 100 +0000\ndata 4\nold\nM 100644 inline f\ndata 4\nold\ncommit refs/heads/main\ncommitter A <a@example.com> 200 +0000\ndata 4\nnew\nfrom :1\nM 100644 inline f\ndata 4\nnew\n");
+    deepen_receiver_history(root.path(), depth);
     let source = Repository::open(root.path()).unwrap();
     let old: ObjectId =
         std::str::from_utf8(&receiver_git(root.path(), &["rev-parse", "main"], b""))
@@ -1871,6 +1943,7 @@ fn local_receiver_rejects_missing_history(
         ],
         b"",
     );
+    unpack_receiver_history(destination.path());
     let missing = String::from_utf8(receiver_git(
         root.path(),
         &["rev-parse", missing_revision],
@@ -1896,25 +1969,22 @@ fn local_receiver_rejects_missing_history(
     )
     .unwrap();
     prepared.receiver_roots.clear(); // Model a hostile sender's omitted ancestry, bypassing negotiation.
+    (destination, prepared, missing_id)
+}
+
+/// Girt must reject missing unreferenced history even when Git's receive check accepts it.
+#[rstest]
+#[case::missing_parent("main")]
+#[case::absent_ancestry("main~1001")]
+fn local_receiver_rejects_incomplete_deep_history(#[case] missing_revision: &str) {
+    let (destination, prepared, missing_id) =
+        incomplete_receiver_history(missing_revision, "independent", "main^{tree}", 1000);
     let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
     assert!(matches!(
         result,
         Err(PushError::NotSent(PushFailure::Install(error)))
             if matches!(*error, crate::fetch::FetchError::Missing(id) if id == missing_id)
     ));
-    let mut request = prepared.request.clone();
-    prepared
-        .pack
-        .reader()
-        .unwrap()
-        .read_to_end(&mut request)
-        .unwrap();
-    let git_report = receiver_git(
-        destination.path(),
-        &["receive-pack", "--stateless-rpc", "."],
-        &request,
-    );
-    assert!(String::from_utf8_lossy(&git_report).contains("ng refs/tags/tip"));
     assert_eq!(
         Repository::open(destination.path())
             .unwrap()
