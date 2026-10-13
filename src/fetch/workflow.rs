@@ -366,11 +366,49 @@ impl FetchRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        observe: impl FnMut(super::LocalFetchProgress),
+    ) -> Result<FetchReady, FetchWorkflowError> {
+        self.receive_local_observed(source, known, limits, control, progress, observe, |_| {})
+    }
+
+    /// Constructs a local fetch with actual object and delta validation progress.
+    ///
+    /// Uses [`Self::receive_local`]'s planning contract and
+    /// [`super::receive_local_with_validation_progress`]'s observer contract. Completion marks
+    /// validation, independently of later installation or publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns planning or validation failures without destination changes.
+    pub fn receive_local_with_validation_progress(
+        self,
+        source: impl AsRef<Path>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        validation: impl FnMut(super::ValidationProgress),
+    ) -> Result<FetchReady, FetchWorkflowError> {
+        self.receive_local_observed(source, known, limits, control, progress, |_| {}, validation)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "independent construction and validation observers"
+    )]
+    fn receive_local_observed(
+        self,
+        source: impl AsRef<Path>,
+        known: &KnownHistory,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
         mut observe: impl FnMut(super::LocalFetchProgress),
+        validation: impl FnMut(super::ValidationProgress),
     ) -> Result<FetchReady, FetchWorkflowError> {
         self.check_known(known)?;
         let mut plan = None;
-        let received = super::local::receive_local_with_known_depth_and_progress(
+        let received = super::local::receive_local_observed(
             source,
             |advertisement| select(self.plan(advertisement), &mut plan),
             known,
@@ -383,6 +421,7 @@ impl FetchRequest {
                     observe(event);
                 }
             },
+            validation,
         );
         let updates = selected(plan, &received)?;
         let ready = FetchReady {

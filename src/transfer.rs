@@ -146,6 +146,14 @@ pub trait TransferCallbacks {
     /// end in `\r` (to be overwritten) or `\n`.
     fn remote_message(&mut self, _message: &[u8]) {}
 
+    /// Receives native local pack-validation work on the calling thread.
+    ///
+    /// Completion describes validation, not installation or reference publication. No pack means
+    /// no snapshots. Counts may restart on a retry. Observers must return promptly; panics unwind
+    /// before this validation phase publishes incoming storage. Network transport messages retain
+    /// their existing byte callback; this observer currently covers native local transfers only.
+    fn validation_progress(&mut self, _progress: crate::fetch::ValidationProgress) {}
+
     /// Receives diagnostic output of a local transport process, such as SSH's standard error
     /// (e.g. host key warnings or authentication failures), as raw bytes.
     fn transport_message(&mut self, _message: &[u8]) {}
@@ -819,14 +827,23 @@ impl Repository {
         };
         let request = || self.fetch_request(options);
         let control = TransportControl::new(&cancel);
+        #[cfg(any(
+            feature = "http",
+            all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+        ))]
         let mut on_message = |message: &[u8]| {
             callbacks.remote_message(message);
             ControlFlow::Continue(())
         };
         let ready = match endpoint {
-            Endpoint::Local(path) => {
-                request()?.receive_local(path, &known, limits, control, &mut on_message)
-            }
+            Endpoint::Local(path) => request()?.receive_local_with_validation_progress(
+                path,
+                &known,
+                limits,
+                control,
+                |_| ControlFlow::Continue(()),
+                |event| callbacks.validation_progress(event),
+            ),
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
@@ -1023,8 +1040,8 @@ impl Repository {
         let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
             Endpoint::Local(path) => {
-                let send = || {
-                    crate::push::send_local_preparing(
+                let mut send = || {
+                    crate::push::send_local_preparing_observed(
                         &path,
                         format,
                         control,
@@ -1033,6 +1050,7 @@ impl Repository {
                             identity: options.identity.as_ref(),
                         },
                         |advertisement| prepare(&advertisement.receiver_roots()?),
+                        |event| callbacks.validation_progress(event),
                     )
                 };
                 let mut result = send();

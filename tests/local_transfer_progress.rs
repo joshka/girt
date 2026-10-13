@@ -5,8 +5,12 @@ mod pack_git;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use girt::fetch::{FetchLimits, KnownHistory, ValidationProgress, receive_local_with_validation_progress};
-use girt::push::{ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushLimits, send_local_with_progress};
+use girt::fetch::{
+    FetchLimits, KnownHistory, ValidationProgress, receive_local_with_validation_progress,
+};
+use girt::push::{
+    ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushLimits, send_local_with_progress,
+};
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::{InitKind, ObjectFormat, PackLimits, Repository};
@@ -15,13 +19,20 @@ use rstest::rstest;
 
 fn check(events: &[ValidationProgress], objects: u64, deltas: u64) {
     assert!(deltas > 0);
-    assert_eq!(events.last(), Some(&ValidationProgress {
-        objects: (objects, objects), deltas: Some((deltas, deltas)), complete: true,
-    }));
+    assert_eq!(
+        events.last(),
+        Some(&ValidationProgress {
+            objects: (objects, objects),
+            deltas: Some((deltas, deltas)),
+            complete: true,
+        })
+    );
     assert_eq!(events.iter().filter(|event| event.complete).count(), 1);
     for pair in events.windows(2) {
         assert!(pair[0].objects.0 <= pair[1].objects.0);
-        assert!(pair[0].deltas.map_or(0, |value| value.0) <= pair[1].deltas.map_or(0, |value| value.0));
+        assert!(
+            pair[0].deltas.map_or(0, |value| value.0) <= pair[1].deltas.map_or(0, |value| value.0)
+        );
     }
 }
 
@@ -33,20 +44,81 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
     let mut events = Vec::new();
     let received = receive_local_with_validation_progress(
         fixture.root.path(),
-        |advertisement| advertisement.refs.iter().filter(|reference| !reference.peeled).map(|reference| reference.id).collect(),
-        &KnownHistory::default(), FetchLimits::default(),
-        TransportControl::new(&AtomicBool::new(false)), |_| ControlFlow::Continue(()),
+        |advertisement| {
+            advertisement
+                .refs
+                .iter()
+                .filter(|reference| !reference.peeled)
+                .map(|reference| reference.id)
+                .collect()
+        },
+        &KnownHistory::default(),
+        FetchLimits::default(),
+        TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
         |event| events.push(event),
-    ).unwrap();
+    )
+    .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let destination = Repository::init(format, root.path().join("destination"), InitKind::Bare).unwrap();
-    let installed = received.install(&destination, PackLimits::default(), &AtomicBool::new(false)).unwrap();
-    let index = destination.object_dir().join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));
-    let report = git(destination.git_dir(), &["verify-pack", "-v", index.to_str().unwrap()], b"");
+    let destination =
+        Repository::init(format, root.path().join("destination"), InitKind::Bare).unwrap();
+    let installed = received
+        .install(&destination, PackLimits::default(), &AtomicBool::new(false))
+        .unwrap();
+    let index = destination
+        .object_dir()
+        .join(format!("pack/pack-{}.idx", installed.checksum.unwrap()));
+    let report = git(
+        destination.git_dir(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
     let report = std::str::from_utf8(&report).unwrap();
-    let deltas = report.lines().filter(|line| line.split_whitespace().count() == 7).count();
+    let deltas = report
+        .lines()
+        .filter(|line| line.split_whitespace().count() == 7)
+        .count();
     check(&events, installed.objects as u64, deltas as u64);
     assert_eq!(installed.objects, fixture.records.len());
+    let plain = girt::fetch::receive_local(
+        fixture.root.path(),
+        |advertisement| {
+            advertisement
+                .refs
+                .iter()
+                .filter(|reference| !reference.peeled)
+                .map(|reference| reference.id)
+                .collect()
+        },
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    )
+    .unwrap();
+    let plain_root = tempfile::tempdir().unwrap();
+    let plain_destination = Repository::init(
+        format,
+        plain_root.path().join("destination"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let plain_installed = plain
+        .install(
+            &plain_destination,
+            PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(plain_installed.checksum, installed.checksum);
+    assert_eq!(plain.object_count(), received.object_count());
+    assert_eq!(
+        std::fs::read(index.with_extension("pack")).unwrap(),
+        std::fs::read(plain_destination.object_dir().join(format!(
+            "pack/pack-{}.pack",
+            plain_installed.checksum.unwrap()
+        )))
+        .unwrap()
+    );
     assert!(fixture.index_path.exists());
     assert_ne!(fixture.ordinary, fixture.delta);
 }
@@ -56,27 +128,276 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
 #[case::sha256(ObjectFormat::Sha256)]
 fn local_push_validation_cancellation_never_publishes(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
-    let id = std::str::from_utf8(&git(fixture.root.path(), &["rev-parse", "main"], b"")).unwrap().trim().parse().unwrap();
+    let id = std::str::from_utf8(&git(fixture.root.path(), &["rev-parse", "main"], b""))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     let prepared = PreparedPush::new_local(
         &fixture.repo.objects(PackLimits::default()).unwrap(),
-        vec![PushCommand { name: RefName::new("refs/heads/main").unwrap(), expected: None, new: id, force: ForcePolicy::FastForwardOnly }],
-        &[], PushLimits::default(), &AtomicBool::new(false),
-    ).unwrap();
+        vec![PushCommand {
+            name: RefName::new("refs/heads/main").unwrap(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     for delta in [false, true] {
         let root = tempfile::tempdir().unwrap();
-        let destination = Repository::init(format, root.path().join("destination"), InitKind::Bare).unwrap();
+        let destination =
+            Repository::init(format, root.path().join("destination"), InitKind::Bare).unwrap();
         let cancel = AtomicBool::new(false);
         let mut events = Vec::new();
         let inputs = girt::config::ConfigInputs::default();
-        let result = send_local_with_progress(destination.git_dir(), &prepared, TransportControl::new(&cancel), LocalPushContext { config_inputs: &inputs, identity: None }, |event| {
-            events.push(event);
-            if if delta { event.deltas.is_some_and(|value| value.0 > 0) } else { event.objects.0 > 0 } {
-                cancel.store(true, Ordering::Relaxed);
-            }
-        });
+        let result = send_local_with_progress(
+            destination.git_dir(),
+            &prepared,
+            TransportControl::new(&cancel),
+            LocalPushContext {
+                config_inputs: &inputs,
+                identity: None,
+            },
+            |event| {
+                events.push(event);
+                if if delta {
+                    event.deltas.is_some_and(|value| value.0 > 0)
+                } else {
+                    event.objects.0 > 0
+                } {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
         assert!(matches!(result, Err(girt::push::PushError::NotSent(_))));
         assert!(events.iter().all(|event| !event.complete));
         assert!(destination.references().unwrap().list().unwrap().is_empty());
-        assert_eq!(std::fs::read_dir(destination.object_dir().join("pack")).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::read_dir(destination.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            0
+        );
     }
+}
+
+#[test]
+fn git_local_transfer_progress_and_repository_callbacks() {
+    let fixture = Fixture::new(ObjectFormat::Sha1, true, 8);
+    let root = tempfile::tempdir().unwrap();
+    let destination = Repository::init(
+        ObjectFormat::Sha1,
+        root.path().join("destination"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    git(
+        destination.git_dir(),
+        &["config", "receive.unpackLimit", "0"],
+        b"",
+    );
+    let output = pack_git::git_output(
+        fixture.root.path(),
+        &[
+            "push",
+            "--progress",
+            destination.git_dir().to_str().unwrap(),
+            "main",
+        ],
+        b"",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Resolving deltas:"), "{stderr}");
+    let fetch_root = tempfile::tempdir().unwrap();
+    let fetch_destination = Repository::init(
+        ObjectFormat::Sha1,
+        fetch_root.path().join("destination"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    let output = pack_git::git_output(
+        fetch_destination.git_dir(),
+        &[
+            "-c",
+            "fetch.unpackLimit=1",
+            "fetch",
+            "--progress",
+            fixture.root.path().to_str().unwrap(),
+            "main",
+        ],
+        b"",
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Receiving objects:") && stderr.contains("Resolving deltas:"),
+        "{stderr}"
+    );
+
+    #[derive(Default)]
+    struct Observer(Vec<ValidationProgress>);
+    impl girt::transfer::TransferCallbacks for Observer {
+        fn validation_progress(&mut self, progress: ValidationProgress) {
+            self.0.push(progress);
+        }
+    }
+    let repo_root = tempfile::tempdir().unwrap();
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        repo_root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    git(
+        repo.git_dir(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            fixture.root.path().to_str().unwrap(),
+        ],
+        b"",
+    );
+    let repo = Repository::open(repo.git_dir()).unwrap();
+    let mut callbacks = Observer::default();
+    repo.fetch(
+        "origin",
+        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::transfer::Environment::default(),
+        &mut callbacks,
+    )
+    .unwrap();
+    assert!(callbacks.0.last().unwrap().complete);
+    callbacks.0.clear();
+    repo.fetch(
+        "origin",
+        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::transfer::Environment::default(),
+        &mut callbacks,
+    )
+    .unwrap();
+    assert!(
+        callbacks.0.is_empty(),
+        "no-op fetch must not fabricate receiving work"
+    );
+    let push_root = tempfile::tempdir().unwrap();
+    let push_destination = Repository::init(
+        ObjectFormat::Sha1,
+        push_root.path().join("repo"),
+        InitKind::Bare,
+    )
+    .unwrap();
+    git(
+        repo.git_dir(),
+        &[
+            "remote",
+            "add",
+            "push",
+            push_destination.git_dir().to_str().unwrap(),
+        ],
+        b"",
+    );
+    let id = std::str::from_utf8(&git(fixture.root.path(), &["rev-parse", "main"], b""))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let repo = Repository::open(repo.git_dir()).unwrap();
+    repo.push(
+        "push",
+        vec![PushCommand {
+            name: RefName::new("refs/heads/main").unwrap(),
+            expected: None,
+            new: id,
+            force: ForcePolicy::FastForwardOnly,
+        }],
+        &girt::transfer::PushOptions::default(),
+        &girt::transfer::Environment::default(),
+        &mut callbacks,
+    )
+    .unwrap();
+    assert!(callbacks.0.last().unwrap().complete);
+    let index = std::fs::read_dir(push_destination.object_dir().join("pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|value| value == "idx"))
+        .unwrap();
+    let report = git(
+        push_destination.git_dir(),
+        &["verify-pack", "-v", index.to_str().unwrap()],
+        b"",
+    );
+    let report = std::str::from_utf8(&report).unwrap();
+    let objects = report
+        .lines()
+        .filter(|line| matches!(line.split_whitespace().count(), 5 | 7))
+        .count();
+    let deltas = report
+        .lines()
+        .filter(|line| line.split_whitespace().count() == 7)
+        .count();
+    check(&callbacks.0, objects as u64, deltas as u64);
+    git(push_destination.git_dir(), &["fsck", "--strict"], b"");
+}
+
+#[test]
+fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
+    let fixture = Fixture::new(ObjectFormat::Sha1, true, 8);
+    let before = std::fs::read(&fixture.index_path).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut events = Vec::new();
+    let result = receive_local_with_validation_progress(
+        fixture.root.path(),
+        |advertisement| {
+            advertisement
+                .refs
+                .iter()
+                .map(|reference| reference.id)
+                .collect()
+        },
+        &KnownHistory::default(),
+        FetchLimits::default(),
+        TransportControl::new(&cancel),
+        |_| ControlFlow::Continue(()),
+        |event| {
+            events.push(event);
+            if event.objects.0 > 0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    );
+    assert!(matches!(result, Err(girt::fetch::FetchError::Cancelled)));
+    assert!(events.iter().all(|event| !event.complete));
+    let result = std::panic::catch_unwind(|| {
+        receive_local_with_validation_progress(
+            fixture.root.path(),
+            |advertisement| {
+                advertisement
+                    .refs
+                    .iter()
+                    .map(|reference| reference.id)
+                    .collect()
+            },
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            TransportControl::new(&AtomicBool::new(false)),
+            |_| ControlFlow::Continue(()),
+            |_| panic!("observer panic"),
+        )
+    });
+    assert!(result.is_err());
+    assert_eq!(std::fs::read(&fixture.index_path).unwrap(), before);
+    git(fixture.root.path(), &["fsck", "--strict"], b"");
 }
