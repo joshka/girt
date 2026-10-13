@@ -1134,3 +1134,125 @@ fn non_tip_receiver_boundary_does_not_scan_old_trees() {
         b"",
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn pre_receive_rejection_discards_quarantined_objects() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        &format!(
+            "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 9\ntest \"$GIT_OBJECT_DIRECTORY\" = \"$GIT_QUARANTINE_PATH\" || exit 9\ngit cat-file -e {} || exit 9\nprintf quarantine >hook-observed\nexit 1\n",
+            main(&f)
+        ),
+    );
+    let report = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(b"pre-receive hook declined".to_vec()))
+    );
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"quarantine"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(fs::read_dir(dest.object_dir()).unwrap().count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn update_hook_observes_published_objects_without_quarantine() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 1\ncat >/dev/null\n",
+    );
+    hook(
+        &dest,
+        "update",
+        "#!/bin/sh\ntest -z \"$GIT_QUARANTINE_PATH\" || exit 1\ntest -z \"$GIT_OBJECT_DIRECTORY\" || exit 1\ngit cat-file -e \"$3\" || exit 1\nprintf primary >hook-observed\nexit 1\n",
+    );
+    let report = push(
+        &f.repo,
+        &dest,
+        vec![command("refs/heads/main", None, main(&f))],
+    )
+    .unwrap();
+    assert_eq!(
+        report.refs[0].status,
+        Some(Status::Rejected(b"hook declined".to_vec()))
+    );
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"primary"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_during_pre_receive_leaves_primary_storage_unchanged() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (_root, dest) = destination(true);
+    // A finite hook keeps the reproducing test bounded even before hook cancellation exists.
+    hook(
+        &dest,
+        "pre-receive",
+        "#!/bin/sh\nprintf started >hook-observed\nsleep 1\ncat >/dev/null\n",
+    );
+    let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
+    let cancel = AtomicBool::new(false);
+    let observed = dest.git_dir().join("hook-observed");
+    let error = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !observed.exists() {
+                assert!(std::time::Instant::now() < end, "hook did not start");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        girt::push::send_local_with_control(
+            dest.git_dir(),
+            &prepared,
+            girt::transport::TransportControl::new(&cancel),
+        )
+        .unwrap_err()
+    });
+    assert!(matches!(error, PushError::NotSent(PushFailure::Cancelled)));
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"started"
+    );
+    assert_eq!(tip(&dest, "refs/heads/main"), None);
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(main(&f), ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+}
