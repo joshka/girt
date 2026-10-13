@@ -23,6 +23,16 @@ pub fn git_output(directory: &Path, args: &[&str], input: &[u8]) -> std::process
             command.env_remove(key);
         }
     }
+    // Rust's canonical Windows paths use an extended-length prefix that Git's CLI and URL
+    // parser do not accept. Keep ordinary arguments intact; fixtures use short local paths.
+    #[cfg(windows)]
+    let args: Vec<String> = args
+        .iter()
+        .map(|arg| match arg.strip_prefix(r"\\?\") {
+            Some(path) => path.replace('\\', "/"),
+            None => (*arg).to_owned(),
+        })
+        .collect();
     let mut child = command
         .current_dir(directory)
         .env("GIT_CONFIG_NOSYSTEM", "1")
