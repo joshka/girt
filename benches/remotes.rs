@@ -1,3 +1,5 @@
+//! Benchmarks refspec mapping over many references.
+
 use std::hint::black_box;
 use std::time::Duration;
 

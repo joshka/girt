@@ -1,3 +1,5 @@
+//! Benchmarks repository configuration parsing.
+
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};

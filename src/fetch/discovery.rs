@@ -28,18 +28,36 @@ pub enum ProtocolVersion {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RemoteHead {
     /// HEAD explicitly names a branch and resolves to its advertised ID.
-    Symbolic { branch: RefName, id: ObjectId },
+    Symbolic {
+        /// Branch named by the symbolic hint.
+        branch: RefName,
+        /// Advertised ID of HEAD and the branch.
+        id: ObjectId,
+    },
     /// HEAD explicitly names a branch that has no tip yet.
-    Unborn { branch: RefName },
+    Unborn {
+        /// Unborn branch named by the symbolic hint.
+        branch: RefName,
+    },
     /// HEAD has an ID but no symbolic hint and matches one advertised branch.
-    Inferred { branch: RefName, id: ObjectId },
+    Inferred {
+        /// The only advertised branch whose ID matches HEAD.
+        branch: RefName,
+        /// Advertised ID of HEAD.
+        id: ObjectId,
+    },
     /// HEAD has an ID but names no uniquely identifiable branch.
-    Detached { id: ObjectId },
+    Detached {
+        /// Advertised ID of HEAD.
+        id: ObjectId,
+    },
     /// HEAD was not advertised and no symbolic hint identifies an unborn branch.
     Missing,
     /// Multiple advertised branches match an unhinted HEAD ID.
     Ambiguous {
+        /// Advertised ID of HEAD.
         id: ObjectId,
+        /// Every advertised branch whose ID matches HEAD.
         branches: Vec<RefName>,
     },
 }

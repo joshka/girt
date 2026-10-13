@@ -592,14 +592,28 @@ impl RepositoryMetadata {
 /// environment-variable or prefix interpolation is performed. Tilde and `%(...)` prefixes in
 /// core.worktree are rejected; dollar signs are literal path bytes.
 ///
-/// Read an existing loose blob by its full identity (no reference lookup):
+/// Open a repository by path, store a blob, and read it back through the loose/packed reader.
+/// Writing an object neither moves a reference nor touches the working tree:
 ///
-/// ```no_run
-/// use girt::{ObjectId, Repository};
-/// let repository = Repository::open("/path/to/repository")?;
-/// let id: ObjectId = "ce013625030ba8dba906f756967f9e9ca394464a".parse()?;
-/// let bytes = repository.loose_objects().read_blob(id, 1024)?;
-/// assert_eq!(bytes, b"hello\n");
+/// ```
+/// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("project");
+/// Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
+///
+/// let repository = Repository::open(&path)?;
+/// assert_eq!(repository.worktree(), Some(path.canonicalize()?.as_path()));
+///
+/// let id = repository.loose_objects().write_blob(b"hello\n")?;
+/// let objects = repository.objects(PackLimits::default())?;
+/// let object = objects
+///     .read(id, ReadLimits::default())?
+///     .expect("blob was just written");
+/// assert_eq!(
+///     (object.kind(), object.data()),
+///     (ObjectKind::Blob, &b"hello\n"[..])
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
@@ -631,6 +645,7 @@ impl std::fmt::Debug for Repository {
     }
 }
 
+/// Failure to open a repository from a path or discovered location.
 #[derive(Debug, Error)]
 pub enum OpenError {
     /// Reftable HEAD metadata could not be read for branch-conditional configuration.

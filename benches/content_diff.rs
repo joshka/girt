@@ -1,3 +1,5 @@
+//! Benchmarks line diffs of blob payloads, including resource-limited inputs.
+
 use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;

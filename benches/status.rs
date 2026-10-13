@@ -1,3 +1,5 @@
+//! Benchmarks raw working-tree status on clean and changed trees.
+
 use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 

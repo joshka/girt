@@ -1,3 +1,5 @@
+//! Benchmarks rewrite detection in the library and against Git and girt processes.
+
 use std::hint::black_box;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;

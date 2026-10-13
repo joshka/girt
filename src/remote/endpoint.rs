@@ -126,12 +126,20 @@ fn helper_scheme(raw: &[u8]) -> Option<&[u8]> {
 /// Recognized Git endpoint family. Helper recognition never authorizes an executable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
+    /// A local path: absolute, `./` or `../` relative, UNC, drive-letter, or any string without a
+    /// recognized scheme or scp-like host.
     Local,
+    /// A `file://` URL naming a local path.
     File,
+    /// An `ssh://` URL or scp-like `host:path` form.
     Ssh,
+    /// An `http://` URL.
     Http,
+    /// An `https://` URL.
     Https,
+    /// A `git://` URL.
     Git,
+    /// A `scheme::address` or unrecognized `scheme://` form handled by a remote helper.
     Helper,
 }
 

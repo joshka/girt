@@ -258,14 +258,34 @@ impl ReadLimits {
 ///
 /// # Example
 ///
-/// ```no_run
-/// use girt::{ObjectId, PackLimits, ReadLimits, Repository};
-/// let repository = Repository::open("/path/to/repository")?;
+/// Read an object by full identity, then parse its exact bytes when structured fields are needed.
+/// Absence is `Ok(None)`, not an error:
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository, Tree};
+///
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo.git"),
+///     InitKind::Bare,
+/// )?;
+/// let tree = Tree::new(ObjectFormat::Sha1, vec![])?;
+/// let id = repository.loose_objects().write_tree(&tree)?;
+///
 /// let objects = repository.objects(PackLimits::default())?;
-/// let id: ObjectId = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391".parse()?;
-/// if let Some(object) = objects.read(id, ReadLimits::default())? {
-///     println!("{}: {} bytes", object.kind().as_str(), object.data().len());
-/// }
+/// let object = objects
+///     .read(id, ReadLimits::default())?
+///     .expect("tree was just written");
+/// assert_eq!(object.kind(), ObjectKind::Tree);
+/// assert!(
+///     Tree::parse(ObjectFormat::Sha1, object.data())?
+///         .entries()
+///         .is_empty()
+/// );
+///
+/// let missing = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, b"never written");
+/// assert!(objects.read(missing, ReadLimits::default())?.is_none());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]

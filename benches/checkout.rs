@@ -1,3 +1,5 @@
+//! Benchmarks checking out trees of increasing size into a disposable repository.
+
 use std::hint::black_box;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;

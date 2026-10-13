@@ -1,3 +1,5 @@
+//! Benchmarks pack writing with and without delta compression.
+
 use std::hint::black_box;
 use std::io;
 use std::time::Duration;

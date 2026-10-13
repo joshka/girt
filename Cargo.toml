@@ -277,3 +277,6 @@ harness = false
 [[bench]]
 name = "retention"
 harness = false
+
+[lints.rust]
+missing_docs = "warn"

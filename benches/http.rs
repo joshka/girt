@@ -1,3 +1,5 @@
+//! Benchmarks smart-HTTP transfer over a loopback Git HTTP server.
+
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;

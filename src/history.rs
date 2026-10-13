@@ -54,6 +54,52 @@ impl Objects {
     /// followed, even when parent objects exist. Raw commit reads retain every parent.
     /// An empty root slice returns an empty vector without reading storage.
     ///
+    /// ```
+    /// use girt::{
+    ///     Commit, CommitFields, HistoryLimits, InitKind, ObjectFormat, PackLimits, Repository,
+    ///     Signature, Tree,
+    /// };
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repository.loose_objects();
+    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"writer@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let commit = |parents, message: &[u8]| {
+    ///     loose.write_commit(&Commit::new(CommitFields {
+    ///         tree,
+    ///         parents,
+    ///         author: person.clone(),
+    ///         committer: person.clone(),
+    ///         extra_headers: vec![],
+    ///         message: message.to_vec(),
+    ///     })?)
+    /// };
+    /// let first = commit(vec![], b"first\n")?;
+    /// let second = commit(vec![first], b"second\n")?;
+    ///
+    /// let objects = repository.objects(PackLimits::default())?;
+    /// assert_eq!(
+    ///     objects.walk(&[second], HistoryLimits::default())?,
+    ///     [second, first]
+    /// );
+    /// // Supplied root order wins over ancestry: the walk is not topological.
+    /// let limits = HistoryLimits::default();
+    /// assert_eq!(objects.walk(&[first, second], limits)?, [first, second]);
+    /// assert!(objects.is_ancestor(first, second, HistoryLimits::default())?);
+    /// assert!(!objects.is_ancestor(second, first, HistoryLimits::default())?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`HistoryError`] on any reachable missing, non-commit, malformed or corrupt object,

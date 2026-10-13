@@ -1,3 +1,5 @@
+//! Benchmarks reftable snapshots, publication and compaction across reference counts.
+
 use std::sync::atomic::AtomicBool;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};

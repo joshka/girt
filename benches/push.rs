@@ -1,3 +1,5 @@
+//! Benchmarks push preparation and transfer, from history selection through protocol replay.
+
 use std::hint::black_box;
 use std::io;
 use std::sync::atomic::AtomicBool;
