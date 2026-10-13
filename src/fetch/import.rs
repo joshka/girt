@@ -1,4 +1,6 @@
 //! Index received packs on disk, retaining metadata and a bounded decoded delta-base cache.
+mod finish;
+
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -146,7 +148,7 @@ impl Imported {
             }
             let mut objects = IndexedObjects {
                 pack: Bytes::File(temporary, len),
-                file: Mutex::new(reader.get_ref().try_clone()?),
+                file: reader.get_ref().try_clone()?,
                 format,
                 entries: Vec::with_capacity(count),
                 identities: IdMap::default(),
@@ -156,83 +158,87 @@ impl Imported {
                 limits,
                 remaining: Mutex::new(0),
             };
-            let mut remaining = limits.max_decode_bytes;
-            let mut offset = 12;
-            observer.decoding(count);
-            for _ in 0..count {
-                check_cancelled(cancel)?;
-                let mut crc = crc32fast::Hasher::new();
-                let (base, length, prefix) = read_header(format, &mut reader, offset, &mut crc)?;
-                let maximum = if matches!(base, Base::Kind(_)) {
-                    limits.max_object_bytes
-                } else {
-                    limits.max_delta_bytes
-                };
-                if length > maximum {
-                    return Err(FetchError::Limit("inflated entry bytes"));
+            finish::with_finisher(count, limits.max_threads, |finisher| {
+                let mut remaining = limits.max_decode_bytes;
+                let mut offset = 12;
+                observer.decoding(count);
+                for _ in 0..count {
+                    check_cancelled(cancel)?;
+                    let mut crc = crc32fast::Hasher::new();
+                    let (base, length, prefix) =
+                        read_header(format, &mut reader, offset, &mut crc)?;
+                    let maximum = if matches!(base, Base::Kind(_)) {
+                        limits.max_object_bytes
+                    } else {
+                        limits.max_delta_bytes
+                    };
+                    if length > maximum {
+                        return Err(FetchError::Limit("inflated entry bytes"));
+                    }
+                    charge(&mut remaining, length)?;
+                    let (payload, consumed) =
+                        inflate_stream(&mut reader, length, &mut crc, cancel, &path)
+                            .map_err(fetch_read_error)?;
+                    let entry_end = offset + prefix + consumed;
+                    if entry_end > end {
+                        return Err(Error::Corrupt("trailing pack entries").into());
+                    }
+                    let position = objects.entries.len();
+                    let object = if let Base::Kind(kind) = base {
+                        let object = Object {
+                            format,
+                            kind,
+                            data: payload.into(),
+                        };
+                        objects.cache.insert(position, &object, true);
+                        Some(object)
+                    } else {
+                        None
+                    };
+                    objects.entries.push(ReceivedEntry {
+                        base,
+                        offset,
+                        start: offset + prefix,
+                        end: entry_end,
+                        length,
+                        crc: crc.finalize(),
+                        resolved: object
+                            .as_ref()
+                            .map(|object| (ObjectId::null(format), 0, object.kind())),
+                    });
+                    if let Some(object) = object {
+                        finisher.submit(&mut objects, position, object, cancel)?;
+                    }
+                    offset = entry_end;
+                    observer.decoded();
                 }
-                charge(&mut remaining, length)?;
-                let (payload, consumed) =
-                    inflate_stream(&mut reader, length, &mut crc, cancel, &path)
-                        .map_err(fetch_read_error)?;
-                let entry_end = offset + prefix + consumed;
-                if entry_end > end {
+                if offset != end {
                     return Err(Error::Corrupt("trailing pack entries").into());
                 }
-                let position = objects.entries.len();
-                let resolved = if let Base::Kind(kind) = base {
-                    let object = Object {
-                        format,
-                        kind,
-                        data: payload.into(),
-                    };
-                    let id = object.id();
-                    if objects.identities.insert(id, position).is_some() {
-                        return Err(Error::Corrupt("duplicate received identity").into());
-                    }
-                    objects.verified.insert(id, &object);
-                    objects.cache.insert(position, &object, true);
-                    Some((id, 0, kind))
+                let deltas = objects
+                    .entries
+                    .iter()
+                    .filter(|e| e.resolved.is_none())
+                    .count();
+                observer.resolving(deltas);
+                let external = objects.resolve(known, &mut remaining, observer, finisher)?;
+                finisher.finish(&mut objects)?;
+                let checksum = if external {
+                    objects.finish_thin(cancel)?
                 } else {
-                    None
+                    checksum
                 };
-                objects.entries.push(ReceivedEntry {
-                    base,
-                    offset,
-                    start: offset + prefix,
-                    end: entry_end,
-                    length,
-                    crc: crc.finalize(),
-                    resolved,
-                });
-                offset = entry_end;
-                observer.decoded();
-            }
-            if offset != end {
-                return Err(Error::Corrupt("trailing pack entries").into());
-            }
-            let deltas = objects
-                .entries
-                .iter()
-                .filter(|e| e.resolved.is_none())
-                .count();
-            observer.resolving(deltas);
-            let external = objects.resolve(known, &mut remaining, observer)?;
-            let checksum = if external {
-                objects.finish_thin(cancel)?
-            } else {
-                checksum
-            };
-            objects.record_read_costs()?;
-            let index = objects.index(checksum)?;
-            objects.remaining = Mutex::new(remaining);
-            #[cfg(feature = "tracing")]
-            span.record("decoded_bytes", limits.max_decode_bytes - remaining)
-                .record("objects", count);
-            Ok(Self {
-                objects,
-                index,
-                checksum,
+                objects.record_read_costs()?;
+                let index = objects.index(checksum)?;
+                objects.remaining = Mutex::new(remaining);
+                #[cfg(feature = "tracing")]
+                span.record("decoded_bytes", limits.max_decode_bytes - remaining)
+                    .record("objects", count);
+                Ok(Self {
+                    objects,
+                    index,
+                    checksum,
+                })
             })
         };
         #[cfg(feature = "tracing")]
@@ -265,7 +271,8 @@ enum Base {
 /// Identity and offset tables stay resident; payloads are decoded on demand from the owned file.
 pub(crate) struct IndexedObjects {
     pub pack: Bytes,
-    file: Mutex<File>,
+    /// Read with positioned reads only, so it shares no cursor with appends to `pack`.
+    file: File,
     format: crate::ObjectFormat,
     entries: Vec<ReceivedEntry>,
     identities: IdMap<usize>,
@@ -377,13 +384,8 @@ impl IndexedObjects {
         known: &(impl KnownObjects + ?Sized),
         remaining: &mut usize,
         observer: &mut ValidationObserver<'_>,
+        finisher: &mut finish::Finisher,
     ) -> Result<bool, FetchError> {
-        let offsets: std::collections::HashMap<_, _> = self
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(p, e)| (e.offset, p))
-            .collect();
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); self.count];
         // REF_DELTA base names come straight from the peer.
         let mut waiting: crate::PeerIdMap<Vec<usize>> = crate::PeerIdMap::default();
@@ -391,15 +393,22 @@ impl IndexedObjects {
         for (p, entry) in self.entries.iter().enumerate() {
             match entry.base {
                 Base::Kind(_) => ready.push_back(p),
-                Base::Offset(offset) => children[*offsets
-                    .get(&offset)
-                    .ok_or(Error::Corrupt("delta base offset"))?]
+                // Entries were read in pack order, so their offsets ascend.
+                Base::Offset(offset) => children[self
+                    .entries
+                    .binary_search_by_key(&offset, |entry| entry.offset)
+                    .map_err(|_| Error::Corrupt("delta base offset"))?]
                 .push(p),
                 Base::Id(id) => waiting.entry(id).or_default().push(p),
             }
         }
+        // A REF_DELTA names its base by identity, so bases need theirs before they are popped.
+        // OFS_DELTA bases are found by position, so their identities can arrive later.
+        if !waiting.is_empty() {
+            finisher.finish(self)?;
+        }
         let mut work = self.limits.max_resolution_steps;
-        let mut resolved = self.identities.len();
+        let mut resolved = self.entries.iter().filter(|e| e.resolved.is_some()).count();
         let mut external = false;
         loop {
             while let Some(parent) = ready.pop_back() {
@@ -438,13 +447,14 @@ impl IndexedObjects {
                         kind,
                         data: data.into(),
                     };
-                    let id = object.id();
-                    if self.identities.insert(id, child).is_some() {
-                        return Err(Error::Corrupt("duplicate received identity").into());
-                    }
-                    self.entries[child].resolved = Some((id, depth + 1, kind));
-                    self.verified.insert(id, &object);
+                    self.entries[child].resolved =
+                        Some((ObjectId::null(self.format), depth + 1, kind));
                     self.cache.insert(child, &object, true);
+                    if waiting.is_empty() {
+                        finisher.submit(self, child, object, observer.cancel)?;
+                    } else {
+                        finisher.submit_now(self, child, object)?;
+                    }
                     resolved += 1;
                     observer.resolved_delta();
                     ready.push_back(child);
@@ -662,22 +672,19 @@ impl Source for IndexedObjects {
 }
 impl IndexedObjects {
     fn inflate_entry(&self, entry: &ReceivedEntry, cancel: &AtomicBool) -> Result<Vec<u8>, Error> {
-        let (start, end, expected) = (entry.start, entry.end, entry.length);
+        // One positioned read covers the header and stream; the CRC spans both.
+        let raw = self.bytes(entry.offset, entry.end)?;
+        let (header, mut stream) = raw.split_at(entry.start - entry.offset);
         let mut crc = crc32fast::Hasher::new();
-        crc.update(&self.bytes(entry.offset, start)?);
-        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
-        file.seek(SeekFrom::Start(start as u64))
-            .map_err(|source| self.io(source))?;
-        let mut reader =
-            BufReader::with_capacity(64 * 1024, (&mut *file).take((end - start) as u64));
+        crc.update(header);
         let (data, consumed) = inflate_stream(
-            &mut reader,
-            expected,
+            &mut stream,
+            entry.length,
             &mut crc,
             cancel,
             self.pack.path().expect("indexed packs are file backed"),
         )?;
-        if consumed != end - start {
+        if consumed != entry.end - entry.start {
             return Err(Error::Corrupt("packed entry length or trailing data"));
         }
         if crc.finalize() != entry.crc {
@@ -698,11 +705,8 @@ impl IndexedObjects {
     }
 
     fn bytes(&self, start: usize, end: usize) -> Result<Vec<u8>, Error> {
-        let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
-        file.seek(SeekFrom::Start(start as u64))
-            .map_err(|source| self.io(source))?;
         let mut bytes = vec![0; end - start];
-        file.read_exact(&mut bytes)
+        crate::pack::read_exact_at(&self.file, start as u64, &mut bytes)
             .map_err(|source| self.io(source))?;
         Ok(bytes)
     }
@@ -776,27 +780,31 @@ fn inflate_stream(
     path: &std::path::Path,
 ) -> Result<(Vec<u8>, usize), Error> {
     let mut inflater = Decompress::new(true);
-    let mut output = [0; 64 * 1024];
-    let mut data = Vec::new();
+    // Capacity grows with actual output, never past one byte beyond the declared size, so an
+    // oversized stream shows itself and an inflated claim allocates nothing up front.
+    let limit = expected.saturating_add(1);
+    let mut data = Vec::with_capacity(limit.min(64 * 1024));
     loop {
         crate::pack::reader::check_cancelled(cancel)?;
+        if data.len() == data.capacity() {
+            data.reserve_exact(data.len().max(64 * 1024).min(limit - data.len()));
+        }
         let input = reader.fill_buf().map_err(|source| Error::Path {
             path: path.to_owned(),
             source,
         })?;
         let before_in = inflater.total_in();
-        let before_out = inflater.total_out();
+        let before_out = data.len();
         let status = inflater
-            .decompress(input, &mut output, FlushDecompress::None)
+            .decompress_vec(input, &mut data, FlushDecompress::None)
             .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
         let consumed = (inflater.total_in() - before_in) as usize;
-        let produced = (inflater.total_out() - before_out) as usize;
+        let produced = data.len() - before_out;
         crc.update(&input[..consumed]);
         reader.consume(consumed);
-        if produced > expected.saturating_sub(data.len()) {
+        if data.len() > expected {
             return Err(Error::Corrupt("inflated entry exceeds declared size"));
         }
-        data.extend_from_slice(&output[..produced]);
         if status == Status::StreamEnd {
             if data.len() != expected {
                 return Err(Error::Corrupt("packed entry length or trailing data"));

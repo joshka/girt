@@ -1,0 +1,282 @@
+[
+ {
+  "repo": "git-git",
+  "tool": "girt-new",
+  "run": 0,
+  "seconds": 15.34,
+  "rss_mib": 552.578125
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-main",
+  "run": 0,
+  "seconds": 39.68,
+  "rss_mib": 3657.921875
+ },
+ {
+  "repo": "git-git",
+  "tool": "stock",
+  "run": 0,
+  "seconds": 14.51,
+  "rss_mib": 880.359375
+ },
+ {
+  "repo": "git-git",
+  "tool": "git",
+  "run": 0,
+  "seconds": 11.48,
+  "rss_mib": 862.25
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-main",
+  "run": 1,
+  "seconds": 39.47,
+  "rss_mib": 3657.640625
+ },
+ {
+  "repo": "git-git",
+  "tool": "stock",
+  "run": 1,
+  "seconds": 14.48,
+  "rss_mib": 861.296875
+ },
+ {
+  "repo": "git-git",
+  "tool": "git",
+  "run": 1,
+  "seconds": 11.54,
+  "rss_mib": 832.078125
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-new",
+  "run": 1,
+  "seconds": 14.74,
+  "rss_mib": 569.90625
+ },
+ {
+  "repo": "git-git",
+  "tool": "stock",
+  "run": 2,
+  "seconds": 14.97,
+  "rss_mib": 828.3125
+ },
+ {
+  "repo": "git-git",
+  "tool": "git",
+  "run": 2,
+  "seconds": 11.57,
+  "rss_mib": 832.484375
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-new",
+  "run": 2,
+  "seconds": 14.85,
+  "rss_mib": 578.25
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-main",
+  "run": 2,
+  "seconds": 39.54,
+  "rss_mib": 3657.984375
+ },
+ {
+  "repo": "git-git",
+  "tool": "git",
+  "run": 3,
+  "seconds": 11.55,
+  "rss_mib": 826.703125
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-new",
+  "run": 3,
+  "seconds": 14.82,
+  "rss_mib": 551.96875
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-main",
+  "run": 3,
+  "seconds": 39.97,
+  "rss_mib": 3657.828125
+ },
+ {
+  "repo": "git-git",
+  "tool": "stock",
+  "run": 3,
+  "seconds": 14.85,
+  "rss_mib": 884.421875
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-new",
+  "run": 4,
+  "seconds": 14.93,
+  "rss_mib": 552.21875
+ },
+ {
+  "repo": "git-git",
+  "tool": "girt-main",
+  "run": 4,
+  "seconds": 40.22,
+  "rss_mib": 3657.96875
+ },
+ {
+  "repo": "git-git",
+  "tool": "stock",
+  "run": 4,
+  "seconds": 14.6,
+  "rss_mib": 833.921875
+ },
+ {
+  "repo": "git-git",
+  "tool": "git",
+  "run": 4,
+  "seconds": 11.6,
+  "rss_mib": 872.359375
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-new",
+  "run": 0,
+  "seconds": 5.38,
+  "rss_mib": 359.890625
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-main",
+  "run": 0,
+  "seconds": 7.54,
+  "rss_mib": 542.890625
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "stock",
+  "run": 0,
+  "seconds": 4.3,
+  "rss_mib": 266.21875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "git",
+  "run": 0,
+  "seconds": 3.49,
+  "rss_mib": 266.28125
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-main",
+  "run": 1,
+  "seconds": 7.55,
+  "rss_mib": 542.875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "stock",
+  "run": 1,
+  "seconds": 4.26,
+  "rss_mib": 268.65625
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "git",
+  "run": 1,
+  "seconds": 3.46,
+  "rss_mib": 266.21875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-new",
+  "run": 1,
+  "seconds": 4.06,
+  "rss_mib": 386.546875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "stock",
+  "run": 2,
+  "seconds": 4.2,
+  "rss_mib": 266.125
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "git",
+  "run": 2,
+  "seconds": 3.44,
+  "rss_mib": 266.21875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-new",
+  "run": 2,
+  "seconds": 4.05,
+  "rss_mib": 386.0
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-main",
+  "run": 2,
+  "seconds": 7.16,
+  "rss_mib": 542.859375
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "git",
+  "run": 3,
+  "seconds": 3.43,
+  "rss_mib": 266.21875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-new",
+  "run": 3,
+  "seconds": 4.02,
+  "rss_mib": 364.9375
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-main",
+  "run": 3,
+  "seconds": 7.24,
+  "rss_mib": 542.984375
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "stock",
+  "run": 3,
+  "seconds": 4.21,
+  "rss_mib": 266.25
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-new",
+  "run": 4,
+  "seconds": 4.04,
+  "rss_mib": 386.109375
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "girt-main",
+  "run": 4,
+  "seconds": 7.25,
+  "rss_mib": 542.921875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "stock",
+  "run": 4,
+  "seconds": 4.21,
+  "rss_mib": 266.71875
+ },
+ {
+  "repo": "jj-fixture",
+  "tool": "git",
+  "run": 4,
+  "seconds": 3.44,
+  "rss_mib": 266.328125
+ }
+]
