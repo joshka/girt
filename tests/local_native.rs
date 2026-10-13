@@ -792,3 +792,98 @@ fn native_fetch_callback_interruption_returns_no_pack() {
     );
     assert!(matches!(result, Err(FetchError::Cancelled)));
 }
+
+/// Git treats the canonical empty tree as present everywhere, so a push whose history reaches it
+/// must succeed or reject per reference when neither repository stores it.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn native_push_accepts_history_reaching_unstored_empty_tree(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, Backend::Files);
+    let dest = repository(&root, "dest", format, Backend::Files);
+    let empty_tree = Tree::new(format, vec![]).unwrap().id();
+    let person = Signature {
+        name: b"Local Test".to_vec(),
+        email: b"local@example.invalid".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let write = |repository: &Repository, parents, message: &[u8]| {
+        let commit = Commit::new(CommitFields {
+            tree: empty_tree,
+            parents,
+            author: person.clone(),
+            committer: person.clone(),
+            extra_headers: vec![],
+            message: message.to_vec(),
+        })
+        .unwrap();
+        repository.loose_objects().write_commit(&commit).unwrap()
+    };
+    // Both repositories store the commits but not the tree, as when another tool writes them.
+    let main = RefName::new("refs/heads/main").unwrap();
+    let mut parent = None;
+    let mut child = None;
+    for repository in [&source, &dest] {
+        let first = write(repository, vec![], b"Parent\n");
+        let second = write(repository, vec![first], b"Child\n");
+        repository
+            .references()
+            .unwrap()
+            .update_without_reflog(&main, Target::Direct(second), Expected::Absent)
+            .unwrap();
+        (parent, child) = (Some(first), Some(second));
+    }
+    let (parent, child) = (parent.unwrap(), child.unwrap());
+
+    // `parent` is stored by the destination but isn't a reference tip, so the pack is empty and
+    // validation walks `parent` down to the unstored empty tree.
+    let copy = RefName::new("refs/heads/copy").unwrap();
+    let commands = vec![
+        PushCommand {
+            name: main.clone(),
+            expected: None,
+            new: parent,
+            force: ForcePolicy::FastForwardOnly,
+        },
+        PushCommand {
+            name: copy.clone(),
+            expected: None,
+            new: parent,
+            force: ForcePolicy::FastForwardOnly,
+        },
+    ];
+    let cancel = AtomicBool::new(false);
+    let prepared = PreparedPush::new_local(
+        &source.objects(PackLimits::default()).unwrap(),
+        commands,
+        &[child],
+        PushLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let report = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    assert_eq!(
+        report.refs[0].rejection_origin,
+        Some(RejectionOrigin::ExpectedValue)
+    );
+    assert_eq!(report.refs[1].status, Some(girt::push::Status::Ok));
+    let refs = dest.references().unwrap();
+    assert_eq!(refs.read(&main).unwrap(), Some(Target::Direct(child)));
+    assert_eq!(refs.read(&copy).unwrap(), Some(Target::Direct(parent)));
+    // The accepted update depends on the tree, so the destination now stores it.
+    let hex = empty_tree.to_string();
+    assert!(dest.object_dir().join(&hex[..2]).join(&hex[2..]).exists());
+    let output = Command::new("git")
+        .arg("--git-dir")
+        .arg(plain_local_path(dest.git_dir()))
+        .args(["fsck", "--connectivity-only"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

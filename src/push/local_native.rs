@@ -212,8 +212,11 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 Target::Symbolic(_) => None,
             })
             .collect();
-        let known = KnownHistory::from_store_roots(store, &roots, control.cancel)
+        let mut known = KnownHistory::from_store_roots(store, &roots, control.cancel)
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        // Git treats the canonical empty tree as present in every repository, so the sender omits
+        // it when the receiver's history reaches it, even if the receiver doesn't store it.
+        let unstored_empty_tree = known.assume_empty_tree();
         let mut pack = crate::fetch::Bytes::temporary()
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         // Keep the prepared artifact reusable; import owns this independent temporary copy.
@@ -255,6 +258,16 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             &mut crate::fetch::ValidationObserver::new(control.cancel, &mut |_| {}),
         )
         .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
+        if let Some(id) = unstored_empty_tree
+            && received.dependencies().contains(&id)
+        {
+            repository
+                .loose_objects()
+                .write_object(prepared.format, crate::ObjectKind::Tree, b"")
+                .map_err(|error| {
+                    PushError::NotSent(PushFailure::Io(std::io::Error::other(error)))
+                })?;
+        }
         received
             .install(&repository, Default::default(), control.cancel)
             .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;

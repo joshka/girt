@@ -216,6 +216,11 @@ impl ReceivedFetch {
         &self.wants
     }
 
+    /// Known-local objects the received objects depend on; installation rechecks them.
+    pub(crate) fn dependencies(&self) -> &[ObjectId] {
+        &self.dependencies
+    }
+
     /// Number of verified received objects, including server extras and materialized connectivity
     /// dependencies. Extra bases appended to make a thin pack self-contained are not counted.
     pub fn object_count(&self) -> usize {
