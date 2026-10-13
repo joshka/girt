@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3](https://github.com/joshka/girt/compare/v0.4.2...v0.4.3) - 2026-10-13
+
+### Other
+
+- bound local push connectivity checks ([#123](https://github.com/joshka/girt/pull/123))
+- Fix a config glob panic and remove panics from config and ignore parsers ([#121](https://github.com/joshka/girt/pull/121))
+- Remove panics from reference and reflog parsers ([#115](https://github.com/joshka/girt/pull/115))
+- Remove panics from index file parsers ([#114](https://github.com/joshka/girt/pull/114))
+- Remove panics from pack data and index parsers ([#113](https://github.com/joshka/girt/pull/113))
+- Remove panics from object and pkt-line parsers ([#112](https://github.com/joshka/girt/pull/112))
+
 ## [0.4.2](https://github.com/joshka/girt/compare/v0.4.1...v0.4.2) - 2026-10-13
 
 ### Other
