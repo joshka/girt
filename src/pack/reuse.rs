@@ -196,6 +196,7 @@ fn write_reusing_impl(
     let mut deltas = DeltaStats::default();
     let mut input_bytes = fresh.iter().map(|o| o.data.len() as u64).sum::<u64>();
     observe(0, u64::from(count));
+    let _ordered = super::HeaderScope::ordered();
     for &(source_index, _, item) in &order {
         check()?;
         let source = packs[source_index];
@@ -1020,6 +1021,8 @@ mod tests {
         assert_eq!(actual, distance);
         assert!(input.is_empty());
     }
+    // Windows rejects the writer at open; file::publication_tests covers that boundary.
+    #[cfg(unix)]
     #[test]
     fn pinned_source_crc_is_checked_during_copy() {
         use std::io::{Seek as _, SeekFrom};
@@ -1037,6 +1040,7 @@ mod tests {
         assert!(rewrite(&[&source], &packed(&source, &ids), &[]).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncation_of_pinned_source_is_rejected_during_copy() {
         let root = tempfile::tempdir().unwrap();

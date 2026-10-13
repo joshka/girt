@@ -131,6 +131,12 @@ fn retention_walk_reads_each_entry_once() {
     let plan = repository.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert_eq!(plan.reachable.len(), entries);
+    let expected: std::collections::BTreeSet<crate::ObjectId> =
+        git(dir.path(), &["rev-list", "--objects", "--all"], b"")
+            .lines()
+            .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
+            .collect();
+    assert_eq!(plan.reachable, expected);
     let repeated: Vec<_> = counters::INFLATIONS.with(|map| {
         map.borrow()
             .iter()
@@ -142,8 +148,7 @@ fn retention_walk_reads_each_entry_once() {
         repeated.is_empty(),
         "entries inflated more than once: {repeated:?}"
     );
-    // One positioned read covers a typical entry's header and stream; root collection and pack
-    // opening add a few. Seek-and-read in 64-byte header chunks needed almost three per entry.
+    // Operation-scoped windows amortize entry-header reads; streams and pack opening add a few.
     let reads = counters::OS_READS.with(|reads| reads.get());
     assert!(
         reads < entries / 4,
@@ -152,18 +157,43 @@ fn retention_walk_reads_each_entry_once() {
 }
 
 /// Independently generated pack with a reachable blob and an old loose pruning candidate.
-pub(super) fn header_fixture() -> (tempfile::TempDir, Repository, RetentionPolicy, std::path::PathBuf) {
+#[cfg(unix)]
+pub(super) fn header_fixture() -> (
+    tempfile::TempDir,
+    Repository,
+    RetentionPolicy,
+    std::path::PathBuf,
+) {
     let root = tempfile::tempdir().unwrap();
     git(root.path(), &["init", "-q", "--template=", "."], b"");
-    let id = git(root.path(), &["hash-object", "-w", "--stdin"], b"packed survivor");
+    let id = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"packed survivor",
+    );
     git(root.path(), &["update-ref", "refs/tags/blob", &id], b"");
     git(root.path(), &["repack", "-adq"], b"");
-    git(root.path(), &["hash-object", "-w", "--stdin"], b"loose orphan");
+    let orphan = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"loose orphan",
+    );
+    let orphan_path = root
+        .path()
+        .join(".git/objects")
+        .join(&orphan[..2])
+        .join(&orphan[2..]);
+    std::fs::File::open(orphan_path)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH)
+        .unwrap();
     git(root.path(), &["fsck", "--full"], b"");
     let repo = Repository::open(root.path()).unwrap();
     let pack = std::fs::read_dir(repo.object_dir().join("pack"))
-        .unwrap().map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().is_some_and(|ext| ext == "pack")).unwrap();
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
+        .unwrap();
     let policy = RetentionPolicy {
         recent_cutoff: std::time::UNIX_EPOCH + Duration::from_secs(1),
         ..RetentionPolicy::trusted()
@@ -180,10 +210,12 @@ pub(super) fn change_pack(path: &Path, truncate: bool) {
     if truncate {
         file.set_len(12).unwrap();
     } else {
-        // Change only the trailer, so the entry CRC remains valid.
-        file.seek(SeekFrom::End(-1)).unwrap();
-        file.write_all(&[0xff]).unwrap();
+        // Change a warmed entry header without changing the file length.
+        let original = std::fs::read(path).unwrap()[12];
+        file.seek(SeekFrom::Start(12)).unwrap();
+        file.write_all(&[original ^ 1]).unwrap();
     }
     // Deterministic even on filesystems with coarse timestamp precision.
-    file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(42)).unwrap();
+    file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(42))
+        .unwrap();
 }

@@ -194,7 +194,10 @@ impl RetentionPolicy {
 /// classed as live if either endpoint is reachable from non-reflog roots; this conservative rule
 /// uses the longer live cutoff when the record straddles live and unreachable history. Callers
 /// must not delete an object based solely on `reachable - required` while retained packs, recent
-/// objects, alternates, or an independent writer can still refer to it.
+/// objects, alternates, or an independent writer can still refer to it. The plan retains the pinned
+/// object store used for its observations until dropped; execution reuses those exact handles.
+/// Drop the plan promptly after use: its handles keep retired packs' disk space allocated. On
+/// Windows a deleted pinned file remains pending deletion and can prevent recreating its name.
 #[derive(Debug)]
 pub struct RetentionPlan {
     /// Distinct explicit root candidates recovered before any failure.
@@ -206,6 +209,8 @@ pub struct RetentionPlan {
     /// One-based record positions eligible for expiry in each stored log.
     pub reflog_expiry_candidates: BTreeMap<ReflogSource, Vec<usize>>,
     observed_logs: Vec<ObservedLog>,
+    // Execution reuses the exact handles and freshness stamps that supplied graph evidence.
+    store: Option<crate::Objects>,
     // Kinds and logical sizes from decoded graph objects and located blob headers.
     object_info: BTreeMap<ObjectId, ObjectInfo>,
     // Separate closure protects dependencies of surviving packs without affecting reflog liveness.
@@ -241,6 +246,13 @@ impl RetentionPlan {
         self.outcome == RetentionOutcome::Complete
     }
 
+    fn check_packs_unchanged(&self, cancel: &AtomicBool) -> Result<(), crate::ObjectReadError> {
+        if let Some(store) = &self.store {
+            store.check_packs_unchanged(cancel)?;
+        }
+        Ok(())
+    }
+
     fn fail(&mut self, reason: impl Into<String>) {
         self.outcome = RetentionOutcome::Incomplete(reason.into());
     }
@@ -259,6 +271,7 @@ impl Repository {
             required: BTreeSet::new(),
             reflog_expiry_candidates: BTreeMap::new(),
             observed_logs: Vec::new(),
+            store: None,
             object_info: BTreeMap::new(),
             protected_objects: BTreeSet::new(),
             reachable: BTreeSet::new(),
@@ -333,6 +346,7 @@ impl Repository {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn plan_retention(&self, policy: &RetentionPolicy, cancel: &AtomicBool) -> RetentionPlan {
+        let _headers = crate::pack::HeaderScope::new();
         let mut plan = self.observe_retention_roots(policy, cancel);
         if !plan.is_complete() {
             return plan;
@@ -555,6 +569,10 @@ impl Repository {
                 plan.fail(error.to_string());
             }
         }
+        if let Err(error) = store.check_packs_unchanged(cancel) {
+            plan.fail(error.to_string());
+        }
+        plan.store = Some(store);
         plan
     }
 }

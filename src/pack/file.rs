@@ -11,7 +11,12 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+mod window;
+pub(crate) use window::HeaderScope;
+
+static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
 use super::index::{Entry, Index, verify_hash, word};
 use super::reader::{EntryHeader, Source, check_cancelled, decode};
@@ -24,22 +29,36 @@ struct Artifact {
     file: File,
     path: PathBuf,
     len: usize,
+    stamp: Stamp,
+    window_id: u64,
     #[cfg(test)]
     bytes_read: std::sync::atomic::AtomicUsize,
 }
 
 impl Artifact {
     fn open(path: &Path) -> Result<Self, Error> {
-        let file = File::open(path).map_err(|source| path_error(path, source))?;
-        let len = file
-            .metadata()
-            .map_err(|source| path_error(path, source))?
-            .len();
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            // Published artifacts are immutable; retain Git's rename/delete interoperability.
+            use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
+            options.share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE);
+        }
+        let file = options
+            .open(path)
+            .map_err(|source| path_error(path, source))?;
+        let stamp = Stamp::read(&file).map_err(|source| path_error(path, source))?;
+        let len = stamp.len;
         let len = usize::try_from(len).map_err(|_| Error::Limit("artifact address space"))?;
         Ok(Self {
             file,
             path: path.to_owned(),
             len,
+            stamp,
+            window_id: NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed),
             #[cfg(test)]
             bytes_read: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -67,6 +86,16 @@ impl Artifact {
         Ok(bytes)
     }
 
+    fn check_unchanged(&self) -> Result<(), Error> {
+        let current = Stamp::read(&self.file).map_err(|source| path_error(&self.path, source))?;
+        if current != self.stamp {
+            return Err(Error::PackChanged {
+                path: self.path.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn check_not_truncated(&self) -> Result<(), Error> {
         let current = self
             .file
@@ -77,6 +106,51 @@ impl Artifact {
             return Err(path_error(&self.path, io::ErrorKind::UnexpectedEof.into()));
         }
         Ok(())
+    }
+}
+
+/// Identity and content-generation metadata of the open handle, never the current pathname.
+#[derive(Debug, Eq, PartialEq)]
+struct Stamp {
+    len: u64,
+    modified: std::time::SystemTime,
+    identity: (u64, u64),
+}
+
+impl Stamp {
+    fn read(file: &File) -> io::Result<Self> {
+        let metadata = file.metadata()?;
+        #[cfg(unix)]
+        let identity = {
+            use std::os::unix::fs::MetadataExt;
+            (metadata.dev(), metadata.ino())
+        };
+        #[cfg(windows)]
+        let identity = {
+            use std::os::windows::io::AsRawHandle;
+
+            use windows_sys::Win32::Storage::FileSystem::{
+                BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+            };
+            let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+            // SAFETY: file owns a live handle and info points to writable, correctly sized storage.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: a successful call initializes every field of BY_HANDLE_FILE_INFORMATION.
+            let info = unsafe { info.assume_init() };
+            (
+                u64::from(info.dwVolumeSerialNumber),
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            )
+        };
+        #[cfg(not(any(unix, windows)))]
+        let identity = (0, 0);
+        Ok(Self {
+            len: metadata.len(),
+            modified: metadata.modified()?,
+            identity,
+        })
     }
 }
 
@@ -147,6 +221,11 @@ pub(crate) struct FilePack {
 }
 
 impl FilePack {
+    pub(crate) fn check_unchanged(&self) -> Result<(), Error> {
+        self.pack.check_unchanged()?;
+        self.index.check_unchanged()
+    }
+
     pub(crate) fn open(
         format: ObjectFormat,
         path: &Path,
@@ -586,10 +665,15 @@ impl FilePack {
             }
             crc
         });
+        let mut ahead = Vec::new();
+        if !delta {
+            ahead.extend_from_slice(&header.encoded);
+        }
+        ahead.extend_from_slice(&header.ahead);
         let input = Range {
             artifact: &self.pack,
-            ahead: &[],
-            position: start,
+            ahead: &ahead,
+            position: start + ahead.len(),
             end: entry.end,
             crc,
         };
@@ -633,7 +717,8 @@ impl Source for FilePack {
 
     /// Reads the header with up to 4 KiB of the entry, so a typical entry needs one read.
     fn prefix(&self, entry: &Entry) -> Result<Vec<u8>, Error> {
-        self.pack.bytes(
+        window::bytes(
+            &self.pack,
             entry.offset,
             entry.end.min(entry.offset.saturating_add(4096)),
         )
@@ -917,6 +1002,7 @@ mod publication_tests {
             &AtomicBool::new(false),
         )
         .unwrap();
+        let _scope = super::super::HeaderScope::new();
         assert!(super::super::reader::entry_header(&pack, &pack.entry(0).unwrap()).is_err());
     }
 
@@ -1004,10 +1090,28 @@ mod publication_tests {
     #[test]
     fn header_windows_are_bounded_across_many_packs_and_drop_with_scope() {
         let root = tempfile::tempdir().unwrap();
-        let paths: Vec<_> = (0..32).map(|i| pair(root.path(), &format!("p{i}"),
-            ObjectFormat::Sha1, &[i as u8; 128])).collect();
-        let packs: Vec<_> = paths.iter().map(|path| FilePack::open(ObjectFormat::Sha1,
-            path, &mut PackLimits::trusted(), &AtomicBool::new(false)).unwrap()).collect();
+        let paths: Vec<_> = (0..32)
+            .map(|i| {
+                pair(
+                    root.path(),
+                    &format!("p{i}"),
+                    ObjectFormat::Sha1,
+                    &[i as u8; 128],
+                )
+            })
+            .collect();
+        let packs: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                FilePack::open(
+                    ObjectFormat::Sha1,
+                    path,
+                    &mut PackLimits::trusted(),
+                    &AtomicBool::new(false),
+                )
+                .unwrap()
+            })
+            .collect();
         let scope = super::super::HeaderScope::new();
         for pack in &packs {
             pack.prefix(&pack.entry(0).unwrap()).unwrap();
@@ -1029,7 +1133,12 @@ mod publication_tests {
         let artifact = super::Artifact::open(&path).unwrap();
         let _scope = super::super::HeaderScope::new();
         super::window::bytes(&artifact, 0, 4096).unwrap();
-        assert_eq!(super::window::bytes(&artifact, start, end).unwrap(), bytes[start..end]);
+        let _ordered = super::super::HeaderScope::ordered();
+        super::window::bytes(&artifact, 0, 8192).unwrap();
+        assert_eq!(
+            super::window::bytes(&artifact, start, end).unwrap(),
+            bytes[start..end]
+        );
         assert!(super::window::bytes(&artifact, 512 * 1024, 512 * 1024 + 1).is_err());
         assert!(super::window::bytes(&artifact, usize::MAX, 0).is_err());
     }
@@ -1038,16 +1147,50 @@ mod publication_tests {
     #[test]
     fn pinned_pack_denies_writers_but_allows_rename_and_delete() {
         use std::os::windows::fs::OpenOptionsExt;
+
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("shared.pack");
         fs::write(&path, b"pinned bytes").unwrap();
         let artifact = super::Artifact::open(&path).unwrap();
-        let writer = fs::OpenOptions::new().write(true).share_mode(1 | 2 | 4).open(&path);
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(&path);
         assert!(writer.is_err());
         let renamed = root.path().join("renamed.pack");
         fs::rename(&path, &renamed).unwrap();
         fs::remove_file(&renamed).unwrap();
+        artifact.check_unchanged().unwrap();
         assert_eq!(artifact.bytes(0, 12).unwrap(), b"pinned bytes");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_pack_allows_attribute_only_freshening_and_detects_it() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("freshened.pack");
+        fs::write(&path, b"pinned bytes").unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        let attributes = fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .open(&path)
+            .unwrap();
+        attributes
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42))
+            .unwrap();
+        assert_eq!(artifact.bytes(0, 12).unwrap(), b"pinned bytes");
+        assert!(
+            matches!(artifact.check_unchanged(), Err(Error::PackChanged { path: changed }) if changed == path)
+        );
     }
 
     #[cfg(unix)]
@@ -1065,5 +1208,4 @@ mod publication_tests {
         artifact.check_unchanged().unwrap();
         assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), b"original");
     }
-
 }

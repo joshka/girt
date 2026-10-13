@@ -30,6 +30,41 @@ readable if any step fails.
 Scan, select and copy through the same open store. Reopening in between lets the plan describe data
 the copy no longer sees.
 
+## Immutable packs and buffered headers
+
+Packs and indexes are immutable once published, as in Git's pack reader. Atomic rename or deletion
+leaves an already-pinned handle reading the original artifact. On Windows, girt opens artifacts with
+`FILE_SHARE_READ | FILE_SHARE_DELETE`, denying concurrent data writers while allowing Git to rename
+and delete files.
+
+Retention operations share one 256 KiB positioned-read header window across all packs on the calling
+thread. Nested phases share that allocation; the outermost operation drops it. Pack size and pack
+count do not increase window memory. Ordinary content reads outside retention operations have no
+header window. Large read-ahead is restricted to offset-ordered blob locating, raw reuse and
+survivor verification; scattered requests use small positioned reads. Entry prefixes and decoder
+scratch retain their existing bounds.
+
+Each pinned artifact records its handle's size, modification time and file identity (device/inode on
+Unix, volume/file index on Windows) at opening. Before pack/index publication, retirement unlinks,
+loose pruning and reflog publication, the operation checks every input pack and index through those
+same handles. A changed artifact produces a structured error naming its original path before that
+step mutates storage. A completed earlier step remains in the failure report. Retirement also
+revalidates the replacement's pinned handles before unlinks and keeps the existing survivor
+decoding, identity hashes, CRCs, zlib checks, checksum gates, limits and cancellation checks.
+
+In-place modification during an operation can make girt serve stale header bytes. Boundary checks
+detect changes to the recorded metadata before mutation; window hits do not call `fstat`. These
+checks do not replace caller-owned exclusion: metadata observations cannot prevent a write after a
+check, nor detect a same-size edit whose modification time is restored. Git makes the same immutable
+pack assumption. Git can also freshen an existing pack's modification time when writing an object
+already present there. This metadata-only change conservatively causes the same refusal even though
+pack content is unchanged. Re-observe storage and retry under caller isolation, accounting for any
+completed steps in the failure report rather than blindly replaying mutations.
+[Git's mapped pack windows](https://git-scm.com/docs/git-config#Documentation/git-config.txt-corepackedGitWindowSize)
+can crash with `SIGBUS` when truncation makes a mapped page inaccessible, as the
+[`mmap` contract](https://man7.org/linux/man-pages/man2/mmap.2.html) describes. Girt uses owned
+buffers and positioned reads, so this path does not acquire that mapping fault hazard.
+
 ## Protected data
 
 Treat protected data as untouchable, not as proof. Never delete or rewrite `.keep`, recent or

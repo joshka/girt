@@ -31,6 +31,9 @@ pub struct RetireReport {
 /// Why old pack retirement stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum RetireCause {
+    /// A pinned pack or index changed before this mutation boundary.
+    #[error(transparent)]
+    PackChanged(Box<crate::ObjectReadError>),
     /// The caller could not exclude writers, old readers or alternate dependents.
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
@@ -203,6 +206,7 @@ impl Repository {
             impl FnMut(&Path) -> io::Result<()>,
         ),
     ) -> Result<RetireReport, RetireFailure> {
+        let _headers = crate::pack::HeaderScope::new();
         let (mut remove, mut sync_directory) = actions;
         let mut report = RetireReport::default();
         check(cancel, &report)?;
@@ -234,6 +238,10 @@ impl Repository {
             None
         };
         let session = session.or(owned.as_mut()).expect("retention session");
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| failed(RetireCause::PackChanged(Box::new(error)), report.clone()))?;
         session.validate(&current, policy, cancel).map_err(|_| {
             failed(
                 if cancel.load(Ordering::Relaxed) {
@@ -256,6 +264,12 @@ impl Repository {
             && protected_survivors_only(&current, first, policy, cancel)
                 .map_err(|cause| failed(cause, report.clone()))?
         {
+            session
+                .plan
+                .check_packs_unchanged(cancel)
+                .map_err(|error| {
+                    failed(RetireCause::PackChanged(Box::new(error)), report.clone())
+                })?;
             session.validate(&current, policy, cancel).map_err(|_| {
                 failed(
                     if cancel.load(Ordering::Relaxed) {
@@ -356,6 +370,7 @@ impl Repository {
             // Pack order lets the delta base cache serve each base once. `read` hashes the
             // payload against the identity at `position`, which `find` matched to `id`.
             found.sort_unstable();
+            let _ordered = crate::pack::HeaderScope::ordered();
             for (_, position, id) in found {
                 check(cancel, &report)?;
                 protected_pack
@@ -380,17 +395,22 @@ impl Repository {
         // `read` hashes each payload against the identity `find` matched; pack order lets the
         // delta base cache serve each base once instead of rebuilding chains in identity order.
         replaced.sort_unstable();
+        let _ordered = crate::pack::HeaderScope::ordered();
         for (_, position) in replaced {
             check(cancel, &report)?;
             pack.read(position, policy.read, cancel)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
         }
-        drop(pack);
+
         let after = snapshot(&directory, policy.max_entries, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
         if !same_old_generation(&before, &after, &replacement_pack, &replacement_index) {
             return Err(failed(RetireCause::Changed, report));
         }
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| failed(RetireCause::PackChanged(Box::new(error)), report.clone()))?;
         session.validate(&refreshed, policy, cancel).map_err(|_| {
             failed(
                 if cancel.load(Ordering::Relaxed) {
@@ -408,6 +428,15 @@ impl Repository {
                 .map_err(|error| failed(RetireCause::Io(error), report.clone()))?;
             let removed_index = !indices.is_empty();
             for path in indices {
+                pack.check_unchanged().map_err(|error| {
+                    failed(RetireCause::PackChanged(Box::new(error)), report.clone())
+                })?;
+                session
+                    .plan
+                    .check_packs_unchanged(cancel)
+                    .map_err(|error| {
+                        failed(RetireCause::PackChanged(Box::new(error)), report.clone())
+                    })?;
                 let result = if path.is_dir() {
                     fs::remove_dir_all(&path)
                 } else {
@@ -436,6 +465,15 @@ impl Repository {
                 recheck(path, before[path]).map_err(|cause| failed(cause, report.clone()))?;
             }
             for path in artifacts {
+                pack.check_unchanged().map_err(|error| {
+                    failed(RetireCause::PackChanged(Box::new(error)), report.clone())
+                })?;
+                session
+                    .plan
+                    .check_packs_unchanged(cancel)
+                    .map_err(|error| {
+                        failed(RetireCause::PackChanged(Box::new(error)), report.clone())
+                    })?;
                 remove(&path).map_err(|error| RetireFailure {
                     cause: RetireCause::Io(error),
                     report: Box::new(report.clone()),

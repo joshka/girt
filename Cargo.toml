@@ -36,6 +36,9 @@ thiserror = "2"
 rustix = { version = "1", features = ["fs", "event", "process"] }
 libc = { version = "0.2", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 sha2 = "0.10"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
