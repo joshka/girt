@@ -10,6 +10,40 @@
 //! HTTP/1.1. [`HttpSettings`] resolves an R21 destination, HTTP configuration and explicit
 //! application environment. The legacy [`HttpRemote::new`] remains an explicit, redirect-free
 //! constructor. Cookies, automatic mutating retries and HTTP content compression are disabled.
+//!
+//! # Example
+//!
+//! List the references of a named remote without transferring objects. Its URL, `http.*` policy and
+//! proxy settings come from configuration; the application supplies the environment it approves
+//! (none here). The caller's Tokio runtime drives the future; the example compiles but does not
+//! connect:
+//!
+//! ```no_run
+//! use std::sync::atomic::AtomicBool;
+//!
+//! use girt::Config;
+//! use girt::fetch::{FetchLimits, discover_http};
+//! use girt::remote::{ProtocolEnvironment, Remote};
+//! use girt::transport::TransportControl;
+//! use girt::transport::http::{HttpEnvironment, HttpRemote, HttpSettings};
+//!
+//! async fn list(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+//!     let origin = Remote::find(config, b"origin")?.ok_or("no origin remote")?;
+//!     let destination = origin.fetch_destination(config, &ProtocolEnvironment::default())?;
+//!     let environment = HttpEnvironment::default();
+//!     let settings =
+//!         HttpSettings::resolve_for_remote(config, b"origin", &destination, &environment)?;
+//!     let remote = HttpRemote::configured(settings)?;
+//!     let cancel = AtomicBool::new(false);
+//!     let control = TransportControl::new(&cancel);
+//!     let discovery = discover_http(&remote, FetchLimits::default(), control).await?;
+//!     for reference in &discovery.advertisement.refs {
+//!         let name = String::from_utf8_lossy(reference.name.as_bytes());
+//!         println!("{} {name}", reference.id);
+//!     }
+//!     Ok(())
+//! }
+//! ```
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};

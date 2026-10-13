@@ -15,6 +15,26 @@
 //! unsupported cleanup failure, retaining guard validity for ordinary Drop/abort. Persistent
 //! worktree `locked` markers and pack `.keep` protections are not transient locks and are never
 //! registered.
+//!
+//! # Example
+//!
+//! In a normal shutdown callback, stop admitting work and wake writers before cleanup, then report
+//! failures for manual recovery. Cleanup is process-wide, so this doctest runs in its own process:
+//!
+//! ```standalone_crate
+//! use std::sync::atomic::{AtomicBool, Ordering};
+//!
+//! // The flag the application's writers poll; set it before cleaning up.
+//! let cancel = AtomicBool::new(false);
+//! cancel.store(true, Ordering::Relaxed);
+//! let report = girt::locks::cleanup()?;
+//! // Join cancelled writers before exiting; retain failures for manual recovery.
+//! for failure in &report.failures {
+//!     eprintln!("lock cleanup failed at {:?}: {}", failure.path, failure.source);
+//! }
+//! assert!(report.failures.is_empty(), "this process held no girt locks");
+//! # Ok::<(), std::io::Error>(())
+//! ```
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -69,21 +89,7 @@ pub struct CleanupFailure {
 /// self-deadlock. Per-file failures are returned in [`CleanupReport::failures`]. No raw signal
 /// handler may call this function: it locks, allocates and performs filesystem I/O.
 ///
-/// ```no_run
-/// # use std::sync::atomic::{AtomicBool, Ordering};
-/// # let cancel = AtomicBool::new(false);
-/// // In a normal shutdown callback, first stop admitting work and wake writers.
-/// cancel.store(true, Ordering::Relaxed);
-/// let report = girt::locks::cleanup()?;
-/// // Join cancelled writers before exiting; retain failures for manual recovery.
-/// for failure in report.failures {
-///     eprintln!(
-///         "lock cleanup failed at {:?}: {}",
-///         failure.path, failure.source
-///     );
-/// }
-/// # Ok::<(), std::io::Error>(())
-/// ```
+/// See the [module example](crate::locks#example) for a shutdown sequence.
 pub fn cleanup() -> io::Result<CleanupReport> {
     cleanup_matching(|_| true, true)
 }

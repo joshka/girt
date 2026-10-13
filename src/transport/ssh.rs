@@ -11,6 +11,40 @@
 //! is implemented here. Callers own a Tokio runtime with I/O/time enabled and trust the executable,
 //! config (including includes and Match exec), remote account and service. The configured path
 //! accepts an R21 [`Destination`] and [`SshEnvironment`]. See [`SshRemote`].
+//!
+//! # Example
+//!
+//! List a server's references through an approved OpenSSH executable and configuration file. The
+//! caller's Tokio runtime drives the future; the example compiles but does not connect:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use std::sync::atomic::AtomicBool;
+//!
+//! use girt::fetch::{FetchLimits, discover_ssh};
+//! use girt::transport::TransportControl;
+//! use girt::transport::ssh::SshRemote;
+//!
+//! async fn list() -> Result<(), Box<dyn std::error::Error>> {
+//!     let remote = SshRemote::new(
+//!         "git.example.com",
+//!         "git",
+//!         22,
+//!         "/srv/project.git",
+//!         Path::new("/usr/bin/ssh"),
+//!         Path::new("/etc/girt/ssh_config"),
+//!     )?;
+//!     let cancel = AtomicBool::new(false);
+//!     let discovery = discover_ssh(
+//!         &remote,
+//!         FetchLimits::default(),
+//!         TransportControl::new(&cancel),
+//!     )
+//!     .await?;
+//!     println!("remote HEAD: {:?}", discovery.head);
+//!     Ok(())
+//! }
+//! ```
 
 mod openssh;
 mod process;
