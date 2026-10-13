@@ -2900,11 +2900,13 @@ fn malformed_loose_inventory_cannot_establish_noop() {
 }
 
 #[cfg(unix)]
-#[test]
-fn malformed_reflog_cannot_establish_noop() {
+#[rstest::rstest]
+#[case::unterminated(b"incomplete record".as_slice())]
+#[case::invalid_fields_at_eof(b"invalid record\n".as_slice())]
+fn malformed_reflog_cannot_establish_noop(#[case] bytes: &[u8]) {
     let (root, repo) = missing_packed_history("sha1");
     let path = root.path().join("logs/refs/heads/main");
-    fs::write(&path, b"incomplete record").unwrap();
+    fs::write(&path, bytes).unwrap();
     let error = repo
         .expire_reflogs(
             &mut FixtureIsolation,
@@ -2914,7 +2916,7 @@ fn malformed_reflog_cannot_establish_noop() {
         .unwrap_err();
     assert!(matches!(error.cause, ExpireCause::Incomplete(_)));
     assert!(error.report.changed.is_empty());
-    assert_eq!(fs::read(path).unwrap(), b"incomplete record");
+    assert_eq!(fs::read(path).unwrap(), bytes);
 }
 
 #[cfg(unix)]
@@ -2935,4 +2937,50 @@ fn reftable_noop_expiry_preserves_missing_history_stack(#[case] format: &str) {
         .unwrap();
     assert!(report.changed.is_empty());
     assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn loose_cutoff_equality_is_conservative_relative_to_git() {
+    let (root, repo, _, _) = fixture();
+    let (oracle, _, _, _) = fixture();
+    let id: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"cutoff equality",
+    )
+    .parse()
+    .unwrap();
+    let oracle_id = git(
+        oracle.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"cutoff equality",
+    );
+    assert_eq!(oracle_id, id.to_string());
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000);
+    let times = fs::FileTimes::new().set_modified(cutoff);
+    let file = fs::File::open(loose_path(root.path(), id)).unwrap();
+    file.set_times(times).unwrap();
+    drop(file);
+    let oracle_file = fs::File::open(loose_path(oracle.path(), id)).unwrap();
+    oracle_file.set_times(times).unwrap();
+    drop(oracle_file);
+    git(
+        oracle.path(),
+        &["prune", "--expire=2023-11-14T22:13:20Z"],
+        b"",
+    );
+    assert!(!loose_path(oracle.path(), id).exists());
+    let policy = RetentionPolicy {
+        recent_cutoff: cutoff,
+        ..Default::default()
+    };
+    let report = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.deleted.is_empty());
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
+        "cutoff equality"
+    );
 }

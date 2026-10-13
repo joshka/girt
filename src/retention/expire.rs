@@ -94,20 +94,19 @@ struct PreparedStack {
 impl Repository {
     /// Expires eligible reflog records under caller-owned isolation.
     ///
-    /// The guard must exclude external Git and girt writers, readers depending on old history,
-    /// and alternate-store dependents for the whole action. A complete bounded root observation
-    /// returns an empty report without validating object history when no record predates either
-    /// supplied cutoff. Otherwise a fresh complete retention plan
-    /// classifies records using the policy's live and unreachable cutoffs. The operation prepares
-    /// every changed files log's exact retained bytes or reftable stack's merged records,
-    /// fingerprints the plan's inputs, and conditionally publishes each replacement. Files preserve
-    /// the original bytes and order of retained records; empty histories remain empty files.
-    /// Reftable preserves retained binary records and reference update indexes in a compacted
-    /// replacement stack. Object storage is not pruned. On Unix, replacement files and containing
-    /// directories are synchronized before a change is reported as durable, assuming a local
-    /// filesystem that honors those calls. Other platforms refuse until the same publication
-    /// contract is established. Separate later pruning acquires a fresh guard and plan;
-    /// [`Self::collect_garbage`] shares the plan and advances its exact expiry outputs.
+    /// The guard must exclude external Git and girt writers, readers depending on old history, and
+    /// alternate-store dependents for the whole action. A complete bounded root observation returns
+    /// an empty report without validating object history when no record predates either supplied
+    /// cutoff. Otherwise a fresh complete retention plan classifies records using the policy's live
+    /// and unreachable cutoffs. The operation prepares every changed files log's exact retained
+    /// bytes or reftable stack's merged records, fingerprints the plan's inputs, and conditionally
+    /// publishes each replacement. Files preserve the original bytes and order of retained records;
+    /// empty histories remain empty files. Reftable preserves retained binary records and reference
+    /// update indexes in a compacted replacement stack. Object storage is not pruned. On Unix,
+    /// replacement files and containing directories are synchronized before a change is reported as
+    /// durable, assuming a local filesystem that honors those calls. Other platforms refuse until
+    /// the same publication contract is established. Separate later pruning acquires a fresh guard
+    /// and plan; [`Self::collect_garbage`] shares the plan and advances its exact expiry outputs.
     ///
     /// Cancellation, I/O and interruption can leave a published prefix. An error from the
     /// replacement call names the uncertain history. Retry only after a fresh scan; do not reuse
