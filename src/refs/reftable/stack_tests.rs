@@ -289,3 +289,55 @@ fn compaction_respects_existing_compactor_table_lock() {
     assert_eq!(fs::read(lock).unwrap(), b"other compactor");
     assert!(!directory.join("tables.list.lock").exists());
 }
+
+/// A listed table with an empty restart table fails compaction before anything is published.
+#[rstest]
+#[case::sha1("sha1", ObjectFormat::Sha1)]
+#[case::sha256("sha256", ObjectFormat::Sha256)]
+fn compaction_rejects_damaged_table_and_preserves_stack(
+    #[case] spelling: &str,
+    #[case] format: ObjectFormat,
+) {
+    let root = fixture(spelling);
+    git(root.path(), &["config", "reftable.autoCompact", "false"]);
+    git(root.path(), &["commit", "--allow-empty", "-m", "second"]);
+    git(root.path(), &["update-ref", "refs/tags/one", "HEAD"]);
+    git(root.path(), &["update-ref", "refs/tags/two", "HEAD"]);
+    let directory = root.path().join(".git/reftable");
+    let list = fs::read(directory.join("tables.list")).unwrap();
+    let names: Vec<_> = list
+        .split(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b".ref"))
+        .map(|line| String::from_utf8(line.to_vec()).unwrap())
+        .collect();
+    assert!(names.len() > 1);
+    let damaged = directory.join(&names[0]);
+    let mut bytes = fs::read(&damaged).unwrap();
+    let header = if format == ObjectFormat::Sha1 { 24 } else { 28 };
+    assert_eq!(bytes[header], b'r');
+    let end = usize::from(bytes[header + 1]) << 16
+        | usize::from(bytes[header + 2]) << 8
+        | usize::from(bytes[header + 3]);
+    bytes[end - 2..end].copy_from_slice(&[0, 0]);
+    fs::write(&damaged, &bytes).unwrap();
+    let tables: Vec<_> = names
+        .iter()
+        .map(|name| fs::read(directory.join(name)).unwrap())
+        .collect();
+
+    assert!(
+        compact(
+            &directory,
+            format,
+            StackLimits::default(),
+            &AtomicBool::new(false)
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(directory.join("tables.list")).unwrap(), list);
+    for (name, bytes) in names.iter().zip(&tables) {
+        assert_eq!(&fs::read(directory.join(name)).unwrap(), bytes);
+    }
+    let entries = fs::read_dir(&directory).unwrap().count();
+    assert_eq!(entries, names.len() + 1, "no new or lock files remain");
+}

@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -432,6 +440,10 @@ impl<'a> References<'a> {
         let packed = self.packed()?;
         let (current, actual, mut locks) = self.lock_resolution(name, &packed)?;
         check_expected(actual, expected)?;
+        #[expect(
+            clippy::unwrap_used,
+            reason = "lock_resolution locks at least the named reference"
+        )]
         locks.last_mut().unwrap().publish(&target)?;
         Ok(current)
     }
@@ -514,6 +526,10 @@ impl<'a> References<'a> {
         let packed = packed::parse(self.object_format, &bytes, &packed_lock.destination)?;
         let (current, actual, locks) = self.lock_resolution(name, &packed)?;
         check_expected(actual, expected)?;
+        #[expect(
+            clippy::unwrap_used,
+            reason = "lock_resolution locks at least the named reference"
+        )]
         delete_locked(
             self.object_format,
             &packed_lock,
@@ -594,14 +610,19 @@ impl<'a> References<'a> {
             let stem = part
                 .split(|b| *b == b'.')
                 .next()
-                .unwrap()
+                .unwrap_or_default()
                 .to_ascii_uppercase();
             if part.ends_with(b".")
                 || part.iter().any(|b| b"<>\"|".contains(b))
-                || matches!(stem.as_slice(), b"CON" | b"PRN" | b"AUX" | b"NUL")
-                || (stem.len() == 4
-                    && (stem.starts_with(b"COM") || stem.starts_with(b"LPT"))
-                    && matches!(stem[3], b'1'..=b'9'))
+                || matches!(
+                    stem.as_slice(),
+                    b"CON"
+                        | b"PRN"
+                        | b"AUX"
+                        | b"NUL"
+                        | [b'C', b'O', b'M', b'1'..=b'9']
+                        | [b'L', b'P', b'T', b'1'..=b'9']
+                )
             {
                 return Err(ReferenceError::Unsupported("Windows reference filename"));
             }
@@ -709,11 +730,7 @@ pub(super) fn parse_loose(
     path: &Path,
 ) -> Result<Target, ReferenceError> {
     // Git accepts trailing ASCII whitespace, including no final newline.
-    let end = bytes
-        .iter()
-        .rposition(|b| !b.is_ascii_whitespace())
-        .map_or(0, |i| i + 1);
-    let bytes = &bytes[..end];
+    let bytes = bytes.trim_ascii_end();
     if let Some(name) = bytes.strip_prefix(b"ref: ") {
         let name = RefName::new(name).map_err(|_| malformed(path, "invalid symbolic target"))?;
         return Ok(Target::Symbolic(name));
@@ -768,6 +785,10 @@ pub(super) struct Lock {
 impl Lock {
     pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
         check_path(&destination)?;
+        #[expect(
+            clippy::unwrap_used,
+            reason = "callers join validated names or fixed file names onto repository roots"
+        )]
         let parent = destination.parent().unwrap();
         fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
         let mut path = destination.as_os_str().to_os_string();
@@ -814,6 +835,7 @@ impl Lock {
 
     pub(super) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
         self.check_owned()?;
+        #[expect(clippy::unwrap_used, reason = "lock destinations lie below a root")]
         let parent = self.destination.parent().unwrap();
         let mut temporary = tempfile::Builder::new()
             .prefix(".girt-packed-")
@@ -845,6 +867,7 @@ impl Lock {
             }
         };
         bytes.push(b'\n');
+        #[expect(clippy::unwrap_used, reason = "an unpublished lock holds its file")]
         self.file
             .as_mut()
             .unwrap()

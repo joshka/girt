@@ -1575,3 +1575,30 @@ fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch(
     );
     git(root.path(), &["fsck", "--strict"], b"");
 }
+
+/// Packed records with a missing name fail in Git's `show-ref` and in girt. Git also accepts a tab
+/// or CR after the object ID (observed with Git 2.56), which Git itself never writes; girt reads
+/// only the space it writes and fails closed on the others, a recorded difference.
+#[rstest]
+#[case::sha1_id_only(girt::ObjectFormat::Sha1, "", true)]
+#[case::sha1_empty_name(girt::ObjectFormat::Sha1, " ", true)]
+#[case::sha1_tab_separator(girt::ObjectFormat::Sha1, "\trefs/heads/a", false)]
+#[case::sha256_id_only(girt::ObjectFormat::Sha256, "", true)]
+#[case::sha256_empty_name(girt::ObjectFormat::Sha256, " ", true)]
+#[case::sha256_tab_separator(girt::ObjectFormat::Sha256, "\trefs/heads/a", false)]
+fn packed_record_framing_against_git(
+    #[case] format: girt::ObjectFormat,
+    #[case] after_id: &str,
+    #[case] git_rejects: bool,
+) {
+    let (root, repo, first) = fixture(format);
+    let bytes = format!("{first}{after_id}\n");
+    fs::write(root.path().join("packed-refs"), &bytes).unwrap();
+    let listed = git_attempt(root.path(), &["show-ref"], b"");
+    assert_eq!(!listed.status.success(), git_rejects);
+    let refs = repo.references().unwrap();
+    assert!(matches!(
+        refs.read(&name("refs/heads/a")),
+        Err(girt::refs::ReferenceError::Malformed { .. })
+    ));
+}

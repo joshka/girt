@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use crate::refs::reftable::LogValue;
 use crate::{IdentityRef, ObjectFormat, ObjectId};
 
@@ -126,27 +134,30 @@ fn file_fields(
     if line.get(width) != Some(&b' ') || line.get(2 * width + 1) != Some(&b' ') {
         return Err(E::ObjectIds);
     }
-    let identity = IdentityRef::parse(&line[2 * width + 2..]).map_err(|_| E::Identity)?;
+    let identity = line
+        .get(2 * width + 2..)
+        .and_then(|identity| IdentityRef::parse(identity).ok())
+        .ok_or(E::Identity)?;
     let date = identity.date_bytes.strip_prefix(b" ").ok_or(E::Identity)?;
-    let split = date.iter().position(|b| *b == b' ').ok_or(E::Identity)?;
-    let seconds = std::str::from_utf8(&date[..split]).map_err(|_| E::Identity)?;
+    let (seconds, zone) = crate::bytes::split_once(date, b' ').ok_or(E::Identity)?;
+    let seconds = std::str::from_utf8(seconds).map_err(|_| E::Identity)?;
     let digits = seconds.strip_prefix(['+', '-']).unwrap_or(seconds);
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(E::Identity);
     }
     let seconds = seconds.parse::<i128>().map_err(|_| E::DateRange)?;
-    let zone = &date[split + 1..];
-    if zone.len() < 5
-        || !matches!(zone[0], b'+' | b'-')
-        || !zone[1..5].iter().all(u8::is_ascii_digit)
-    {
+    let Some((&[sign, digits @ ..], message)) = zone.split_first_chunk::<5>() else {
+        return Err(E::Identity);
+    };
+    if !matches!(sign, b'+' | b'-') || !digits.iter().all(u8::is_ascii_digit) {
         return Err(E::Identity);
     }
-    let hhmm = std::str::from_utf8(&zone[..5])
-        .unwrap()
-        .parse::<i16>()
-        .unwrap();
-    let message = zone[5..].strip_prefix(b"\t").unwrap_or(&zone[5..]);
+    // Four decimal digits are at most 9999, which fits in i16.
+    let hhmm = digits
+        .iter()
+        .fold(0_i16, |value, digit| value * 10 + i16::from(digit - b'0'));
+    let hhmm = if sign == b'-' { -hhmm } else { hhmm };
+    let message = message.strip_prefix(b"\t").unwrap_or(message);
     Ok(ReflogFields {
         old,
         new,
@@ -156,4 +167,47 @@ fn file_fields(
         offset_minutes: hhmm / 100 * 60 + hhmm % 100,
         message,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn fields(tail: &[u8]) -> Result<(i16, Vec<u8>), ReflogInterpretationError> {
+        let mut bytes =
+            format!("{} {} ", ObjectId::Sha1([0; 20]), ObjectId::Sha1([1; 20])).into_bytes();
+        bytes.extend_from_slice(tail);
+        let record = ImportedRecord::File {
+            format: ObjectFormat::Sha1,
+            bytes,
+        };
+        record
+            .fields()
+            .map(|fields| (fields.offset_minutes, fields.message.to_vec()))
+    }
+
+    #[rstest]
+    #[case::east(b"A <a> 1 +0130\tm\n", 90, b"m")]
+    #[case::west(b"A <a> 1 -0130m\n", -90, b"m")]
+    #[case::maximum(b"A <a> 1 +9999\n", 6039, b"")]
+    fn interprets_four_digit_zones(
+        #[case] tail: &[u8],
+        #[case] offset: i16,
+        #[case] message: &[u8],
+    ) {
+        assert_eq!(fields(tail), Ok((offset, message.to_vec())));
+    }
+
+    #[rstest]
+    #[case::sign_only(b"A <a> 1 +\n")]
+    #[case::short(b"A <a> 1 +013\n")]
+    #[case::text(b"A <a> 1 +01x0\n")]
+    #[case::unsigned(b"A <a> 1 01300\n")]
+    #[case::no_zone(b"A <a> 1\n")]
+    #[case::no_identity(b"\n")]
+    fn rejects_malformed_zones(#[case] tail: &[u8]) {
+        assert_eq!(fields(tail), Err(ReflogInterpretationError::Identity));
+    }
 }

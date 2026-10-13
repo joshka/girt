@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -55,20 +63,25 @@ pub(super) fn parse(
                 return Err(malformed(path, "orphan or repeated peeled record"));
             }
             let peeled = parse_id(format, peeled, path)?;
-            let name = previous.as_ref().expect("peel follows a reference");
-            entries
-                .get_mut(name)
-                .expect("previous reference exists")
-                .peeled_hint = Some(peeled);
+            // can_peel is set only after a reference record, which also sets previous.
+            let entry = previous
+                .as_ref()
+                .and_then(|name| entries.get_mut(name))
+                .ok_or_else(|| malformed(path, "orphan or repeated peeled record"))?;
+            entry.peeled_hint = Some(peeled);
             can_peel = false;
             continue;
         }
-        if line.len() < width + 2 || line[width] != b' ' {
+        let Some((id, name)) = line
+            .split_at_checked(width)
+            .and_then(|(id, rest)| Some((id, rest.strip_prefix(b" ")?)))
+            .filter(|(_, name)| !name.is_empty())
+        else {
             return Err(malformed(path, "expected object ID and reference name"));
-        }
-        let id = parse_id(format, &line[..width], path)?;
-        let name = RefName::new(&line[width + 1..])
-            .map_err(|_| malformed(path, "invalid packed reference name"))?;
+        };
+        let id = parse_id(format, id, path)?;
+        let name =
+            RefName::new(name).map_err(|_| malformed(path, "invalid packed reference name"))?;
         if name.as_bytes() == b"HEAD" || name.per_worktree() {
             return Err(ReferenceError::Unsupported("packed per-worktree reference"));
         }
@@ -206,6 +219,9 @@ mod tests {
 
     #[rstest]
     #[case::truncated("1111 refs/heads/a\n")]
+    #[case::id_only("1111111111111111111111111111111111111111\n")]
+    #[case::empty_name("1111111111111111111111111111111111111111 \n")]
+    #[case::tab_separator("1111111111111111111111111111111111111111\trefs/heads/a\n")]
     #[case::missing_newline("1111111111111111111111111111111111111111 refs/heads/a")]
     #[case::orphan("^1111111111111111111111111111111111111111\n")]
     #[case::blank("\n")]

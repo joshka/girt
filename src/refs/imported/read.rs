@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fs::File;
 use std::io::{self, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -132,7 +140,9 @@ impl ImportedReflog {
                 result.end = ReflogReadEnd::Limit("bytes or retained bytes");
                 break;
             }
-            let count = match reader.read(&mut buffer[..allowance.min(8192)]) {
+            let window = allowance.min(buffer.len());
+            let window = buffer.get_mut(..window).unwrap_or_default();
+            let count = match reader.read(window) {
                 Ok(0) => break,
                 Ok(count) => count,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -142,7 +152,7 @@ impl ImportedReflog {
                 }
             };
             consumed += count;
-            for &byte in &buffer[..count] {
+            for &byte in buffer.get(..count).unwrap_or_default() {
                 if cancel.load(Ordering::Relaxed) {
                     result.end = ReflogReadEnd::Cancelled;
                     break 'read;

@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
@@ -22,6 +30,7 @@ impl References<'_> {
         max_bytes: usize,
         cancel: &AtomicBool,
     ) -> Result<Option<Target>, ReferenceError> {
+        #[expect(clippy::expect_used, reason = "constant reference name is valid")]
         let name = RefName::new(b"HEAD").expect("HEAD is a valid name");
         if self.reference_backend == super::Backend::Reftable {
             if cancel.load(Ordering::Relaxed) {
@@ -286,8 +295,11 @@ impl References<'_> {
         for name in entries.keys() {
             for (index, byte) in name.as_bytes().iter().enumerate().skip(5) {
                 if *byte == b'/'
-                    && RefName::new(&name.as_bytes()[..index])
-                        .is_ok_and(|parent| entries.contains_key(&parent))
+                    && name
+                        .as_bytes()
+                        .get(..index)
+                        .and_then(|parent| RefName::new(parent).ok())
+                        .is_some_and(|parent| entries.contains_key(&parent))
                 {
                     return Err(ReferenceError::Conflict(self.path(name)?));
                 }
