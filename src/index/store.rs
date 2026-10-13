@@ -769,6 +769,8 @@ impl IndexEdit {
     ///
     /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
     /// recovery; no index or working-tree content is changed.
+    /// An `Interrupted` I/O cause after caller cleanup means the guard was invalidated; consult
+    /// cleanup's earlier report rather than inferring that an owned lock still needs recovery.
     pub fn abort(mut self) -> Result<(), StorageError> {
         let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]

@@ -74,38 +74,87 @@ fn cleanup_invalidates_owned_edits_and_preserves_git_targets_and_replacements() 
 #[cfg(unix)]
 #[test]
 fn git_interrupt_releases_index_lock_without_changing_published_index() {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::os::unix::process::CommandExt as _;
+
+    use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+
     let root = tempfile::tempdir().unwrap();
     git(root.path(), &["init", "--template=", "-q"]);
     std::fs::write(root.path().join("file"), b"git interrupt fixture").unwrap();
     git(root.path(), &["add", "file"]);
     let index = root.path().join(".git/index");
     let before = std::fs::read(&index).unwrap();
-    struct Child(std::process::Child);
-    impl Drop for Child {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
+    let filter = root.path().join(".git/cleanup-filter");
+    std::fs::write(
+        &filter,
+        b"#!/bin/sh\nprintf ready >.git/filter-ready\nsleep 2\ncat\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&filter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(root.path().join(".gitattributes"), b"file filter=cleanup\n").unwrap();
+    std::fs::write(root.path().join("file"), b"changed fixture").unwrap();
+    struct Child {
+        child: std::process::Child,
+        reaped: bool,
+    }
+    impl Child {
+        fn pid(&self) -> Pid {
+            Pid::from_raw(self.child.id() as i32).unwrap()
         }
     }
-    let mut child = Child(
-        command(root.path())
-            .args(["update-index", "--index-info"])
-            .stdin(Stdio::piped())
+    impl Drop for Child {
+        fn drop(&mut self) {
+            if !self.reaped {
+                let _ = kill_process_group(self.pid(), Signal::KILL);
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+        }
+    }
+    let filter_command = format!("'{}'", filter.to_str().unwrap().replace('\'', "'\\''"));
+    let mut child = Child {
+        child: command(root.path())
+            .args([
+                "-c",
+                &format!("filter.cleanup.clean={filter_command}"),
+                "add",
+                "file",
+            ])
+            .process_group(0)
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap(),
-    );
+        reaped: false,
+    };
+    // The filter starts only after Git has acquired the index lock. Its marker replaces the
+    // previous assumption that a fixed sleep was enough to finish lock registration.
     let end = Instant::now() + Duration::from_secs(5);
-    while !root.path().join(".git/index.lock").exists() && Instant::now() < end {
+    while !root.path().join(".git/filter-ready").exists() && Instant::now() < end {
         std::thread::sleep(Duration::from_millis(5));
     }
+    assert!(root.path().join(".git/filter-ready").exists());
     assert!(root.path().join(".git/index.lock").exists());
-    // Let Git finish registering the just-created lock before interrupting its stdin wait.
-    std::thread::sleep(Duration::from_millis(100));
-    let pid = rustix::process::Pid::from_raw(child.0.id() as i32).unwrap();
-    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
-    assert!(!child.0.wait().unwrap().success());
+    kill_process_group(child.pid(), Signal::INT).unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        let exited = waitid(
+            WaitId::Pid(child.pid()),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+        )
+        .unwrap();
+        if exited.is_some() {
+            break;
+        }
+        assert!(Instant::now() < end, "Git did not exit after interruption");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Reserve the leader PID until its owned group is cleaned up, then reap it.
+    let _ = kill_process_group(child.pid(), Signal::KILL);
+    assert!(!child.child.wait().unwrap().success());
+    child.reaped = true;
     assert!(!root.path().join(".git/index.lock").exists());
     assert_eq!(std::fs::read(index).unwrap(), before);
 }
@@ -158,14 +207,20 @@ fn cleanup_cancels_a_pending_packed_ref_wait_without_stealing_the_lock() {
                 &objects,
                 girt::refs::PackRefsOptions {
                     // Bounded independently if cancellation regresses.
-                    lock_wait: girt::refs::LockWait::For(Duration::from_secs(2)),
+                    lock_wait: girt::refs::LockWait::For(Duration::from_secs(5)),
                     ..girt::refs::PackRefsOptions::ALL
                 },
             )
         });
         ready.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(girt::locks::cleanup().unwrap().failures.is_empty());
+        // Keep requesting cleanup until the worker acknowledges cancellation. This does not
+        // assume it loaded the generation before the main thread was scheduled.
+        let end = Instant::now() + Duration::from_secs(10);
+        while !worker.is_finished() {
+            assert!(girt::locks::cleanup().unwrap().failures.is_empty());
+            assert!(Instant::now() < end, "packing did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let error = worker.join().unwrap().unwrap_err();
         assert!(matches!(
             error,

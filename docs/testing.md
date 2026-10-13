@@ -115,14 +115,15 @@ not an acceptance claim for this increment.
 
 [Issue 93](https://github.com/joshka/girt/issues/93) records the ownership inventory, tests-first
 revision and design choice. `tests/lock_cleanup.rs` generates index/config storage with Git and
-compares SIGINT cleanup during Git's index-info stdin wait. It verifies unchanged published bytes,
-foreign/replacement lock preservation, stale-guard refusal, idempotence and Git readability while
-cleanup races index publication/drop. Fault tests cover acquisition/registration and publication
-checkpoints, nested operations, reference/reflog/packed-ref/reftable lock topologies, reentrant
-callback refusal, path-specific inspection failures, shallow/credential stale-guard refusal and a
-Git-generated worktree repair checkpoint between link replacements. The writer and identity pin
-share a single descriptor. A Git-generated fixture checks cleanup cancellation of a pending
-packed-ref wait without stealing the foreign lock.
+compares SIGINT cleanup after a clean-filter readiness marker under Git's index lock. It verifies
+unchanged published bytes, foreign/replacement lock preservation, stale-guard refusal, idempotence
+and Git readability while cleanup races index publication/drop. Fault tests cover
+acquisition/registration and publication checkpoints, nested operations,
+reference/reflog/packed-ref/reftable lock topologies, reentrant callback refusal, path-specific
+inspection failures, shallow/credential stale-guard refusal and a Git-generated worktree repair
+checkpoint between link replacements. The writer and identity pin share a single descriptor. A
+Git-generated fixture checks cleanup cancellation of a pending packed-ref wait without stealing the
+foreign lock.
 
 `girt::locks::cleanup` runs in normal thread context. jj must request cancellation, stop admitting
 work, wake writers, call cleanup, then join cancelled writers; raw signal handlers must delegate to

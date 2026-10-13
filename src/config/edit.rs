@@ -262,6 +262,8 @@ impl ConfigEdit {
     ///
     /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
     /// recovery; no config or working-tree content is changed.
+    /// An `Interrupted` I/O cause after caller cleanup means the guard was invalidated; consult
+    /// cleanup's earlier report rather than inferring that an owned lock still needs recovery.
     pub fn abort(mut self) -> Result<(), EditError> {
         let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
