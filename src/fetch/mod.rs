@@ -45,6 +45,75 @@
 //! a caller-managed blocking worker without borrowing its initiating scope.
 //! SSH requires macOS/Linux and a caller-selected OpenSSH configuration. Peeling hints are exposed
 //! separately from selectable reference tips.
+//!
+//! # Example
+//!
+//! Fetch `main` from a local source repository (setup hidden) into `refs/remotes/origin/main`.
+//! Objects are installed before the conditional reference update:
+//!
+//! ```
+//! use std::collections::BTreeSet;
+//! use std::ops::ControlFlow;
+//! use std::sync::atomic::AtomicBool;
+//!
+//! use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory};
+//! use girt::refs::{RefName, Reflog, Target};
+//! use girt::transport::TransportControl;
+//! use girt::{InitKind, ObjectFormat, Repository};
+//! # use girt::refs::Expected;
+//! # use girt::{Commit, CommitFields, Signature, Tree};
+//! # let directory = tempfile::tempdir()?;
+//! # let source_path = directory.path().join("source.git");
+//! # let source = Repository::init(ObjectFormat::Sha1, source_path, InitKind::Bare)?;
+//! # let person = Signature {
+//! #     name: b"A. Writer".to_vec(),
+//! #     email: b"writer@example.com".to_vec(),
+//! #     seconds: 1_700_000_000,
+//! #     offset_minutes: 0,
+//! # };
+//! # let loose = source.loose_objects();
+//! # let commit = loose.write_commit(&Commit::new(CommitFields {
+//! #     tree: loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?,
+//! #     parents: vec![],
+//! #     author: person.clone(),
+//! #     committer: person.clone(),
+//! #     extra_headers: vec![],
+//! #     message: b"Initial commit\n".to_vec(),
+//! # })?)?;
+//! # let main = RefName::new("refs/heads/main")?;
+//! # source.references()?.update_without_reflog(&main, Target::Direct(commit), Expected::Absent)?;
+//!
+//! let destination =
+//!     Repository::init(ObjectFormat::Sha1, directory.path().join("clone.git"), InitKind::Bare)?;
+//! let config = girt::Config::parse(
+//!     b"[remote \"origin\"]\nfetch = +refs/heads/*:refs/remotes/origin/*\n",
+//! )?;
+//! let origin = girt::remote::Remote::find(&config, b"origin")?.expect("origin is configured");
+//!
+//! let request = FetchRequest::prepare(
+//!     destination,
+//!     origin.fetch_refspecs().clone(),
+//!     // `+` records force intent, but girt also requires each forced destination name here.
+//!     // An empty set refuses non-fast-forward updates despite the `+`.
+//!     BTreeSet::new(),
+//!     Reflog::Append { committer: person, message: b"fetch origin".to_vec() },
+//! )?;
+//! let cancel = AtomicBool::new(false);
+//! let ready = request.receive_local(
+//!     source.git_dir(),
+//!     &KnownHistory::default(),
+//!     FetchLimits::default(),
+//!     TransportControl::new(&cancel),
+//!     |_progress| ControlFlow::Continue(()),
+//! )?;
+//! let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+//! assert_eq!(report.references.len(), 1);
+//!
+//! let destination = Repository::open(directory.path().join("clone.git"))?;
+//! let tracking = RefName::new("refs/remotes/origin/main")?;
+//! assert_eq!(destination.references()?.read(&tracking)?, Some(Target::Direct(commit)));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 mod ssh;
