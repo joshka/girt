@@ -838,8 +838,17 @@ fn verifies_delta_result_identity_after_valid_base(#[case] format: ObjectFormat)
 fn overflowing_word_offset_returns_corruption() {
     assert!(matches!(
         super::index::word(&[], usize::MAX),
-        Err(Error::Corrupt(_))
+        Err(Error::Corrupt("truncated integer"))
     ));
+}
+
+#[test]
+fn three_byte_word_is_truncated() {
+    assert!(matches!(
+        super::index::word(&[0, 0, 0], 0),
+        Err(Error::Corrupt("truncated integer"))
+    ));
+    assert!(matches!(super::index::word(&[0, 0, 0, 7], 0), Ok(7)));
 }
 
 fn legacy_index(format: ObjectFormat) -> (Vec<u8>, Vec<u8>) {

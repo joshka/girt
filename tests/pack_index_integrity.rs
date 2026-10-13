@@ -250,3 +250,62 @@ fn damaged_table_length_fails_open(#[case] format: ObjectFormat, #[case] rehash:
     });
     assert_eq!(corrupt_artifacts(open(&fixture)), "index table length");
 }
+
+fn git_rejects(fixture: &Fixture) -> bool {
+    let index = fixture.index_path.to_str().unwrap();
+    !git_output(fixture.root.path(), &["verify-pack", index], b"")
+        .status
+        .success()
+}
+
+/// Truncation inside each index table, with a recomputed checksum, is rejected by Git's
+/// `verify-pack` and by opening, so the structural checks rather than the checksum reject it.
+#[rstest]
+#[case::sha1_names(ObjectFormat::Sha1, "names")]
+#[case::sha1_crcs(ObjectFormat::Sha1, "crcs")]
+#[case::sha1_offsets(ObjectFormat::Sha1, "offsets")]
+#[case::sha1_trailer(ObjectFormat::Sha1, "trailer")]
+#[case::sha256_names(ObjectFormat::Sha256, "names")]
+#[case::sha256_crcs(ObjectFormat::Sha256, "crcs")]
+#[case::sha256_offsets(ObjectFormat::Sha256, "offsets")]
+#[case::sha256_trailer(ObjectFormat::Sha256, "trailer")]
+fn truncated_table_fails_like_git(#[case] format: ObjectFormat, #[case] table: &str) {
+    let fixture = Fixture::new(format, true, 8);
+    let width = format.digest_len();
+    damage(&fixture, true, |layout, index| {
+        let crcs = layout.name(layout.count);
+        let length = match table {
+            "names" => layout.name(layout.count / 2) + 3,
+            "crcs" => crcs + 4 * (layout.count / 2) + 1,
+            "offsets" => layout.offset(layout.count / 2) + 2,
+            _ => index.len() - width - 1,
+        };
+        // Keep room for the recomputed checksum after the cut.
+        index.truncate(length + width);
+    });
+    assert!(
+        git_rejects(&fixture),
+        "Git accepted a truncated {table} table"
+    );
+    assert!(open(&fixture).is_err());
+}
+
+/// A large-offset slot beyond the one-slot table is rejected by Git and by opening.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn large_offset_slot_outside_table_fails_like_git(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    damage(&fixture, true, |layout, index| {
+        let at = layout.offset(0);
+        let offset = u32::from_be_bytes(index[at..at + 4].try_into().unwrap());
+        index[at..at + 4].copy_from_slice(&0x8000_0001_u32.to_be_bytes());
+        let trailer = index.len() - 2 * format.digest_len();
+        index.splice(trailer..trailer, u64::from(offset).to_be_bytes());
+    });
+    assert!(
+        git_rejects(&fixture),
+        "Git accepted an out-of-table large offset"
+    );
+    assert_eq!(corrupt_artifacts(open(&fixture)), "large offset index");
+}

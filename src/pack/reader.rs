@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -286,16 +294,16 @@ pub(crate) fn decode_checked(
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
-        if let Some(hit) = cache.and_then(|cache| cache.get(position)) {
+        if let Some(cache) = cache
+            && let Some(hit) = cache.get(position)
+        {
             // A payload cached under looser limits must still fit this read's.
             if hit.data.len() > limits.max_object_bytes {
                 return Err(Error::Limit("object bytes"));
             }
             if verify && position == requested && !hit.verified {
                 verify_identity(format, hit.kind, &hit.data, source.entry(position)?.id)?;
-                cache
-                    .expect("hit came from the cache")
-                    .mark_verified(position);
+                cache.mark_verified(position);
             }
             break (hit.kind, hit.data);
         }
@@ -333,7 +341,7 @@ pub(crate) fn decode_checked(
                 2 => ObjectKind::Tree,
                 3 => ObjectKind::Blob,
                 4 => ObjectKind::Tag,
-                _ => unreachable!("non-delta kinds validated above"),
+                other => return Err(Error::ObjectType(other)),
             };
             // Only the requested object's identity is checked: a corrupt base changes every
             // object reconstructed from it, so the final check still catches it.
@@ -415,11 +423,12 @@ pub(crate) fn entry_header(
             Some(source.at_offset(offset)?)
         }
         7 => {
-            let raw = input
-                .get(..width)
+            let (raw, rest) = input
+                .split_at_checked(width)
                 .ok_or(Error::Corrupt("truncated base identity"))?;
-            let id = ObjectId::from_bytes(source.format(), raw).unwrap();
-            input = &input[width..];
+            let id = ObjectId::from_bytes(source.format(), raw)
+                .map_err(|_| Error::Corrupt("truncated base identity"))?;
+            input = rest;
             Some(source.find(id)?.ok_or(Error::MissingBase(id))?)
         }
         other => return Err(Error::ObjectType(other)),
