@@ -82,6 +82,33 @@ construction still buffers its output.
 A repeat with the final release build took 19.57 s and peaked at 404 MiB. That clone received
 131,149 objects, produced a 199.65 MiB pack/index pair, and passed `git fsck --connectivity-only`.
 
+## Everyday-operation benchmark
+
+`scripts/jj-e2e/bench-ops.py` times clone, fetch, status, log, diff, `new`, `describe`, a 10-commit
+rebase, push, annotate and `util gc` for three tools: jj on girt, stock jj and the closest Git
+command. It is an end-to-end CLI harness rather than a Criterion benchmark under `benches/`, because
+it measures whole jj processes against stock jj and Git rather than girt functions. The latest
+results are on [#66](https://github.com/joshka/girt/issues/66).
+
+To repeat a run:
+
+1. Build both jj binaries from the same jj commit: stock jj from the parent of
+   `joshka/girt-backend`, and jj on girt from `joshka/girt-backend`. To test an unreleased girt, add
+   `--config 'patch.crates-io.girt.path="<girt checkout>"'` to the build. Use
+   `cargo build --release -p jj-cli` with separate `CARGO_TARGET_DIR`s.
+2. Prepare bare origins whose `HEAD` names a branch:
+   - the jj fixture (`git clone --bare` of `jj-vcs/jj`);
+   - git/git (`git clone --bare`, then `git repack -ad`).
+3. Run
+   `bench-ops.py --girt-jj <girt jj> --stock-jj <stock jj> --girt-rev <girt commit> --repo NAME=PATH`
+   with a multiple of three `--runs`.
+
+The script requires macOS: it uses `/usr/bin/time -l`, `shlock` and `cp -c` on APFS. Each run holds
+the shared timing lock. The raw JSON records the jj versions and binary hashes, the Git, Python and
+platform versions, the load average, the invocation and the origin `HEAD`. Caches are not
+controlled, so results are warm-cache figures. Rows marked with a `workload` note compare different
+work; for example, `util gc` on girt skips verified no-ops, while stock jj and `git gc` repack.
+
 ## Open work
 
 Tracked as [GitHub issues](https://github.com/joshka/girt/issues?q=is%3Aissue+is%3Aopen+label%3Ajj)
@@ -108,7 +135,9 @@ with the `jj` label, each a self-contained brief with acceptance criteria.
   - `cargo nextest run --workspace`;
   - `scripts/jj-e2e/e2e.sh <jj>` (196 checks);
   - `scripts/jj-e2e/no-git.sh <jj>` (zero Git invocations);
-  - `scripts/jj-e2e/bench-large.sh` against stock jj for performance work.
+  - `scripts/jj-e2e/bench-large.sh` against stock jj for performance work;
+  - `scripts/jj-e2e/bench-ops.py` for everyday operations
+    ([everyday-operation benchmark](#everyday-operation-benchmark)).
 - **Shipping:** open girt PRs against `main` and squash-merge them once the `required` check passes.
   release-plz opens a release PR, and merging it publishes. Then bump jj's `girt` version, rerun jj
   acceptance, and force-push `joshka/girt-backend`. Push jj only to the `joshka/jj` fork, never
