@@ -2,9 +2,13 @@
 #[path = "support/pack_git.rs"]
 mod pack_git;
 
+use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 
-use girt::{ObjectId, ObjectKind, ObjectReadError, PackLimits, ReadLimits};
+use girt::{
+    ObjectFormat, ObjectId, ObjectKind, ObjectReadError, PackLimits, ReadLimits, Repository,
+};
 use pack_git::{Fixture, git};
 use rstest::rstest;
 
@@ -809,4 +813,235 @@ fn matching_trailers_do_not_replace_whole_pack_verification(#[case] format: girt
     );
     assert_eq!(fs::read(&path).unwrap(), pack);
     assert_eq!(fs::read(&fixture.index_path).unwrap(), index);
+}
+
+// Whole-history reads compared byte for byte with `git cat-file --batch`. Reads share decoded
+// payloads with the delta base cache, so these read objects in several orders, as requested
+// objects and as bases, and after a caller has taken and changed a payload.
+
+/// Bytes deterministic for a seed, so successive versions differ in scattered places.
+fn noise(seed: u64, length: usize) -> Vec<u8> {
+    let mut state = seed;
+    (0..length)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 56) as u8
+        })
+        .collect()
+}
+
+/// A history whose large file (over 1 MiB) and small text files change in every commit, repacked
+/// by Git with deep delta chains.
+fn history(format: ObjectFormat) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    git(
+        path,
+        &[
+            "init",
+            "--quiet",
+            &format!("--object-format={format}"),
+            "--template=",
+            "--initial-branch=main",
+            ".",
+        ],
+        b"",
+    );
+    let mut large = noise(1, 1536 * 1024);
+    for version in 0..12u64 {
+        let edit = noise(version + 100, 4096);
+        let at = (version as usize * 97_331) % (large.len() - edit.len());
+        large[at..at + edit.len()].copy_from_slice(&edit);
+        large.extend_from_slice(&noise(version + 200, 3000));
+        fs::write(path.join("large.bin"), &large).unwrap();
+        for file in 0..6 {
+            let text = (0..200)
+                .map(|line| {
+                    let changed = line % 37 == version as usize;
+                    format!(
+                        "file {file} line {line} {}\n",
+                        if changed { version } else { 0 }
+                    )
+                })
+                .collect::<String>();
+            fs::write(path.join(format!("small-{file}.txt")), text).unwrap();
+        }
+        git(path, &["add", "--all"], b"");
+        git(
+            path,
+            &["commit", "--quiet", "-m", &format!("version {version}")],
+            b"",
+        );
+    }
+    git(
+        path,
+        &[
+            "repack",
+            "-a",
+            "-d",
+            "-f",
+            "-q",
+            "--depth=50",
+            "--window=50",
+        ],
+        b"",
+    );
+    root
+}
+
+/// Every reachable object in `git rev-list --objects --all` order, with Git's kind and bytes.
+fn git_objects(path: &Path) -> Vec<(ObjectId, ObjectKind, Vec<u8>)> {
+    let listing = git(path, &["rev-list", "--objects", "--all"], b"");
+    let ids: Vec<ObjectId> = String::from_utf8(listing)
+        .unwrap()
+        .lines()
+        .map(|line| line.split(' ').next().unwrap().parse().unwrap())
+        .collect();
+    let request: String = ids.iter().map(|id| format!("{id}\n")).collect();
+    let batch = git(path, &["cat-file", "--batch"], request.as_bytes());
+    let mut rest = batch.as_slice();
+    let objects = ids
+        .iter()
+        .map(|id| {
+            let newline = rest.iter().position(|&byte| byte == b'\n').unwrap();
+            let header = std::str::from_utf8(&rest[..newline]).unwrap();
+            let mut fields = header.split(' ');
+            assert_eq!(fields.next(), Some(id.to_string().as_str()));
+            let kind = match fields.next().unwrap() {
+                "commit" => ObjectKind::Commit,
+                "tree" => ObjectKind::Tree,
+                "blob" => ObjectKind::Blob,
+                "tag" => ObjectKind::Tag,
+                other => panic!("unexpected kind {other}"),
+            };
+            let size: usize = fields.next().unwrap().parse().unwrap();
+            let data = rest[newline + 1..newline + 1 + size].to_vec();
+            assert_eq!(rest[newline + 1 + size], b'\n');
+            rest = &rest[newline + 2 + size..];
+            (*id, kind, data)
+        })
+        .collect();
+    assert!(rest.is_empty());
+    objects
+}
+
+/// Number of pack entries whose delta chain has at least `depth` links, from `git verify-pack`.
+fn chains_at_least(path: &Path, depth: usize) -> usize {
+    let pack_dir = path.join(".git/objects/pack");
+    let index = fs::read_dir(&pack_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|file| file.extension().is_some_and(|extension| extension == "idx"))
+        .unwrap();
+    let report = git(path, &["verify-pack", "-v", index.to_str().unwrap()], b"");
+    String::from_utf8(report)
+        .unwrap()
+        .lines()
+        .filter(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            fields.len() == 7 && fields[5].parse::<usize>().is_ok_and(|chain| chain >= depth)
+        })
+        .count()
+}
+
+fn read(repo: &Repository, id: ObjectId) -> (ObjectKind, Vec<u8>) {
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let object = objects.read(id, ReadLimits::trusted()).unwrap().unwrap();
+    (object.kind(), object.into_data())
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn full_history_reads_match_git_in_every_order(#[case] format: ObjectFormat) {
+    let root = history(format);
+    assert!(
+        chains_at_least(root.path(), 5) > 0,
+        "fixture must contain deep delta chains"
+    );
+    let expected = git_objects(root.path());
+    assert!(
+        expected.iter().any(|(_, _, data)| data.len() > 1024 * 1024),
+        "fixture must contain objects larger than the initial reservation"
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    // One reader for every pass, so later passes hit entries cached by earlier ones.
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    let forward: Vec<usize> = (0..expected.len()).collect();
+    let reverse: Vec<usize> = forward.iter().rev().copied().collect();
+    for order in [&forward, &reverse, &forward] {
+        for &index in order {
+            let (id, kind, data) = &expected[index];
+            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            assert_eq!(
+                (object.kind(), object.data()),
+                (*kind, data.as_slice()),
+                "{id}"
+            );
+            assert_eq!(object.id(), *id);
+            assert_eq!(object.into_data(), *data, "{id}");
+        }
+    }
+    // A fresh reader agrees too, with nothing cached.
+    for (id, kind, data) in &expected {
+        assert_eq!(read(&repo, *id), (*kind, data.clone()));
+    }
+}
+
+/// A caller owns the payload it takes: changing it cannot alter the cache that later reads, or
+/// later delta reconstructions, use.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn taken_payloads_do_not_alias_cached_bases(#[case] format: ObjectFormat) {
+    let root = history(format);
+    let expected = git_objects(root.path());
+    let by_id: HashMap<_, _> = expected
+        .iter()
+        .map(|(id, kind, data)| (*id, (*kind, data.clone())))
+        .collect();
+    let repo = Repository::open(root.path()).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    for round in 0..3 {
+        for (id, _, _) in &expected {
+            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            let mut data = object.into_data();
+            data.iter_mut().for_each(|byte| *byte = !*byte);
+            data.push(round);
+        }
+        for (id, _, _) in expected.iter().rev() {
+            let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+            assert_eq!(
+                (object.kind(), object.into_data()),
+                by_id[id].clone(),
+                "{id}"
+            );
+        }
+    }
+}
+
+/// Readers on several threads share one cache and still each get Git's bytes.
+#[test]
+fn concurrent_full_reads_match_git() {
+    let root = history(ObjectFormat::Sha1);
+    let expected = git_objects(root.path());
+    let repo = Repository::open(root.path()).unwrap();
+    let objects = repo.objects(PackLimits::default()).unwrap();
+    std::thread::scope(|scope| {
+        for thread in 0..4 {
+            let objects = &objects;
+            let expected = &expected;
+            scope.spawn(move || {
+                for step in 0..expected.len() {
+                    let (id, kind, data) = &expected[(step * (thread + 1)) % expected.len()];
+                    let object = objects.read(*id, ReadLimits::trusted()).unwrap().unwrap();
+                    assert_eq!((object.kind(), object.data()), (*kind, data.as_slice()));
+                    let mut owned = object.into_data();
+                    owned.fill(thread as u8);
+                }
+            });
+        }
+    });
 }
