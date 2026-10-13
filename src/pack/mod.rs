@@ -27,7 +27,7 @@ pub(crate) mod write;
 pub use compression::{DeltaOptions, DeltaStats, PackCompression};
 #[cfg(test)]
 pub(crate) use file::counters;
-pub(crate) use file::{BaseKinds, FilePack};
+pub(crate) use file::{BaseKinds, FilePack, HeaderScope};
 #[cfg(test)]
 pub(crate) use reader::Pack;
 pub use rebuild::{

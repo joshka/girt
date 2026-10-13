@@ -21,6 +21,9 @@ pub struct MaintenanceReport {
 /// Why maintenance stopped; a phase error carries that phase's partial effects.
 #[derive(Debug, thiserror::Error)]
 pub enum MaintenanceCause {
+    /// A pinned pack or index changed before this mutation boundary.
+    #[error(transparent)]
+    PackChanged(Box<crate::ObjectReadError>),
     /// The caller could not hold a repository-wide exclusion boundary.
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
@@ -190,6 +193,7 @@ impl Repository {
         after_expiry: impl FnOnce(),
         after_retirement: impl FnOnce(),
     ) -> Result<MaintenanceReport, MaintenanceFailure> {
+        let _headers = crate::pack::HeaderScope::new();
         let mut report = MaintenanceReport::default();
         let mut session = super::inputs::Session::new(self, policy, cancel).map_err(|reason| {
             failed(
@@ -205,6 +209,15 @@ impl Repository {
         if cancel.load(Ordering::Relaxed) {
             return Err(failed(MaintenanceCause::Cancelled, report));
         }
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| {
+                failed(
+                    MaintenanceCause::PackChanged(Box::new(error)),
+                    report.clone(),
+                )
+            })?;
         session.validate(self, policy, cancel).map_err(|_| {
             failed(
                 if cancel.load(Ordering::Relaxed) {
@@ -421,5 +434,35 @@ mod tests {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", root.join("absent-config"));
         command
+    }
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_maintenance(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let before = std::fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count();
+        let error = repo
+            .maintain_exclusive(
+                &policy,
+                Some(RepackLimits::trusted()),
+                &AtomicBool::new(false),
+                || super::super::walk_tests::change_pack(&pack, truncate),
+                || {},
+                || {},
+            )
+            .unwrap_err();
+        assert!(matches!(&error.cause, MaintenanceCause::PackChanged(source)
+            if matches!(source.as_ref(), crate::ObjectReadError::PackChanged { path } if path == &pack)));
+        assert!(error.report.expired.is_none());
+        assert!(error.report.retired.is_none());
+        assert!(error.report.pruned.is_none());
+        assert_eq!(
+            std::fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            before
+        );
     }
 }

@@ -146,6 +146,7 @@ impl Repository {
         cancel: &AtomicBool,
         after_plan: impl FnOnce(),
     ) -> Result<RepackPublished, RepackError> {
+        let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
         let mut plan = self.plan_retention(policy, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
@@ -171,9 +172,24 @@ impl Repository {
         limits: RepackLimits,
         cancel: &AtomicBool,
     ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
+        self.publish_required_after_write(plan, policy, limits, cancel, || {})
+    }
+
+    fn publish_required_after_write(
+        &self,
+        plan: &super::RetentionPlan,
+        policy: &RetentionPolicy,
+        limits: RepackLimits,
+        cancel: &AtomicBool,
+        after_write: impl FnOnce(),
+    ) -> Result<(RepackPublished, std::collections::BTreeSet<ObjectId>), RepackError> {
+        let _headers = crate::pack::HeaderScope::new();
         check(cancel)?;
-        let objects =
-            self.objects_controlled(policy.packs, crate::AlternateLimits::default(), cancel)?;
+        plan.check_packs_unchanged(cancel)?;
+        let objects = plan
+            .store
+            .as_ref()
+            .ok_or_else(|| RepackError::Incomplete("missing pinned plan store".into()))?;
         let required = &plan.required;
         let protected = &plan.protected_packs;
         let protected_names: std::collections::BTreeSet<_> = protected
@@ -277,8 +293,19 @@ impl Repository {
         }
         pack.as_file().sync_all()?;
         index.as_file().sync_all()?;
+        after_write();
         let basename = directory.join(format!("pack-{}", written.checksum));
-        publish_pair(pack, index, &basename, cancel, || {})?;
+        publish_pair_checked(
+            pack,
+            index,
+            &basename,
+            cancel,
+            || {},
+            || {
+                plan.check_packs_unchanged(cancel)
+                    .map_err(RepackError::from)
+            },
+        )?;
         Ok((RepackPublished { written }, held))
     }
 }
@@ -296,6 +323,7 @@ fn charge_input(len: u64, bytes: &mut u64, limits: PackWriteLimits) -> Result<()
     Ok(())
 }
 
+#[cfg(test)]
 fn publish_pair(
     pack: NamedTempFile,
     index: NamedTempFile,
@@ -303,13 +331,26 @@ fn publish_pair(
     cancel: &AtomicBool,
     after_pack: impl FnOnce(),
 ) -> Result<(), RepackError> {
+    publish_pair_checked(pack, index, basename, cancel, after_pack, || Ok(()))
+}
+
+fn publish_pair_checked(
+    pack: NamedTempFile,
+    index: NamedTempFile,
+    basename: &Path,
+    cancel: &AtomicBool,
+    after_pack: impl FnOnce(),
+    mut fresh: impl FnMut() -> Result<(), RepackError>,
+) -> Result<(), RepackError> {
     check(cancel)?;
+    fresh()?;
     publish(pack, &basename.with_extension("pack"), cancel)?;
     // Persist the pack name before publishing its index visibility marker.
     #[cfg(unix)]
     File::open(basename.parent().expect("pack basename has a directory"))?.sync_all()?;
     after_pack();
     check(cancel)?;
+    fresh()?;
     publish(index, &basename.with_extension("idx"), cancel)?;
     Ok(())
 }
@@ -464,6 +505,61 @@ mod tests {
         assert_eq!(
             repository.loose_objects().read_blob(id, 64).unwrap(),
             b"new writer"
+        );
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_repack_publication(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let before = fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count();
+        let error = repo
+            .repack_retained_after_plan(
+                &policy,
+                RepackLimits::trusted(),
+                &AtomicBool::new(false),
+                || super::super::walk_tests::change_pack(&pack, truncate),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, RepackError::Open(ObjectReadError::PackChanged { path }) if path == pack)
+        );
+        assert_eq!(
+            fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            before
+        );
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_after_write_refuses_publication(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let cancel = AtomicBool::new(false);
+        let mut plan = repo.plan_retention(&policy, &cancel);
+        assert!(plan.is_complete());
+        plan.protected_packs.clear();
+        let before = fs::read_dir(repo.object_dir().join("pack"))
+            .unwrap()
+            .count();
+        let error = repo
+            .publish_required_after_write(&plan, &policy, RepackLimits::trusted(), &cancel, || {
+                super::super::walk_tests::change_pack(&pack, truncate)
+            })
+            .unwrap_err();
+        assert!(
+            matches!(error, RepackError::Open(ObjectReadError::PackChanged { path }) if path == pack)
+        );
+        assert_eq!(
+            fs::read_dir(repo.object_dir().join("pack"))
+                .unwrap()
+                .count(),
+            before
         );
     }
 }

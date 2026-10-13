@@ -35,6 +35,9 @@ pub struct ExpireReport {
 /// Why expiry stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum ExpireCause {
+    /// A pinned pack or index changed before this mutation boundary.
+    #[error(transparent)]
+    PackChanged(Box<crate::ObjectReadError>),
     /// The caller could not exclude writers and dependent readers.
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
@@ -210,6 +213,10 @@ impl Repository {
         {
             return Err(failed(ExpireCause::Changed, report));
         }
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| failed(ExpireCause::PackChanged(Box::new(error)), report.clone()))?;
         session.validate(&refreshed, policy, cancel).map_err(|_| {
             failed(
                 if cancel.load(Ordering::Relaxed) {
@@ -224,6 +231,14 @@ impl Repository {
         let mut changes = Vec::new();
         for (directory, stack) in prepared {
             check(cancel, &report)?;
+            session
+                .plan
+                .check_packs_unchanged(cancel)
+                .map_err(|error| {
+                    failed(ExpireCause::PackChanged(Box::new(error)), report.clone())
+                })?;
+            // Reftable expiry publishes and retires files as one stack transaction. Check at
+            // its boundary; caller isolation must exclude writers throughout its internal steps.
             match expire_logs(
                 &directory,
                 self.object_format(),
@@ -411,6 +426,10 @@ impl Repository {
         {
             return Err(failed(ExpireCause::Changed, report));
         }
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| failed(ExpireCause::PackChanged(Box::new(error)), report.clone()))?;
         session.validate(&refreshed, policy, cancel).map_err(|_| {
             failed(
                 if cancel.load(Ordering::Relaxed) {
@@ -456,6 +475,12 @@ impl Repository {
             temp.as_file()
                 .sync_all()
                 .map_err(|error| failed(ExpireCause::Io(error), report.clone()))?;
+            session
+                .plan
+                .check_packs_unchanged(cancel)
+                .map_err(|error| {
+                    failed(ExpireCause::PackChanged(Box::new(error)), report.clone())
+                })?;
             replace(temp, &log.path).map_err(|error| ExpireFailure {
                 cause: ExpireCause::Io(error),
                 report: Box::new(report.clone()),

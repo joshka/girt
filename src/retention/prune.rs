@@ -31,6 +31,9 @@ pub struct PruneReport {
 /// Why a loose-object sweep stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum PruneCause {
+    /// A pinned pack or index changed before this mutation boundary.
+    #[error(transparent)]
+    PackChanged(Box<crate::ObjectReadError>),
     /// Caller isolation could not be established.
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
@@ -125,8 +128,8 @@ impl Repository {
 
     fn finish_prune(&self, report: PruneReport) -> Result<PruneReport, PruneFailure> {
         if !report.deleted.is_empty() {
-            // A commit-graph can name pruned commits; Git rebuilds it when needed, as `git gc`
-            // does.
+            // This derived-data cleanup needs no pack freshness proof: removing a commit-graph
+            // cannot remove an object. It can name pruned commits; Git rebuilds it when needed.
             let info = self.object_dir().join("info");
             let remove = |result: io::Result<()>| match result {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => {
@@ -183,6 +186,7 @@ impl Repository {
         checkpoints: (impl FnOnce(), impl FnOnce(), impl FnMut()),
         mut remove: impl FnMut(&std::path::Path) -> io::Result<()>,
     ) -> Result<PruneReport, PruneFailure> {
+        let _headers = crate::pack::HeaderScope::new();
         let (before_plan, after_plan, mut after_delete) = checkpoints;
         let mut report = PruneReport::default();
         check(cancel, &report)?;
@@ -235,6 +239,10 @@ impl Repository {
         {
             return Err(failure(PruneCause::Changed, report));
         }
+        session
+            .plan
+            .check_packs_unchanged(cancel)
+            .map_err(|error| failure(PruneCause::PackChanged(Box::new(error)), report.clone()))?;
         session.validate(&refreshed, policy, cancel).map_err(|_| {
             failure(
                 if cancel.load(Ordering::Relaxed) {
@@ -268,6 +276,12 @@ impl Repository {
             {
                 return Err(failure(PruneCause::Changed, report));
             }
+            session
+                .plan
+                .check_packs_unchanged(cancel)
+                .map_err(|error| {
+                    failure(PruneCause::PackChanged(Box::new(error)), report.clone())
+                })?;
             remove(&candidate.path).map_err(|error| PruneFailure {
                 cause: PruneCause::Io(error),
                 report: report.clone(),
@@ -531,5 +545,24 @@ mod tests {
             git(root.path(), &["cat-file", "-t", &uncertain], b""),
             "blob"
         );
+    }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_prune(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let error = repo
+            .prune_unreachable_loose_at(
+                &policy,
+                &AtomicBool::new(false),
+                || super::super::walk_tests::change_pack(&pack, truncate),
+                || {},
+                |_| panic!("must not unlink"),
+            )
+            .unwrap_err();
+        assert!(matches!(&error.cause, PruneCause::PackChanged(source)
+            if matches!(source.as_ref(), crate::ObjectReadError::PackChanged { path } if path == &pack)));
+        assert!(error.report.deleted.is_empty());
     }
 }

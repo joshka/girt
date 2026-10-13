@@ -50,6 +50,7 @@ pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
         Cancelled => "cancelled",
         Path { source, .. } => io(source),
         PackArtifacts { source, .. } => object(source),
+        PackChanged { .. } => "conflict",
         Loose(e) => loose(e),
         Unsupported(_) | IndexVersion(_) | PackVersion(_) | ObjectType(_) => "unsupported",
         Alternate { .. } | Corrupt(_) | DeltaCycle => "corrupt",

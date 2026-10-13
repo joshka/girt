@@ -220,6 +220,9 @@ impl ReadLimits {
 /// recently decoded entries, up to 96 MiB, as delta bases; a cached entry is still
 /// identity-checked before it is returned. No negative cache is retained. [`PackLimits`] bounds
 /// aggregate opening work, index memory and handles; [`ReadLimits`] bounds each packed decode.
+/// Retention operations additionally share a single 256 KiB header window across packs on the
+/// calling thread, dropped when the operation ends. Windows artifact handles allow read/delete
+/// sharing and deny concurrent data writers.
 /// Concurrent reads and caller-owned results multiply memory use. Cancellation is available through
 /// [`crate::Repository::objects_controlled`] and [`Self::read_controlled`].
 ///
@@ -494,6 +497,7 @@ impl Objects {
         }
         packed.sort_unstable();
         let packs: Vec<_> = self.stores.iter().flat_map(|store| &store.packs).collect();
+        let _ordered = crate::pack::HeaderScope::ordered();
         let mut known = (usize::MAX, crate::pack::BaseKinds::new());
         for (pack, _, position, id) in packed {
             check_cancelled(cancel)?;
@@ -541,6 +545,17 @@ impl Objects {
             store.check_loose_blob_kinds(max_entries, cancel, &is_blob, &mut entries)?;
         }
         Ok(())
+    }
+
+    /// Revalidates every pinned artifact before a retention mutation.
+    pub(crate) fn check_packs_unchanged(&self, cancel: &AtomicBool) -> Result<(), ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                check_cancelled(cancel)?;
+                pack.check_unchanged()?;
+            }
+        }
+        check_cancelled(cancel)
     }
 
     /// Verifies index checksums, whole-pack checksums and v2 entry CRCs in every pinned store,
@@ -997,6 +1012,12 @@ impl Store {
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
 pub enum ObjectReadError {
+    /// A pinned artifact changed in place before a mutation boundary.
+    #[error("pinned pack artifact changed: {path}")]
+    PackChanged {
+        /// Original path naming the pinned pack or index.
+        path: PathBuf,
+    },
     /// The caller requested cancellation; no partial object is returned.
     #[error("object storage cancelled")]
     Cancelled,

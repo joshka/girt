@@ -581,6 +581,7 @@ fn cloned_readers_share_files_with_independent_cursors(#[case] format: girt::Obj
     );
 }
 
+#[cfg(not(windows))]
 #[rstest]
 #[case::index("idx")]
 #[case::pack("pack")]
@@ -658,6 +659,8 @@ fn open_rejects_truncated_pack(#[case] format: girt::ObjectFormat) {
         .open(fixture.index_path.with_extension("pack"))
         .unwrap();
     file.set_len((offset + format.digest_len()) as u64).unwrap();
+    // Finish fixture mutation before opening a reader that excludes writers on Windows.
+    drop(file);
     assert!(
         matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("offset outside pack entries")))
     );
