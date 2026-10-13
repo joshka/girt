@@ -170,6 +170,7 @@ impl References<'_> {
         objects: &Objects,
         options: PackRefsOptions,
     ) -> Result<PackRefsReport, PackRefsError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend != Backend::Files {
             return Err(ReferenceError::Unsupported("packing reftable references").into());
         }

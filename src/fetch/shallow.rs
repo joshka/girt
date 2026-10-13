@@ -28,6 +28,7 @@ pub(super) struct Lock {
     #[cfg(unix)]
     identity: fs::Metadata,
     old: Vec<ObjectId>,
+    cleanup: crate::locks::Guard,
 }
 
 impl Lock {
@@ -37,6 +38,7 @@ impl Lock {
         old: &[ObjectId],
         cancel: &AtomicBool,
     ) -> Result<Self, FetchShallowError> {
+        let _lock_operation = crate::locks::operation();
         let path = common_dir.join("shallow");
         let lock_path = common_dir.join("shallow.lock");
         let mut options = OpenOptions::new();
@@ -49,7 +51,9 @@ impl Lock {
         let file = options.open(&lock_path)?;
         #[cfg(unix)]
         let identity = file.metadata()?;
+        let cleanup = crate::locks::Guard::new(&lock_path, &file)?;
         let lock = Self {
+            cleanup,
             path,
             lock_path,
             file: Some(file),
@@ -67,6 +71,7 @@ impl Lock {
     /// Publishes the new sorted roots after object installation while retaining the lock.
     /// A later reference failure leaves this new file in place for explicit recovery.
     pub(super) fn publish(&mut self, roots: &[ObjectId]) -> Result<bool, FetchShallowError> {
+        let _lock_operation = crate::locks::operation();
         if self.old == roots {
             return Ok(false);
         }
@@ -82,6 +87,7 @@ impl Lock {
     }
 
     fn check_owned(&self) -> Result<(), FetchShallowError> {
+        self.cleanup.check()?;
         let current = fs::symlink_metadata(&self.lock_path)?;
         if !current.is_file() || current.file_type().is_symlink() {
             return Err(FetchShallowError::Changed);
@@ -99,6 +105,7 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
+        let _lock_operation = crate::locks::operation();
         if self.check_owned().is_ok() {
             drop(self.file.take());
             let _ = fs::remove_file(&self.lock_path);

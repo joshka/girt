@@ -383,6 +383,7 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, Some(target), expected, false)
                 .map(|_| ());
@@ -423,6 +424,7 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(
                 self,
@@ -480,6 +482,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, false).map(|_| ());
         }
@@ -516,6 +519,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, true)
                 .map(|outcome| outcome.name);
@@ -781,9 +785,11 @@ pub(super) struct Lock {
     path: PathBuf,
     file: Option<File>,
     identity: fs::Metadata,
+    cleanup: crate::locks::Guard,
 }
 impl Lock {
     pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         check_path(&destination)?;
         #[expect(
             clippy::unwrap_used,
@@ -810,14 +816,20 @@ impl Lock {
                 io_error(&path, source)
             }
         })?;
+        let cleanup =
+            crate::locks::Guard::new(&path, &file).map_err(|source| io_error(&path, source))?;
         Ok(Self {
             destination,
+            cleanup,
             path: path.clone(),
             identity: file.metadata().map_err(|source| io_error(&path, source))?,
             file: Some(file),
         })
     }
     pub(super) fn check_owned(&self) -> Result<(), ReferenceError> {
+        self.cleanup
+            .check()
+            .map_err(|source| io_error(&self.path, source))?;
         let current =
             fs::symlink_metadata(&self.path).map_err(|source| io_error(&self.path, source))?;
         if !current.is_file() || current.file_type().is_symlink() {
@@ -845,6 +857,7 @@ impl Lock {
     }
 
     fn publish_replacement(&self, bytes: &[u8], sync: bool) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         self.check_owned()?;
         #[expect(clippy::unwrap_used, reason = "lock destinations lie below a root")]
         let parent = self.destination.parent().unwrap();
@@ -895,6 +908,7 @@ impl Lock {
 }
 impl Drop for Lock {
     fn drop(&mut self) {
+        let _lock_operation = crate::locks::operation();
         if self.check_owned().is_ok() {
             drop(self.file.take());
             let _ = fs::remove_file(&self.path);
@@ -1298,5 +1312,34 @@ mod termination_tests {
         drop(lock);
         assert_eq!(fs::read(directory.join("ref")).unwrap(), b"recovered");
         assert!(!directory.join("ref.lock").exists());
+    }
+}
+
+#[cfg(test)]
+mod interrupt_cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_invalidates_all_reference_lock_topologies_before_publication() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        for name in [
+            "refs/heads/main",
+            "logs/refs/heads/main",
+            "packed-refs",
+            "reftable/tables.list",
+        ] {
+            let destination = directory.join(name);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::write(&destination, b"published bytes").unwrap();
+            let lock = Lock::acquire(destination.clone()).unwrap();
+            let report = crate::locks::cleanup_under(&directory).unwrap();
+            #[cfg(unix)]
+            assert_eq!(report.removed.len(), 1);
+            #[cfg(not(unix))]
+            assert_eq!(report.failures.len(), 1);
+            assert!(lock.publish_retaining_lock(b"unsafe replacement").is_err());
+            assert_eq!(fs::read(destination).unwrap(), b"published bytes");
+        }
     }
 }

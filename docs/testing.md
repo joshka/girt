@@ -111,6 +111,24 @@ hook execution needs native macOS/Linux evidence. Existing installation, expecte
 receive-policy tests remain applicable. Process-group-escaping hooks remain a separate limitation,
 not an acceptance claim for this increment.
 
+### Caller-Controlled Lock Cleanup Acceptance
+
+[Issue 93](https://github.com/joshka/girt/issues/93) records the ownership inventory, tests-first
+revision and design choice. `tests/lock_cleanup.rs` generates index/config storage with Git and
+compares SIGINT cleanup during Git's index-info stdin wait. It verifies unchanged published bytes,
+foreign/replacement lock preservation, stale-guard refusal, idempotence and Git readability while
+cleanup races index publication/drop. Fault tests cover acquisition/registration and publication
+checkpoints, nested operations, reference/reflog/packed-ref/reftable lock topologies, reentrant
+callback refusal and path-specific inspection failures.
+
+`girt::locks::cleanup` runs in normal thread context. jj must request cancellation, stop admitting
+work and wake/join writers before cleanup; raw signal handlers must delegate to normal context.
+Cleanup waits for active lock operations and invalidates surviving guards before releasing locks.
+Existing public error enums gain no variants. Unix uses pinned device/inode identities; other
+platforms preserve locks and report unsupported removal. Caller exclusion of hostile path/parent
+replacement remains required. Cleanup does not roll back completed publication, remove persistent
+worktree locks or pack protections, or provide SIGKILL/crash cleanup.
+
 ## Required Evidence
 
 - **Behavior:** State what callers can do, supported formats, and explicit exclusions. Reject

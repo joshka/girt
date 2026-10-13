@@ -2,18 +2,32 @@
 #![cfg(unix)]
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+static CLEANUP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn command(root: &std::path::Path) -> Command {
+    let mut command = Command::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .arg("-C")
+        .arg(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"));
+    command
+}
 
 fn git(root: &std::path::Path, args: &[&str]) {
-    let output = Command::new("git").arg("-C").arg(root).args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", root.join("absent-config"))
-        .output().unwrap();
+    let output = command(root).args(args).output().unwrap();
     assert!(output.status.success(), "{:?}", output);
 }
 
 #[cfg(unix)]
 #[test]
 fn cleanup_invalidates_owned_edits_and_preserves_git_targets_and_replacements() {
+    let _serial = CLEANUP_TEST.lock().unwrap();
     let root = tempfile::tempdir().unwrap();
     git(root.path(), &["init", "--template=", "-q"]);
     std::fs::write(root.path().join("file"), b"original fixture").unwrap();
@@ -36,7 +50,10 @@ fn cleanup_invalidates_owned_edits_and_preserves_git_targets_and_replacements() 
     std::fs::write(repo.git_dir().join("index.lock"), b"replacement").unwrap();
     assert!(edit.commit().is_err());
     assert!(config_edit.commit().is_err());
-    assert_eq!(std::fs::read(repo.git_dir().join("index.lock")).unwrap(), b"replacement");
+    assert_eq!(
+        std::fs::read(repo.git_dir().join("index.lock")).unwrap(),
+        b"replacement"
+    );
     assert_eq!(std::fs::read(&foreign).unwrap(), b"foreign");
     assert_eq!(std::fs::read(index_path).unwrap(), index);
     assert_eq!(std::fs::read(config_path).unwrap(), config);
@@ -65,19 +82,60 @@ fn git_interrupt_releases_index_lock_without_changing_published_index() {
     let before = std::fs::read(&index).unwrap();
     struct Child(std::process::Child);
     impl Drop for Child {
-        fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
     }
-    let mut child = Child(Command::new("git").arg("-C").arg(root.path())
-        .args(["update-index", "--index-info"]).stdin(Stdio::piped())
-        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+    let mut child = Child(
+        command(root.path())
+            .args(["update-index", "--index-info"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let end = Instant::now() + Duration::from_secs(5);
     while !root.path().join(".git/index.lock").exists() && Instant::now() < end {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(root.path().join(".git/index.lock").exists());
+    // Let Git finish registering the just-created lock before interrupting its stdin wait.
+    std::thread::sleep(Duration::from_millis(100));
     let pid = rustix::process::Pid::from_raw(child.0.id() as i32).unwrap();
     rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
     assert!(!child.0.wait().unwrap().success());
     assert!(!root.path().join(".git/index.lock").exists());
     assert_eq!(std::fs::read(index).unwrap(), before);
+}
+
+#[test]
+fn cleanup_racing_index_publication_or_drop_preserves_git_readability() {
+    let _serial = CLEANUP_TEST.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "--template=", "-q"]);
+    std::fs::write(root.path().join("file"), b"publication race fixture").unwrap();
+    git(root.path(), &["add", "file"]);
+    let repo = girt::Repository::open(root.path()).unwrap();
+    for publish in [true, false] {
+        for _ in 0..20 {
+            let edit = repo.edit_index(girt::index::Limits::default()).unwrap();
+            let start = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    start.wait();
+                    if publish {
+                        let _ = edit.commit();
+                    } else {
+                        drop(edit);
+                    }
+                });
+                start.wait();
+                assert!(girt::locks::cleanup().unwrap().failures.is_empty());
+            });
+            assert!(!repo.git_dir().join("index.lock").exists());
+            git(root.path(), &["ls-files", "--stage"]);
+        }
+    }
 }

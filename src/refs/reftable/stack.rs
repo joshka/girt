@@ -244,6 +244,7 @@ pub(super) fn expire_logs_with_sync(
     cancel: &AtomicBool,
     mut sync: impl FnMut(&Path) -> Result<(), ReferenceError>,
 ) -> Result<ExpiredStack, ExpireStackError> {
+    let _lock_operation = crate::locks::operation();
     let fail = |source| ExpireStackError::Failed {
         source,
         publication_uncertain: false,
@@ -396,6 +397,7 @@ pub fn compact(
     limits: StackLimits,
     cancel: &AtomicBool,
 ) -> Result<Compaction, ReferenceError> {
+    let _lock_operation = crate::locks::operation();
     #[cfg(feature = "tracing")]
     let span = tracing::debug_span!(target: "girt", "reftable.compact", outcome = "incomplete", failure_class = tracing::field::Empty);
     let operation = || compact_inner(directory, format, limits, cancel);
@@ -469,6 +471,7 @@ pub(super) fn publish_with(
     limits: StackLimits,
     before_list: impl FnOnce() -> std::io::Result<()>,
 ) -> Result<(), ReferenceError> {
+    let _lock_operation = crate::locks::operation();
     if names.len() >= limits.tables {
         return Err(Error::Limit("stack table count").into());
     }

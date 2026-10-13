@@ -316,10 +316,12 @@ struct Lock {
     file: PathBuf,
     lock: PathBuf,
     handle: Option<std::fs::File>,
+    cleanup: crate::locks::Guard,
 }
 
 impl Lock {
     fn acquire(file: &Path) -> Result<Self, CredentialError> {
+        let _lock_operation = crate::locks::operation();
         let file = match std::fs::canonicalize(file) {
             Ok(target) => target,
             Err(error) if error.kind() == ErrorKind::NotFound => file.to_path_buf(),
@@ -342,10 +344,12 @@ impl Lock {
             options.mode(mode);
         }
         let handle = options.open(&lock).map_err(write_error)?;
+        let cleanup = crate::locks::Guard::new(&lock, &handle).map_err(write_error)?;
         Ok(Self {
             file,
             lock,
             handle: Some(handle),
+            cleanup,
         })
     }
 
@@ -354,6 +358,8 @@ impl Lock {
     }
 
     fn commit(mut self, contents: &[u8]) -> Result<(), CredentialError> {
+        let _lock_operation = crate::locks::operation();
+        self.cleanup.check_path().map_err(write_error)?;
         let mut handle = self.handle.take().expect("uncommitted lock");
         let published = handle
             .write_all(contents)
@@ -362,7 +368,7 @@ impl Lock {
                 drop(handle);
                 std::fs::rename(&self.lock, &self.file)
             });
-        if published.is_err() {
+        if published.is_err() && self.cleanup.check_path().is_ok() {
             let _ = std::fs::remove_file(&self.lock);
         }
         published.map_err(write_error)
@@ -371,7 +377,8 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        if self.handle.take().is_some() {
+        let _lock_operation = crate::locks::operation();
+        if self.handle.take().is_some() && self.cleanup.check_path().is_ok() {
             let _ = std::fs::remove_file(&self.lock);
         }
     }

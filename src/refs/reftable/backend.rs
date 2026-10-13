@@ -578,6 +578,7 @@ impl Prepared {
         cancel: &AtomicBool,
         mut after_group: impl FnMut(),
     ) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        let _lock_operation = crate::locks::operation();
         for group in &self.groups {
             if let Err(source) = stack::cancelled(cancel) {
                 return Err(TransactionError::Publish {

@@ -42,12 +42,14 @@ fn quoted(output: &mut Vec<u8>, bytes: &[u8]) {
 // This deliberately only replaces our initializer's exact configuration under config.lock.
 // It is not a general editor and never merges another writer's changes.
 pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Result<()> {
+    let _lock_operation = crate::locks::operation();
     let lock = repo.git_dir().join("config.lock");
     let destination = repo.git_dir().join("config");
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&lock)?;
+    let cleanup = crate::locks::Guard::new(&lock, &file)?;
     let result = (|| {
         if fs::read(&destination)? != initial_config(kind) {
             return Err(io::Error::other(
@@ -57,9 +59,10 @@ pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Re
         file.write_all(bytes)?;
         file.flush()?;
         drop(file);
+        cleanup.check_path()?;
         fs::rename(&lock, &destination)
     })();
-    if result.is_err() {
+    if result.is_err() && cleanup.check_path().is_ok() {
         let _ = fs::remove_file(lock);
     }
     result

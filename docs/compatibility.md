@@ -2503,3 +2503,32 @@ refresh, current and candidate views coexist: aggregate handles and tables may r
 generations' limits. Further retained generations multiply that cost; clones within one generation
 share handles and tables. R15's bounded per-generation accounting and per-read work limits still
 apply. [R16 evidence](evidence/r16.md) records publication, recovery and native cases.
+
+## Caller-Controlled Interrupt Lock Cleanup
+
+`girt::locks::cleanup` releases this process's registered transient lock files during normal-context
+shutdown. It includes index/config edits, files/reflog/packed-ref/reftable guards, shallow metadata,
+credentials, clone config and worktree administration mutexes. It does not scan directories or
+recover foreign stale locks. Persistent worktree `locked` markers and `.keep` protections are
+preserved.
+
+jj owns signal handling. A callback thread may first request cancellation, stop admitting work,
+wake/join writers, and call cleanup before exiting. A raw POSIX signal trampoline must delegate this
+work to normal context: the API allocates, locks and performs filesystem I/O. An invocation inside a
+girt lock callback returns `WouldBlock`; it cannot wait on its own operation. Cleanup can wait
+indefinitely for uncancelled lock waits or synchronous filesystem operations.
+
+Cleanup and active acquisition/publication/drop are mutually exclusive. Surviving guards are
+invalidated before their identity-matched paths are unlinked; they cannot publish through a new
+writer's replacement lock. Completed ref/index/config/worktree effects remain completed. New work
+after cleanup can acquire locks, so shutdown admission control remains the caller's responsibility.
+Report entries identify removed/absent, replaced/preserved and failed paths. Invalidated failures
+are not retried by later cleanup calls; preserve the first report for manual recovery. Registration
+inspection/handle failures can leave a lock requiring recovery and are returned by the acquiring
+operation. Unpublished temporary files and crash durability are outside this lock-only API.
+
+Unix registrations pin the file inode and compare device/inode before unlinking. Identity checks
+cannot protect a check/unlink pair against non-cooperating lock-path or parent-directory
+replacement; callers must exclude those races. Other platforms preserve locks and report
+`Unsupported` cleanup. No library signal handlers or new variants in existing public error enums are
+introduced.

@@ -34,6 +34,7 @@ pub struct ConfigEdit {
     file: Option<File>,
     original: Option<Vec<u8>>,
     lock_identity: fs::Metadata,
+    cleanup: crate::locks::Guard,
     document: Document,
     max_bytes: usize,
     published: bool,
@@ -108,6 +109,7 @@ impl ConfigEdit {
     ///
     /// Returns contention, read, parse and size errors, retaining cleanup failures.
     pub fn open(path: impl AsRef<Path>, max_bytes: usize) -> Result<Self, EditError> {
+        let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -141,10 +143,13 @@ impl ConfigEdit {
                     io::Error::other("cannot safely remove lock without its file identity"),
                 )),
             })?;
+            let cleanup = crate::locks::Guard::new(&lock_path, &file)
+                .map_err(|source| io_error("register lock", &lock_path, source))?;
             let mut edit = ConfigEdit {
                 destination,
                 lock_path,
                 lock_identity,
+                cleanup,
                 file: Some(file),
                 original: None,
                 #[expect(clippy::expect_used, reason = "empty input is a valid configuration")]
@@ -257,6 +262,7 @@ impl ConfigEdit {
     /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
     /// recovery; no config or working-tree content is changed.
     pub fn abort(mut self) -> Result<(), EditError> {
+        let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -293,6 +299,7 @@ impl ConfigEdit {
         &mut self,
         rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
     ) -> Result<(), EditError> {
+        let _lock_operation = crate::locks::operation();
         let bytes = self.document.as_bytes().to_vec();
         if bytes.len() > self.max_bytes {
             return Err(EditError::Limit);
@@ -309,6 +316,9 @@ impl ConfigEdit {
     }
 
     fn check_lock_identity(&self) -> Result<(), EditError> {
+        self.cleanup
+            .check()
+            .map_err(|source| io_error("check lock registration", &self.lock_path, source))?;
         let current = fs::symlink_metadata(&self.lock_path)
             .map_err(|source| io_error("inspect owned config lock", &self.lock_path, source))?;
         if !current.is_file() {
@@ -349,6 +359,7 @@ impl ConfigEdit {
 }
 impl Drop for ConfigEdit {
     fn drop(&mut self) {
+        let _lock_operation = crate::locks::operation();
         if !self.published && self.check_lock_identity().is_ok() {
             drop(self.file.take());
             let _ = fs::remove_file(&self.lock_path);

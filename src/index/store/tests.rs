@@ -815,3 +815,53 @@ fn discard_resolve_undo_requires_offsets_first_and_explicit_commit(
     assert_eq!(result.extensions()[0].data(), b"opaque tree");
     assert_eq!(result.extensions().len(), 1);
 }
+
+#[test]
+fn caller_cleanup_waits_through_the_publication_checkpoint() {
+    let (_root, repo) = repository(crate::ObjectFormat::Sha1);
+    populated(&repo);
+    let mut edit = repo.edit_index(Limits::default()).unwrap();
+    let (at_sync, observed) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let (cleaned, done) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let publisher = scope.spawn(move || {
+            edit.publish_with_policy(
+                IndexCommitOptions {
+                    sync: true,
+                    ..Default::default()
+                },
+                |file| {
+                    file.sync_all()?;
+                    at_sync.send(()).unwrap();
+                    resume.recv().unwrap();
+                    Ok(())
+                },
+                |from, to| fs::rename(from, to),
+            )
+        });
+        observed.recv().unwrap();
+        let cleaner = scope.spawn(|| {
+            let report = crate::locks::cleanup_under(repo.git_dir()).unwrap();
+            cleaned.send(()).unwrap();
+            report
+        });
+        assert!(
+            done.recv_timeout(std::time::Duration::from_millis(50))
+                .is_err()
+        );
+        assert!(repo.git_dir().join("index.lock").exists());
+        release.send(()).unwrap();
+        publisher.join().unwrap().unwrap();
+        assert!(cleaner.join().unwrap().failures.is_empty());
+    });
+    assert!(!repo.git_dir().join("index.lock").exists());
+    assert_eq!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .entries()
+            .len(),
+        1
+    );
+}
