@@ -237,7 +237,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             pack.append(&buffer[..count])
                 .map_err(|error| PushError::NotSent(PushFailure::install(error)))?;
         }
-        let received = ReceivedFetch::validate_known(
+        let received = ReceivedFetch::validate_local_push(
             Advertisement {
                 refs: Vec::new(),
                 capabilities: vec![format!("object-format={}", prepared.format).into_bytes()],
@@ -249,7 +249,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 .map(|command| command.new)
                 .collect(),
             pack,
-            &known,
+            known,
             vec![],
             crate::fetch::FetchOptions {
                 limits,

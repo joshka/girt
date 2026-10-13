@@ -1758,3 +1758,170 @@ fn external_delta_base_requires_live_advertisement_without_history_exclusion() {
     );
     assert!(sent.is_empty());
 }
+
+fn receiver_git(path: &std::path::Path, args: &[&str], input: &[u8]) -> Vec<u8> {
+    let mut child = std::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "A")
+        .env("GIT_AUTHOR_EMAIL", "a@example.com")
+        .env("GIT_COMMITTER_NAME", "A")
+        .env("GIT_COMMITTER_EMAIL", "a@example.com")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
+
+/// A malformed transfer cannot turn arbitrary destination possession into complete history.
+#[rstest]
+#[case::missing_parent("main", "independent", "main^{tree}")]
+#[case::incomplete_stored_parent("main~1", "independent", "main^{tree}")]
+#[case::incomplete_stored_child("main^{tree}", "main~1", "main~1^{tree}")]
+fn local_receiver_rejects_missing_history(
+    #[case] missing_revision: &str,
+    #[case] live_revision: &str,
+    #[case] new_tree_revision: &str,
+) {
+    let root = tempfile::tempdir().unwrap();
+    receiver_git(root.path(), &["init", "--bare", "--template=", "."], b"");
+    receiver_git(root.path(), &["fast-import", "--quiet"],
+        b"commit refs/heads/main\nmark :1\ncommitter A <a@example.com> 100 +0000\ndata 4\nold\nM 100644 inline f\ndata 4\nold\ncommit refs/heads/main\ncommitter A <a@example.com> 200 +0000\ndata 4\nnew\nfrom :1\nM 100644 inline f\ndata 4\nnew\n");
+    let source = Repository::open(root.path()).unwrap();
+    let old: ObjectId =
+        std::str::from_utf8(&receiver_git(root.path(), &["rev-parse", "main"], b""))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+    let tree = receiver_git(root.path(), &["rev-parse", "main^{tree}"], b"");
+    let new_tree = receiver_git(root.path(), &["rev-parse", new_tree_revision], b"");
+    let new: ObjectId = std::str::from_utf8(&receiver_git(
+        root.path(),
+        &[
+            "commit-tree",
+            std::str::from_utf8(&new_tree).unwrap().trim(),
+            "-p",
+            &old.to_string(),
+        ],
+        b"receiver integrity\n",
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    receiver_git(
+        destination.path(),
+        &["init", "--bare", "--template=", "."],
+        b"",
+    );
+    receiver_git(
+        root.path(),
+        &["push", destination.path().to_str().unwrap(), "main:main"],
+        b"",
+    );
+    receiver_git(
+        destination.path(),
+        &["update-ref", "-d", "refs/heads/main"],
+        b"",
+    );
+    // Keep an independent live reference while the omitted parent remains unreferenced.
+    let independent: ObjectId = std::str::from_utf8(&receiver_git(
+        root.path(),
+        &["commit-tree", std::str::from_utf8(&tree).unwrap().trim()],
+        b"independent\n",
+    ))
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    receiver_git(
+        root.path(),
+        &[
+            "update-ref",
+            "refs/heads/independent",
+            &independent.to_string(),
+        ],
+        b"",
+    );
+    let live = String::from_utf8(receiver_git(
+        root.path(),
+        &["rev-parse", live_revision],
+        b"",
+    ))
+    .unwrap();
+    receiver_git(
+        root.path(),
+        &[
+            "push",
+            destination.path().to_str().unwrap(),
+            &format!("{}:refs/heads/live", live.trim()),
+        ],
+        b"",
+    );
+    let missing = String::from_utf8(receiver_git(
+        root.path(),
+        &["rev-parse", missing_revision],
+        b"",
+    ))
+    .unwrap();
+    let missing = missing.trim();
+    let missing_id: ObjectId = missing.parse().unwrap();
+    std::fs::remove_file(
+        destination
+            .path()
+            .join("objects")
+            .join(&missing[..2])
+            .join(&missing[2..]),
+    )
+    .unwrap();
+    let mut prepared = PreparedPush::new_excluding(
+        &source.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/tags/tip", None, new)],
+        &[old],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    prepared.receiver_roots.clear(); // Model a hostile sender's omitted ancestry, bypassing negotiation.
+    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(PushFailure::Install(error)))
+            if matches!(*error, crate::fetch::FetchError::Missing(id) if id == missing_id)
+    ));
+    let mut request = prepared.request.clone();
+    prepared
+        .pack
+        .reader()
+        .unwrap()
+        .read_to_end(&mut request)
+        .unwrap();
+    let git_report = receiver_git(
+        destination.path(),
+        &["receive-pack", "--stateless-rpc", "."],
+        &request,
+    );
+    assert!(String::from_utf8_lossy(&git_report).contains("ng refs/tags/tip"));
+    assert_eq!(
+        Repository::open(destination.path())
+            .unwrap()
+            .references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/tip").unwrap())
+            .unwrap(),
+        None
+    );
+}

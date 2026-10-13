@@ -1,5 +1,6 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -23,7 +24,7 @@ pub struct KnownHistory {
     pub(super) objects: HashMap<ObjectId, Object>,
     /// Destination objects available as delta bases and dependencies, consulted after `objects`.
     pub(super) store: Option<Arc<Objects>>,
-    /// Commit targets of explicit destination roots and commits discovered from them.
+    /// Verified complete commits, plus local-receive trees established through their typed edges.
     pub(super) complete_roots: HashSet<ObjectId>,
     /// A synthetic reader value is not a physical object that can support publication.
     pub(super) missing_empty_tree: Option<ObjectId>,
@@ -71,6 +72,121 @@ impl KnownObjects for KnownHistory {
     }
 }
 
+pub(super) const DISCOVERY_ANCESTORS: usize = 256;
+const DISCOVERY_SEEDS: usize = 4096;
+const DISCOVERY_OBJECT_BYTES: usize = 1024 * 1024;
+const DISCOVERY_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+struct Ancestor {
+    seconds: i64,
+    id: ObjectId,
+    parents: Vec<ObjectId>,
+    tree: ObjectId,
+}
+
+impl Ancestor {
+    fn prioritized(self, dates: &[i64]) -> Reverse<(u64, Self)> {
+        let distance = dates
+            .iter()
+            .map(|&date| self.seconds.abs_diff(date))
+            .min()
+            .unwrap_or(0);
+        Reverse((distance, self))
+    }
+}
+
+fn discovery_read(limits: FetchLimits, bytes: usize) -> crate::ReadLimits {
+    let mut read = limits.known_read;
+    read.max_object_bytes = read.max_object_bytes.min(bytes).min(DISCOVERY_OBJECT_BYTES);
+    read.max_decode_bytes = read.max_decode_bytes.min(8 * DISCOVERY_OBJECT_BYTES);
+    read.max_input_bytes = read.max_input_bytes.min(8 * DISCOVERY_OBJECT_BYTES);
+    read.max_delta_bytes = read.max_delta_bytes.min(DISCOVERY_OBJECT_BYTES);
+    read.max_delta_depth = read.max_delta_depth.min(64);
+    read
+}
+
+/// A failed optimization read supplies no evidence; connectivity must verify that branch itself.
+fn ancestor_entry(
+    store: &Objects,
+    id: ObjectId,
+    limits: FetchLimits,
+    bytes: &mut usize,
+) -> Result<Option<Ancestor>, Error> {
+    let read = discovery_read(limits, *bytes);
+    let Ok(Some(object)) = store.read(id, read) else {
+        return Ok(None);
+    };
+    *bytes = bytes
+        .checked_sub(object.data().len())
+        .ok_or(Error::Limit("known bytes"))?;
+    if object.kind() != ObjectKind::Commit {
+        return Ok(None);
+    }
+    let Ok(commit) = crate::Commit::parse(store.object_format(), object.data()) else {
+        return Ok(None);
+    };
+    let seconds = commit
+        .committer()
+        .ok()
+        .flatten()
+        .and_then(|person| person.date().ok())
+        .map_or(0, |date| date.seconds);
+    Ok(Some(Ancestor {
+        seconds,
+        id,
+        parents: commit.parents().to_vec(),
+        tree: commit.tree(),
+    }))
+}
+
+/// Verify the complete commit's tree and direct subtrees, so edited received trees can stop at
+/// unchanged subtrees. Only verified typed tree edges establish these boundaries.
+fn discover_tree_boundaries(
+    store: &Objects,
+    tree: ObjectId,
+    limits: FetchLimits,
+    bytes: &mut usize,
+    complete: &mut HashSet<ObjectId>,
+    cancel: &AtomicBool,
+) -> Result<(), Error> {
+    check_cancelled(cancel)?;
+    let read = discovery_read(limits, *bytes);
+    let Ok(Some(object)) = store.read(tree, read) else {
+        return Ok(());
+    };
+    *bytes -= object.data().len();
+    if object.kind() != ObjectKind::Tree {
+        return Ok(());
+    }
+    let mut trees = Vec::new();
+    if crate::edges::visit(tree, object.kind(), object.data(), |id, kind| {
+        if kind == ObjectKind::Tree {
+            trees.push(id);
+        }
+        Ok::<_, Error>(())
+    })
+    .is_err()
+    {
+        return Ok(());
+    }
+    complete.insert(tree);
+    for id in trees.into_iter().take(DISCOVERY_ANCESTORS) {
+        check_cancelled(cancel)?;
+        let read = discovery_read(limits, *bytes);
+        let Ok(Some(object)) = store.read(id, read) else {
+            continue;
+        };
+        *bytes -= object.data().len();
+        if object.kind() == ObjectKind::Tree
+            && crate::Tree::parse(store.object_format(), object.data()).is_ok()
+        {
+            complete.insert(id);
+        }
+    }
+    Ok(())
+}
+
 impl KnownHistory {
     pub(super) fn kind(&self, id: ObjectId) -> Option<ObjectKind> {
         self.objects.get(&id).map(Object::kind).or_else(|| {
@@ -115,6 +231,95 @@ impl KnownHistory {
             missing_empty_tree,
             ..Self::default()
         })
+    }
+
+    /// Extend reference-root evidence with a bounded, verified ancestor search for local receive.
+    /// Dates only prioritize work: even skewed dates cannot establish an ancestry edge. Objects
+    /// outside this search still require the ordinary complete connectivity walk.
+    pub(crate) fn discover_ancestors(
+        &mut self,
+        targets: &[ObjectId],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<(), Error> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let mut targets: HashSet<_> = targets.iter().copied().collect();
+        if targets.is_empty()
+            || targets.len() > DISCOVERY_ANCESTORS
+            || limits.max_known_objects == 0
+        {
+            return Ok(());
+        }
+        let mut bytes = limits.max_known_bytes.min(DISCOVERY_BYTES);
+        let mut dates = Vec::new();
+        for id in targets.clone() {
+            check_cancelled(cancel)?;
+            if let Some(entry) = ancestor_entry(store, id, limits, &mut bytes)? {
+                if self.trusted_complete(id) {
+                    discover_tree_boundaries(
+                        store,
+                        entry.tree,
+                        limits,
+                        &mut bytes,
+                        &mut self.complete_roots,
+                        cancel,
+                    )?;
+                    targets.remove(&id);
+                } else {
+                    dates.push(entry.seconds);
+                }
+            }
+        }
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let mut pending = BinaryHeap::new();
+        let mut seen = self.complete_roots.clone();
+        let mut roots: Vec<_> = self.complete_roots.iter().copied().collect();
+        roots.sort_unstable();
+        for id in roots.into_iter().take(DISCOVERY_SEEDS) {
+            check_cancelled(cancel)?;
+            if self.shallow.contains(&id) {
+                continue;
+            }
+            if let Some(entry) = ancestor_entry(store, id, limits, &mut bytes)? {
+                pending.push(entry.prioritized(&dates));
+            }
+        }
+        let mut remaining = limits.max_known_objects.min(DISCOVERY_ANCESTORS);
+        while let Some(Reverse((_, entry))) = pending.pop() {
+            for id in entry.parents {
+                check_cancelled(cancel)?;
+                if remaining == 0 {
+                    return Ok(());
+                }
+                if !seen.insert(id) || self.shallow.contains(&id) {
+                    continue;
+                }
+                remaining -= 1;
+                if let Some(entry) = ancestor_entry(store, id, limits, &mut bytes)? {
+                    self.complete_roots.insert(id);
+                    if targets.contains(&id) {
+                        discover_tree_boundaries(
+                            store,
+                            entry.tree,
+                            limits,
+                            &mut bytes,
+                            &mut self.complete_roots,
+                            cancel,
+                        )?;
+                    }
+                    targets.remove(&id);
+                    if targets.is_empty() {
+                        return Ok(());
+                    }
+                    pending.push(entry.prioritized(&dates));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Describes a destination store for negotiation without reading its complete history.
@@ -554,6 +759,191 @@ mod tests {
         )
         .unwrap();
         (root, objects, commit, blob)
+    }
+
+    fn ancestor_graph() -> (tempfile::TempDir, Objects, ObjectId, ObjectId) {
+        let (root, objects, parent, _) = graph();
+        let object = objects
+            .read(parent, crate::ReadLimits::default())
+            .unwrap()
+            .unwrap();
+        let mut fields = Commit::parse(ObjectFormat::Sha1, object.data())
+            .unwrap()
+            .to_fields()
+            .unwrap();
+        fields.parents = vec![parent];
+        fields.committer.seconds = -100; // Parent newer than child: dates cannot prune edges.
+        let child = LooseObjects::new(root.path(), ObjectFormat::Sha1)
+            .write_commit(&Commit::new(fields).unwrap())
+            .unwrap();
+        (root, objects, parent, child)
+    }
+
+    #[rstest]
+    #[case::no_budget(0, false, false)]
+    #[case::exact_budget(1, false, true)]
+    #[case::shallow_seed(1, true, false)]
+    fn discovery_requires_verified_ancestry_within_budget(
+        #[case] count: usize,
+        #[case] shallow: bool,
+        #[case] complete: bool,
+    ) {
+        let (_root, objects, parent, child) = ancestor_graph();
+        let cancel = AtomicBool::new(false);
+        let mut known = KnownHistory::from_store_roots(objects, &[child], &cancel).unwrap();
+        known.shallow = vec![child].into_iter().filter(|_| shallow).collect();
+        known
+            .discover_ancestors(
+                &[parent],
+                FetchLimits {
+                    max_known_objects: count,
+                    ..FetchLimits::default()
+                },
+                &cancel,
+            )
+            .unwrap();
+        assert_eq!(known.trusted_complete(parent), complete);
+    }
+
+    #[test]
+    fn discovery_cannot_trust_mislabelled_parent_bytes() {
+        let (root, objects, parent, child) = ancestor_graph();
+        let other = child.to_string();
+        let id = parent.to_string();
+        std::fs::copy(
+            root.path().join(&other[..2]).join(&other[2..]),
+            root.path().join(&id[..2]).join(&id[2..]),
+        )
+        .unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut known = KnownHistory::from_store_roots(objects, &[child], &cancel).unwrap();
+        known
+            .discover_ancestors(&[parent], FetchLimits::default(), &cancel)
+            .unwrap();
+        assert!(!known.trusted_complete(parent));
+    }
+
+    #[test]
+    fn rejected_tree_kind_still_charges_proof_payload() {
+        let (_root, objects, _, blob) = graph();
+        let mut complete = HashSet::new();
+        let mut bytes = 100;
+        discover_tree_boundaries(
+            &objects,
+            blob,
+            FetchLimits::default(),
+            &mut bytes,
+            &mut complete,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(bytes, 90);
+        assert!(complete.is_empty());
+    }
+
+    #[test]
+    fn tree_boundary_requires_subtree_identity() {
+        let (root, objects, _, _) = graph();
+        let loose = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let subtree = loose
+            .write_tree(
+                &Tree::new(
+                    ObjectFormat::Sha1,
+                    vec![TreeEntry {
+                        mode: EntryMode::Blob,
+                        name: b"f".to_vec(),
+                        id: loose.write_blob(b"payload").unwrap(),
+                    }],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let tree = loose
+            .write_tree(
+                &Tree::new(
+                    ObjectFormat::Sha1,
+                    vec![TreeEntry {
+                        mode: EntryMode::Tree,
+                        name: b"d".to_vec(),
+                        id: subtree,
+                    }],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let other = loose
+            .write_tree(&Tree::new(ObjectFormat::Sha1, vec![]).unwrap())
+            .unwrap()
+            .to_string();
+        let id = subtree.to_string();
+        std::fs::copy(
+            root.path().join(&other[..2]).join(&other[2..]),
+            root.path().join(&id[..2]).join(&id[2..]),
+        )
+        .unwrap();
+        let mut complete = HashSet::new();
+        let mut bytes = DISCOVERY_BYTES;
+        discover_tree_boundaries(
+            &objects,
+            tree,
+            FetchLimits::default(),
+            &mut bytes,
+            &mut complete,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(complete.contains(&tree));
+        assert!(!complete.contains(&subtree));
+    }
+
+    #[test]
+    fn exhausted_discovery_preserves_full_connectivity_validation() {
+        let (root, objects, parent, child) = ancestor_graph();
+        let cancel = AtomicBool::new(false);
+        let mut known = KnownHistory::from_store_roots(objects, &[child], &cancel).unwrap();
+        known
+            .discover_ancestors(
+                &[parent],
+                FetchLimits {
+                    max_known_objects: 0,
+                    ..FetchLimits::default()
+                },
+                &cancel,
+            )
+            .unwrap();
+        let received = HashMap::<ObjectId, Object>::new();
+        let result = super::super::connectivity::validate_with_boundaries(
+            &received,
+            &known,
+            &[parent],
+            &[],
+            FetchLimits::default(),
+            &cancel,
+        );
+        assert!(result.is_ok());
+        assert!(!known.trusted_complete(parent));
+        let blob = ObjectId::for_blob(ObjectFormat::Sha1, b"known blob");
+        damage(root.path(), blob, false);
+        let result = super::super::connectivity::validate_with_boundaries(
+            &received,
+            &known,
+            &[parent],
+            &[],
+            FetchLimits::default(),
+            &cancel,
+        );
+        assert!(matches!(result, Err(Error::Missing(id)) if id == blob));
+    }
+
+    #[test]
+    fn cancelled_discovery_cannot_authorize_ancestors() {
+        let (_root, objects, parent, child) = ancestor_graph();
+        let mut known =
+            KnownHistory::from_store_roots(objects, &[child], &AtomicBool::new(false)).unwrap();
+        let result =
+            known.discover_ancestors(&[parent], FetchLimits::default(), &AtomicBool::new(true));
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert!(!known.trusted_complete(parent));
     }
 
     #[rstest]
