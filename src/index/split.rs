@@ -1,4 +1,13 @@
 //! Shared-index resolution from the published index and EWAH format specifications.
+
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use super::codec::validate_entries;
 use super::{Error, Index, Limits};
 use crate::ObjectId;
@@ -31,7 +40,8 @@ impl Index {
             .data
             .get(..width)
             .ok_or(invalid("truncated shared identity"))?;
-        let id = ObjectId::from_bytes(self.format, hash).unwrap();
+        let id = ObjectId::from_bytes(self.format, hash)
+            .map_err(|_| invalid("truncated shared identity"))?;
         let mut base = if id == ObjectId::null(self.format) {
             Index::empty(self.format)
         } else {
@@ -47,7 +57,7 @@ impl Index {
             if base.extensions.iter().any(|e| e.signature == *b"link") {
                 return Err(invalid("nested shared index"));
             }
-            if bytes[bytes.len() - width..] != *hash {
+            if !bytes.ends_with(hash) {
                 return Err(Error::Checksum);
             }
             base
@@ -70,12 +80,16 @@ impl Index {
             return Err(invalid("missing replacement entries"));
         }
         let mut drafts = self.entries.into_iter();
-        for &position in &replaced {
-            let mut entry = drafts.next().unwrap();
+        for (&position, mut entry) in replaced.iter().zip(drafts.by_ref()) {
+            // Bitmap positions are below the shared entry count, which bounds the bitmap length.
+            let slot = base
+                .entries
+                .get_mut(position)
+                .ok_or(invalid("replaced entry outside shared index"))?;
             if entry.path.is_empty() {
-                entry.path = base.entries[position].path.clone();
+                entry.path = slot.path.clone();
             }
-            base.entries[position] = entry;
+            *slot = entry;
         }
         let mut position = 0;
         base.entries.retain(|_| {
@@ -124,14 +138,19 @@ fn bitmap(bytes: &[u8], cursor: &mut usize, maximum: usize) -> Result<Vec<usize>
     if words == 0 || current >= words {
         return Err(invalid("invalid bitmap run pointer"));
     }
-    let word = |i: usize| u64::from_be_bytes(data[i * 8..i * 8 + 8].try_into().unwrap());
+    let (data, _) = data.as_chunks::<8>();
+    let word = |i: usize| {
+        data.get(i)
+            .map(|word| u64::from_be_bytes(*word))
+            .ok_or(invalid("truncated bitmap"))
+    };
     let mut output = Vec::new();
     let mut offset = 0usize;
     let mut index = 0;
     let mut last_run = 0;
     while index < words {
         last_run = index;
-        let run = word(index);
+        let run = word(index)?;
         index += 1;
         let repeats = ((run >> 1) & 0xffff_ffff) as usize;
         let literals = (run >> 33) as usize;
@@ -150,7 +169,7 @@ fn bitmap(bytes: &[u8], cursor: &mut usize, maximum: usize) -> Result<Vec<usize>
         }
         offset = next;
         for _ in 0..literals {
-            let value = word(index);
+            let value = word(index)?;
             index += 1;
             for bit in 0..64 {
                 if value & (1 << bit) != 0 {
@@ -173,12 +192,12 @@ fn bitmap(bytes: &[u8], cursor: &mut usize, maximum: usize) -> Result<Vec<usize>
     Ok(output)
 }
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, Error> {
-    let end = cursor.checked_add(4).ok_or(Error::Limit("bitmap bytes"))?;
     let raw = bytes
-        .get(*cursor..end)
+        .get(*cursor..)
+        .and_then(<[u8]>::first_chunk::<4>)
         .ok_or(invalid("truncated bitmap header"))?;
-    *cursor = end;
-    Ok(u32::from_be_bytes(raw.try_into().unwrap()))
+    *cursor += 4;
+    Ok(u32::from_be_bytes(*raw))
 }
 
 #[cfg(test)]
@@ -195,6 +214,31 @@ mod tests {
         }
         bytes.extend_from_slice(&pointer.to_be_bytes());
         bytes
+    }
+
+    #[test]
+    fn rejects_bitmap_truncated_at_every_length() {
+        let bytes = encoded(130, &[3 | (1 << 33), 2, 1 << 33, 1], 2);
+        assert_eq!(
+            bitmap(&bytes[..0], &mut 0, 130),
+            Err(Error::Malformed {
+                offset: 0,
+                reason: "truncated bitmap header"
+            })
+        );
+        assert_eq!(
+            bitmap(&bytes[..12], &mut 0, 130),
+            Err(Error::Malformed {
+                offset: 0,
+                reason: "truncated bitmap"
+            })
+        );
+        for length in 0..bytes.len() {
+            assert!(
+                bitmap(&bytes[..length], &mut 0, 130).is_err(),
+                "accepted {length}"
+            );
+        }
     }
 
     #[test]

@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 #[cfg(test)]
 use sha1::{Digest, Sha1};
 use thiserror::Error;
@@ -536,20 +544,23 @@ impl Index {
         limits: Limits,
     ) -> Result<Self, Error> {
         check_count(bytes.len(), limits.max_bytes, "bytes")?;
-        if bytes.len() < 12 + format.digest_len() || &bytes[..4] != b"DIRC" {
+        if bytes.len() < 12 + format.digest_len() || !bytes.starts_with(b"DIRC") {
             return Err(malformed(0, "missing header or checksum"));
         }
-        let version = match word(bytes, 4) {
+        let version = match word(bytes, 4)? {
             2 => Version::V2,
             3 => Version::V3,
             4 => Version::V4,
             other => return Err(Error::Version(other)),
         };
         let end = bytes.len() - format.digest_len();
-        if *format.checksum(&bytes[..end]).as_bytes() != bytes[end..] {
+        let (content, checksum) = bytes
+            .split_at_checked(end)
+            .ok_or(malformed(0, "missing header or checksum"))?;
+        if format.checksum(content).as_bytes() != checksum {
             return Err(Error::Checksum);
         }
-        let count = word(bytes, 8) as usize;
+        let count = word(bytes, 8)? as usize;
         check_count(count, limits.max_entries, "entries")?;
         if count > (end - 12) / (43 + format.digest_len()) {
             return Err(malformed(8, "entry count exceeds available bytes"));
@@ -559,7 +570,7 @@ impl Index {
         for position in 0..count {
             entries.push(parse_entry(
                 format,
-                &bytes[..end],
+                content,
                 &mut cursor,
                 position,
                 limits,
@@ -570,21 +581,23 @@ impl Index {
         let mut extensions = Vec::new();
         while cursor < end {
             check_count(extensions.len() + 1, limits.max_extensions, "extensions")?;
-            if end - cursor < 8 {
-                return Err(malformed(cursor, "truncated extension header"));
-            }
-            let signature: [u8; 4] = bytes[cursor..cursor + 4].try_into().unwrap();
+            let signature = *content
+                .get(cursor..)
+                .and_then(<[u8]>::first_chunk::<8>)
+                .and_then(|header| header.first_chunk::<4>())
+                .ok_or(malformed(cursor, "truncated extension header"))?;
             if !signature[0].is_ascii_uppercase() && !matches!(&signature, b"link" | b"sdir") {
                 return Err(Error::MandatoryExtension(signature));
             }
-            let length = word(bytes, cursor + 4) as usize;
+            let length = word(content, cursor + 4)? as usize;
             cursor += 8;
-            if length > end - cursor {
-                return Err(malformed(cursor, "truncated extension payload"));
-            }
+            let data = content
+                .get(cursor..)
+                .and_then(|rest| rest.get(..length))
+                .ok_or(malformed(cursor, "truncated extension payload"))?;
             extensions.push(Extension {
                 signature,
-                data: bytes[cursor..cursor + length].to_vec(),
+                data: data.to_vec(),
             });
             cursor += length;
         }
@@ -687,7 +700,10 @@ fn parse_entry(
     let fixed = bytes
         .get(start..start.saturating_add(fixed_len))
         .ok_or(malformed(start, "truncated entry"))?;
-    let mode = match word(fixed, 24) {
+    let (fixed, flags) = fixed
+        .split_last_chunk::<2>()
+        .ok_or(malformed(start, "truncated entry"))?;
+    let mode = match word(fixed, 24)? {
         0o100644 => Mode::Regular,
         0o100755 => Mode::Executable,
         0o120000 => Mode::Symlink,
@@ -697,17 +713,18 @@ fn parse_entry(
             return Err(entry_error(position, "unsupported mode"));
         }
     };
-    let flags = u16::from_be_bytes(fixed[40 + width..fixed_len].try_into().unwrap());
+    let flags = u16::from_be_bytes(*flags);
     let mut path_start = start + fixed_len;
     let extended_flags = if flags & 0x4000 != 0 {
         if version == Version::V2 {
             return Err(entry_error(position, "extended flags unsupported in v2"));
         }
         let raw = bytes
-            .get(path_start..path_start + 2)
+            .get(path_start..)
+            .and_then(<[u8]>::first_chunk::<2>)
             .ok_or(malformed(path_start, "truncated extended flags"))?;
         path_start += 2;
-        let value = u16::from_be_bytes(raw.try_into().unwrap());
+        let value = u16::from_be_bytes(*raw);
         if value & !0x6000 != 0 {
             return Err(entry_error(position, "unknown extended flags"));
         }
@@ -730,16 +747,16 @@ fn parse_entry(
             .saturating_add(limits.max_path_bytes - prefix)
             .saturating_add(1),
     );
-    let suffix_len = bytes[path_start..search_end]
-        .iter()
-        .position(|b| *b == 0)
-        .ok_or_else(|| {
-            if search_end < bytes.len() {
-                Error::Limit("path bytes")
-            } else {
-                malformed(path_start, "unterminated path")
-            }
-        })?;
+    let searched = bytes
+        .get(path_start..search_end)
+        .ok_or(malformed(path_start, "unterminated path"))?;
+    let suffix_len = searched.iter().position(|b| *b == 0).ok_or_else(|| {
+        if search_end < bytes.len() {
+            Error::Limit("path bytes")
+        } else {
+            malformed(path_start, "unterminated path")
+        }
+    })?;
     let name_len = prefix + suffix_len;
     if (flags & 0xfff) as usize != name_len.min(0xfff) {
         return Err(entry_error(position, "name length flag mismatch"));
@@ -758,12 +775,15 @@ fn parse_entry(
     }
     *cursor = end;
     let mut path = Vec::with_capacity(name_len);
-    path.extend_from_slice(&previous[..prefix]);
-    path.extend_from_slice(&bytes[path_start..path_start + suffix_len]);
+    path.extend_from_slice(previous.get(..prefix).unwrap_or_default());
+    path.extend_from_slice(searched.get(..suffix_len).unwrap_or_default());
     Ok(Entry {
         path,
         mode,
-        id: ObjectId::from_bytes(format, &fixed[40..40 + width]).unwrap(),
+        id: fixed
+            .get(40..40 + width)
+            .and_then(|id| ObjectId::from_bytes(format, id).ok())
+            .ok_or(malformed(start, "truncated entry"))?,
         stage: match (flags >> 12) & 3 {
             0 => Stage::Normal,
             1 => Stage::Base,
@@ -775,18 +795,18 @@ fn parse_entry(
         skip_worktree: extended_flags & 0x4000 != 0,
         stat: Stat {
             ctime: Timestamp {
-                seconds: word(fixed, 0),
-                nanoseconds: word(fixed, 4),
+                seconds: word(fixed, 0)?,
+                nanoseconds: word(fixed, 4)?,
             },
             mtime: Timestamp {
-                seconds: word(fixed, 8),
-                nanoseconds: word(fixed, 12),
+                seconds: word(fixed, 8)?,
+                nanoseconds: word(fixed, 12)?,
             },
-            device: word(fixed, 16),
-            inode: word(fixed, 20),
-            uid: word(fixed, 28),
-            gid: word(fixed, 32),
-            size: word(fixed, 36),
+            device: word(fixed, 16)?,
+            inode: word(fixed, 20)?,
+            uid: word(fixed, 28)?,
+            gid: word(fixed, 32)?,
+            size: word(fixed, 36)?,
         },
     })
 }
@@ -820,8 +840,7 @@ pub(super) fn validate_entries(
         {
             return Err(entry_error(position, "invalid path component or NUL"));
         }
-        if position > 0 {
-            let previous = &entries[position - 1];
+        if let Some(previous) = position.checked_sub(1).and_then(|p| entries.get(p)) {
             if (&previous.path, previous.stage) >= (&entry.path, entry.stage) {
                 return Err(entry_error(position, "unsorted or duplicate path/stage"));
             }
@@ -844,9 +863,11 @@ pub(super) fn validate_entries(
         // Search each proper path prefix in the sorted entry set. Only up to four records share
         // a name, so conflicts remain bounded without building a second path tree.
         for (slash, _) in entry.path.iter().enumerate().filter(|(_, b)| **b == b'/') {
-            let prefix = &entry.path[..slash];
+            let prefix = entry.path.get(..slash).unwrap_or_default();
             let start = entries.partition_point(|candidate| candidate.path.as_slice() < prefix);
-            for ancestor in entries[start..]
+            for ancestor in entries
+                .get(start..)
+                .unwrap_or_default()
                 .iter()
                 .take_while(|candidate| candidate.path == prefix)
             {
@@ -862,6 +883,11 @@ pub(super) fn validate_entries(
     Ok(())
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    reason = "encode checked every entry length first; common prefixes and varint starts are in range"
+)]
 fn encode_entry(out: &mut Vec<u8>, entry: &Entry, version: Version, previous: &[u8]) {
     let start = out.len();
     let stat = entry.stat;
@@ -946,6 +972,10 @@ fn read_varint(bytes: &[u8], cursor: &mut usize) -> Result<usize, Error> {
             .ok_or(malformed(*cursor, "path prefix overflow"))?;
     }
 }
+#[expect(
+    clippy::indexing_slicing,
+    reason = "ten groups hold any usize, so start stays within the array"
+)]
 fn varint(mut value: usize) -> ([u8; 10], usize) {
     // Ten seven-bit groups cover every usize on supported 32/64-bit hosts.
     let mut bytes = [0; 10];
@@ -965,8 +995,12 @@ fn entry_len(format: crate::ObjectFormat, path_len: usize) -> Result<usize, Erro
         .map(|n| n & !7)
         .ok_or(Error::Limit("path bytes"))
 }
-fn word(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+fn word(bytes: &[u8], offset: usize) -> Result<u32, Error> {
+    bytes
+        .get(offset..)
+        .and_then(<[u8]>::first_chunk::<4>)
+        .map(|word| u32::from_be_bytes(*word))
+        .ok_or(malformed(offset, "truncated integer"))
 }
 fn put_word(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_be_bytes());
