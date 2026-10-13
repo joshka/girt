@@ -6,7 +6,7 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -923,7 +923,7 @@ impl Drop for Lock {
 /// established directory barrier here, so callers must not retire data that depends on one.
 #[cfg(unix)]
 pub(super) fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
-    File::open(directory)
+    fs::File::open(directory)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| io_error(directory, source))
 }
@@ -1078,7 +1078,7 @@ mod tests {
         let path = repo.git_dir().join("HEAD");
         let mut lock = Lock::acquire(path.clone()).unwrap();
         // A read-only handle injects a deterministic write failure without chmod/root assumptions.
-        lock.file = Some(File::open(&lock.path).unwrap().into());
+        lock.file = Some(fs::File::open(&lock.path).unwrap().into());
         assert!(lock.publish(&Target::Direct(id())).is_err());
         drop(lock);
         assert_eq!(fs::read(path).unwrap(), b"ref: refs/heads/main\n");
