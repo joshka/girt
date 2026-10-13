@@ -743,10 +743,13 @@ synced before any loose file is removed. Each removal takes that ref's lock with
 unlinks only if the file still holds the packed value. A locked or changed file stays and is
 reported, and it still shadows its packed record. A crash at any point therefore leaves every ref
 either loose or packed with its old value. If the directory sync fails after the rename,
-`PackRefsError::Unconfirmed` reports the visible replacement and nothing is pruned. Packing is
-refused on non-Unix hosts, where no directory sync is established to make the rename durable before
-the last loose copy is retired; clone skips packing there. Concurrent Git writers that delete refs
-need `packed-refs.lock` and cannot interleave. Reftable is unsupported.
+`PackRefsError::Unconfirmed` reports the visible replacement and nothing is pruned. On non-Unix
+hosts `packed-refs` is still written, but no loose file is removed and every packed name is reported
+as retained. This follows the deferral of destructive Windows maintenance in
+[the roadmap](jj-roadmap.md#b08--nonadmin-windows-destructive-maintenance): without a nonadmin
+durability barrier for the rename, the loose copy stays as the durable one. Clone behaves the same
+way. Concurrent Git writers that delete refs need `packed-refs.lock` and cannot interleave. Reftable
+is unsupported.
 
 `PackTrigger::Auto` approximates `git pack-refs --auto` as observed with Git 2.56. It packs once at
 least 16 loose candidates exist, and the threshold grows by 5 for each doubling of `packed-refs`

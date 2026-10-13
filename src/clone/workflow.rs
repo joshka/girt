@@ -319,7 +319,7 @@ impl CloneReady {
         report.configured = true;
         cancelled(cancel)?;
         // Like Git's clone, publish fetched refs packed; the local branch and HEAD stay loose.
-        if cfg!(unix) && repo.reference_backend() == crate::refs::Backend::Files {
+        if repo.reference_backend() == crate::refs::Backend::Files {
             let objects = repo.objects(crate::PackLimits::default())?;
             report.packed_refs = Some(
                 repo.references()?
@@ -426,8 +426,8 @@ pub struct CloneReport {
     pub fetch: Option<FetchReport>,
     /// Complete remote/branch config replaced initialization config.
     pub configured: bool,
-    /// Fetched refs moved into `packed-refs`; `None` for reftable, non-Unix hosts (see
-    /// [`crate::refs::References::pack`]) or an earlier failure.
+    /// Fetched refs written to `packed-refs`; `None` for reftable or an earlier failure. Loose
+    /// copies stay on non-Unix hosts; see [`crate::refs::References::pack`].
     pub packed_refs: Option<crate::refs::PackRefsReport>,
     /// Successful local branch/HEAD transaction. On error inspect the nested transaction outcomes.
     pub references: Vec<RefEditOutcome>,

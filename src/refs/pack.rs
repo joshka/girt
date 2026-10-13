@@ -68,7 +68,8 @@ pub struct PackRefsReport {
     pub packed: usize,
     /// Loose files removed after packing.
     pub pruned: usize,
-    /// Packed names whose loose file stays because it was locked or changed after packing.
+    /// Packed names whose loose file stays: it was locked or changed after packing, or the host
+    /// is not Unix, where pruning is deferred.
     ///
     /// The loose file still takes precedence over its packed record, so every value is unchanged.
     pub retained: Vec<RefName>,
@@ -131,8 +132,10 @@ impl References<'_> {
     /// target of every annotated tag, and is synced to disk with its directory before any loose
     /// file is removed. An existing `^` line is kept when its objects can no longer be read. Each
     /// loose file is then removed under its own lock, only if it still holds the packed value;
-    /// a locked or changed file is kept and reported. Readers observe either the old state or
-    /// loose files that shadow equal packed records.
+    /// a locked or changed file is kept and reported. On non-Unix hosts no loose file is removed,
+    /// following the deferral of destructive maintenance there: no nonadmin sync makes the rename
+    /// durable first. Every packed name is then reported as retained. Readers observe either the
+    /// old state or loose files that shadow equal packed records.
     ///
     /// Symbolic references, `HEAD`, per-worktree references and refs that are not direct stay
     /// loose. Malformed loose files and references to missing objects are skipped, as Git skips
@@ -140,13 +143,11 @@ impl References<'_> {
     ///
     /// # Errors
     ///
-    /// Returns [`ReferenceError::Unsupported`] for reftable and on non-Unix hosts, where no
-    /// directory sync establishes that the rename is durable before loose files are retired.
-    /// Returns [`ReferenceError::Locked`] when `packed-refs.lock` remains held, and
-    /// [`PackRefsError::Peel`] for a corrupt object. All of these have no effects.
-    /// [`PackRefsError::Unconfirmed`] reports a visible replacement whose directory sync failed,
-    /// with nothing pruned; [`PackRefsError::Prune`] reports a removal failure after a durable
-    /// replacement.
+    /// Returns [`ReferenceError::Unsupported`] for reftable. Returns [`ReferenceError::Locked`]
+    /// when `packed-refs.lock` remains held, and [`PackRefsError::Peel`] for a corrupt object.
+    /// All of these have no effects. [`PackRefsError::Unconfirmed`] reports a visible
+    /// replacement whose directory sync failed, with nothing pruned; [`PackRefsError::Prune`]
+    /// reports a removal failure after a durable replacement.
     ///
     /// ```
     /// use girt::refs::PackRefsOptions;
@@ -157,14 +158,11 @@ impl References<'_> {
     ///     directory.path().join("r"),
     ///     InitKind::Bare,
     /// )?;
-    /// let result = repo
+    /// let report = repo
     ///     .references()?
-    ///     .pack(&repo.objects(PackLimits::default())?, PackRefsOptions::ALL);
-    /// if cfg!(unix) {
-    ///     let report = result?;
-    ///     assert!(report.rewritten);
-    ///     assert_eq!(report.packed, 0);
-    /// }
+    ///     .pack(&repo.objects(PackLimits::default())?, PackRefsOptions::ALL)?;
+    /// assert!(report.rewritten);
+    /// assert_eq!(report.packed, 0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn pack(
@@ -174,13 +172,6 @@ impl References<'_> {
     ) -> Result<PackRefsReport, PackRefsError> {
         if self.reference_backend != Backend::Files {
             return Err(ReferenceError::Unsupported("packing reftable references").into());
-        }
-        if !cfg!(unix) {
-            // Pruning retires the last loose copy, which needs a durable rename first.
-            return Err(ReferenceError::Unsupported(
-                "durable packed-refs replacement on this platform",
-            )
-            .into());
         }
         let cancel = AtomicBool::new(false);
         let lock = Lock::acquire_wait(
@@ -222,6 +213,12 @@ impl References<'_> {
         lock.publish_synced(&encode(&records))?;
         report.rewritten = true;
         report.packed = packed_loose.len();
+        if !cfg!(unix) {
+            // Destructive maintenance is deferred on Windows (roadmap B08): without a nonadmin
+            // durability barrier for the rename, keep every loose copy.
+            report.retained.extend(packed_loose.into_keys());
+            return Ok(report);
+        }
         if let Err(source) =
             checkpoint(Checkpoint::Published).and_then(|()| confirm_rename(self.common_dir))
         {
@@ -325,7 +322,7 @@ fn confirm_rename(directory: &std::path::Path) -> Result<(), ReferenceError> {
     super::store::sync_directory(directory)
 }
 
-/// Unreachable in practice: [`References::pack`] refuses non-Unix hosts before publishing.
+/// Unreachable in practice: [`References::pack`] never prunes on non-Unix hosts.
 #[cfg(not(unix))]
 fn confirm_rename(_: &std::path::Path) -> Result<(), ReferenceError> {
     Err(ReferenceError::Unsupported(
