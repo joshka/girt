@@ -116,19 +116,32 @@ a branch unproven and reject old corruption that Git would leave unvisited. Refe
 trusted complete, so this operation does not replace `git fsck`. Dependency reads, synchronized pack
 publication and conditional ref updates remain.
 
-Fetch may reuse kind, size and typed-edge evidence recorded from identity-checked received objects.
-This evidence is owned by that receive result and never supplies object content. Before a
-destination walk uses it, the pinned installed pack must match the receive artifact and recorded
-pack checksum, and its retained index must match the generated receive index. Normal lookup must
-select that exact pack; a different primary, alternate or duplicate copy receives the ordinary
-checked read. Independent walk object, payload-byte and edge budgets still apply. Recorded uncached
-representation costs must satisfy the caller's per-read limits; otherwise the ordinary reader checks
-those limits. Fetch's fast-forward query reads verified commits breadth-first from the new tip and
-stops after verifying the old tip, without following its parents. It detects cycles in the explored
-graph and respects shallow boundaries; a negative answer exhausts the reachable graph. Unvisited
-history supplies no evidence. Public full-history queries retain complete ancestry validation. This
-is no process-wide or persistent trust cache, and the caller's existing trusted-directory and GC
-coordination obligations still apply.
+Import hashes every received object, parses its edges and proves typed connectivity before
+installation. On the eligible path below, that is the only identity check. The checked fallbacks can
+hash received objects again; they are kept rather than removed to make the single pass
+unconditional. It keeps each commit's and tag's typed edges, but not each tree's: on git/git,
+163,754 trees hold 62.9 million entries. Instead, import records the kind each distinct tree entry
+target must have. If every received tree parsed and named each target with one kind, connectivity
+checks those targets once against received objects and complete local history, then walks only
+commit and tag edges, checking every edge's required kind even when its target was already visited.
+Otherwise it falls back to the exact walk from the wants, which re-reads trees from the received
+pack and alone decides rejections. The table can add local dependencies named only by unreachable
+received trees, and installation rechecks them too.
+
+Publication reuses that proof only for the representation import checked. The pinned installed pack
+must match the receive artifact and recorded pack checksum, and its retained index must match the
+generated receive index. Normal lookup must select that exact pack for every received object, and
+each object's recorded representation costs must satisfy the caller's per-read limits. Then only
+local dependencies are walked, through checked reads down to existing references. Otherwise, as when
+a different primary, alternate or duplicate copy is selected, publication walks the whole new graph
+with ordinary checked reads where the evidence does not apply. Received objects count against the
+independent walk object, payload-byte and edge budgets either way. Fetch's fast-forward query reads
+verified commits breadth-first from the new tip and stops after verifying the old tip, without
+following its parents. It detects cycles in the explored graph and respects shallow boundaries; a
+negative answer exhausts the reachable graph. Unvisited history supplies no evidence. Public
+full-history queries retain complete ancestry validation. This is no process-wide or persistent
+trust cache, and the caller's existing trusted-directory and GC coordination obligations still
+apply.
 
 A walk locates blobs without decoding them, so it does not see a damaged blob. A content read of
 that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack checksums) and

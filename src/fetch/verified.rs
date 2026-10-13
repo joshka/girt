@@ -1,51 +1,175 @@
 //! Receive-owned evidence for structural walks, never a source of object content.
 use crate::{IdMap, Object, ObjectId, ObjectKind, ReadLimits};
 
+/// Kind, size and structure of every identity-checked received object.
+///
+/// Commit and tag edges stay per object for ancestry and connectivity walks. Tree entries are the
+/// bulk of a history's edges (62.9M on git/git, against 409k objects), so import records only the
+/// kind each tree expects of each distinct target. Connectivity then proves every received tree
+/// at once from that table instead of walking tree edges again.
 #[derive(Debug, Default)]
 pub(super) struct VerifiedObjects {
     pub objects: IdMap<VerifiedObject>,
+    trees: TreeTargets,
+}
+
+/// Entry targets named by received trees, with the kind each entry's mode requires.
+#[derive(Debug, Default)]
+struct TreeTargets {
+    /// Targets are names from received trees, unverified until connectivity, so a peer chooses
+    /// them.
+    kinds: crate::PeerIdMap<ObjectKind>,
+    /// Typed tree entries, including repeats, for connectivity edge budgets.
+    edges: usize,
+    /// A received tree failed to parse or named one target with two kinds. Only a walk that
+    /// reaches that tree can decide the outcome.
+    unproven: bool,
+}
+
+/// Received trees whose entries all parsed with consistent target kinds.
+pub(super) struct TreeProof<'a> {
+    /// Each distinct target with the kind every naming tree requires.
+    pub targets: &'a crate::PeerIdMap<ObjectKind>,
+    /// Typed entries across all received trees.
+    pub edges: usize,
+}
+
+impl VerifiedObjects {
+    /// Records an identity-checked object's kind, size and structure.
+    pub fn insert(&mut self, id: ObjectId, object: &Object) {
+        let structure = if object.kind() == ObjectKind::Tree {
+            let trees = &mut self.trees;
+            let parsed = crate::edges::visit::<super::FetchError>(
+                id,
+                ObjectKind::Tree,
+                object.data(),
+                |target, kind| {
+                    trees.edges += 1;
+                    if *trees.kinds.entry(target).or_insert(kind) != kind {
+                        trees.unproven = true;
+                    }
+                    Ok(())
+                },
+            );
+            if parsed.is_ok() {
+                Structure::Tree
+            } else {
+                trees.unproven = true;
+                Structure::Malformed
+            }
+        } else {
+            let mut edges = Vec::new();
+            let parsed = crate::edges::visit::<super::FetchError>(
+                id,
+                object.kind(),
+                object.data(),
+                |id, kind| {
+                    edges.push((id, kind));
+                    Ok(())
+                },
+            );
+            parsed.map_or(Structure::Malformed, |()| Structure::Edges(edges))
+        };
+        self.objects.insert(
+            id,
+            VerifiedObject {
+                kind: object.kind(),
+                bytes: object.data().len(),
+                structure,
+                read: ReadLimits {
+                    max_object_bytes: object.data().len(),
+                    max_delta_bytes: 0,
+                    max_delta_depth: 0,
+                    max_decode_bytes: object.data().len(),
+                    max_input_bytes: 0,
+                },
+            },
+        );
+    }
+
+    /// Received objects, their payload bytes and their typed edges, for walk budgets.
+    pub fn totals(&self) -> (usize, usize, usize) {
+        let bytes = self.objects.values().map(|object| object.bytes).sum();
+        let edges = self
+            .objects
+            .values()
+            .filter_map(VerifiedObject::edges)
+            .map(<[_]>::len)
+            .sum::<usize>();
+        (self.objects.len(), bytes, edges + self.trees.edges)
+    }
+
+    /// The received trees' entry targets, when every received tree parsed consistently.
+    pub fn tree_proof(&self) -> Option<TreeProof<'_>> {
+        (!self.trees.unproven).then_some(TreeProof {
+            targets: &self.trees.kinds,
+            edges: self.trees.edges,
+        })
+    }
+}
+
+#[cfg(test)]
+impl VerifiedObjects {
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+
+    pub fn contains(&self, id: ObjectId) -> bool {
+        self.objects.contains_key(&id)
+    }
+
+    /// Typed edges kept after import for objects of `kind`.
+    pub fn retained_edges(&self, kind: ObjectKind) -> usize {
+        self.objects
+            .values()
+            .filter(|object| object.kind == kind)
+            .filter_map(VerifiedObject::edges)
+            .map(<[_]>::len)
+            .sum()
+    }
 }
 
 #[derive(Debug)]
 pub(super) struct VerifiedObject {
     pub kind: ObjectKind,
     pub bytes: usize,
-    /// Unselected malformed server extras need not be parsed successfully during import.
-    pub edges: Option<Vec<(ObjectId, ObjectKind)>>,
+    structure: Structure,
     pub read: ReadLimits,
 }
 
+#[derive(Debug)]
+enum Structure {
+    /// Typed edges of a commit or tag; blobs have none.
+    Edges(Vec<(ObjectId, ObjectKind)>),
+    /// A tree whose entries [`VerifiedObjects::tree_proof`] covers.
+    Tree,
+    /// Unselected malformed server extras need not parse during import.
+    Malformed,
+}
+
 impl VerifiedObject {
-    pub fn new(id: ObjectId, object: &Object) -> Self {
-        let mut edges = Vec::new();
-        let parsed = crate::edges::visit::<super::FetchError>(
-            id,
-            object.kind(),
-            object.data(),
-            |id, kind| {
-                edges.push((id, kind));
-                Ok(())
-            },
-        );
-        Self {
-            kind: object.kind(),
-            bytes: object.data().len(),
-            edges: parsed.ok().map(|()| edges),
-            read: ReadLimits {
-                max_object_bytes: object.data().len(),
-                max_delta_bytes: 0,
-                max_delta_depth: 0,
-                max_decode_bytes: object.data().len(),
-                max_input_bytes: 0,
-            },
+    /// Typed edges of a received commit, tag or blob. Trees are proven collectively instead.
+    pub fn edges(&self) -> Option<&[(ObjectId, ObjectKind)]> {
+        match &self.structure {
+            Structure::Edges(edges) => Some(edges),
+            Structure::Tree | Structure::Malformed => None,
         }
+    }
+
+    /// Whether this is a received tree covered by [`VerifiedObjects::tree_proof`].
+    pub fn is_proven_tree(&self) -> bool {
+        matches!(self.structure, Structure::Tree)
     }
 
     /// Certify the uncached representation's bounds. Smaller limits use the ordinary reader,
     /// which preserves its delta-base cache behavior and exact errors.
     pub fn fits(&self, limits: ReadLimits) -> bool {
-        self.edges.is_some()
-            && self.read.max_object_bytes <= limits.max_object_bytes
+        self.edges().is_some() && self.within(limits)
+    }
+
+    /// Whether reading the uncached representation stays within `limits`.
+    pub fn within(&self, limits: ReadLimits) -> bool {
+        self.read.max_object_bytes <= limits.max_object_bytes
             && self.read.max_delta_bytes <= limits.max_delta_bytes
             && self.read.max_delta_depth <= limits.max_delta_depth
             && self.read.max_decode_bytes <= limits.max_decode_bytes
@@ -93,6 +217,32 @@ impl<'a> InstalledObjects<'a> {
             verified: &received.verified,
             pack: selected,
         })
+    }
+
+    /// Whether normal lookup selects the validated pack for every received object.
+    ///
+    /// Then every received object reads as the bytes import identity-checked, so import's
+    /// connectivity proof holds for the installed graph. Objects whose recorded representation
+    /// costs exceed `read` need the ordinary reader's exact limit checks, so they also answer
+    /// `false`.
+    pub fn selects_every_received(
+        &self,
+        read: ReadLimits,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<bool, crate::ObjectReadError> {
+        let Some(pack) = self.pack else {
+            return Ok(false);
+        };
+        for (&id, object) in &self.verified.objects {
+            if !object.within(read) || !self.store.selects_received(id, pack, cancel)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn verified(&self) -> &'a VerifiedObjects {
+        self.verified
     }
 
     pub fn get(

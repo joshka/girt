@@ -190,10 +190,7 @@ impl Imported {
                     if objects.identities.insert(id, position).is_some() {
                         return Err(Error::Corrupt("duplicate received identity").into());
                     }
-                    objects
-                        .verified
-                        .objects
-                        .insert(id, super::verified::VerifiedObject::new(id, &object));
+                    objects.verified.insert(id, &object);
                     objects.cache.insert(position, &object, true);
                     Some((id, 0, kind))
                 } else {
@@ -446,9 +443,7 @@ impl IndexedObjects {
                         return Err(Error::Corrupt("duplicate received identity").into());
                     }
                     self.entries[child].resolved = Some((id, depth + 1, kind));
-                    self.verified
-                        .objects
-                        .insert(id, super::verified::VerifiedObject::new(id, &object));
+                    self.verified.insert(id, &object);
                     self.cache.insert(child, &object, true);
                     resolved += 1;
                     observer.resolved_delta();
@@ -577,9 +572,7 @@ impl IndexedObjects {
             resolved: Some((id, 0, object.kind())),
         });
         self.identities.insert(id, position);
-        self.verified
-            .objects
-            .insert(id, super::verified::VerifiedObject::new(id, object));
+        self.verified.insert(id, object);
         self.cache.insert(position, object, true);
         Ok(position)
     }

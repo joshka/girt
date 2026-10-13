@@ -841,9 +841,10 @@ impl FetchReady {
             let verified =
                 super::verified::InstalledObjects::bind(&objects, &self.received, cancel)
                     .map_err(FetchFinishFailure::BeforePublication)?;
-            KnownHistory::verify_stopping_at(
+            KnownHistory::verify_installed(
                 &verified,
                 &verify_roots,
+                self.received.dependencies(),
                 &shallow,
                 &published,
                 limits.verification,
@@ -1169,3 +1170,7 @@ pub enum FetchFinishFailure {
 #[cfg(test)]
 #[path = "workflow_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "single_pass_tests.rs"]
+mod single_pass_tests;

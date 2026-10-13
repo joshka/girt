@@ -571,6 +571,63 @@ impl KnownHistory {
         Ok(kinds.into_keys().collect())
     }
 
+    /// Checks that history reachable from `roots` is complete after installation.
+    ///
+    /// Import identity-checked every received object and proved its typed closure over the
+    /// received set and `dependencies`. When the installed pack is that validated artifact and
+    /// lookup selects it for every received object, that proof holds for the installed graph, so
+    /// only `dependencies` and roots outside the received set are walked, through ordinary checked
+    /// reads down to `published`. Received objects still count against the walk budgets.
+    /// Otherwise this falls back to [`Self::verify_stopping_at`] from `roots`.
+    pub(super) fn verify_installed(
+        source: &super::verified::InstalledObjects<'_>,
+        roots: &[ObjectId],
+        dependencies: &[ObjectId],
+        shallow: &[ObjectId],
+        published: &IdSet,
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<(), Error> {
+        if roots.len() > limits.max_wants {
+            return Err(Error::Limit("known roots"));
+        }
+        let verified = source.verified();
+        let (objects, bytes, edges) = verified.totals();
+        let within = objects <= limits.max_known_objects
+            && bytes <= limits.max_known_bytes
+            && edges <= limits.max_known_edges;
+        let proven = within
+            && source
+                .selects_every_received(limits.known_read, cancel)
+                .map_err(Error::Destination)?;
+        if !proven {
+            return Self::verify_stopping_at(source, roots, shallow, published, limits, cancel)
+                .map(drop);
+        }
+        let local: Vec<_> = roots
+            .iter()
+            .chain(dependencies)
+            .copied()
+            .filter(|id| !verified.objects.contains_key(id))
+            .collect();
+        let limits = FetchLimits {
+            max_known_objects: limits.max_known_objects - objects,
+            max_known_bytes: limits.max_known_bytes - bytes,
+            max_known_edges: limits.max_known_edges - edges,
+            ..limits
+        };
+        walk(
+            WalkSource::Installed(source),
+            &local,
+            shallow,
+            published,
+            limits,
+            cancel,
+            |_, _| {},
+        )
+        .map(drop)
+    }
+
     /// Number of distinct verified local objects retained for connectivity checks.
     pub fn object_count(&self) -> usize {
         self.objects.len()
@@ -589,6 +646,12 @@ fn missing_empty_tree(store: &Objects, cancel: &AtomicBool) -> Result<Option<Obj
     check_cancelled(cancel)?;
     let present = present.map_err(|source| Error::LocalRead { id, source })?;
     Ok((!present).then_some(id))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Objects visited by destination history walks, for single-pass regression tests.
+    pub(in crate::fetch) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Installed evidence carries its own store, so the walk cannot pair it with another snapshot.
@@ -637,6 +700,8 @@ fn walk(
     let mut bytes = limits.max_known_bytes;
     let mut edges = limits.max_known_edges;
     while let Some(id) = pending.pop_front() {
+        #[cfg(test)]
+        WALKED.with(|walked| walked.set(walked.get() + 1));
         check_cancelled(cancel)?;
         let mut read = limits.known_read;
         read.max_object_bytes = read.max_object_bytes.min(bytes);
@@ -683,8 +748,7 @@ fn walk(
         };
         if let Some(proof) = proof {
             let edges = proof
-                .edges
-                .as_ref()
+                .edges()
                 .expect("InstalledObjects::get requires parsed edges");
             for &(target, expected) in edges {
                 edge(target, expected)?;
