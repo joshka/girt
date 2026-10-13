@@ -610,9 +610,7 @@ fn mislabel_index_entry(index: &Path, old: girt::ObjectId, replacement: girt::Ob
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn mislabelled_delta_base_cannot_publish_even_when_destination_has_that_id(
-    #[case] format: ObjectFormat,
-) {
+fn mislabelled_delta_base_cannot_misdirect_a_fetched_delta(#[case] format: ObjectFormat) {
     let source = fixture(format);
     let pack = pack_path(source.path());
     let rows = pack_rows(source.path(), &pack);
@@ -622,7 +620,9 @@ fn mislabelled_delta_base_cannot_publish_even_when_destination_has_that_id(
         .unwrap();
     let target: girt::ObjectId = delta[0].parse().unwrap();
     let base: girt::ObjectId = delta[6].parse().unwrap();
-    let mut unrelated = git(source.path(), &["cat-file", "blob", &base.to_string()]);
+    let contents =
+        [target, base].map(|id| git(source.path(), &["cat-file", "blob", &id.to_string()]));
+    let mut unrelated = contents[1].clone();
     unrelated[0] ^= 0xff;
     let root = tempfile::tempdir().unwrap();
     let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
@@ -667,9 +667,80 @@ fn mislabelled_delta_base_cannot_publish_even_when_destination_has_that_id(
         packed, 2,
         "both entries must reach the receiver's independent validation"
     );
-    assert!(matches!(result, Err(girt::fetch::FetchError::Missing(missing)) if missing == target));
+    // Fetch frames copied deltas by offset, so the delta resolves against the entry copied with
+    // it, never against the destination's object under the mislabelled name. Import derives the
+    // base's true identity from its bytes.
+    let received = result.unwrap();
+    assert_eq!(received.object_count(), 2);
     assert_eq!(object_set(dest.git_dir()), before);
+    received
+        .install(&dest, PackLimits::trusted(), &AtomicBool::new(false))
+        .unwrap();
+    for (id, content) in [target, base].iter().zip(&contents) {
+        assert_eq!(
+            &git(dest.git_dir(), &["cat-file", "blob", &id.to_string()]),
+            content
+        );
+    }
+    assert_eq!(
+        git(
+            dest.git_dir(),
+            &["cat-file", "blob", &false_base.to_string()]
+        ),
+        unrelated
+    );
     assert!(dest.references().unwrap().list().unwrap().is_empty());
+    git(dest.git_dir(), &["fsck", "--strict"]);
+}
+
+/// A local fetch frames copied deltas by offset, as Git's own clone and fetch packs do.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn local_fetch_frames_deltas_by_offset(#[case] format: ObjectFormat) {
+    let source = fixture(format);
+    let head: girt::ObjectId = String::from_utf8(git(source.path(), &["rev-parse", "HEAD"]))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
+    let received = receive_local_with_known_and_progress(
+        source.path(),
+        |_| vec![head],
+        &KnownHistory::default(),
+        FetchLimits::trusted(),
+        TransportControl::new(&AtomicBool::new(false)),
+        |_| ControlFlow::Continue(()),
+        |_| {},
+    )
+    .unwrap();
+    received
+        .install(&dest, PackLimits::trusted(), &AtomicBool::new(false))
+        .unwrap();
+    let pack = std::fs::read_dir(dest.git_dir().join("objects/pack"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "pack")
+        })
+        .unwrap();
+    let rows = pack_rows(dest.git_dir(), &pack);
+    let bytes = std::fs::read(&pack).unwrap();
+    // Verify-pack delta rows: id, type, size, packed size, offset, depth, base.
+    let types: Vec<u8> = rows
+        .iter()
+        .filter(|row| row.len() == 7)
+        .map(|row| (bytes[row[4].parse::<usize>().unwrap()] >> 4) & 7)
+        .collect();
+    assert!(
+        types.len() > 50,
+        "fixture must keep deltas: {}",
+        types.len()
+    );
+    assert!(types.iter().all(|&kind| kind == 6), "{types:?}");
     git(dest.git_dir(), &["fsck", "--strict"]);
 }
 

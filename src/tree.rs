@@ -121,28 +121,16 @@ impl Tree {
     /// or fewer than `format.digest_len()` bytes for an entry's ID. The caller must select the
     /// payload's format; these binary records have no reliable format autodetection. Empty trees
     /// also retain the selected format for hashing.
-    pub fn parse(format: crate::ObjectFormat, mut payload: &[u8]) -> Result<Self, TreeError> {
+    pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TreeError> {
         let original = payload.to_vec();
         let mut entries = Vec::new();
-
-        while !payload.is_empty() {
-            let (mode, rest) =
-                crate::bytes::split_once(payload, b' ').ok_or(TreeError::MissingModeDelimiter)?;
-            let mode = EntryMode::parse(mode)?;
-            let (name, rest) =
-                crate::bytes::split_once(rest, 0).ok_or(TreeError::MissingNameDelimiter)?;
-            let (raw_id, rest) = rest
-                .split_at_checked(format.digest_len())
-                .ok_or(TreeError::TruncatedObjectId)?;
-            let id =
-                ObjectId::from_bytes(format, raw_id).map_err(|_| TreeError::TruncatedObjectId)?;
-
+        for entry in RawEntries::new(format, payload) {
+            let (mode, name, id) = entry?;
             entries.push(TreeEntry {
                 mode,
                 name: name.to_vec(),
                 id,
             });
-            payload = rest;
         }
 
         Ok(Self {
@@ -211,6 +199,52 @@ fn encode_entries(entries: &[TreeEntry]) -> Vec<u8> {
         payload.extend_from_slice(entry.id.as_bytes());
     }
     payload
+}
+
+/// Entries of a tree payload in stored order, borrowing their names.
+///
+/// Yields exactly what [`Tree::parse`] accepts and stops after the first error, which is the
+/// error `Tree::parse` returns. Walks over many trees use this to avoid copying each payload and
+/// name.
+pub(crate) struct RawEntries<'a> {
+    format: crate::ObjectFormat,
+    payload: &'a [u8],
+}
+
+impl<'a> RawEntries<'a> {
+    pub(crate) fn new(format: crate::ObjectFormat, payload: &'a [u8]) -> Self {
+        Self { format, payload }
+    }
+
+    fn parse_one(&mut self) -> Result<(EntryMode, &'a [u8], ObjectId), TreeError> {
+        let (mode, rest) =
+            crate::bytes::split_once(self.payload, b' ').ok_or(TreeError::MissingModeDelimiter)?;
+        let mode = EntryMode::parse(mode)?;
+        let (name, rest) =
+            crate::bytes::split_once(rest, 0).ok_or(TreeError::MissingNameDelimiter)?;
+        let (raw_id, rest) = rest
+            .split_at_checked(self.format.digest_len())
+            .ok_or(TreeError::TruncatedObjectId)?;
+        let id =
+            ObjectId::from_bytes(self.format, raw_id).map_err(|_| TreeError::TruncatedObjectId)?;
+        self.payload = rest;
+        Ok((mode, name, id))
+    }
+}
+
+impl<'a> Iterator for RawEntries<'a> {
+    type Item = Result<(EntryMode, &'a [u8], ObjectId), TreeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.payload.is_empty() {
+            return None;
+        }
+        let entry = self.parse_one();
+        if entry.is_err() {
+            self.payload = &[];
+        }
+        Some(entry)
+    }
 }
 
 /// One tree entry, with an uninterpreted byte name and a format-bearing reference.
