@@ -466,4 +466,19 @@ mod tests {
             b"new writer"
         );
     }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_repack_publication(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let before = fs::read_dir(repo.object_dir().join("pack")).unwrap().count();
+        let error = repo.repack_retained_after_plan(&policy, RepackLimits::trusted(),
+            &AtomicBool::new(false), || super::super::walk_tests::change_pack(&pack, truncate))
+            .unwrap_err();
+        assert!(format!("{error:?}").contains("PackChanged"), "{error:?}");
+        assert!(format!("{error:?}").contains(pack.to_str().unwrap()), "{error:?}");
+        assert_eq!(fs::read_dir(repo.object_dir().join("pack")).unwrap().count(), before);
+    }
+
 }

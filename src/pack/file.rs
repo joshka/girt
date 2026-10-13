@@ -1001,4 +1001,69 @@ mod publication_tests {
             Err(Error::Corrupt(_))
         ));
     }
+    #[test]
+    fn header_windows_are_bounded_across_many_packs_and_drop_with_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let paths: Vec<_> = (0..32).map(|i| pair(root.path(), &format!("p{i}"),
+            ObjectFormat::Sha1, &[i as u8; 128])).collect();
+        let packs: Vec<_> = paths.iter().map(|path| FilePack::open(ObjectFormat::Sha1,
+            path, &mut PackLimits::trusted(), &AtomicBool::new(false)).unwrap()).collect();
+        let scope = super::super::HeaderScope::new();
+        for pack in &packs {
+            pack.prefix(&pack.entry(0).unwrap()).unwrap();
+            assert!(super::window::allocated() <= 256 * 1024);
+        }
+        drop(scope);
+        assert_eq!(super::window::allocated(), 0);
+    }
+
+    #[rstest]
+    #[case::cross_window(256 * 1024 - 2, 256 * 1024 + 4)]
+    #[case::final_bytes(512 * 1024 - 3, 512 * 1024)]
+    #[case::empty_eof(512 * 1024, 512 * 1024)]
+    fn header_window_boundaries(#[case] start: usize, #[case] end: usize) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        let bytes: Vec<_> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        let _scope = super::super::HeaderScope::new();
+        super::window::bytes(&artifact, 0, 4096).unwrap();
+        assert_eq!(super::window::bytes(&artifact, start, end).unwrap(), bytes[start..end]);
+        assert!(super::window::bytes(&artifact, 512 * 1024, 512 * 1024 + 1).is_err());
+        assert!(super::window::bytes(&artifact, usize::MAX, 0).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_pack_denies_writers_but_allows_rename_and_delete() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("shared.pack");
+        fs::write(&path, b"pinned bytes").unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        let writer = fs::OpenOptions::new().write(true).share_mode(1 | 2 | 4).open(&path);
+        assert!(writer.is_err());
+        let renamed = root.path().join("renamed.pack");
+        fs::rename(&path, &renamed).unwrap();
+        fs::remove_file(&renamed).unwrap();
+        assert_eq!(artifact.bytes(0, 12).unwrap(), b"pinned bytes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn warmed_window_rename_replacement_keeps_pinned_original() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("old.pack");
+        let replacement = root.path().join("new.pack");
+        fs::write(&path, b"original").unwrap();
+        fs::write(&replacement, b"replaced").unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        let _scope = super::super::HeaderScope::new();
+        assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), b"original");
+        fs::rename(replacement, &path).unwrap();
+        artifact.check_unchanged().unwrap();
+        assert_eq!(super::window::bytes(&artifact, 0, 8).unwrap(), b"original");
+    }
+
 }

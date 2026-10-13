@@ -532,4 +532,18 @@ mod tests {
             "blob"
         );
     }
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_prune(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let error = repo.prune_unreachable_loose_at(&policy, &AtomicBool::new(false),
+            || super::super::walk_tests::change_pack(&pack, truncate), || {},
+            |_| panic!("must not unlink")) .unwrap_err();
+        assert!(format!("{error:?}").contains("PackChanged"), "{error:?}");
+        assert!(format!("{error:?}").contains(pack.to_str().unwrap()), "{error:?}");
+        assert!(error.report.deleted.is_empty());
+    }
+
 }

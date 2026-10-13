@@ -9,7 +9,7 @@ use crate::pack::counters;
 use crate::retention::RetentionPolicy;
 use crate::{PackLimits, Repository};
 
-fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
+pub(super) fn git(root: &Path, args: &[&str], input: &[u8]) -> String {
     let mut child = Command::new("git")
         .current_dir(root)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -146,7 +146,44 @@ fn retention_walk_reads_each_entry_once() {
     // opening add a few. Seek-and-read in 64-byte header chunks needed almost three per entry.
     let reads = counters::OS_READS.with(|reads| reads.get());
     assert!(
-        reads < entries * 3 / 2,
+        reads < entries / 4,
         "{reads} system reads for {entries} entries"
     );
+}
+
+/// Independently generated pack with a reachable blob and an old loose pruning candidate.
+pub(super) fn header_fixture() -> (tempfile::TempDir, Repository, RetentionPolicy, std::path::PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    git(root.path(), &["init", "-q", "--template=", "."], b"");
+    let id = git(root.path(), &["hash-object", "-w", "--stdin"], b"packed survivor");
+    git(root.path(), &["update-ref", "refs/tags/blob", &id], b"");
+    git(root.path(), &["repack", "-adq"], b"");
+    git(root.path(), &["hash-object", "-w", "--stdin"], b"loose orphan");
+    git(root.path(), &["fsck", "--full"], b"");
+    let repo = Repository::open(root.path()).unwrap();
+    let pack = std::fs::read_dir(repo.object_dir().join("pack"))
+        .unwrap().map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "pack")).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: std::time::UNIX_EPOCH + Duration::from_secs(1),
+        ..RetentionPolicy::trusted()
+    };
+    (root, repo, policy, pack)
+}
+
+#[cfg(unix)]
+pub(super) fn change_pack(path: &Path, truncate: bool) {
+    use std::io::{Seek, SeekFrom};
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    if truncate {
+        file.set_len(12).unwrap();
+    } else {
+        // Change only the trailer, so the entry CRC remains valid.
+        file.seek(SeekFrom::End(-1)).unwrap();
+        file.write_all(&[0xff]).unwrap();
+    }
+    // Deterministic even on filesystems with coarse timestamp precision.
+    file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(42)).unwrap();
 }

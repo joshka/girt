@@ -422,4 +422,21 @@ mod tests {
             .env("GIT_CONFIG_GLOBAL", root.join("absent-config"));
         command
     }
+    #[rstest::rstest]
+    #[case::truncate(true)]
+    #[case::overwrite(false)]
+    fn warmed_pack_change_refuses_maintenance(#[case] truncate: bool) {
+        let (_root, repo, policy, pack) = super::super::walk_tests::header_fixture();
+        let before = std::fs::read_dir(repo.object_dir().join("pack")).unwrap().count();
+        let error = repo.maintain_exclusive(&policy, Some(RepackLimits::trusted()),
+            &AtomicBool::new(false), || super::super::walk_tests::change_pack(&pack, truncate),
+            || {}, || {}).unwrap_err();
+        assert!(format!("{error:?}").contains("PackChanged"), "{error:?}");
+        assert!(format!("{error:?}").contains(pack.to_str().unwrap()), "{error:?}");
+        assert!(error.report.expired.is_none());
+        assert!(error.report.retired.is_none());
+        assert!(error.report.pruned.is_none());
+        assert_eq!(std::fs::read_dir(repo.object_dir().join("pack")).unwrap().count(), before);
+    }
+
 }
