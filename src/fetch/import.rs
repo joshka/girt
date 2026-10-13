@@ -18,6 +18,23 @@ use crate::pack::reader::{BaseCache, Source, decode_budgeted};
 use crate::pack::write::{Entry, encode_index};
 use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error};
 
+/// Verifies a self-contained pack exactly as a received one and returns its index and checksum.
+pub(crate) fn index_self_contained(
+    format: crate::ObjectFormat,
+    pack: Bytes,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<(Vec<u8>, ObjectId), FetchError> {
+    let imported = Imported::read_owned(
+        format,
+        pack,
+        &HashMap::new(),
+        limits,
+        &mut ValidationObserver::new(cancel, &mut |_| {}),
+    )?;
+    Ok((imported.index, imported.checksum))
+}
+
 pub(crate) struct Imported {
     pub objects: IndexedObjects,
     pub index: Vec<u8>,

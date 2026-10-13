@@ -943,6 +943,34 @@ including exact 32-bit slots, 64-bit table bytes, checksums, and reader interpre
 hosts. It does not allocate or validate an actual multi-gigabyte pack. Git 2.55.0 on macOS 26.6.2
 arm64 was exercised; other platforms and actual multi-gigabyte output remain untested.
 
+## Pack Index Rebuild
+
+`girt::pack::rebuild_index` regenerates a pack's `.idx` from the `.pack` alone, as
+`git index-pack <pack>` does, and replaces the old index atomically. It verifies a private copy of
+the pack with the received-pack importer: trailer hash, entry framing and CRCs, every object's
+identity, and every delta resolved inside the pack. External bases (thin packs) are refused. The
+index is version 2 with 64-bit offsets past 2 GiB, which is Git's default, and is parsed back before
+publication. A `tmp_idx_*` file in the pack directory is synced, takes the pack's mode, and is
+renamed over the index; then the directory is synced. A byte-identical existing index is left
+untouched, and an existing index is compared in bounded chunks rather than read whole. The pack copy
+is bounded by `max_pack_bytes` and checks cancellation per chunk. If the directory sync fails after
+the rename, `Unsynced` reports the published index rather than claiming no change. A pack that fails
+verification is refused with the pack directory unchanged.
+
+`tests/pack_index_rebuild.rs` uses `tests/support/pack_git.rs` fixtures (SHA-1 and SHA-256, OFS and
+REF deltas). It damages the Git-written index's checksum, fanout, a name, an offset (outside the
+pack, duplicated, swapped), the trailer pack hash, or truncates or deletes it. Each rebuild is
+compared byte for byte with the index `git index-pack --index-version=2` wrote, then checked with
+`git verify-pack` and by reading every object. Damaged packs (body byte, trailer, truncation) are
+refused, also by `git index-pack`, and the pack, index and directory listing are unchanged. A reader
+thread racing 50 replacements sees only complete indexes. Exercised with Git 2.56.0 on macOS arm64.
+
+Limitations: only version 2 packs are indexed (Git also accepts version 3, reported here as
+`PackVersion`); no v1 output (a v1 index is replaced by v2); `.rev` and multi-pack indexes are not
+written; running concurrently with maintenance that retires the same pack can leave an `.idx`
+without its `.pack`, as with `git index-pack`. That loses no objects and is repaired by deleting the
+index. The private copy needs free space equal to the pack in its directory.
+
 ## Upload-Pack Fetch
 
 R16 established the original upload-pack acceptance boundary. R27 extends it with SHA-256 wire
