@@ -179,6 +179,8 @@ impl References<'_> {
             options.lock_wait,
             &cancel,
         )?;
+        let _lock_operation = crate::locks::operation();
+        lock.check_owned()?;
         let bytes = read_optional(&lock.destination)?.unwrap_or_default();
         let existing = packed::parse(self.object_format, &bytes, &lock.destination)?;
         let mut report = PackRefsReport::default();

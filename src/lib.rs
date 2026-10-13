@@ -250,6 +250,7 @@ pub mod fetch;
 mod history;
 pub mod ignore;
 pub mod index;
+pub mod locks;
 mod loose;
 mod object;
 mod objects;

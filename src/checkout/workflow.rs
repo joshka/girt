@@ -25,6 +25,7 @@ impl Repository {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Failure> {
+        let _lock_operation = crate::locks::operation();
         for id in baseline.into_iter().chain(target) {
             id.require_format(self.object_format())
                 .map_err(|error| Failure {

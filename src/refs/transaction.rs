@@ -673,6 +673,7 @@ pub(crate) struct Prepared {
 
 impl Prepared {
     pub(crate) fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -696,6 +697,16 @@ impl Prepared {
                         .collect(),
                 })
                 .collect();
+            for lock in std::iter::once(&self.packed_lock)
+                .chain(self.locks.values())
+                .chain(self.log_locks.values())
+            {
+                lock.check_owned()
+                    .map_err(|source| TransactionError::Publish {
+                        outcomes: outcomes.clone(),
+                        source,
+                    })?;
+            }
             if self.operations.iter().any(|op| op.packed_removed) {
                 self.packed_lock
                     .publish_retaining_lock(&self.replacement)
@@ -809,6 +820,7 @@ pub(crate) enum PreparedBackend {
 
 impl PreparedBackend {
     pub(crate) fn publish(self) -> Result<Vec<RefEditOutcome>, TransactionError> {
+        let _lock_operation = crate::locks::operation();
         match self {
             Self::Files(prepared) => prepared.publish(),
             Self::Reftable(prepared) => prepared.publish(),

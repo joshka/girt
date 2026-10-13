@@ -328,6 +328,7 @@ impl Repository {
         max_names: usize,
         options: OrphanWorktreeOptions,
     ) -> Result<Self, CreateWorktreeError> {
+        let _lock_operation = crate::locks::operation();
         let location = create_orphan_worktree(
             self.references()?,
             destination.as_ref(),
@@ -379,6 +380,7 @@ impl RepositoryMetadata {
         max_names: usize,
         options: OrphanWorktreeOptions,
     ) -> Result<RepositoryLocation, CreateWorktreeError> {
+        let _lock_operation = crate::locks::operation();
         let references = References::from_layout(
             self.git_dir(),
             self.common_dir(),

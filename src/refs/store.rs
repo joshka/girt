@@ -6,7 +6,7 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -383,6 +383,7 @@ impl<'a> References<'a> {
         target: Target,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, Some(target), expected, false)
                 .map(|_| ());
@@ -423,6 +424,7 @@ impl<'a> References<'a> {
         id: ObjectId,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(
                 self,
@@ -480,6 +482,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, false).map(|_| ());
         }
@@ -516,6 +519,7 @@ impl<'a> References<'a> {
         name: &RefName,
         expected: Expected,
     ) -> Result<RefName, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
             return super::reftable::backend::single(self, name, None, expected, true)
                 .map(|outcome| outcome.name);
@@ -779,11 +783,15 @@ pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
 pub(super) struct Lock {
     pub(super) destination: PathBuf,
     path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     identity: fs::Metadata,
+    cleanup: crate::locks::Guard,
 }
 impl Lock {
     pub(super) fn acquire(destination: PathBuf) -> Result<Self, ReferenceError> {
+        let _lock_operation = crate::locks::operation();
+        let destination =
+            std::path::absolute(&destination).map_err(|source| io_error(&destination, source))?;
         check_path(&destination)?;
         #[expect(
             clippy::unwrap_used,
@@ -810,14 +818,22 @@ impl Lock {
                 io_error(&path, source)
             }
         })?;
+        let identity = crate::locks::capture_identity(&path, &file)
+            .map_err(|source| io_error(&path, source))?;
+        let file = crate::locks::SharedFile::from(file);
+        let cleanup = crate::locks::Guard::new(&path, &file, identity.clone());
         Ok(Self {
             destination,
+            cleanup,
             path: path.clone(),
-            identity: file.metadata().map_err(|source| io_error(&path, source))?,
+            identity,
             file: Some(file),
         })
     }
     pub(super) fn check_owned(&self) -> Result<(), ReferenceError> {
+        self.cleanup
+            .check()
+            .map_err(|source| io_error(&self.path, source))?;
         let current =
             fs::symlink_metadata(&self.path).map_err(|source| io_error(&self.path, source))?;
         if !current.is_file() || current.file_type().is_symlink() {
@@ -845,6 +861,7 @@ impl Lock {
     }
 
     fn publish_replacement(&self, bytes: &[u8], sync: bool) -> Result<(), ReferenceError> {
+        let _lock_operation = crate::locks::operation();
         self.check_owned()?;
         #[expect(clippy::unwrap_used, reason = "lock destinations lie below a root")]
         let parent = self.destination.parent().unwrap();
@@ -895,6 +912,7 @@ impl Lock {
 }
 impl Drop for Lock {
     fn drop(&mut self) {
+        let _lock_operation = crate::locks::operation();
         if self.check_owned().is_ok() {
             drop(self.file.take());
             let _ = fs::remove_file(&self.path);
@@ -905,7 +923,7 @@ impl Drop for Lock {
 /// established directory barrier here, so callers must not retire data that depends on one.
 #[cfg(unix)]
 pub(super) fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
-    File::open(directory)
+    fs::File::open(directory)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| io_error(directory, source))
 }
@@ -1060,7 +1078,7 @@ mod tests {
         let path = repo.git_dir().join("HEAD");
         let mut lock = Lock::acquire(path.clone()).unwrap();
         // A read-only handle injects a deterministic write failure without chmod/root assumptions.
-        lock.file = Some(File::open(&lock.path).unwrap());
+        lock.file = Some(fs::File::open(&lock.path).unwrap().into());
         assert!(lock.publish(&Target::Direct(id())).is_err());
         drop(lock);
         assert_eq!(fs::read(path).unwrap(), b"ref: refs/heads/main\n");
@@ -1298,5 +1316,46 @@ mod termination_tests {
         drop(lock);
         assert_eq!(fs::read(directory.join("ref")).unwrap(), b"recovered");
         assert!(!directory.join("ref.lock").exists());
+    }
+}
+
+#[cfg(test)]
+mod interrupt_cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_covers_reference_lock_topologies_without_changing_destinations() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().canonicalize().unwrap();
+        for name in [
+            "refs/heads/main",
+            "logs/refs/heads/main",
+            "packed-refs",
+            "reftable/tables.list",
+        ] {
+            let destination = directory.join(name);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::write(&destination, b"published bytes").unwrap();
+            let lock = Lock::acquire(destination.clone()).unwrap();
+            let report = crate::locks::cleanup_under(&directory).unwrap();
+            #[cfg(unix)]
+            assert_eq!(report.removed.len(), 1);
+            #[cfg(not(unix))]
+            assert_eq!(report.failures.len(), 1);
+            #[cfg(unix)]
+            assert!(lock.publish_retaining_lock(b"unsafe replacement").is_err());
+            #[cfg(not(unix))]
+            assert!(lock.check_owned().is_ok());
+            assert_eq!(fs::read(destination).unwrap(), b"published bytes");
+            #[cfg(not(unix))]
+            {
+                let path = lock.path.clone();
+                drop(lock);
+                assert!(
+                    !path.exists(),
+                    "unsupported cleanup must preserve ordinary Drop"
+                );
+            }
+        }
     }
 }

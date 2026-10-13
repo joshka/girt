@@ -111,11 +111,12 @@ impl LeafSnapshot {
 pub struct IndexEdit {
     destination: PathBuf,
     lock_path: PathBuf,
-    file: Option<File>,
+    file: Option<crate::locks::SharedFile>,
     original: Option<Vec<u8>>,
     leaf: Option<LeafSnapshot>,
     shared: Option<(PathBuf, Vec<u8>)>,
     lock_identity: fs::Metadata,
+    cleanup: crate::locks::Guard,
     index: Index,
     limits: Limits,
     published: bool,
@@ -361,6 +362,7 @@ impl IndexEdit {
         limits: Limits,
         options: EditOptions,
     ) -> Result<IndexEdit, StorageError> {
+        let _lock_operation = crate::locks::operation();
         let destination = absolute_index_path(&destination)?;
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
@@ -394,10 +396,13 @@ impl IndexEdit {
                     io::Error::other("cannot safely remove lock without its file identity"),
                 )),
             })?;
+            let file = crate::locks::SharedFile::from(file);
+            let cleanup = crate::locks::Guard::new(&lock_path, &file, lock_identity.clone());
             let mut edit = IndexEdit {
                 destination,
                 lock_path,
                 lock_identity,
+                cleanup,
                 file: Some(file),
                 original: None,
                 leaf: None,
@@ -737,6 +742,7 @@ impl IndexEdit {
         options: IndexCommitOptions,
         remove_lock: impl FnOnce(&Path) -> io::Result<()>,
     ) -> Result<(), StorageError> {
+        let _lock_operation = crate::locks::operation();
         let operation = (|| {
             if !self.original_missing() {
                 return Err(StorageError::Changed(self.destination.clone()));
@@ -763,7 +769,10 @@ impl IndexEdit {
     ///
     /// Returns the lock path and I/O cause when removal fails. The lock may remain for manual
     /// recovery; no index or working-tree content is changed.
+    /// An `Interrupted` I/O cause after caller cleanup means the guard was invalidated; consult
+    /// cleanup's earlier report rather than inferring that an owned lock still needs recovery.
     pub fn abort(mut self) -> Result<(), StorageError> {
+        let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(
             target: "girt",
@@ -825,6 +834,7 @@ impl IndexEdit {
         sync: impl FnOnce(&File) -> io::Result<()>,
         rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
     ) -> Result<(), StorageError> {
+        let _lock_operation = crate::locks::operation();
         options
             .shared_permissions
             .validate()
@@ -877,6 +887,9 @@ impl IndexEdit {
     }
 
     fn check_lock_identity(&self) -> Result<(), StorageError> {
+        self.cleanup
+            .check()
+            .map_err(|source| io_error("check lock registration", &self.lock_path, source))?;
         let current = fs::symlink_metadata(&self.lock_path)
             .map_err(|source| io_error("inspect owned index lock", &self.lock_path, source))?;
         if !current.is_file() {
@@ -927,6 +940,7 @@ impl IndexEdit {
 }
 impl Drop for IndexEdit {
     fn drop(&mut self) {
+        let _lock_operation = crate::locks::operation();
         if !self.published && self.check_lock_identity().is_ok() {
             drop(self.file.take());
             let _ = fs::remove_file(&self.lock_path);

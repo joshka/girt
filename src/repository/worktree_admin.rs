@@ -50,17 +50,41 @@ pub enum WorktreeRetirement {
     Confirmed,
 }
 
-pub(super) struct AdminLock(PathBuf);
+pub(super) struct AdminLock {
+    path: PathBuf,
+    cleanup: crate::locks::Guard,
+}
 impl Drop for AdminLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        let _lock_operation = crate::locks::operation();
+        if self.cleanup.check_path().is_ok() {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
 pub(super) fn lock(registration: &Path) -> Result<AdminLock, WorktreeAdminError> {
-    let path = registration.join("girt-admin.lock");
+    let _lock_operation = crate::locks::operation();
+    let path = std::path::absolute(registration.join("girt-admin.lock")).map_err(|source| {
+        WorktreeAdminError::Io {
+            path: registration.to_owned(),
+            written: Vec::new(),
+            source,
+        }
+    })?;
     match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(_) => Ok(AdminLock(path)),
+        Ok(file) => {
+            let identity = crate::locks::capture_identity(&path, &file).map_err(|source| {
+                WorktreeAdminError::Io {
+                    path: path.clone(),
+                    written: Vec::new(),
+                    source,
+                }
+            })?;
+            let file = crate::locks::SharedFile::from(file);
+            let cleanup = crate::locks::Guard::new(&path, &file, identity);
+            Ok(AdminLock { path, cleanup })
+        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             Err(WorktreeAdminError::Busy(path))
         }
@@ -167,6 +191,7 @@ impl Repository {
         checkout: impl AsRef<Path>,
         link_style: WorktreeLinkStyle,
     ) -> Result<(), WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let checkout = fs::canonicalize(checkout.as_ref())
             .map_err(|_| WorktreeAdminError::Uncertain(checkout.as_ref().into()))?;
@@ -235,6 +260,7 @@ impl Repository {
         registration: impl AsRef<Path>,
         reason: &str,
     ) -> Result<(), WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         if reason.contains(['\n', '\r']) {
             return Err(WorktreeAdminError::Uncertain(registration));
@@ -268,6 +294,7 @@ impl Repository {
         registration: impl AsRef<Path>,
         reason: &str,
     ) -> Result<(), WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let _guard = lock(&registration)?;
         let path = registration.join("locked");
@@ -300,6 +327,7 @@ impl Repository {
         expire_before: SystemTime,
         _retirement: WorktreeRetirement,
     ) -> Result<(), WorktreeAdminError> {
+        let _lock_operation = crate::locks::operation();
         let registration = checked_registration(&self.common_dir, registration.as_ref())?;
         let _guard = lock(&registration)?;
         let locked = registration.join("locked");

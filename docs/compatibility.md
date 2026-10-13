@@ -2503,3 +2503,40 @@ refresh, current and candidate views coexist: aggregate handles and tables may r
 generations' limits. Further retained generations multiply that cost; clones within one generation
 share handles and tables. R15's bounded per-generation accounting and per-read work limits still
 apply. [R16 evidence](evidence/r16.md) records publication, recovery and native cases.
+
+## Caller-Controlled Interrupt Lock Cleanup
+
+`girt::locks::cleanup` releases this process's registered transient lock files during normal-context
+shutdown. It includes index/config edits, files/reflog/packed-ref/reftable guards, shallow metadata,
+credentials, clone config and worktree administration mutexes. It does not scan directories or
+recover foreign stale locks. Persistent worktree `locked` markers and `.keep` protections are
+preserved.
+
+jj owns signal handling. A callback thread must request cancellation, stop admitting work, wake
+writers, and invoke cleanup before joining any pending uncancellable packing wait. Cleanup cancels
+pending reference lock waits, including packing's wait. A raw POSIX signal trampoline must delegate
+this work to normal context: the API allocates, locks and performs filesystem I/O. An invocation
+inside a girt lock callback returns `WouldBlock`; it cannot wait on its own operation. Active
+synchronous filesystem operations can delay cleanup without a deadline.
+
+Cleanup and active acquisition/publication/drop are mutually exclusive. Surviving Unix guards are
+invalidated before their identity-matched paths are unlinked; they cannot publish through a new
+writer's replacement lock. Completed ref/index/config/worktree effects remain completed. Worktree
+repair retains its administration lock across both link replacements, and colocation retains its
+index/HEAD operation gate across both publications. New work after cleanup can acquire locks, so
+shutdown admission control remains the caller's responsibility.
+
+Report entries identify removed/absent, replaced/preserved and failed paths. Unix invalidated
+failures are not retried by later cleanup calls; preserve the first report for manual recovery.
+Paths are resolved before creation, and registration is infallible after identity capture. An
+unavailable acquired-file identity refuses cleanup and names the lock requiring manual recovery in
+the acquiring operation's error. Writer and identity pin share one OS handle. Unpublished temporary
+files and crash durability are outside this lock-only API.
+
+Unix registrations pin the file inode and compare device/inode before unlinking. Identity checks
+cannot protect a check/unlink pair against non-cooperating lock-path or parent-directory
+replacement; callers must exclude those races. Other platforms report `Unsupported` for existing
+registered paths, preserving both the lock and its guard's validity for normal Drop/abort. Already
+absent paths do not require removal. Windows identity-safe removal is tracked in
+[issue 136](https://github.com/joshka/girt/issues/136). No library signal handlers or new variants
+in existing public error enums are introduced.
