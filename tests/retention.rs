@@ -2676,11 +2676,37 @@ fn damaged_index_checksum_refuses_deletion(#[case] maintenance: bool) {
 // Git generates the references and reflog; removing its only pack creates history that a
 // no-op must not need to read. No retained bytes are rewritten on this path.
 fn missing_packed_history(format: &str) -> (tempfile::TempDir, Repository) {
+    missing_packed_history_backend(format, "files")
+}
+
+fn missing_packed_history_backend(format: &str, backend: &str) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
-    git(root.path(), &["init", "--bare", "--template=", &format!("--object-format={format}"), "."], b"");
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            &format!("--object-format={format}"),
+            &format!("--ref-format={backend}"),
+            ".",
+        ],
+        b"",
+    );
     let tree = git(root.path(), &["mktree"], b"");
     let commit = git(root.path(), &["commit-tree", &tree], b"packed history\n");
-    git(root.path(), &["update-ref", "--create-reflog", "-m", "generated", "refs/heads/main", &commit], b"");
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "-m",
+            "generated",
+            "refs/heads/main",
+            &commit,
+        ],
+        b"",
+    );
     git(root.path(), &["repack", "-ad"], b"");
     fs::remove_dir_all(root.path().join("objects/pack")).unwrap();
     fs::create_dir(root.path().join("objects/pack")).unwrap();
@@ -2695,9 +2721,18 @@ fn prune_without_old_loose_candidates_does_not_audit_history(#[case] format: &st
     let (root, repo) = missing_packed_history(format);
     let before = fs::read(root.path().join("logs/refs/heads/main")).unwrap();
     git(root.path(), &["prune", "--expire=now"], b"");
-    let report = repo.prune_unreachable_loose(&mut FixtureIsolation, &RetentionPolicy::default(), &AtomicBool::new(false)).unwrap();
+    let report = repo
+        .prune_unreachable_loose(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
     assert!(report.deleted.is_empty());
-    assert_eq!(fs::read(root.path().join("logs/refs/heads/main")).unwrap(), before);
+    assert_eq!(
+        fs::read(root.path().join("logs/refs/heads/main")).unwrap(),
+        before
+    );
 }
 
 #[cfg(unix)]
@@ -2708,14 +2743,26 @@ fn expiry_at_cutoff_does_not_audit_history(#[case] format: &str) {
     let (root, repo) = missing_packed_history(format);
     let path = root.path().join("logs/refs/heads/main");
     let before = fs::read(&path).unwrap();
-    git(root.path(), &["reflog", "expire", "--all", "--expire=@1700000000", "--expire-unreachable=@1700000000"], b"");
+    git(
+        root.path(),
+        &[
+            "reflog",
+            "expire",
+            "--all",
+            "--expire=@1700000000",
+            "--expire-unreachable=@1700000000",
+        ],
+        b"",
+    );
     assert_eq!(fs::read(&path).unwrap(), before);
     let policy = RetentionPolicy {
         reflog_expire_before: Some(1700000000),
         reflog_expire_unreachable_before: Some(1700000000),
         ..Default::default()
     };
-    let report = repo.expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false)).unwrap();
+    let report = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
     assert!(report.changed.is_empty());
     assert_eq!(fs::read(path).unwrap(), before);
 }
@@ -2730,7 +2777,9 @@ fn eligible_expiry_with_missing_history_refuses_without_rewrite() {
         reflog_expire_unreachable_before: Some(1700000001),
         ..Default::default()
     };
-    let error = repo.expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false)).unwrap_err();
+    let error = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
     assert!(matches!(error.cause, ExpireCause::Incomplete(_)));
     assert!(error.report.changed.is_empty());
     assert_eq!(fs::read(path).unwrap(), before);
@@ -2744,8 +2793,133 @@ fn old_loose_candidate_with_missing_history_refuses_without_deletion() {
         recent_cutoff: SystemTime::now() + Duration::from_secs(60),
         ..Default::default()
     };
-    let error = repo.prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false)).unwrap_err();
+    let error = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
     assert!(matches!(error.cause, PruneCause::Incomplete(_)));
     assert!(error.report.deleted.is_empty());
-    assert_eq!(git(root.path(), &["cat-file", "blob", &id], b""), "only copy");
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id], b""),
+        "only copy"
+    );
+}
+
+#[rstest::rstest]
+#[case::entry_limit(0, false)]
+#[case::cancelled(usize::MAX, true)]
+fn prune_empty_inventory_still_enforces_scan_bounds(
+    #[case] entries: usize,
+    #[case] cancelled: bool,
+) {
+    let (root, repo) = missing_packed_history("sha1");
+    let before = fs::read(root.path().join("logs/refs/heads/main")).unwrap();
+    let policy = RetentionPolicy {
+        max_entries: entries,
+        ..Default::default()
+    };
+    let error = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(cancelled))
+        .unwrap_err();
+    assert!(error.report.deleted.is_empty());
+    assert_eq!(
+        fs::read(root.path().join("logs/refs/heads/main")).unwrap(),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::entry_limit(0, u64::MAX)]
+#[case::byte_limit(usize::MAX, 0)]
+fn expiry_noop_still_enforces_observation_budgets(#[case] entries: usize, #[case] bytes: u64) {
+    let (root, repo) = missing_packed_history("sha1");
+    let path = root.path().join("logs/refs/heads/main");
+    let before = fs::read(&path).unwrap();
+    let policy = RetentionPolicy {
+        max_entries: entries,
+        max_reflog_bytes: bytes,
+        ..Default::default()
+    };
+    let error = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(matches!(error.cause, ExpireCause::Incomplete(_)));
+    assert!(error.report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn recent_loose_candidate_is_preserved_without_a_history_walk() {
+    let (root, repo) = missing_packed_history("sha1");
+    let id = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"recent only copy",
+    );
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::UNIX_EPOCH,
+        ..Default::default()
+    };
+    git(root.path(), &["prune", "--expire=@0"], b"");
+    let report = repo
+        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.deleted.is_empty());
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id], b""),
+        "recent only copy"
+    );
+}
+
+#[test]
+fn malformed_loose_inventory_cannot_establish_noop() {
+    let (root, repo) = missing_packed_history("sha1");
+    fs::create_dir(root.path().join("objects/zz")).unwrap();
+    let error = repo
+        .prune_unreachable_loose(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(error.cause, PruneCause::Incomplete(_)));
+    assert!(error.report.deleted.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_reflog_cannot_establish_noop() {
+    let (root, repo) = missing_packed_history("sha1");
+    let path = root.path().join("logs/refs/heads/main");
+    fs::write(&path, b"incomplete record").unwrap();
+    let error = repo
+        .expire_reflogs(
+            &mut FixtureIsolation,
+            &RetentionPolicy::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+    assert!(matches!(error.cause, ExpireCause::Incomplete(_)));
+    assert!(error.report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), b"incomplete record");
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn reftable_noop_expiry_preserves_missing_history_stack(#[case] format: &str) {
+    let (root, repo) = missing_packed_history_backend(format, "reftable");
+    let path = root.path().join("reftable/tables.list");
+    let before = fs::read(&path).unwrap();
+    let policy = RetentionPolicy {
+        reflog_expire_before: Some(1700000000),
+        reflog_expire_unreachable_before: Some(1700000000),
+        ..Default::default()
+    };
+    let report = repo
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert!(report.changed.is_empty());
+    assert_eq!(fs::read(path).unwrap(), before);
 }

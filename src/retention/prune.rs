@@ -73,7 +73,9 @@ impl Repository {
     /// Removes old unreachable loose objects from this repository's primary store.
     ///
     /// The caller supplies a repository-wide isolation boundary through `isolation`. Inside that
-    /// boundary this operation builds one complete plan, inventories loose entries twice, and
+    /// boundary this operation inventories primary loose entries. If none are older than
+    /// `recent_cutoff`, it returns an empty report without validating object history. Otherwise it
+    /// builds one complete plan, inventories loose entries twice, and
     /// revalidates root-bearing metadata and storage fingerprints before the first deletion. All
     /// reflog candidates are retained regardless of the policy's expiry cutoffs; this operation
     /// does not expire reflogs, repack, or remove packs or alternate storage. It removes only
@@ -187,6 +189,14 @@ impl Repository {
         {
             return Err(failure(PruneCause::Changed, report));
         }
+        let observed = candidates(&current, policy, cancel)
+            .map_err(|cause| failure(cause, PruneReport::default()))?;
+        if session.is_none() && observed.is_empty() {
+            // Caller isolation holds through this complete inventory. No unlink is possible,
+            // so unvisited history need not supply deletion evidence.
+            check(cancel, &report)?;
+            return Ok(report);
+        }
         let owned = if session.is_none() {
             Some(
                 super::inputs::Session::new(&current, policy, cancel).map_err(|reason| {
@@ -205,8 +215,6 @@ impl Repository {
         };
         let session = session.or(owned.as_ref()).expect("retention session");
         let first = &session.plan;
-        let observed = candidates(&current, policy, cancel)
-            .map_err(|cause| failure(cause, PruneReport::default()))?;
         after_inventory();
         check(cancel, &report)?;
         let refreshed = Repository::open(self.git_dir())

@@ -95,7 +95,9 @@ impl Repository {
     /// Expires eligible reflog records under caller-owned isolation.
     ///
     /// The guard must exclude external Git and girt writers, readers depending on old history,
-    /// and alternate-store dependents for the whole action. A fresh complete retention plan
+    /// and alternate-store dependents for the whole action. A complete bounded root observation
+    /// returns an empty report without validating object history when no record predates either
+    /// supplied cutoff. Otherwise a fresh complete retention plan
     /// classifies records using the policy's live and unreachable cutoffs. The operation prepares
     /// every changed files log's exact retained bytes or reftable stack's merged records,
     /// fingerprints the plan's inputs, and conditionally publishes each replacement. Files preserve
@@ -173,6 +175,9 @@ impl Repository {
             || current.reference_backend() != Backend::Reftable
         {
             return Err(failed(ExpireCause::Changed, report));
+        }
+        if session.is_none() && no_expiry_possible(&current, policy, cancel)? {
+            return Ok(report);
         }
         let mut owned = if session.is_none() {
             Some(
@@ -370,6 +375,9 @@ impl Repository {
         if current.reference_backend() != Backend::Files {
             return Err(failed(ExpireCause::UnsupportedBackend, report));
         }
+        if session.is_none() && no_expiry_possible(&current, policy, cancel)? {
+            return Ok(report);
+        }
         let mut owned = if session.is_none() {
             Some(
                 super::inputs::Session::new(&current, policy, cancel).map_err(|reason| {
@@ -487,6 +495,34 @@ impl Repository {
         })?;
         Ok(report)
     }
+}
+
+// Root observation shares discovery, worktree routing, parsing and budgets with planning.
+// Classification is unnecessary only when neither cutoff can select any observed record.
+#[cfg(unix)]
+fn no_expiry_possible(
+    repository: &Repository,
+    policy: &RetentionPolicy,
+    cancel: &AtomicBool,
+) -> Result<bool, ExpireFailure> {
+    let plan = repository.observe_retention_roots(policy, cancel);
+    check(cancel, &ExpireReport::default())?;
+    if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
+        return Err(failed(
+            ExpireCause::Incomplete(reason),
+            ExpireReport::default(),
+        ));
+    }
+    let cutoffs = [
+        policy.reflog_expire_before,
+        policy.reflog_expire_unreachable_before,
+    ];
+    Ok(!plan.observed_logs.iter().any(|record| {
+        cutoffs
+            .into_iter()
+            .flatten()
+            .any(|cutoff| record.seconds < cutoff)
+    }))
 }
 
 #[cfg(unix)]

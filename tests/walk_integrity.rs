@@ -244,7 +244,10 @@ fn destructive_operations_refuse(root: &Path, walk_detects: bool) {
         .is_err()
     );
     let pruned = repo.prune_unreachable_loose(&mut FixtureIsolation, &policy(), &cancel);
-    assert!(pruned.is_err() || !walk_detects, "prune must refuse");
+    assert!(
+        pruned.is_err() || pruned.unwrap().deleted.is_empty(),
+        "prune must refuse or prove there is nothing to delete"
+    );
     let collected = repo.collect_garbage(&mut FixtureIsolation, &policy(), &cancel);
     assert!(collected.is_err() || !walk_detects, "gc must refuse");
     assert!(
