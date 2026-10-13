@@ -111,6 +111,7 @@ mod progress;
 pub use progress::{LocalFetchProgress, ValidationProgress};
 
 mod import;
+pub(crate) use import::index_self_contained;
 mod install;
 mod retention;
 pub use retention::{FetchRetention, RetainedFetchError};
