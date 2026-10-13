@@ -2984,3 +2984,66 @@ fn loose_cutoff_equality_is_conservative_relative_to_git() {
         "cutoff equality"
     );
 }
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::never("sha1", "never", "never")]
+#[case::expire_all("sha1", "now", "never")]
+#[case::unreachable_only("sha1", "never", "now")]
+#[case::sha256("sha256", "now", "never")]
+fn configured_expiry_keeps_the_same_records_as_git(
+    #[case] format: &str,
+    #[case] general: &str,
+    #[case] unreachable: &str,
+) {
+    let (root, _, first, second) = fixture_format(format);
+    git(root.path(), &["config", "gc.reflogExpire", general], b"");
+    git(
+        root.path(),
+        &["config", "gc.reflogExpireUnreachable", unreachable],
+        b"",
+    );
+    git(
+        root.path(),
+        &[
+            "update-ref",
+            "--create-reflog",
+            "refs/heads/main",
+            &second.to_string(),
+        ],
+        b"",
+    );
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/main", &first.to_string()],
+        b"",
+    );
+    let log = root.path().join("logs/refs/heads/main");
+    let original = fs::read(&log).unwrap();
+    git(root.path(), &["reflog", "expire", "refs/heads/main"], b"");
+    let expected = fs::read(&log).unwrap();
+    fs::write(&log, original).unwrap();
+    let repository = Repository::open(root.path()).unwrap();
+    let policy = RetentionPolicy {
+        configured_reflog_expiry: Some(
+            girt::retention::ReflogExpiry::from_config(repository.config(), 1_800_000_000).unwrap(),
+        ),
+        ..Default::default()
+    };
+    repository
+        .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(fs::read(log).unwrap(), expected);
+    assert!(
+        repository
+            .loose_objects()
+            .read_commit(first, usize::MAX)
+            .is_ok()
+    );
+    assert!(
+        repository
+            .loose_objects()
+            .read_commit(second, usize::MAX)
+            .is_ok()
+    );
+}
