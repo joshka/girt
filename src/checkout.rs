@@ -47,6 +47,55 @@
 //! in execution order, the active stage and owned artifacts whose cleanup failed. Earlier
 //! operations remain applied; inspect the report and actual files before recovery, rather than
 //! blindly retrying.
+//!
+//! # Example
+//!
+//! Materialize a tree into a new working tree whose index is still absent, as after a no-checkout
+//! clone. HEAD and references are unchanged:
+//!
+//! ```
+//! use std::sync::atomic::AtomicBool;
+//!
+//! use girt::checkout::Limits;
+//! use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+//!
+//! # if cfg!(not(any(target_os = "linux", target_os = "macos"))) {
+//! #     return Ok(());
+//! # }
+//! let directory = tempfile::tempdir()?;
+//! let repository = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("w"),
+//!     InitKind::Worktree,
+//! )?;
+//! let loose = repository.loose_objects();
+//! let id = loose.write_blob(b"#!/bin/sh\necho hello\n")?;
+//! let entry = TreeEntry {
+//!     mode: EntryMode::Executable,
+//!     name: b"hello.sh".to_vec(),
+//!     id,
+//! };
+//! let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?;
+//!
+//! // `None` baseline: the current index is empty or absent.
+//! repository.checkout_tree(None, Some(tree), Limits::default(), &AtomicBool::new(false))?;
+//!
+//! let file = repository
+//!     .worktree()
+//!     .expect("ordinary repository")
+//!     .join("hello.sh");
+//! assert_eq!(std::fs::read(&file)?, b"#!/bin/sh\necho hello\n");
+//! #[cfg(unix)]
+//! {
+//!     use std::os::unix::fs::PermissionsExt;
+//!     assert_ne!(std::fs::metadata(&file)?.permissions().mode() & 0o111, 0);
+//! }
+//! let index = repository
+//!     .read_index(Default::default())?
+//!     .expect("checkout published an index");
+//! assert_eq!(index.entries()[0].path, b"hello.sh");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 mod types;
 mod workflow;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

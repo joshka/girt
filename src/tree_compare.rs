@@ -106,21 +106,49 @@ impl Objects {
     /// are produced. Both object formats and the five modes accepted by [`Tree::parse`] are
     /// supported.
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::{ObjectId, PackLimits, Repository, TreeCompareLimits};
-    /// let repo = Repository::open("/path/to/repository")?;
-    /// let objects = repo.objects(PackLimits::default())?;
-    /// let tree: ObjectId = "4b825dc642cb6eb9a060e54bf8d69288fbee4904".parse()?;
-    /// let changes = objects.compare_trees(
-    ///     None,
-    ///     Some(tree),
-    ///     TreeCompareLimits::default(),
-    ///     &AtomicBool::new(false),
-    /// )?;
-    /// assert!(changes.is_empty()); // The specified ID is Git's empty tree.
+    /// use girt::{
+    ///     EntryMode, InitKind, ObjectFormat, PackLimits, Repository, Tree, TreeCompareLimits,
+    ///     TreeEntry,
+    /// };
     ///
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let tree = |content: &[u8]| -> Result<_, Box<dyn std::error::Error>> {
+    ///     let id = loose.write_blob(content)?;
+    ///     let entry = TreeEntry {
+    ///         mode: EntryMode::Blob,
+    ///         name: b"notes.txt".to_vec(),
+    ///         id,
+    ///     };
+    ///     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?)
+    /// };
+    /// let (old, new) = (tree(b"draft\n")?, tree(b"final\n")?);
+    ///
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let cancel = AtomicBool::new(false);
+    /// let limits = TreeCompareLimits::default();
+    /// let changes = objects.compare_trees(Some(old), Some(new), limits, &cancel)?;
+    /// assert_eq!(changes.len(), 1);
+    /// assert_eq!(changes[0].path, b"notes.txt");
+    /// assert_ne!(
+    ///     changes[0].old.map(|old| old.id),
+    ///     changes[0].new.map(|new| new.id)
+    /// );
+    ///
+    /// // `None` stands for an empty tree on either side.
+    /// assert!(
+    ///     objects
+    ///         .compare_trees(None, None, limits, &cancel)?
+    ///         .is_empty()
+    /// );
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn compare_trees(
