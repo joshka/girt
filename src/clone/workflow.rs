@@ -29,48 +29,10 @@ use crate::{InitKind, ObjectKind, Repository};
 /// Direct refs use the supplied reflog policy; symbolic HEAD uses `Reflog::Preserve` because
 /// stored symbolic replacements cannot append logs. No `origin/HEAD` alias is created. No index,
 /// checkout, shallow/filter, alternates, hardlinks, mirror or submodule behavior is supported.
-/// Finish requires the existing reference backend. Native local and optional SSH adapters
-/// require macOS/Linux; HTTP is feature-gated and uses the caller's runtime.
-///
-/// This example needs a local source repository and Git on PATH for upload-pack:
-///
-/// ```no_run
-/// use std::ops::ControlFlow;
-/// use std::sync::atomic::AtomicBool;
-///
-/// use girt::InitKind;
-/// use girt::clone::{BranchSelection, CloneRequest};
-/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
-/// use girt::refs::Reflog;
-/// use girt::transport::TransportControl;
-///
-/// let root = tempfile::tempdir()?;
-/// let source = std::fs::canonicalize("/path/to/source")?;
-/// let url = source.to_str().ok_or("example needs a UTF-8 path")?;
-/// let request = CloneRequest::prepare_tracking(
-///     root.path().join("copy"),
-///     InitKind::Worktree,
-///     url.as_bytes(),
-///     BranchSelection::Default,
-///     Reflog::Preserve,
-/// )?;
-/// let cancel = AtomicBool::new(false);
-/// let ready = request.receive_local(
-///     &source,
-///     FetchLimits::default(),
-///     TransportControl::new(&cancel),
-///     |_| ControlFlow::Continue(()),
-/// )?;
-/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
-/// let repository = report.repository.as_ref().unwrap();
-/// assert!(!repository.git_dir().join("index").exists());
-/// // Only .git exists: checkout is a separate, later operation.
-/// assert_eq!(
-///     std::fs::read_dir(repository.worktree().unwrap())?.count(),
-///     1
-/// );
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// Finish requires the existing reference backend. Native local clone reads girt storage directly
+/// and needs no Git executable. The optional SSH adapter requires macOS/Linux; HTTP is
+/// feature-gated and uses the caller's runtime. See the [module example](crate::clone#example) for
+/// a runnable local clone.
 pub struct CloneRequest {
     pub(super) destination: PathBuf,
     pub(super) kind: InitKind,
