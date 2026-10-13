@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/joshka/girt/compare/v0.4.1...v0.4.2) - 2026-10-13
+
+### Other
+
+- Add a quality scorecard and fix stale release references ([#111](https://github.com/joshka/girt/pull/111))
+- Share decoded pack payloads with the base cache ([#102](https://github.com/joshka/girt/pull/102))
+- Skip retention walks for verified GC no-ops ([#96](https://github.com/joshka/girt/pull/96))
+- Store an unstored empty tree that a native push depends on ([#98](https://github.com/joshka/girt/pull/98))
+
 ## [0.4.1](https://github.com/joshka/girt/compare/v0.4.0...v0.4.1) - 2026-10-13
 
 ### Other
