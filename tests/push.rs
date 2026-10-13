@@ -1737,3 +1737,37 @@ fn many_ref_history() -> (
     let repo = Repository::open(root.path()).unwrap();
     (root, repo, roots, base, new)
 }
+
+#[cfg(unix)]
+#[test]
+fn deep_receiver_boundary_with_quarantine() {
+    let (source, repo, ids) = deep_push_history();
+    let (_root, dest) = receiver_with(&source, ids[1001]);
+    hook(
+        &dest,
+        "pre-receive",
+        &format!(
+            "#!/bin/sh\ntest -n \"$GIT_QUARANTINE_PATH\" || exit 9\ngit cat-file -e {} || exit 9\nprintf quarantine >hook-observed\ncat >/dev/null\n",
+            ids[1002]
+        ),
+    );
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, ids[1002])],
+        &[ids[1001]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(ids[1002]));
+    assert_eq!(
+        fs::read(dest.git_dir().join("hook-observed")).unwrap(),
+        b"quarantine"
+    );
+    git(dest.git_dir(), &["fsck", "--strict", "--no-reflogs"], b"");
+}

@@ -136,51 +136,56 @@ fn push(c: &mut Criterion) {
             })
         });
         // A sibling commit forks from a non-tip receiver ancestor. Setup is outside timing.
-        let mut receiver_fields = commit.to_fields().unwrap();
-        receiver_fields.parents = vec![old];
-        receiver_fields.message = b"Receiver descendant\n".to_vec();
-        let receiver_tip = fixture
-            .repo
-            .loose_objects()
-            .write_commit(&girt::Commit::new(receiver_fields).unwrap())
-            .unwrap();
-        let fork = PreparedPush::new_excluding(
-            &objects,
-            vec![PushCommand {
-                name: RefName::new("refs/heads/fork").unwrap(),
-                expected: None,
-                new: next,
-                force: ForcePolicy::FastForwardOnly,
-            }],
-            &[receiver_tip],
-            PushLimits::default(),
-            &cancel,
-        )
-        .unwrap();
-        group.bench_function(format!("native-local-non-tip-{count}"), |b| {
-            b.iter_batched(
-                || {
-                    let root = tempfile::tempdir().unwrap();
-                    pack_git::git(root.path(), &["init", "--bare", "--template=", "."], b"");
-                    pack_git::git(
-                        fixture.root.path(),
-                        &[
-                            "push",
-                            "--quiet",
-                            root.path().to_str().unwrap(),
-                            &format!("{receiver_tip}:refs/heads/main"),
-                        ],
-                        b"",
-                    );
-                    root
-                },
-                |root| {
-                    let report = girt::push::send_local(root.path(), &fork, &cancel).unwrap();
-                    assert!(report.all_succeeded());
-                },
-                BatchSize::SmallInput,
+        for depth in [1, 400, 1000] {
+            let mut receiver_tip = old;
+            for index in 0..depth {
+                let mut receiver_fields = commit.to_fields().unwrap();
+                receiver_fields.parents = vec![receiver_tip];
+                receiver_fields.message = format!("Receiver descendant {index}\n").into_bytes();
+                receiver_tip = fixture
+                    .repo
+                    .loose_objects()
+                    .write_commit(&girt::Commit::new(receiver_fields).unwrap())
+                    .unwrap();
+            }
+            let fork = PreparedPush::new_excluding(
+                &objects,
+                vec![PushCommand {
+                    name: RefName::new("refs/heads/fork").unwrap(),
+                    expected: None,
+                    new: next,
+                    force: ForcePolicy::FastForwardOnly,
+                }],
+                &[receiver_tip],
+                PushLimits::default(),
+                &cancel,
             )
-        });
+            .unwrap();
+            group.bench_function(format!("native-local-non-tip-{depth}-{count}"), |b| {
+                b.iter_batched(
+                    || {
+                        let root = tempfile::tempdir().unwrap();
+                        pack_git::git(root.path(), &["init", "--bare", "--template=", "."], b"");
+                        pack_git::git(
+                            fixture.root.path(),
+                            &[
+                                "push",
+                                "--quiet",
+                                root.path().to_str().unwrap(),
+                                &format!("{receiver_tip}:refs/heads/main"),
+                            ],
+                            b"",
+                        );
+                        root
+                    },
+                    |root| {
+                        let report = girt::push::send_local(root.path(), &fork, &cancel).unwrap();
+                        assert!(report.all_succeeded());
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
         let mut response = vec![];
         packet(
             &mut response,

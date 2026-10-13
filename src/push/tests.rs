@@ -1995,3 +1995,49 @@ fn local_receiver_rejects_incomplete_deep_history(#[case] missing_revision: &str
         None
     );
 }
+
+/// A configured quarantine hook cannot make an incoming child prove its omitted ancestry.
+#[cfg(unix)]
+#[test]
+fn incomplete_received_history_never_reaches_quarantine_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    let (destination, prepared, missing_id) =
+        incomplete_receiver_history("main~1001", "independent", "main^{tree}", 1000);
+    std::fs::create_dir_all(destination.path().join("hooks")).unwrap();
+    let hook = destination.path().join("hooks/pre-receive");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nprintf invoked >hook-observed\ncat >/dev/null\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    assert!(matches!(
+        result,
+        Err(PushError::NotSent(PushFailure::Install(error)))
+            if matches!(*error, crate::fetch::FetchError::Missing(id) if id == missing_id)
+    ));
+    assert!(!destination.path().join("hook-observed").exists());
+    let repo = Repository::open(destination.path()).unwrap();
+    assert_eq!(
+        repo.references()
+            .unwrap()
+            .read(&RefName::new("refs/tags/tip").unwrap())
+            .unwrap(),
+        None
+    );
+    assert!(
+        repo.objects(PackLimits::default())
+            .unwrap()
+            .read(prepared.commands[0].new, crate::ReadLimits::default())
+            .unwrap()
+            .is_none()
+    );
+    assert!(std::fs::read_dir(repo.object_dir()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .as_encoded_bytes()
+            .starts_with(b"tmp_objdir-incoming-")
+    }));
+}
