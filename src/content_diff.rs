@@ -7,6 +7,65 @@
 //!
 //! The comparison does not apply attributes, textconv, whitespace normalization, rename
 //! detection, or patch encoding. It performs no merge, index, or worktree operation.
+//!
+//! # Example
+//!
+//! Load both sides of a changed tree entry, then diff their lines:
+//!
+//! ```
+//! use std::sync::atomic::AtomicBool;
+//!
+//! use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, DiffLimits, diff};
+//! use girt::{
+//!     EntryMode, InitKind, ObjectFormat, PackLimits, ReadLimits, Repository, Tree,
+//!     TreeCompareLimits, TreeEntry,
+//! };
+//!
+//! let directory = tempfile::tempdir()?;
+//! let repo = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("r"),
+//!     InitKind::Bare,
+//! )?;
+//! let loose = repo.loose_objects();
+//! let tree = |content: &[u8]| -> Result<_, Box<dyn std::error::Error>> {
+//!     let id = loose.write_blob(content)?;
+//!     let entry = TreeEntry {
+//!         mode: EntryMode::Blob,
+//!         name: b"list.txt".to_vec(),
+//!         id,
+//!     };
+//!     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![entry])?)?)
+//! };
+//! let (old, new) = (tree(b"apples\npears\n")?, tree(b"apples\nplums\n")?);
+//!
+//! let objects = repo.objects(PackLimits::default())?;
+//! let cancel = AtomicBool::new(false);
+//! let changes =
+//!     objects.compare_trees(Some(old), Some(new), TreeCompareLimits::default(), &cancel)?;
+//! let limits = DiffLimits::default();
+//! let content = BlobContent::read(
+//!     &objects,
+//!     &changes[0],
+//!     ReadLimits::default(),
+//!     limits.max_input_bytes,
+//!     &cancel,
+//! )?;
+//! let ContentDiff::Text(text) = diff(
+//!     &content.old,
+//!     &content.new,
+//!     BinaryMode::Auto,
+//!     limits,
+//!     &cancel,
+//! )?
+//! else {
+//!     panic!("both sides are text");
+//! };
+//! let edit = &text.edits()[0];
+//! assert_eq!(&text.old_bytes()[edit.old_bytes.clone()], b"pears\n");
+//! assert_eq!(&text.new_bytes()[edit.new_bytes.clone()], b"plums\n");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 mod blobs;
 mod myers;
 mod types;

@@ -14,6 +14,57 @@
 //!
 //! Pack decoding limits belong to [`crate::PackLimits`] and [`crate::ReadLimits`]. Neither pack
 //! reading nor writing selects refs or decides which objects should remain reachable.
+//!
+//! # Example
+//!
+//! Write a pack and its index, then read the object back through a fresh [`crate::Objects`]
+//! snapshot. The example writes the final filenames directly, which is safe only because no other
+//! process can see this private, disposable repository. Plain writes are not an atomic
+//! installation: a concurrent reader could observe a partial index, and an existing name could be
+//! truncated. Install into a shared repository through validated fetch installation
+//! ([`crate::fetch::ReceivedFetch::install`]) or
+//! [`Repository::repack_retained`](crate::Repository::repack_retained) instead.
+//!
+//! ```
+//! use girt::{
+//!     InitKind, ObjectFormat, ObjectKind, PackLimits, PackObject, PackWriteLimits, ReadLimits,
+//!     Repository, write_pack,
+//! };
+//!
+//! let directory = tempfile::tempdir()?;
+//! let path = directory.path().join("repo.git");
+//! let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+//! let data = b"packed content\n";
+//! let id = ObjectFormat::Sha1.hash_object(ObjectKind::Blob, data);
+//! let input = PackObject {
+//!     id,
+//!     kind: ObjectKind::Blob,
+//!     data,
+//! };
+//!
+//! let (mut pack, mut index) = (Vec::new(), Vec::new());
+//! let written = write_pack(
+//!     ObjectFormat::Sha1,
+//!     &[input],
+//!     &mut pack,
+//!     &mut index,
+//!     PackWriteLimits::default(),
+//! )?;
+//! let base = repository
+//!     .object_dir()
+//!     .join("pack")
+//!     .join(format!("pack-{}", written.checksum));
+//! // Private fixture only: the index names a pack, so write the pack first.
+//! std::fs::write(base.with_extension("pack"), &pack)?;
+//! std::fs::write(base.with_extension("idx"), &index)?;
+//!
+//! let objects = repository.objects(PackLimits::default())?;
+//! let object = objects
+//!     .read(id, ReadLimits::default())?
+//!     .expect("indexed pack is visible");
+//! assert_eq!(object.data(), data);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 mod compression;
 pub(crate) mod delta;

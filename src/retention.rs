@@ -18,6 +18,60 @@
 //! The caller supplies [`MaintenanceIsolation`] to exclude external writers and dependent readers
 //! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
 //! a new isolation guard. Read each method's platform and recovery contract before use.
+//!
+//! # Example
+//!
+//! Plan retention for a repository whose `main` branch (setup hidden) reaches one commit and its
+//! tree, then repack exactly what the plan retains. Planning changes no files, and the additive
+//! repack leaves the unreachable loose blob in place:
+//!
+//! ```
+//! use std::sync::atomic::AtomicBool;
+//! use std::time::{Duration, SystemTime};
+//!
+//! use girt::retention::{RepackLimits, RetentionPolicy};
+//! # use girt::refs::{Expected, RefName, Target};
+//! # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+//! # let directory = tempfile::tempdir()?;
+//! # let path = directory.path().join("repo.git");
+//! # let repository = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+//! # let person = Signature {
+//! #     name: b"A. Writer".to_vec(),
+//! #     email: b"writer@example.com".to_vec(),
+//! #     seconds: 1_700_000_000,
+//! #     offset_minutes: 0,
+//! # };
+//! # let loose = repository.loose_objects();
+//! # let commit = loose.write_commit(&Commit::new(CommitFields {
+//! #     tree: loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?,
+//! #     parents: vec![],
+//! #     author: person.clone(),
+//! #     committer: person.clone(),
+//! #     extra_headers: vec![],
+//! #     message: b"Initial commit\n".to_vec(),
+//! # })?)?;
+//! # let main = RefName::new("refs/heads/main")?;
+//! # let references = repository.references()?;
+//! # references.update_without_reflog(&main, Target::Direct(commit), Expected::Absent)?;
+//! let tree = loose.read_commit(commit, 1024)?.tree();
+//! let unreachable = loose.write_blob(b"no reference reaches this")?;
+//!
+//! let policy = RetentionPolicy {
+//!     // Treat no loose object as recently written, so only references keep objects alive.
+//!     recent_cutoff: SystemTime::now() + Duration::from_secs(3600),
+//!     ..RetentionPolicy::default()
+//! };
+//! let cancel = AtomicBool::new(false);
+//! let plan = repository.plan_retention(&policy, &cancel);
+//! assert!(plan.is_complete(), "{:?}", plan.outcome);
+//! assert!(plan.required.contains(&commit) && plan.required.contains(&tree));
+//! assert!(!plan.reachable.contains(&unreachable));
+//!
+//! let published = repository.repack_retained(&policy, RepackLimits::default(), &cancel)?;
+//! assert_eq!(published.written.objects, 2);
+//! assert!(loose.read_blob(unreachable, 1024).is_ok());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Read;
