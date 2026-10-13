@@ -10,8 +10,8 @@ tracked as [GitHub issues](https://github.com/joshka/girt/issues?q=is%3Aissue+la
   the `joshka/jj` fork. It's one commit on jj `main` at `35dbc362`, depending on girt 0.3.1 from
   crates.io. It's experimental and not proposed upstream. The commit message lists behavior changes
   and limitations.
-- **girt:** 0.3.1 is published from `main`. The Windows test fixes after 0.3.1 are unreleased; they
-  wait in release-plz's release PR.
+- **girt:** 0.4.1 is published from `main`. The jj branch still depends on 0.3.1; moving it to 0.4.1
+  needs a jj acceptance rerun.
 - **Contract:** met (see below). jj passes its full workspace suite (3386 tests), Clippy, the
   end-to-end script (196 checks) and the no-`git` tripwire against published girt.
 - **Performance:** behind stock jj on large repositories. That's the main remaining work; see
@@ -132,8 +132,11 @@ with the `jj` label, each a self-contained brief with acceptance criteria.
     s);
   - packs are read before loose objects;
   - a delta base cache, with only the requested object's identity checked.
-- **After 0.3.1:** girt's CI passes on Windows, after fixing build warnings, Windows paths in test
-  config and lock retries on Windows.
+- **girt 0.3.2 to 0.4.1:** Windows CI fixes, streamed received packs with bounded delta caching,
+  repack that reuses packed entries and deltas, pushes prepared against the receiver's
+  advertisement, compressed-entry reuse in native transfers, native `credential.helper = store`,
+  linear pack-index checks, and rebuilding a damaged pack index from its pack. The jj branch has not
+  moved to these releases yet, so the benchmark above still measures 0.3.1.
 - **jj adapter decisions:**
   - commit header bytes match gix's, so commit IDs are unchanged;
   - copy detection matches gix (postimage sources, exact-only binary matching);

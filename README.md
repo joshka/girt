@@ -17,7 +17,7 @@ worktree/HEAD changes through publication. Inspect partial publication before re
 
 ## First use
 
-Add `girt = "0.1"` to your dependencies (Rust 1.97.1 or newer). This small example computes a Git
+Add `girt = "0.4"` to your dependencies (Rust 1.97.1 or newer). This small example computes a Git
 blob identity without opening a repository:
 
 ```rust
