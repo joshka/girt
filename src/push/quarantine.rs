@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 use super::{PushError, PushFailure, PushReport};
 use crate::Repository;
 
+// One pack/index, alternate metadata and optional loose empty tree fit this bound.
+// installed_artifact_inventory_pins_the_bounded_layout guards installer coupling.
+const MAX_PRIVATE_ENTRIES: usize = 16;
+
 pub(super) struct Quarantine {
     directory: tempfile::TempDir,
     identity: DirectoryIdentity,
@@ -49,7 +53,7 @@ impl Quarantine {
         let mut inputs = Vec::new();
         let mut pending = vec![self.path().to_owned()];
         while let Some(path) = pending.pop() {
-            if inputs.len() >= 16 {
+            if inputs.len() >= MAX_PRIVATE_ENTRIES {
                 return Err(std::io::Error::other("unsupported quarantine contents"));
             }
             let metadata = fs::symlink_metadata(&path)?;
@@ -161,5 +165,103 @@ impl DirectoryIdentity {
             #[cfg(unix)]
             inode: metadata.ino(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::ControlFlow;
+    use std::process::Command;
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    #[test]
+    fn installed_artifact_inventory_pins_the_bounded_layout() {
+        for format in [crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256] {
+            let root = tempfile::tempdir().unwrap();
+            let git = |args: &[&str]| {
+                let mut command = Command::new("git");
+                for (key, _) in std::env::vars_os() {
+                    if key.to_string_lossy().starts_with("GIT_") {
+                        command.env_remove(key);
+                    }
+                }
+                let output = command
+                    .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-C"])
+                    .arg(root.path())
+                    .args(args)
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_CONFIG_GLOBAL", root.path().join("absent-config"))
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "{:?}", output);
+                String::from_utf8(output.stdout).unwrap().trim().to_owned()
+            };
+            git(&[
+                "init",
+                "--bare",
+                "--template=",
+                &format!("--object-format={format}"),
+            ]);
+            fs::write(root.path().join("fixture"), b"original inventory fixture").unwrap();
+            let id: crate::ObjectId = git(&["hash-object", "-w", "fixture"]).parse().unwrap();
+            git(&["update-ref", "refs/for/blob", &id.to_string()]);
+            let cancel = AtomicBool::new(false);
+            let received = crate::fetch::receive_local(
+                root.path(),
+                |_| vec![id],
+                crate::fetch::FetchLimits::trusted(),
+                &cancel,
+                |_| ControlFlow::Continue(()),
+            )
+            .unwrap();
+            let primary = Repository::open(root.path()).unwrap();
+            let quarantine = Quarantine::new(&primary).unwrap();
+            received
+                .install(
+                    &quarantine.repository,
+                    crate::PackLimits::trusted(),
+                    &cancel,
+                )
+                .unwrap();
+            let tree = quarantine
+                .repository
+                .loose_objects()
+                .write_object(format, crate::ObjectKind::Tree, b"")
+                .unwrap();
+            let mut paths: Vec<String> = quarantine
+                .observe()
+                .unwrap()
+                .into_iter()
+                .map(|input| {
+                    let path = input.path.to_string_lossy().replace('\\', "/");
+                    if path.starts_with("pack/pack-") {
+                        format!(
+                            "pack/*.{}",
+                            input.path.extension().unwrap().to_str().unwrap()
+                        )
+                    } else {
+                        path
+                    }
+                })
+                .collect();
+            paths.sort();
+            let tree = tree.to_string();
+            let mut expected = vec![
+                String::new(),
+                "info".into(),
+                "info/alternates".into(),
+                "pack".into(),
+                "pack/*.idx".into(),
+                "pack/*.pack".into(),
+                tree[..2].into(),
+                format!("{}/{}", &tree[..2], &tree[2..]),
+            ];
+            expected.sort();
+            assert_eq!(paths, expected);
+            assert!(paths.len() < MAX_PRIVATE_ENTRIES);
+            quarantine.close().unwrap();
+        }
     }
 }

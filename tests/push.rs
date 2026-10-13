@@ -1259,7 +1259,7 @@ fn cancellation_during_pre_receive_leaves_primary_storage_unchanged() {
 
 #[cfg(unix)]
 #[test]
-fn hook_output_limit_rejects_before_primary_publication() {
+fn hook_output_limit_truncates_without_aborting_publication() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     hook(
@@ -1278,19 +1278,9 @@ fn hook_output_limit_rejects_before_primary_publication() {
         &AtomicBool::new(false),
     )
     .unwrap();
-    let error = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap_err();
-    assert!(matches!(
-        error,
-        PushError::NotSent(PushFailure::Limit("receive hook output"))
-    ));
-    assert_eq!(tip(&dest, "refs/heads/main"), None);
-    assert!(
-        dest.objects(PackLimits::default())
-            .unwrap()
-            .read(main(&f), ReadLimits::default())
-            .unwrap()
-            .is_none()
-    );
+    let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
+    assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);
 }
 
 #[cfg(unix)]
@@ -1449,4 +1439,65 @@ fn replacement_quarantine_is_preserved_and_cleanup_failure_is_structured() {
     );
     assert!(dest.git_dir().join("saved-quarantine/pack").is_dir());
     assert_eq!(tip(&dest, "refs/heads/main"), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    for native in [false, true] {
+        let (_root, dest) = destination(true);
+        hook(
+            &dest,
+            "post-receive",
+            "#!/bin/sh\nhead -c 5242880 /dev/zero\n(sleep 0.1; printf completed >background-result) &\nexit 0\n",
+        );
+        hook(
+            &dest,
+            "post-update",
+            "#!/bin/sh\nprintf completed >post-update-result\n",
+        );
+        if native {
+            let prepared = PreparedPush::new_local(
+                &f.repo.objects(PackLimits::default()).unwrap(),
+                vec![command("refs/heads/main", None, main(&f))],
+                &[],
+                PushLimits {
+                    max_status_bytes: 30,
+                    ..Default::default()
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let report = girt::push::send_local_with_control(
+                dest.git_dir(),
+                &prepared,
+                girt::transport::TransportControl {
+                    cancel: &AtomicBool::new(false),
+                    deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
+                },
+            )
+            .unwrap();
+            assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);
+        } else {
+            git(
+                f.root.path(),
+                &[
+                    "push",
+                    dest.git_dir().to_str().unwrap(),
+                    "main:refs/heads/main",
+                ],
+                b"",
+            );
+        }
+        assert_eq!(tip(&dest, "refs/heads/main"), Some(main(&f)));
+        assert_eq!(
+            fs::read(dest.git_dir().join("background-result")).unwrap(),
+            b"completed"
+        );
+        assert_eq!(
+            fs::read(dest.git_dir().join("post-update-result")).unwrap(),
+            b"completed"
+        );
+    }
 }

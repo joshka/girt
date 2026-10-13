@@ -1152,11 +1152,18 @@ alternate. Pre-receive rejection/cancellation preserves primary objects and refs
 girt publishes the original validated artifact and removes quarantine before `update`; update
 rejection leaves published objects, as observed with Git. Hooks that modify private object storage
 are explicitly unsupported and refuse before publication. Cleanup preserves a replaced quarantine
-directory and reports its path, cleanup error and any earlier operation failure.
+directory and reports its path, cleanup error and any earlier operation failure, including uncertain
+published-ref evidence. Pre-receive pushes write the pack twice, into quarantine and primary
+storage. The supported single-pack quarantine inventory is bounded to 16 files/directories and
+pinned by SHA-1/SHA-256 installation tests. Inherited object-directory and alternate environment
+variables are cleared; pre-receive sees primary alternates rather than the caller's environment
+alternates.
 
 Hook pipe/exit waits poll cancellation and deadlines; retained combined stdout/stderr across all
-hooks is bounded by `PushLimits::max_status_bytes`. An owned process group is killed and its leader
-reaped on return. Escaped/daemonized descendants are outside this containment
+hooks is bounded by `PushLimits::max_status_bytes`; excess output is discarded while draining
+continues. Successful hooks preserve background work and drain descendant-held pipes to EOF.
+Cancellation, deadlines and errors kill the owned process group and reap its leader.
+Escaped/daemonized descendants are outside this containment
 ([issue 58](https://github.com/joshka/girt/issues/58)). Hooks are trusted executable code and can
 mutate storage themselves. Caller exclusion of GC, layout/object-directory replacement and checkout
 changes remains required; path identity checks do not establish hostile-race protection. Hook

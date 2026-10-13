@@ -39,18 +39,24 @@ use crate::transport::TransportControl;
 /// On macOS/Linux, incoming objects are private during `pre-receive`, with primary objects
 /// exposed as alternates. Rejection or cancellation there discards incoming objects without
 /// installing them in primary storage. After acceptance, the original validated pack is installed
-/// and quarantine is removed before `update`. Update rejection can leave published objects.
+/// and quarantine is removed before `update`. This writes the pack twice when pre-receive is
+/// configured. Update rejection can leave published objects.
 /// Hooks that add or change quarantined object storage are explicitly unsupported and refuse
-/// before primary publication. A replacement quarantine directory is preserved, with structured
+/// before primary publication. The private inventory is bounded to 16 files/directories; the
+/// supported single-pack layout is pinned by tests. Inherited object-directory/alternate
+/// environment variables are cleared; only primary alternates are exposed to pre-receive.
+/// A replacement quarantine directory is preserved, with structured
 /// cleanup failure and its path. The caller must exclude concurrent object-directory/layout
 /// replacement; path checks do not provide protection against hostile directory races.
 ///
 /// Hook stdin/stdout/stderr and exit waits observe cancellation/deadlines. Combined retained hook
-/// output shares [`super::PushLimits::max_status_bytes`]. One owner kills the hook's process group
-/// and reaps the leader on return, including failure. Descendants that escape that group are
-/// outside this containment. Hooks are trusted programs, can mutate repository data themselves, and
-/// are not an execution sandbox. Hook execution on other platforms refuses before mutation; native
-/// transfers without hooks retain their existing platform support.
+/// output shares [`super::PushLimits::max_status_bytes`]; excess output is discarded while pipes
+/// continue draining. Successful hooks preserve background work and wait for pipe EOF. On error,
+/// cancellation or deadline, one owner kills the hook's process group and reaps its leader.
+/// Descendants that escape that group are outside this containment. Hooks are trusted programs, can
+/// mutate repository data themselves, and are not an execution sandbox. Hook execution on other
+/// platforms refuses before mutation; native transfers without hooks retain their existing platform
+/// support.
 ///
 /// # Errors
 ///

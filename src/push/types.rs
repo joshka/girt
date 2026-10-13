@@ -54,7 +54,8 @@ pub struct PushLimits {
     /// Total encoded command and push-option bytes, including flushes (default 16 MiB).
     pub max_command_bytes: usize,
     /// Status bytes including framing (default 4 MiB). Native receive hooks share this bound
-    /// for their combined retained stdout/stderr across the whole operation.
+    /// for their combined retained stdout/stderr across the whole operation. Excess native hook
+    /// output is discarded while draining continues; truncation does not abort hooks.
     pub max_status_bytes: usize,
     /// Edge occurrences from objects selected for sending, including duplicates (default 4
     /// million). Reading known receiver history has a separate allowance of the same size.
@@ -275,7 +276,8 @@ pub enum PushFailure {
         /// Filesystem cleanup failure.
         #[source]
         source: std::io::Error,
-        /// Earlier operation failure, if one occurred before cleanup.
+        /// Earlier operation failure, if one occurred before cleanup. This may itself be
+        /// [`PushError::Uncertain`] with published refs; inspect its report as well.
         failure: Option<Box<PushError>>,
     },
 

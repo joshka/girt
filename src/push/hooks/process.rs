@@ -2,7 +2,7 @@
 use std::io::{self, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
@@ -40,15 +40,14 @@ pub(super) fn run(
     let mut stderr = Vec::new();
     let mut stdout_open = true;
     let mut stderr_open = true;
-    let mut status = None;
+    let mut exited = false;
     loop {
-        if status.is_none() {
-            status = process.observe_exit()?;
+        if !exited {
+            exited = process.observe_exit()?;
         }
-        if let Some(status) = status
-            && !stdout_open
-            && !stderr_open
-        {
+        if exited && !stdout_open && !stderr_open {
+            let status = process.child.wait()?;
+            process.reaped = true;
             stdout.extend_from_slice(&stderr);
             return Ok((status.success(), stdout));
         }
@@ -60,7 +59,7 @@ pub(super) fn run(
             stdout_open,
             stderr_open,
         );
-        if written == input.len() || status.is_some() {
+        if written == input.len() || exited {
             process.child.stdin.take();
         }
         if let Some(stdin) = &mut process.child.stdin {
@@ -84,36 +83,42 @@ pub(super) fn run(
         let remaining = limit
             .saturating_sub(stdout.len())
             .saturating_sub(stderr.len());
+        let mut read_progress = false;
         if stdout_open {
-            stdout_open = read_output(
+            let (open, progress) = read_output(
                 process.child.stdout.as_mut().expect("piped stdout"),
                 &mut stdout,
                 remaining,
             )?;
+            stdout_open = open;
+            read_progress |= progress;
         }
         let remaining = limit
             .saturating_sub(stdout.len())
             .saturating_sub(stderr.len());
         if stderr_open {
-            stderr_open = read_output(
+            let (open, progress) = read_output(
                 process.child.stderr.as_mut().expect("piped stderr"),
                 &mut stderr,
                 remaining,
             )?;
+            stderr_open = open;
+            read_progress |= progress;
         }
         // One bounded pass per pipe keeps cancellation fair even with continuous output.
         let pause = control.deadline.map_or(Duration::from_millis(10), |end| {
             end.saturating_duration_since(std::time::Instant::now())
                 .min(Duration::from_millis(10))
         });
-        if before
-            == (
-                written,
-                stdout.len(),
-                stderr.len(),
-                stdout_open,
-                stderr_open,
-            )
+        if !read_progress
+            && before
+                == (
+                    written,
+                    stdout.len(),
+                    stderr.len(),
+                    stdout_open,
+                    stderr_open,
+                )
         {
             std::thread::sleep(pause);
         }
@@ -125,17 +130,13 @@ impl Process {
         Pid::from_raw(self.child.id() as i32).expect("positive child PID")
     }
 
-    fn observe_exit(&mut self) -> io::Result<Option<ExitStatus>> {
+    fn observe_exit(&mut self) -> io::Result<bool> {
         let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+        // Keep the leader PID reserved while descendants hold pipes. Error cleanup can then
+        // safely address its group; successful completion reaps without killing background work.
         match waitid(WaitId::Pid(self.pid()), options) {
-            Ok(Some(_)) => {
-                // Reserve the leader PID until its group is killed; descendants may hold pipes.
-                let _ = kill_process_group(self.pid(), Signal::KILL);
-                let status = self.child.wait()?;
-                self.reaped = true;
-                Ok(Some(status))
-            }
-            Ok(None) | Err(rustix::io::Errno::INTR) => Ok(None),
+            Ok(Some(_)) => Ok(true),
+            Ok(None) | Err(rustix::io::Errno::INTR) => Ok(false),
             Err(error) => Err(error.into()),
         }
     }
@@ -157,26 +158,25 @@ fn nonblocking(pipe: &impl AsFd) -> io::Result<()> {
     Ok(())
 }
 
-fn read_output(reader: &mut impl Read, output: &mut Vec<u8>, remaining: usize) -> io::Result<bool> {
+fn read_output(
+    reader: &mut impl Read,
+    output: &mut Vec<u8>,
+    remaining: usize,
+) -> io::Result<(bool, bool)> {
     let mut buffer = [0; 8192];
-    let capacity = buffer.len().min(remaining.saturating_add(1));
-    match reader.read(&mut buffer[..capacity]) {
-        Ok(0) => Ok(false),
-        Ok(count) if count <= remaining => {
-            output.extend_from_slice(&buffer[..count]);
-            Ok(true)
+    match reader.read(&mut buffer) {
+        Ok(0) => Ok((false, false)),
+        Ok(count) => {
+            output.extend_from_slice(&buffer[..count.min(remaining)]);
+            Ok((true, true))
         }
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::FileTooLarge,
-            "receive hook output limit",
-        )),
         Err(error)
             if matches!(
                 error.kind(),
                 io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
             ) =>
         {
-            Ok(true)
+            Ok((true, false))
         }
         Err(error) => Err(error),
     }
@@ -206,18 +206,28 @@ mod tests {
     }
 
     #[test]
-    fn leader_exit_closes_pipes_held_by_owned_descendants() {
+    fn leader_exit_drains_descendant_output_without_killing_it() {
         let mut command = Command::new("/bin/sh");
-        // Finite even if group cleanup regresses; an inherited pipe is still held when the leader
-        // exits.
+        command.args(["-c", "(sleep 0.1; printf descendant) & exit 0"]);
+        let cancel = AtomicBool::new(false);
+        let control = TransportControl {
+            cancel: &cancel,
+            deadline: Some(std::time::Instant::now() + Duration::from_secs(3)),
+        };
+        let output = run(&mut command, b"", control, 1024).unwrap();
+        assert!(output.0);
+        assert_eq!(output.1, b"descendant");
+    }
+    #[test]
+    fn deadline_still_interrupts_descendant_pipes_after_leader_exit() {
+        let mut command = Command::new("/bin/sh");
         command.args(["-c", "sleep 3 & exit 0"]);
         let cancel = AtomicBool::new(false);
         let control = TransportControl {
             cancel: &cancel,
-            deadline: Some(std::time::Instant::now() + Duration::from_secs(1)),
+            deadline: Some(std::time::Instant::now() + Duration::from_millis(100)),
         };
-        let output = run(&mut command, b"", control, 1024).unwrap();
-        assert!(output.0);
-        assert!(output.1.is_empty());
+        let error = run(&mut command, b"", control, 1024).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 }

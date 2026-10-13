@@ -115,13 +115,7 @@ impl ReceiveHooks {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let output = process::run(&mut command, &input, control, self.output_remaining.get())
-                .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::FileTooLarge {
-                    PushFailure::Limit("receive hook output")
-                } else {
-                    error.into()
-                }
-            })?;
+                .map_err(PushFailure::from)?;
             self.output_remaining
                 .set(self.output_remaining.get() - output.1.len());
             Ok(output)
