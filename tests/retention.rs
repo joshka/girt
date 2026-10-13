@@ -2625,3 +2625,50 @@ fn corrupted_blob_shaped_root_refuses_before_descendant_deletion(#[case] format:
     git(root.path(), &["cat-file", "-e", &tree], b"");
     git(root.path(), &["fsck", "--strict"], b"");
 }
+
+/// Opening skips the index checksum, so a plan that authorizes deletion must check it itself.
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::prune(false)]
+#[case::maintenance(true)]
+fn damaged_index_checksum_refuses_deletion(#[case] maintenance: bool) {
+    let (root, _, _, _) = fixture();
+    git(root.path(), &["repack", "-ad"], b"");
+    let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
+    let index = pack_files(root.path(), "idx").pop().unwrap();
+    let mut bytes = fs::read(&index).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs::remove_file(&index).unwrap();
+    fs::write(&index, &bytes).unwrap();
+    let repo = Repository::open(root.path()).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let cancel = AtomicBool::new(false);
+    if maintenance {
+        let error = repo
+            .run_maintenance(
+                &mut FixtureIsolation,
+                &policy,
+                RepackLimits::default(),
+                &cancel,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .report
+                .pruned
+                .is_none_or(|pruned| pruned.deleted.is_empty())
+        );
+    } else {
+        let error = repo
+            .prune_unreachable_loose(&mut FixtureIsolation, &policy, &cancel)
+            .unwrap_err();
+        assert!(matches!(error.cause, PruneCause::Incomplete(_)));
+        assert!(error.report.deleted.is_empty());
+    }
+    assert_eq!(git(root.path(), &["cat-file", "-t", &orphan], b""), "blob");
+    assert_eq!(pack_files(root.path(), "idx"), std::slice::from_ref(&index));
+    assert_eq!(fs::read(&index).unwrap(), bytes);
+}

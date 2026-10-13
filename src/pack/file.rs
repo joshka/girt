@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use super::index::{Entry, Index, word};
+use super::index::{Entry, Index, verify_hash, word};
 use super::reader::{EntryHeader, Source, check_cancelled, decode};
 use crate::object::Hasher;
 use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
@@ -130,9 +130,10 @@ pub(crate) struct FilePack {
     index_bytes: Vec<u8>,
     pack: Artifact,
     format: ObjectFormat,
-    legacy: bool,
-    ranges: Vec<(usize, usize)>,
-    offsets: Vec<usize>,
+    table: Index,
+    /// Set once the index's own checksum has been verified, before its identities label reused
+    /// bytes.
+    index_verified: std::sync::OnceLock<()>,
     base_cache: super::reader::BaseCache,
 }
 
@@ -189,28 +190,21 @@ impl FilePack {
         check_cancelled(cancelled)?;
         let index = Index::parse(format, &index_bytes, end)?;
         check_cancelled(cancelled)?;
-        if word(&header, 8)? as usize != index.entries.len() {
+        if word(&header, 8)? as usize != index.len() {
             return Err(Error::Corrupt("pack object count"));
         }
-        let legacy = !index_bytes.starts_with(b"\xfftOc");
         let trailer = pack.bytes(end, pack.len)?;
         if index.pack_hash.as_bytes() != trailer {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
         check_cancelled(cancelled)?;
-        let ranges = index
-            .entries
-            .iter()
-            .map(|entry| (entry.offset, entry.end))
-            .collect();
         Ok(Self {
             index: index_file,
             index_bytes,
             pack,
             format,
-            legacy,
-            ranges,
-            offsets: index.offsets,
+            table: index,
+            index_verified: std::sync::OnceLock::new(),
             base_cache: super::reader::BaseCache::new(),
         })
     }
@@ -258,10 +252,11 @@ impl FilePack {
         Ok(true)
     }
 
-    /// Checks the entire pinned pack checksum and every v2 entry CRC without decoding objects.
+    /// Checks the index checksum, the entire pinned pack checksum and every v2 entry CRC without
+    /// decoding objects.
     pub(crate) fn verify(&self, cancelled: &AtomicBool) -> Result<(), Error> {
         check_cancelled(cancelled)?;
-        self.index.check_not_truncated()?;
+        self.verify_index()?;
         self.pack.check_not_truncated()?;
         let pack = &self.pack;
         let format = self.format;
@@ -269,7 +264,7 @@ impl FilePack {
         let mut hash = Hasher::new(format);
         hash.update(&pack.bytes(0, 12)?);
         let mut buffer = [0; 64 * 1024];
-        for &position in &self.offsets {
+        for &position in &self.table.offsets {
             let entry = self.entry(position)?;
             let mut offset = entry.offset;
             let mut crc = crc32fast::Hasher::new();
@@ -297,43 +292,42 @@ impl FilePack {
         check_cancelled(cancelled)
     }
 
+    /// Checks the pinned index's own trailing checksum, once per reader.
+    ///
+    /// Opening validates only the index structure. Anything that trusts the index's identities
+    /// without hashing the objects they name, such as copying entries into a new pack, checks this
+    /// first so a damaged name cannot label other bytes.
+    pub(crate) fn verify_index(&self) -> Result<(), Error> {
+        if self.index_verified.get().is_some() {
+            return Ok(());
+        }
+        self.index.check_not_truncated()?;
+        verify_hash(self.format, &self.index_bytes, "index checksum")?;
+        let _ = self.index_verified.set(());
+        Ok(())
+    }
+
     pub(crate) fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
         if id.format() != self.format {
             return Ok(None);
         }
         // Retained identities cannot turn a truncated pinned index into a successful lookup.
         self.index.check_not_truncated()?;
-        let mut low = 0;
-        let mut high = self.ranges.len();
-        while low < high {
-            let middle = low + (high - low) / 2;
-            match self.identity(middle)?.cmp(&id) {
-                std::cmp::Ordering::Less => low = middle + 1,
-                std::cmp::Ordering::Greater => high = middle,
-                std::cmp::Ordering::Equal => return Ok(Some(middle)),
-            }
-        }
-        Ok(None)
+        Ok(self.table.find(&self.index_bytes, id))
     }
 
     /// Pack offset of the entry at index `position`.
     pub(crate) fn offset(&self, position: usize) -> usize {
-        self.ranges[position].0
+        self.table.ranges[position].0
     }
 
     fn identity(&self, position: usize) -> Result<ObjectId, Error> {
-        let width = self.format.digest_len();
-        let start = if self.legacy {
-            1028 + position * (width + 4)
-        } else {
-            1032 + position * width
-        };
-        Ok(ObjectId::from_bytes(self.format, &self.index_bytes[start..start + width]).unwrap())
+        Ok(self.table.identity(&self.index_bytes, position))
     }
 
     /// Iterates identities from the validated pinned index without decoding their payloads.
     pub(crate) fn identities(&self) -> impl Iterator<Item = Result<ObjectId, Error>> + '_ {
-        (0..self.ranges.len()).map(|position| self.identity(position))
+        (0..self.table.len()).map(|position| self.identity(position))
     }
 
     /// Reads entry/delta headers only. Payload identity and CRC remain the reader's job.
@@ -599,20 +593,7 @@ impl Source for FilePack {
     }
 
     fn entry(&self, position: usize) -> Result<Entry, Error> {
-        let (offset, end) = self.ranges[position];
-        Ok(Entry {
-            id: self.identity(position)?,
-            offset,
-            end,
-            crc: (!self.legacy)
-                .then(|| {
-                    word(
-                        &self.index_bytes,
-                        1032 + self.ranges.len() * self.format.digest_len() + position * 4,
-                    )
-                })
-                .transpose()?,
-        })
+        Ok(self.table.entry(&self.index_bytes, position))
     }
 
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
@@ -624,11 +605,7 @@ impl Source for FilePack {
     }
 
     fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        let position = self
-            .offsets
-            .binary_search_by_key(&offset, |&i| self.ranges[i].0)
-            .map_err(|_| Error::Corrupt("base offset is not an indexed entry"))?;
-        Ok(self.offsets[position])
+        self.table.at_offset(offset)
     }
 
     /// Reads the header with up to 4 KiB of the entry, so a typical entry needs one read.

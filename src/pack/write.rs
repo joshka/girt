@@ -919,8 +919,8 @@ mod tests {
         let parsed =
             crate::pack::index::Index::parse(crate::ObjectFormat::Sha1, &bytes, 0x1_0000_0001)
                 .unwrap();
-        assert_eq!(parsed.entries[2].offset, 0x8000_0000);
-        assert_eq!(parsed.entries[3].offset, 0x1_0000_0000);
+        assert_eq!(parsed.ranges[2].0, 0x8000_0000);
+        assert_eq!(parsed.ranges[3].0, 0x1_0000_0000);
     }
 
     #[rstest]

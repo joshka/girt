@@ -312,6 +312,12 @@ impl Repository {
                 return plan;
             }
         };
+        // Opening checks index structure only. A plan authorizes deletion, so it also requires
+        // every pinned index's checksum before trusting the identities that index claims.
+        if let Err(error) = store.verify_indexes(cancel) {
+            plan.fail(error.to_string());
+            return plan;
+        }
         plan.alternate_stores = store
             .store_directories()
             .skip(1)

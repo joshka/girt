@@ -191,11 +191,13 @@ impl ReadLimits {
 ///
 /// Obtain this synchronous, blocking reader through [`crate::Repository::objects`]. Opening streams
 /// index bytes in the repository's object format in filename order and verifies index v1/v2
-/// structure and checksum, pack v2/v3 headers/counts, offset ranges, and index/pack trailer
-/// agreement. It reads only the pack header and trailer; body corruption is detected when used.
+/// structure (table sizes, sorted identities, fanout, offsets that tile the pack), pack v2/v3
+/// headers/counts, and index/pack trailer agreement. Like Git, it does not hash the whole index
+/// at open. It reads only the pack header and trailer; body corruption is detected when used.
 /// Reads check entry framing, v2 CRCs, zlib streams and delta programs throughout reconstruction,
-/// and verify the requested object's decoded identity. Legacy v1 indexes have no entry CRCs.
-/// [`Self::verify_packs`] explicitly checks whole-pack checksums and CRCs; neither opening nor
+/// and verify the requested object's decoded identity, so a damaged index fails a read rather
+/// than returning other content. Legacy v1 indexes have no entry CRCs. [`Self::verify_packs`]
+/// explicitly checks index checksums, whole-pack checksums and CRCs; neither opening nor
 /// whole-pack verification is a full fsck.
 ///
 /// Pack bytes are never retained in full. Bounded index bytes and offset tables stay in memory
@@ -357,8 +359,9 @@ impl Objects {
     /// Every pair is reopened and revalidated, even if its filename is unchanged. The old and new
     /// views coexist until success: peak handles and tables can reach their combined limits,
     /// multiplied by independently retained generations. Clone shares handles within a generation.
-    /// Like [`crate::Repository::objects`], refresh validates index bytes and pack headers/trailers
-    /// without scanning pack bodies. Use [`Self::verify_packs`] for whole-pack checksum/CRC proof.
+    /// Like [`crate::Repository::objects`], refresh validates index structure and pack
+    /// headers/trailers without hashing indexes or scanning pack bodies. Use
+    /// [`Self::verify_packs`] for index checksum, whole-pack checksum and CRC proof.
     ///
     /// # Errors
     ///
@@ -515,13 +518,15 @@ impl Objects {
         Ok(())
     }
 
-    /// Verifies whole-pack checksums and v2 entry CRCs in every pinned store, including alternates.
+    /// Verifies index checksums, whole-pack checksums and v2 entry CRCs in every pinned store,
+    /// including alternates.
     ///
-    /// Opening checks index integrity, pack framing and trailer agreement without reading pack
-    /// bodies. Use this operation when the complete raw-byte checksum proof is required. It streams
-    /// each pack with bounded scratch memory and checks cancellation every 64 KiB. The artifact
-    /// sizes already charged to [`PackLimits::max_bytes`] bound this work. It changes no files or
-    /// reader state; failure and cancellation leave the reader usable for unaffected objects.
+    /// Opening checks index structure, pack framing and trailer agreement without hashing the
+    /// index or reading pack bodies. Use this operation when the complete raw-byte checksum proof
+    /// is required. It streams each pack with bounded scratch memory and checks cancellation
+    /// every 64 KiB. The artifact sizes already charged to [`PackLimits::max_bytes`] bound this
+    /// work. It changes no files or reader state; failure and cancellation leave the reader
+    /// usable for unaffected objects.
     ///
     /// This is not a full fsck: it does not decode objects, verify their identities, validate
     /// payload syntax or check connectivity. Legacy v1 indexes have no entry CRCs. Artifacts
@@ -538,6 +543,17 @@ impl Objects {
             }
         }
         check_cancelled(cancelled)
+    }
+
+    /// Verifies every pinned index's own checksum, including alternates, without reading packs.
+    pub(crate) fn verify_indexes(&self, cancelled: &AtomicBool) -> Result<(), ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                check_cancelled(cancelled)?;
+                pack.verify_index()?;
+            }
+        }
+        Ok(())
     }
 
     /// Reads an exact object by full identity in this store's format; returns `None` only when

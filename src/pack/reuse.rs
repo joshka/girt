@@ -163,8 +163,10 @@ fn write_reusing_impl(
             .map_err(PackWriteError::from)?;
         if seen.insert(item.id) {
             let source = packs[item.pack];
+            // Copied entries keep the identity this index claims for them.
             let entry = source
-                .entry(item.position)
+                .verify_index()
+                .and_then(|()| source.entry(item.position))
                 .map_err(|source| ReuseError::Read {
                     id: item.id,
                     source,
@@ -807,6 +809,28 @@ mod tests {
         let result = rewrite(&[&pack], &packed(&pack, &ids), &[]);
         assert!(
             matches!(result, Err(ReuseError::Read { id, source: ObjectReadError::Corrupt("entry CRC") }) if id == ids[damaged])
+        );
+    }
+
+    /// Opening skips the index checksum, so reuse checks it before trusting the claimed names.
+    #[rstest::rstest]
+    #[case::checksum(None)]
+    #[case::name(Some(19))]
+    fn raw_reuse_rejects_index_checksum_mismatch(#[case] name_byte: Option<usize>) {
+        let root = tempfile::tempdir().unwrap();
+        let (_, _) = source(root.path(), &versions());
+        let pack_bytes = std::fs::read(root.path().join("source.pack")).unwrap();
+        let mut index = std::fs::read(root.path().join("source.idx")).unwrap();
+        let damaged = match name_byte {
+            Some(byte) => 1032 + byte,
+            None => index.len() - 1,
+        };
+        index[damaged] ^= 1;
+        let pack = open(root.path(), "damaged", &pack_bytes, &index);
+        let ids: Vec<_> = pack.identities().map(Result::unwrap).collect();
+        let result = rewrite(&[&pack], &packed(&pack, &ids), &[]);
+        assert!(
+            matches!(result, Err(ReuseError::Read { id, source: ObjectReadError::Corrupt("index checksum") }) if id == ids[0])
         );
     }
 

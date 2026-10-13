@@ -14,6 +14,7 @@ use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
 #[derive(Debug)]
 pub(crate) struct Pack {
     index: Index,
+    index_bytes: Vec<u8>,
     data: Vec<u8>,
 }
 
@@ -33,14 +34,16 @@ impl Pack {
         }
         let end = data.len() - format.digest_len();
         let index = Index::parse(format, index_bytes, end)?;
-        if word(&data, 8)? as usize != index.entries.len() {
+        verify_hash(format, index_bytes, "index checksum")?;
+        if word(&data, 8)? as usize != index.len() {
             return Err(Error::Corrupt("pack object count"));
         }
         verify_hash(format, &data, "pack checksum")?;
         if *index.pack_hash.as_bytes() != data[end..] {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
-        for entry in &index.entries {
+        for position in 0..index.len() {
+            let entry = index.entry(index_bytes, position);
             if entry
                 .crc
                 .is_some_and(|crc| crc32fast::hash(&data[entry.offset..entry.end]) != crc)
@@ -48,11 +51,15 @@ impl Pack {
                 return Err(Error::Corrupt("entry CRC"));
             }
         }
-        Ok(Self { index, data })
+        Ok(Self {
+            index,
+            index_bytes: index_bytes.to_vec(),
+            data,
+        })
     }
 
     pub fn find(&self, id: ObjectId) -> Option<usize> {
-        self.index.find(id)
+        self.index.find(&self.index_bytes, id)
     }
 
     pub fn read(&self, position: usize, limits: ReadLimits) -> Result<Object, Error> {
@@ -193,7 +200,7 @@ impl Source for Pack {
         self.index.pack_hash.format()
     }
     fn entry(&self, position: usize) -> Result<super::index::Entry, Error> {
-        Ok(self.index.entries[position].clone())
+        Ok(self.index.entry(&self.index_bytes, position))
     }
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
         Ok(self.find(id))
