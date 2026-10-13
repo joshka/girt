@@ -512,16 +512,32 @@ fn no_expiry_possible(
             ExpireReport::default(),
         ));
     }
-    let cutoffs = [
-        policy.reflog_expire_before,
-        policy.reflog_expire_unreachable_before,
-    ];
-    Ok(!plan.observed_logs.iter().any(|record| {
-        cutoffs
+    for record in &plan.observed_logs {
+        let cutoffs = match &policy.reflog_expiry {
+            super::ReflogExpiryPolicy::KeepAll => [None, None],
+            super::ReflogExpiryPolicy::ClassifiedCutoffs {
+                live_before,
+                disconnected_before,
+            } => [*live_before, *disconnected_before],
+            super::ReflogExpiryPolicy::Configured(expiry) => {
+                let cutoffs = expiry.cutoffs(record.source.name()).map_err(|error| {
+                    failed(
+                        ExpireCause::Incomplete(error.to_string()),
+                        ExpireReport::default(),
+                    )
+                })?;
+                [cutoffs.general, cutoffs.unreachable]
+            }
+        };
+        if cutoffs
             .into_iter()
             .flatten()
             .any(|cutoff| record.seconds < cutoff)
-    }))
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(unix)]
@@ -737,7 +753,10 @@ mod tests {
         let repository = Repository::open(root.path()).unwrap();
         let policy = RetentionPolicy {
             recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-            reflog_expire_unreachable_before: Some(1700000001),
+            reflog_expiry: crate::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+                live_before: None,
+                disconnected_before: Some(1700000001),
+            },
             ..Default::default()
         };
         (root, repository, policy, [path_a, path_b], id)

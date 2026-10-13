@@ -34,6 +34,8 @@ mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
 mod prune;
 pub use prune::{MaintenanceIsolation, PruneCause, PruneFailure, PruneReport};
+mod config;
+pub use config::{ReflogCutoffs, ReflogExpiry, ReflogExpiryError};
 mod expire;
 pub use expire::{ExpireCause, ExpireFailure, ExpireReport};
 mod retire;
@@ -83,6 +85,30 @@ impl ReflogSource {
     }
 }
 
+/// Explicit reflog expiry mode for one retention observation.
+///
+/// Keep-all is the safe default. Classified cutoffs preserve girt's existing caller-supplied
+/// semantics; configured expiry applies Git's independent general/unreachable rules. Selecting
+/// one mode prevents configuration and explicit cutoffs from silently overriding each other.
+#[derive(Clone, Debug, Default)]
+pub enum ReflogExpiryPolicy {
+    /// Retain every history record.
+    #[default]
+    KeepAll,
+    /// Select one cutoff by whether either record endpoint belongs to the live root closure.
+    /// This preserves the previous explicit-cutoff API's conservative classification.
+    ClassifiedCutoffs {
+        /// Expire records with a live endpoint strictly before this Unix second.
+        live_before: Option<i128>,
+        /// Expire records with neither endpoint live strictly before this Unix second.
+        disconnected_before: Option<i128>,
+    },
+    /// Apply a resolved Git configuration snapshot, including reference patterns and stash policy.
+    /// A record qualifies under the general cutoff or, if either endpoint is disconnected, the
+    /// unreachable cutoff. Null endpoints count as live in this mode.
+    Configured(ReflogExpiry),
+}
+
 /// Caller policy and aggregate work bounds for one observation.
 #[derive(Clone, Debug)]
 pub struct RetentionPolicy {
@@ -93,10 +119,8 @@ pub struct RetentionPolicy {
     /// as live; their dependencies receive a separate protection closure when deletion is
     /// possible.
     pub recent_cutoff: SystemTime,
-    /// Expire reachable reflog records older than this Unix second; `None` retains all.
-    pub reflog_expire_before: Option<i128>,
-    /// Expire records disconnected from live roots older than this Unix second.
-    pub reflog_expire_unreachable_before: Option<i128>,
+    /// Reflog expiry selection; the default retains every record.
+    pub reflog_expiry: ReflogExpiryPolicy,
     /// Maximum names, directory entries, and graph objects visited in each bounded phase.
     pub max_entries: usize,
     /// Maximum graph edges followed in each distinct closure traversal.
@@ -126,8 +150,7 @@ impl Default for RetentionPolicy {
         Self {
             heads: Vec::new(),
             recent_cutoff: UNIX_EPOCH,
-            reflog_expire_before: None,
-            reflog_expire_unreachable_before: None,
+            reflog_expiry: ReflogExpiryPolicy::KeepAll,
             max_entries: 1_000_000,
             max_edges: 4_000_000,
             max_bytes: 4 * 1024 * 1024 * 1024,
@@ -272,18 +295,18 @@ impl Repository {
     /// later repacking policy. Unknown or incomplete reads return an incomplete report, preserving
     /// recovered candidates. `gc.recentObjectsHook`, precious objects and partial clones block
     /// completion. The caller supplies cutoffs in place of Git's `gc.pruneExpire`,
-    /// `gc.reflogExpire`, and `gc.reflogExpireUnreachable` configuration. Scans are synchronous
-    /// and do not coordinate concurrent writers. The default cutoffs retain all reflog entries
-    /// and all existing loose objects. Valid registered private metadata remains a root even when
-    /// its checkout is missing or now points to another registration. Malformed or unrelated
-    /// registration metadata makes the scan incomplete. Commits, trees and tags are
-    /// identity-checked and parsed. Blob edges are located through the same pinned store and
-    /// checked for kind, size and bounded delta ancestry; their payload, zlib completion, CRC
-    /// and identity are not validated. Blob-shaped untyped roots use ordinary identity-verified
-    /// reads so a damaged graph header cannot erase root edges. `max_bytes` counts only decoded
-    /// commit, tree and tag bytes, including when a blob root requires a verified read.
-    /// Replacement retirement still decodes every retained object from a surviving copy before
-    /// deleting an old pack.
+    /// reflog configuration, or selects [`ReflogExpiryPolicy::Configured`] with a resolved
+    /// snapshot. Scans are synchronous and do not coordinate concurrent writers. The default
+    /// cutoffs retain all reflog entries and all existing loose objects. Valid registered
+    /// private metadata remains a root even when its checkout is missing or now points to
+    /// another registration. Malformed or unrelated registration metadata makes the scan
+    /// incomplete. Commits, trees and tags are identity-checked and parsed. Blob edges are
+    /// located through the same pinned store and checked for kind, size and bounded delta
+    /// ancestry; their payload, zlib completion, CRC and identity are not validated.
+    /// Blob-shaped untyped roots use ordinary identity-verified reads so a damaged graph header
+    /// cannot erase root edges. `max_bytes` counts only decoded commit, tree and tag bytes,
+    /// including when a blob root requires a verified read. Replacement retirement still
+    /// decodes every retained object from a surviving copy before deleting an old pack.
     ///
     /// Recent packs and `.keep` packs remain protected without contributing to `roots`,
     /// `strong_roots`, `reachable` or reflog live classification. If loose or unprotected packed
@@ -366,13 +389,40 @@ impl Repository {
         };
         let mut required_roots = strong_roots.clone();
         for record in &plan.observed_logs {
-            let live_record = live.contains(&record.old) || live.contains(&record.new);
-            let cutoff = if live_record {
-                policy.reflog_expire_before
-            } else {
-                policy.reflog_expire_unreachable_before
+            let expires = match &policy.reflog_expiry {
+                ReflogExpiryPolicy::KeepAll => false,
+                ReflogExpiryPolicy::ClassifiedCutoffs {
+                    live_before,
+                    disconnected_before,
+                } => {
+                    let live_record = live.contains(&record.old) || live.contains(&record.new);
+                    let cutoff = if live_record {
+                        live_before
+                    } else {
+                        disconnected_before
+                    };
+                    cutoff.is_some_and(|cutoff| record.seconds < cutoff)
+                }
+                ReflogExpiryPolicy::Configured(expiry) => {
+                    let cutoffs = match expiry.cutoffs(record.source.name()) {
+                        Ok(cutoffs) => cutoffs,
+                        Err(error) => {
+                            plan.fail(error.to_string());
+                            return plan;
+                        }
+                    };
+                    let live_record = (record.old.is_null() || live.contains(&record.old))
+                        && (record.new.is_null() || live.contains(&record.new));
+                    cutoffs
+                        .general
+                        .is_some_and(|cutoff| record.seconds < cutoff)
+                        || (!live_record
+                            && cutoffs
+                                .unreachable
+                                .is_some_and(|cutoff| record.seconds < cutoff))
+                }
             };
-            if cutoff.is_some_and(|cutoff| record.seconds < cutoff) {
+            if expires {
                 plan.reflog_expiry_candidates
                     .entry(record.source.clone())
                     .or_default()

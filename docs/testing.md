@@ -67,6 +67,32 @@ begins.
    inventory and tries to break each "impossible by construction" claim. Run parallel attempts only
    when the design round cannot choose between candidates.
 
+### Reflog Configuration Acceptance
+
+[Issue 91](https://github.com/joshka/girt/issues/91) records the failure inventory and design round.
+`tests/reflog_expiry.rs` compares special values and Unix timestamps with Git's `expiry-date`
+interpretation. `tests/retention.rs::configured_expiry_keeps_the_same_records_as_git` compares exact
+Git-generated retained records through the public expiry operation, including partial matching
+patterns, first match, duplicate settings and stash preservation. The layered case uses explicit
+system/global inputs, an included file and repository configuration, comparing retained bytes with
+Git. Both commits remain readable after expiry. Parser units cover unsupported dates, overflow,
+duplicate rejection and matching work exhaustion. Existing retention suites cover isolated
+publication, changed inputs, protected stores and retained-object integrity.
+
+`RetentionPolicy::reflog_expiry` selects one explicit `ReflogExpiryPolicy`: keep all, historical
+classified cutoffs, or a configured snapshot. `ReflogCutoffs` names the configured general and
+unreachable rules. A matching pattern supplies both rules; an unset key disables its rule instead of
+inheriting a global cutoff. Numeric second/minute/hour/day/week intervals, Unix timestamps, `never`,
+exact `false`, `now` and `all` are supported. Calendar and natural-language expressions are rejected
+before maintenance. Configured retention still uses its conservative repository-wide live roots
+rather than Git's per-reference tip for unreachable classification; it can retain additional
+history. This is a configuration increment, not full `git reflog expire` parity.
+
+Existing explicit-cutoff callers must migrate both values to
+`ReflogExpiryPolicy::ClassifiedCutoffs`, preserving any values formerly inherited through a struct
+update. Configured callers select `Configured(ReflogExpiry)`. Modes cannot contradict each other;
+`KeepAll` remains the default. No jj source change is made in this PR.
+
 ## Required Evidence
 
 - **Behavior:** State what callers can do, supported formats, and explicit exclusions. Reject

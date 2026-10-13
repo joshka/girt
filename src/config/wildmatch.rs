@@ -1,11 +1,25 @@
 //! Byte glob matching for include conditions; bounded dynamic programming avoids backtracking.
 
+pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> Option<bool> {
+    matches_with_pathname(pattern, text, fold, cells, true)
+}
+
+pub(crate) fn matches_without_pathname(pattern: &[u8], text: &[u8], cells: usize) -> Option<bool> {
+    matches_with_pathname(pattern, text, false, cells, false)
+}
+
 #[expect(
     clippy::indexing_slicing,
     reason = "rows have text.len() + 1 cells indexed by 0..=text.len(); pattern positions stay \
               below pattern.len(), and class_end returns an in-bounds `]`"
 )]
-pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> Option<bool> {
+fn matches_with_pathname(
+    pattern: &[u8],
+    text: &[u8],
+    fold: bool,
+    cells: usize,
+    pathname: bool,
+) -> Option<bool> {
     if pattern
         .len()
         .saturating_add(1)
@@ -27,7 +41,8 @@ pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> 
                 while pattern.get(pos) == Some(&b'*') {
                     pos += 1;
                 }
-                let recursive = pos - start >= 2
+                let recursive = pathname
+                    && pos - start >= 2
                     && (start == 0 || pattern[start - 1] == b'/')
                     && (pos == pattern.len() || pattern[pos] == b'/');
                 if recursive && pattern.get(pos) == Some(&b'/') {
@@ -40,14 +55,14 @@ pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> 
                 } else {
                     next[0] = previous[0];
                     for i in 1..=text.len() {
-                        next[i] =
-                            previous[i] || (next[i - 1] && (recursive || text[i - 1] != b'/'));
+                        next[i] = previous[i]
+                            || (next[i - 1] && (!pathname || recursive || text[i - 1] != b'/'));
                     }
                 }
             }
             b'?' => {
                 for i in 1..=text.len() {
-                    next[i] = previous[i - 1] && text[i - 1] != b'/';
+                    next[i] = previous[i - 1] && (!pathname || text[i - 1] != b'/');
                 }
                 pos += 1;
             }
@@ -57,7 +72,7 @@ pub(super) fn matches(pattern: &[u8], text: &[u8], fold: bool, cells: usize) -> 
                 };
                 let members = &pattern[pos + 1..end];
                 for i in 1..=text.len() {
-                    if previous[i - 1] && text[i - 1] != b'/' {
+                    if previous[i - 1] && (!pathname || text[i - 1] != b'/') {
                         // Git rejects the whole pattern when a class names an unknown set.
                         let byte = text[i - 1];
                         let Some(mut matched) = class(members, byte) else {
@@ -197,6 +212,21 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    #[rstest]
+    #[case::star(b"refs/*", b"refs/heads/nested/topic", true)]
+    #[case::question(b"a?b", b"a/b", true)]
+    #[case::class(b"a[/]b", b"a/b", true)]
+    #[case::double_star_is_not_a_component(b"a/**/b", b"a/b", false)]
+    #[case::case_sensitive(b"HEAD", b"head", false)]
+    #[case::malformed_class(b"[o[:]", b"[", true)]
+    #[case::unknown_named_class(b"[o[:foo:]]", b"o", false)]
+    fn reference_glob(#[case] pattern: &[u8], #[case] text: &[u8], #[case] expected: bool) {
+        assert_eq!(
+            matches_without_pathname(pattern, text, 10000),
+            Some(expected)
+        );
+    }
+
     #[rstest]
     #[case::single(b"a/*/c", b"a/b/d/c", false)]
     #[case::recursive(b"a/**/c", b"a/b/d/c", true)]

@@ -207,8 +207,7 @@ impl Repository {
         let mut report = RetireReport::default();
         check(cancel, &report)?;
         let mut keep_all_logs = policy.clone();
-        keep_all_logs.reflog_expire_before = None;
-        keep_all_logs.reflog_expire_unreachable_before = None;
+        keep_all_logs.reflog_expiry = super::ReflogExpiryPolicy::KeepAll;
         let current = Repository::open(self.git_dir())
             .map_err(|error| failed(RetireCause::Incomplete(error.to_string()), report.clone()))?;
         if current.object_dir() != self.object_dir()
