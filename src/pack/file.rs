@@ -1,4 +1,13 @@
 //! Pinned file pairs with bounded offset tables and explicit streaming pack verification.
+
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -83,7 +92,7 @@ fn read_exact_at(file: &File, mut offset: u64, mut output: &mut [u8]) -> io::Res
         match std::os::windows::fs::FileExt::seek_read(file, output, offset) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(count) => {
-                output = &mut output[count..];
+                output = output.get_mut(count..).ok_or(io::ErrorKind::InvalidData)?;
                 offset += count as u64;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -178,7 +187,7 @@ impl FilePack {
             return Err(Error::Corrupt("pack header"));
         }
         let header = pack.bytes(0, 12)?;
-        if &header[..4] != b"PACK" {
+        if !header.starts_with(b"PACK") {
             return Err(Error::Corrupt("pack header"));
         }
         let version = word(&header, 4)?;
@@ -211,6 +220,10 @@ impl FilePack {
 
     /// Binds receive-time identity evidence to this pinned representation, not a pathname or
     /// claimed checksum. The index retained by this reader must agree byte for byte as well.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "every buffer slice ends at a count bounded by that buffer's length"
+    )]
     pub(crate) fn matches_received(
         &self,
         index: &[u8],
@@ -243,9 +256,7 @@ impl FilePack {
             }
             offset += count;
         }
-        let expected_hash = &index
-            [index.len() - 2 * self.format.digest_len()..index.len() - self.format.digest_len()];
-        if hash.finalize().as_bytes() != expected_hash {
+        if Some(hash.finalize().as_bytes()) != pack_hash(self.format, index) {
             return Ok(false);
         }
         check_cancelled(cancel)?;
@@ -254,6 +265,10 @@ impl FilePack {
 
     /// Checks the index checksum, the entire pinned pack checksum and every v2 entry CRC without
     /// decoding objects.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "every buffer slice ends at a count bounded by that buffer's length"
+    )]
     pub(crate) fn verify(&self, cancelled: &AtomicBool) -> Result<(), Error> {
         check_cancelled(cancelled)?;
         self.verify_index()?;
@@ -284,9 +299,7 @@ impl FilePack {
         if hash.finalize().as_bytes() != trailer {
             return Err(Error::Corrupt("pack checksum"));
         }
-        let pack_hash = &self.index_bytes[self.index_bytes.len() - 2 * format.digest_len()
-            ..self.index_bytes.len() - format.digest_len()];
-        if pack_hash != trailer {
+        if pack_hash(format, &self.index_bytes) != Some(&trailer[..]) {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
         check_cancelled(cancelled)
@@ -317,6 +330,10 @@ impl FilePack {
     }
 
     /// Pack offset of the entry at index `position`.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "callers pass positions below len() from this pack's own index"
+    )]
     pub(crate) fn offset(&self, position: usize) -> usize {
         self.table.ranges[position].0
     }
@@ -398,7 +415,8 @@ impl FilePack {
         for (depth, position) in seen.iter().rev().enumerate() {
             known.insert(*position, (kind, base_depth + depth));
         }
-        let size = result_size.expect("the requested entry was read");
+        // The first iteration always reads the requested entry and records its size.
+        let size = result_size.ok_or(Error::Corrupt("pack entry size"))?;
         if size > limits.max_object_bytes as u64 {
             return Err(Error::Limit("object bytes"));
         }
@@ -449,7 +467,10 @@ impl FilePack {
                 let mut decoder = flate2::read::ZlibDecoder::new_with_buf(range, vec![0; 256]);
                 let mut produced = 0;
                 while produced < prefix.len() {
-                    match decoder.read(&mut prefix[produced..]) {
+                    let Some(unfilled) = prefix.get_mut(produced..) else {
+                        break;
+                    };
+                    match decoder.read(unfilled) {
                         Ok(0) => break,
                         Ok(count) => produced += count,
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -459,7 +480,9 @@ impl FilePack {
                 produced
             }
         };
-        let mut input = &prefix[..produced];
+        let mut input = prefix
+            .get(..produced)
+            .ok_or(Error::Corrupt("delta size prefix"))?;
         super::delta::size(&mut input, 0, 0, true)?;
         super::delta::size(&mut input, 0, 0, true)
     }
@@ -532,7 +555,7 @@ impl FilePack {
                     2 => crate::ObjectKind::Tree,
                     3 => crate::ObjectKind::Blob,
                     4 => crate::ObjectKind::Tag,
-                    _ => unreachable!("entry header checks kind"),
+                    other => return Err(Error::ObjectType(other)),
                 };
                 let length = length.unwrap_or(header.length);
                 if length > limits.max_object_bytes {
@@ -616,6 +639,10 @@ impl Source for FilePack {
         )
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "every buffer slice ends at a count bounded by that buffer's length"
+    )]
     fn inflate(
         &self,
         entry: &Entry,
@@ -705,6 +732,13 @@ impl Source for FilePack {
     }
 }
 
+/// The pack checksum an index records just before its own trailing checksum.
+fn pack_hash(format: ObjectFormat, index: &[u8]) -> Option<&[u8]> {
+    let width = format.digest_len();
+    let start = index.len().checked_sub(2 * width)?;
+    index.get(start..start + width)
+}
+
 /// A bounded cursor whose reads never disturb another lookup's logical position.
 ///
 /// Bytes already read with the entry header are served from `ahead` before the file is read.
@@ -737,7 +771,9 @@ impl<'a> Range<'a> {
 impl Range<'_> {
     fn verify_crc(&self, expected: Option<u32>) -> Result<(), Error> {
         if let Some(expected) = expected {
-            let actual = self.crc.as_ref().expect("v2 entry CRC").clone().finalize();
+            // Entries with a recorded CRC always stream with a hasher; fail closed otherwise.
+            let crc = self.crc.as_ref().ok_or(Error::Corrupt("entry CRC"))?;
+            let actual = crc.clone().finalize();
             if actual != expected {
                 return Err(Error::Corrupt("entry CRC"));
             }
@@ -747,6 +783,10 @@ impl Range<'_> {
 }
 
 impl Read for Range<'_> {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "every buffer slice ends at a count bounded by that buffer's length"
+    )]
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         if !self.ahead.is_empty() {
             let count = output.len().min(self.ahead.len());

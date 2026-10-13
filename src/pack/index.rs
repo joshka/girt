@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use crate::{ObjectFormat, ObjectId, ObjectReadError as Error};
 
 #[derive(Debug, Clone)]
@@ -35,7 +43,7 @@ impl Index {
         if bytes.len() < 8 {
             return Err(Error::Corrupt("truncated index header"));
         }
-        if &bytes[..4] != b"\xfftOc" {
+        if !bytes.starts_with(b"\xfftOc") {
             return Self::parse_v1(format, bytes, pack_end);
         }
         let version = word(bytes, 4)?;
@@ -55,14 +63,19 @@ impl Index {
         if table_end > trailer || (trailer - table_end) % 8 != 0 {
             return Err(Error::Corrupt("index table length"));
         }
-        let names = &bytes[1032..1032 + count * width];
+        let table = |start, end| {
+            bytes
+                .get(start..end)
+                .ok_or(Error::Corrupt("index table length"))
+        };
+        let names = table(1032, 1032 + count * width)?;
         check_names(names, width)?;
-        let large = &bytes[table_end..trailer];
-        let mut used_large = vec![false; large.len() / 8];
+        let (large, _) = table(table_end, trailer)?.as_chunks::<8>();
+        let mut used_large = vec![false; large.len()];
         if used_large.len() > count {
             return Err(Error::Corrupt("excess large offsets"));
         }
-        let table = &bytes[1032 + count * (width + 4)..table_end];
+        let table = table(1032 + count * (width + 4), table_end)?;
         let mut ranges = Vec::with_capacity(count);
         for raw in table.as_chunks::<4>().0 {
             let raw = u32::from_be_bytes(*raw);
@@ -70,14 +83,14 @@ impl Index {
                 u64::from(raw)
             } else {
                 let slot = (raw & 0x7fff_ffff) as usize;
-                let used = used_large
-                    .get_mut(slot)
-                    .ok_or(Error::Corrupt("large offset index"))?;
+                let (Some(used), Some(large)) = (used_large.get_mut(slot), large.get(slot)) else {
+                    return Err(Error::Corrupt("large offset index"));
+                };
                 if *used {
                     return Err(Error::Corrupt("duplicate large offset index"));
                 }
                 *used = true;
-                u64::from_be_bytes(large[slot * 8..slot * 8 + 8].try_into().unwrap())
+                u64::from_be_bytes(*large)
             };
             ranges.push((checked_offset(offset, pack_end)?, 0));
         }
@@ -97,16 +110,20 @@ impl Index {
         if trailer.checked_add(2 * width) != Some(bytes.len()) {
             return Err(Error::Corrupt("index table length"));
         }
-        let table = &bytes[1024..trailer];
+        let table = bytes
+            .get(1024..trailer)
+            .ok_or(Error::Corrupt("index table length"))?;
         let mut previous: Option<&[u8]> = None;
         let mut ranges = Vec::with_capacity(count);
         for record in table.chunks_exact(width + 4) {
-            let (offset, name) = record.split_at(4);
+            let Some((offset, name)) = record.split_first_chunk::<4>() else {
+                return Err(Error::Corrupt("index table length"));
+            };
             if previous.is_some_and(|previous| previous >= name) {
                 return Err(Error::Corrupt("unsorted or duplicate index identities"));
             }
             previous = Some(name);
-            let offset = u32::from_be_bytes(offset.try_into().unwrap());
+            let offset = u32::from_be_bytes(*offset);
             ranges.push((checked_offset(u64::from(offset), pack_end)?, 0));
         }
         Self::finish(format, bytes, (0, table), ranges, pack_end)
@@ -117,6 +134,11 @@ impl Index {
     ///
     /// `names` holds the identities at a fixed stride: `width` in v2, `4 + width` in v1, whose
     /// records start with the offset.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "each record is at least 20 bytes and first_byte is 0 or 4; a u8 selects one of \
+                  256 fanout buckets; offset_order returns a permutation of ranges' positions"
+    )]
     fn finish(
         format: ObjectFormat,
         bytes: &[u8],
@@ -153,13 +175,18 @@ impl Index {
         if next != 12 {
             return Err(Error::Corrupt("unindexed pack bytes"));
         }
-        let trailer = bytes.len() - 2 * width;
+        let pack_hash = bytes
+            .len()
+            .checked_sub(2 * width)
+            .and_then(|trailer| bytes.get(trailer..trailer + width))
+            .and_then(|hash| ObjectId::from_bytes(format, hash).ok())
+            .ok_or(Error::Corrupt("truncated index"))?;
         Ok(Self {
             format,
             legacy,
             ranges,
             offsets,
-            pack_hash: ObjectId::from_bytes(format, &bytes[trailer..trailer + width]).unwrap(),
+            pack_hash,
         })
     }
 
@@ -168,6 +195,11 @@ impl Index {
     }
 
     /// Identity at `position`, read from the index bytes this table was parsed from.
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        reason = "parse checked the name table for every position below len() in these bytes"
+    )]
     pub fn identity(&self, bytes: &[u8], position: usize) -> ObjectId {
         let width = self.format.digest_len();
         let start = if self.legacy {
@@ -179,6 +211,11 @@ impl Index {
     }
 
     /// Entry at `position`, read from the index bytes this table was parsed from.
+    #[expect(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        reason = "parse checked the CRC table for every position below len() in these bytes"
+    )]
     pub fn entry(&self, bytes: &[u8], position: usize) -> Entry {
         let (offset, end) = self.ranges[position];
         let crc = (!self.legacy).then(|| {
@@ -208,6 +245,10 @@ impl Index {
     }
 
     /// Identity-order position of the entry starting at `offset`.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offsets holds a permutation of the positions in ranges"
+    )]
     pub fn at_offset(&self, offset: usize) -> Result<usize, Error> {
         let position = self
             .offsets
@@ -245,6 +286,10 @@ fn checked_offset(offset: u64, pack_end: usize) -> Result<usize, Error> {
 /// Only the offset bits are sorted, in at most 16-bit digits, so a pack under 4 GiB needs two
 /// passes. Equal offsets stay adjacent for the caller's duplicate check. Keys that cannot fit in
 /// 64 bits fall back to a comparison sort.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "digits are masked below counts.len(), and counted slots stay below keys.len()"
+)]
 fn offset_order(ranges: &[(usize, usize)]) -> Vec<usize> {
     let shift = usize::BITS - ranges.len().leading_zeros();
     let largest = ranges.iter().map(|range| range.0).max().unwrap_or(0) as u64;
@@ -290,14 +335,10 @@ fn offset_order(ranges: &[(usize, usize)]) -> Vec<usize> {
 
 pub(crate) fn word(bytes: &[u8], position: usize) -> Result<u32, Error> {
     let word = bytes
-        .get(
-            position
-                ..position
-                    .checked_add(4)
-                    .ok_or(Error::Corrupt("integer offset overflow"))?,
-        )
+        .get(position..)
+        .and_then(<[u8]>::first_chunk::<4>)
         .ok_or(Error::Corrupt("truncated integer"))?;
-    Ok(u32::from_be_bytes(word.try_into().unwrap()))
+    Ok(u32::from_be_bytes(*word))
 }
 
 pub(crate) fn verify_hash(
@@ -305,11 +346,12 @@ pub(crate) fn verify_hash(
     bytes: &[u8],
     reason: &'static str,
 ) -> Result<(), Error> {
-    let end = bytes
+    let (content, checksum) = bytes
         .len()
         .checked_sub(format.digest_len())
+        .and_then(|end| bytes.split_at_checked(end))
         .ok_or(Error::Corrupt(reason))?;
-    if *format.checksum(&bytes[..end]).as_bytes() != bytes[end..] {
+    if format.checksum(content).as_bytes() != checksum {
         return Err(Error::Corrupt(reason));
     }
     Ok(())
@@ -317,7 +359,45 @@ pub(crate) fn verify_hash(
 
 #[cfg(test)]
 mod tests {
-    use super::offset_order;
+    use super::{Index, offset_order};
+    use crate::{ObjectFormat, ObjectReadError as Error};
+
+    /// A one-entry SHA-1 v2 index whose entry spans pack bytes 12..13, with the given offset word.
+    fn v2_index(offset: u32, large: &[u8]) -> Vec<u8> {
+        let mut bytes = b"\xfftOc\0\0\0\x02".to_vec();
+        for bucket in 0..256 {
+            bytes.extend_from_slice(&u32::from(bucket >= 0x81).to_be_bytes());
+        }
+        bytes.extend_from_slice(&[0x81; 20]);
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&offset.to_be_bytes());
+        bytes.extend_from_slice(large);
+        bytes.extend_from_slice(&[0; 40]);
+        bytes
+    }
+
+    #[test]
+    fn rejects_every_truncation_of_a_valid_index() {
+        let bytes = v2_index(12, &[]);
+        assert!(Index::parse(ObjectFormat::Sha1, &bytes, 13).is_ok());
+        for len in 0..bytes.len() {
+            assert!(
+                Index::parse(ObjectFormat::Sha1, &bytes[..len], 13).is_err(),
+                "accepted {len} bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_large_offset_slot_outside_table() {
+        let bytes = v2_index(0x8000_0001, &12u64.to_be_bytes());
+        assert!(matches!(
+            Index::parse(ObjectFormat::Sha1, &bytes, 13),
+            Err(Error::Corrupt("large offset index"))
+        ));
+        let bytes = v2_index(0x8000_0000, &12u64.to_be_bytes());
+        assert!(Index::parse(ObjectFormat::Sha1, &bytes, 13).is_ok());
+    }
 
     #[test]
     fn offset_order_sorts_by_offset_at_every_key_width() {

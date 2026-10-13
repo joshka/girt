@@ -1,3 +1,11 @@
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    reason = "parses untrusted repository or network input (#103)"
+)]
 use crate::ObjectReadError as Error;
 
 /// Advances a borrowed byte cursor; all pack/delta integers use checked arithmetic.
@@ -54,10 +62,10 @@ pub(crate) fn apply(
                 return Err(Error::Corrupt("reserved delta instruction"));
             }
             let length = instruction as usize;
-            let Some(data) = program.get(..length) else {
+            let Some((data, rest)) = program.split_at_checked(length) else {
                 return Err(Error::Corrupt("truncated delta insertion"));
             };
-            program = &program[length..];
+            program = rest;
             data
         } else {
             let mut offset = 0usize;
