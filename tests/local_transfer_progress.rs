@@ -356,30 +356,36 @@ fn git_local_transfer_progress_and_repository_callbacks() {
 fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
     let fixture = Fixture::new(ObjectFormat::Sha1, true, 8);
     let before = std::fs::read(&fixture.index_path).unwrap();
-    let cancel = AtomicBool::new(false);
-    let mut events = Vec::new();
-    let result = receive_local_with_validation_progress(
-        fixture.root.path(),
-        |advertisement| {
-            advertisement
-                .refs
-                .iter()
-                .map(|reference| reference.id)
-                .collect()
-        },
-        &KnownHistory::default(),
-        FetchLimits::default(),
-        TransportControl::new(&cancel),
-        |_| ControlFlow::Continue(()),
-        |event| {
-            events.push(event);
-            if event.objects.0 > 0 {
-                cancel.store(true, Ordering::Relaxed);
-            }
-        },
-    );
-    assert!(matches!(result, Err(girt::fetch::FetchError::Cancelled)));
-    assert!(events.iter().all(|event| !event.complete));
+    for delta in [false, true] {
+        let cancel = AtomicBool::new(false);
+        let mut events = Vec::new();
+        let result = receive_local_with_validation_progress(
+            fixture.root.path(),
+            |advertisement| {
+                advertisement
+                    .refs
+                    .iter()
+                    .map(|reference| reference.id)
+                    .collect()
+            },
+            &KnownHistory::default(),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |_| ControlFlow::Continue(()),
+            |event| {
+                events.push(event);
+                if if delta {
+                    event.deltas.is_some_and(|value| value.0 > 0)
+                } else {
+                    event.objects.0 > 0
+                } {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        assert!(matches!(result, Err(girt::fetch::FetchError::Cancelled)));
+        assert!(events.iter().all(|event| !event.complete));
+    }
     let result = std::panic::catch_unwind(|| {
         receive_local_with_validation_progress(
             fixture.root.path(),
@@ -400,4 +406,144 @@ fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
     assert!(result.is_err());
     assert_eq!(std::fs::read(&fixture.index_path).unwrap(), before);
     git(fixture.root.path(), &["fsck", "--strict"], b"");
+}
+
+fn snapshot(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>> {
+    fn visit(
+        root: &std::path::Path,
+        path: &std::path::Path,
+        result: &mut std::collections::BTreeMap<std::path::PathBuf, Option<Vec<u8>>>,
+    ) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                result.insert(path.strip_prefix(root).unwrap().to_owned(), None);
+                visit(root, &path, result);
+            } else {
+                result.insert(
+                    path.strip_prefix(root).unwrap().to_owned(),
+                    Some(std::fs::read(&path).unwrap()),
+                );
+            }
+        }
+    }
+    let mut result = std::collections::BTreeMap::new();
+    visit(root, root, &mut result);
+    result
+}
+
+#[test]
+fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
+    let fixture = Fixture::new(ObjectFormat::Sha1, true, 8);
+    let id = std::str::from_utf8(&git(fixture.root.path(), &["rev-parse", "main"], b""))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let command = PushCommand {
+        name: RefName::new("refs/heads/main").unwrap(),
+        expected: None,
+        new: id,
+        force: ForcePolicy::FastForwardOnly,
+    };
+    let prepared = PreparedPush::new_local(
+        &fixture.repo.objects(PackLimits::default()).unwrap(),
+        vec![command.clone()],
+        &[],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    struct Panics;
+    impl girt::transfer::TransferCallbacks for Panics {
+        fn validation_progress(&mut self, progress: ValidationProgress) {
+            if progress.objects.0 > 0 {
+                panic!("observer panic");
+            }
+        }
+    }
+    for operation in ["push", "repository-fetch", "repository-push"] {
+        let root = tempfile::tempdir().unwrap();
+        let destination = Repository::init(
+            ObjectFormat::Sha1,
+            root.path().join("destination"),
+            InitKind::Bare,
+        )
+        .unwrap();
+        git(
+            destination.git_dir(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                fixture.root.path().to_str().unwrap(),
+            ],
+            b"",
+        );
+        let destination = Repository::open(destination.git_dir()).unwrap();
+        git(
+            fixture.root.path(),
+            &[
+                "remote",
+                "add",
+                "panic-target",
+                destination.git_dir().to_str().unwrap(),
+            ],
+            b"",
+        );
+        let source = Repository::open(fixture.root.path()).unwrap();
+        let before = snapshot(destination.git_dir());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
+            "push" => {
+                let inputs = girt::config::ConfigInputs::default();
+                let _ = send_local_with_progress(
+                    destination.git_dir(),
+                    &prepared,
+                    TransportControl::new(&AtomicBool::new(false)),
+                    LocalPushContext {
+                        config_inputs: &inputs,
+                        identity: None,
+                    },
+                    |event| {
+                        if event.objects.0 > 0 {
+                            panic!("observer panic");
+                        }
+                    },
+                );
+            }
+            "repository-fetch" => {
+                let _ = destination.fetch(
+                    "origin",
+                    &girt::transfer::FetchOptions::new([
+                        "refs/heads/main:refs/remotes/origin/main",
+                    ]),
+                    &girt::transfer::Environment::default(),
+                    &mut Panics,
+                );
+            }
+            "repository-push" => {
+                let _ = source.push(
+                    "panic-target",
+                    vec![command.clone()],
+                    &girt::transfer::PushOptions::default(),
+                    &girt::transfer::Environment::default(),
+                    &mut Panics,
+                );
+            }
+            _ => unreachable!(),
+        }));
+        assert!(result.is_err(), "{operation} must exercise observer unwind");
+        assert_eq!(
+            snapshot(destination.git_dir()),
+            before,
+            "{operation}: refs, primary objects and temporary directories unchanged"
+        );
+        git(
+            fixture.root.path(),
+            &["remote", "remove", "panic-target"],
+            b"",
+        );
+    }
 }

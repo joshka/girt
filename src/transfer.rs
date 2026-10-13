@@ -836,14 +836,20 @@ impl Repository {
             ControlFlow::Continue(())
         };
         let ready = match endpoint {
-            Endpoint::Local(path) => request()?.receive_local_with_validation_progress(
-                path,
-                &known,
-                limits,
-                control,
-                |_| ControlFlow::Continue(()),
-                |event| callbacks.validation_progress(event),
-            ),
+            Endpoint::Local(path) => {
+                let callbacks = std::cell::RefCell::new(callbacks);
+                request()?.receive_local_with_validation_progress(
+                    path,
+                    &known,
+                    limits,
+                    control,
+                    |message| {
+                        callbacks.borrow_mut().remote_message(message);
+                        ControlFlow::Continue(())
+                    },
+                    |event| callbacks.borrow_mut().validation_progress(event),
+                )
+            }
             #[cfg(feature = "http")]
             Endpoint::Http(http) => {
                 let runtime = runtime()?;

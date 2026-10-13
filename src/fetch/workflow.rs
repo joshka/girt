@@ -375,7 +375,8 @@ impl FetchRequest {
     ///
     /// Uses [`Self::receive_local`]'s planning contract and
     /// [`super::receive_local_with_validation_progress`]'s observer contract. Completion marks
-    /// validation, independently of later installation or publication.
+    /// validation, independently of later installation or publication. Later planning or transport
+    /// cancellation can still fail this operation.
     ///
     /// # Errors
     ///

@@ -125,7 +125,8 @@ pub fn receive_local_with_known_and_progress(
 /// Uses [`receive_local_with_known`]'s storage contract. The synchronous observer receives
 /// [`super::ValidationProgress`], independently of receiver messages. No pack means no snapshots.
 /// Observers must return promptly; set `control.cancel` to request cooperative cancellation.
-/// Completion describes validation, before installation or reference publication.
+/// Completion describes validation, before installation or reference publication. A subsequent
+/// deadline/cancellation check or planning step can still fail the enclosing fetch.
 ///
 /// # Errors
 ///
