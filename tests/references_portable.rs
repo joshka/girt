@@ -318,3 +318,30 @@ fn symbolic_unborn_head_logging_agrees_with_git(#[case] format: ObjectFormat) {
     assert_eq!(records[0].old, ObjectId::null(format));
     assert_eq!(records[0].new, tip);
 }
+
+/// Without a nonadmin durability barrier, destructive maintenance is deferred on non-Unix hosts:
+/// packed-refs is written, but every loose copy stays and still resolves to the same value.
+#[cfg(not(unix))]
+#[test]
+fn packing_keeps_loose_copies_without_a_durable_rename() {
+    let (root, repo, tip) = fixture(ObjectFormat::Sha1);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(&name("refs/tags/t"), Target::Direct(tip), Expected::Absent)
+        .unwrap();
+    let report = refs
+        .pack(
+            &repo.objects(girt::PackLimits::default()).unwrap(),
+            girt::refs::PackRefsOptions::ALL,
+        )
+        .unwrap();
+    assert!(report.rewritten);
+    assert_eq!(report.pruned, 0);
+    assert_eq!(report.retained, [name("refs/tags/t")]);
+    assert!(root.path().join("refs/tags/t").exists());
+    let packed = fs::read_to_string(root.path().join("packed-refs")).unwrap();
+    assert!(packed.contains(&format!("{tip} refs/tags/t\n")));
+    assert_eq!(
+        git::git(root.path(), &["rev-parse", "refs/tags/t"], b""),
+        format!("{tip}\n").into_bytes()
+    );
+}
