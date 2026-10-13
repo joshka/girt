@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/joshka/girt/compare/v0.6.3...v0.6.4) - 2026-10-13
+
+### Other
+
+- Add maintenance, pack, reftable, locks, diff and network transport examples ([#146](https://github.com/joshka/girt/pull/146))
+- Add working-tree and diff examples ([#145](https://github.com/joshka/girt/pull/145))
+- Add fetch, clone, push and transport module examples ([#144](https://github.com/joshka/girt/pull/144))
+- Add refs, remote and config module examples ([#143](https://github.com/joshka/girt/pull/143))
+- Enable missing_docs and add core repository examples ([#142](https://github.com/joshka/girt/pull/142))
+
 ## [0.6.3](https://github.com/joshka/girt/compare/v0.6.2...v0.6.3) - 2026-10-13
 
 ### Other
