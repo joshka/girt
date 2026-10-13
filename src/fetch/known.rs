@@ -797,6 +797,32 @@ mod tests {
     }
 
     #[rstest]
+    #[case::empty(100, &[], 0)]
+    #[case::exact(100, &[0, 100, 200], 0)]
+    #[case::duplicate(100, &[100, 100], 0)]
+    #[case::before(50, &[100, 200], 50)]
+    #[case::after(250, &[100, 200], 50)]
+    #[case::closer_previous(125, &[100, 200], 25)]
+    #[case::closer_next(175, &[100, 200], 25)]
+    #[case::tie(150, &[100, 200], 50)]
+    #[case::extremes(i64::MIN, &[i64::MAX], u64::MAX)]
+    fn ancestor_priority_uses_nearest_sorted_date(
+        #[case] seconds: i64,
+        #[case] dates: &[i64],
+        #[case] expected: u64,
+    ) {
+        let id = ObjectId::Sha1([0; 20]);
+        let entry = Ancestor {
+            seconds,
+            id,
+            parents: vec![],
+            tree: id,
+        };
+        let Reverse((distance, _)) = entry.prioritized(dates);
+        assert_eq!(distance, expected);
+    }
+
+    #[rstest]
     #[case::no_budget(0, false, false)]
     #[case::exact_budget(2, false, true)]
     #[case::shallow_seed(1, true, false)]
