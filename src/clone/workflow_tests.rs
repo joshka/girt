@@ -98,6 +98,7 @@ fn initialized(ready: &CloneReady) -> (Repository, CloneReport) {
         initialized: true,
         fetch: None,
         configured: false,
+        packed_refs: None,
         references: vec![],
         repository: None,
         head: ready.head.clone(),

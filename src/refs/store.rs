@@ -813,6 +813,17 @@ impl Lock {
     }
 
     pub(super) fn publish_retaining_lock(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+        self.publish_replacement(bytes, false)
+    }
+
+    /// Publishes like [`Self::publish_retaining_lock`], syncing the file before the rename.
+    ///
+    /// The rename itself is durable only after [`sync_directory`] on the destination's parent.
+    pub(super) fn publish_synced(&self, bytes: &[u8]) -> Result<(), ReferenceError> {
+        self.publish_replacement(bytes, true)
+    }
+
+    fn publish_replacement(&self, bytes: &[u8], sync: bool) -> Result<(), ReferenceError> {
         self.check_owned()?;
         let parent = self.destination.parent().unwrap();
         let mut temporary = tempfile::Builder::new()
@@ -828,6 +839,12 @@ impl Lock {
         temporary
             .write_all(bytes)
             .map_err(|source| io_error(temporary.path(), source))?;
+        if sync {
+            temporary
+                .as_file()
+                .sync_all()
+                .map_err(|source| io_error(temporary.path(), source))?;
+        }
         self.check_owned()?;
         temporary
             .persist(&self.destination)
@@ -861,6 +878,15 @@ impl Drop for Lock {
         }
     }
 }
+/// Makes completed renames in `directory` durable. Unix only: other platforms have no
+/// established directory barrier here, so callers must not retire data that depends on one.
+#[cfg(unix)]
+pub(super) fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
+    File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| io_error(directory, source))
+}
+
 pub(super) fn io_error(path: &Path, source: io::Error) -> ReferenceError {
     ReferenceError::Io {
         path: path.into(),

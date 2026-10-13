@@ -201,7 +201,9 @@ impl CloneReady {
     }
 
     /// Creates the destination, installs/publishes tracking refs and tags, writes remote/branch
-    /// config, then conditionally publishes the local branch and HEAD (HEAD last).
+    /// config, packs the published refs, then conditionally publishes the local branch and HEAD
+    /// (HEAD last). As with `git clone`, tracking refs and tags end up in `packed-refs`, while the
+    /// local branch and symbolic refs stay loose.
     ///
     /// Both layouts contain all tracking branches/tags and at most one local branch. No index or
     /// worktree files are written. The returned repository has freshly reopened configuration.
@@ -241,6 +243,7 @@ impl CloneReady {
                 initialized: false,
                 fetch: None,
                 configured: false,
+                packed_refs: None,
                 references: Vec::new(),
                 repository: None,
                 head: self.head.clone(),
@@ -314,6 +317,15 @@ impl CloneReady {
         let bytes = config::contents(self.request.kind, &self.request.url, &self.head);
         config::publish(&repo, self.request.kind, &bytes).map_err(CloneFailure::Configuration)?;
         report.configured = true;
+        cancelled(cancel)?;
+        // Like Git's clone, publish fetched refs packed; the local branch and HEAD stay loose.
+        if cfg!(unix) && repo.reference_backend() == crate::refs::Backend::Files {
+            let objects = repo.objects(crate::PackLimits::default())?;
+            report.packed_refs = Some(
+                repo.references()?
+                    .pack(&objects, crate::refs::PackRefsOptions::ALL)?,
+            );
+        }
         cancelled(cancel)?;
         report.references = repo
             .references()?
@@ -414,6 +426,9 @@ pub struct CloneReport {
     pub fetch: Option<FetchReport>,
     /// Complete remote/branch config replaced initialization config.
     pub configured: bool,
+    /// Fetched refs moved into `packed-refs`; `None` for reftable, non-Unix hosts (see
+    /// [`crate::refs::References::pack`]) or an earlier failure.
+    pub packed_refs: Option<crate::refs::PackRefsReport>,
     /// Successful local branch/HEAD transaction. On error inspect the nested transaction outcomes.
     pub references: Vec<RefEditOutcome>,
     /// Reopened repository with persisted config, present only on complete success.
@@ -480,6 +495,12 @@ pub enum CloneFailure {
     /// Reference store could not be opened.
     #[error(transparent)]
     Reference(#[from] crate::refs::ReferenceError),
+    /// Packing fetched refs failed; every fetched ref keeps its value.
+    #[error(transparent)]
+    PackRefs(#[from] crate::refs::PackRefsError),
+    /// Object storage could not be opened to record peeled tags.
+    #[error(transparent)]
+    Objects(#[from] crate::ObjectReadError),
     /// Final branch/HEAD transaction failed, retaining per-ref/log partial effects.
     #[error(transparent)]
     Publication(#[from] crate::refs::TransactionError),

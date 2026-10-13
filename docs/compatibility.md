@@ -727,6 +727,36 @@ removed on ordinary errors/unwind; cleanup I/O failures or process termination c
 locks. No fsync is issued, so successful visibility does not guarantee crash/power-loss durability
 for either refs or objects. Network filesystems and crash recovery have not been validated.
 
+### Packing References
+
+`References::pack` moves loose direct references into `packed-refs`, like `git pack-refs`.
+`PackScope::All` matches `--all`; `PackScope::Tags` matches the default, which packs only
+`refs/tags/`. Output is byte-identical to Git 2.56 for SHA-1 and SHA-256: the
+`# pack-refs with: peeled fully-peeled sorted` header (with its trailing space), records in name
+byte order, and a `^` line with the fully peeled ID after every annotated tag, including nested
+tags. Existing packed records are kept, including those whose objects are missing, and an existing
+`^` line is kept when its objects can no longer be read, as Git keeps it. Symbolic refs, `HEAD`,
+per-worktree names, malformed loose files and refs to missing objects stay loose, as with Git.
+
+The whole operation holds `packed-refs.lock`. The replacement is synced, renamed, and its directory
+synced before any loose file is removed. Each removal takes that ref's lock without waiting and
+unlinks only if the file still holds the packed value. A locked or changed file stays and is
+reported, and it still shadows its packed record. A crash at any point therefore leaves every ref
+either loose or packed with its old value. If the directory sync fails after the rename,
+`PackRefsError::Unconfirmed` reports the visible replacement and nothing is pruned. Packing is
+refused on non-Unix hosts, where no directory sync is established to make the rename durable before
+the last loose copy is retired; clone skips packing there. Concurrent Git writers that delete refs
+need `packed-refs.lock` and cannot interleave. Reftable is unsupported.
+
+`PackTrigger::Auto` approximates `git pack-refs --auto` as observed with Git 2.56. It packs once at
+least 16 loose candidates exist, and the threshold grows by 5 for each doubling of `packed-refs`
+past 12 KiB. Git's exact heuristic is not reproduced. Clone packs every fetched ref before
+publishing the local branch and HEAD, leaving the same loose files as `git clone`. Fetch does not
+pack: Git does that through auto-maintenance after the fetch, so consumers call
+`pack(PackRefsOptions::AUTO)` where Git would run auto-maintenance. `tests/packed_refs.rs` and
+`tests/clone.rs` compare the bytes and the remaining loose files with Git's, and check round trips
+where Git reads, updates, deletes and repacks girt's output.
+
 ### Evidence and Provenance
 
 Original `tests/references.rs` fixtures invoke Git 2.55.0 in isolated temporary repositories with

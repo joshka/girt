@@ -786,3 +786,28 @@ fn head_and_reflog_policies_compose_in_each_layout(
     assert!(!repo.git_dir().join("index").exists());
     git(repo.git_dir(), &["fsck", "--strict", "--full"], b"");
 }
+
+#[cfg(unix)]
+#[test]
+fn clone_packs_fetched_refs_like_git() {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("girt");
+    let report = clone(&source, &path, InitKind::Worktree, BranchSelection::Default);
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            "--no-checkout",
+            &source.root.path().to_string_lossy(),
+            "git",
+        ],
+        b"",
+    );
+    assert_eq!(
+        fs::read(path.join(".git/packed-refs")).unwrap(),
+        fs::read(root.path().join("git/.git/packed-refs")).unwrap()
+    );
+    assert!(report.packed_refs.unwrap().retained.is_empty());
+}

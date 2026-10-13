@@ -318,3 +318,26 @@ fn symbolic_unborn_head_logging_agrees_with_git(#[case] format: ObjectFormat) {
     assert_eq!(records[0].old, ObjectId::null(format));
     assert_eq!(records[0].new, tip);
 }
+
+/// Without a directory sync to make the rename durable, packing would retire the last loose copy
+/// on trust, so it is refused before any effect.
+#[cfg(not(unix))]
+#[test]
+fn packing_is_refused_without_a_durable_rename() {
+    let (root, repo, tip) = fixture(ObjectFormat::Sha1);
+    let refs = repo.references().unwrap();
+    refs.update_without_reflog(&name("refs/tags/t"), Target::Direct(tip), Expected::Absent)
+        .unwrap();
+    let result = refs.pack(
+        &repo.objects(girt::PackLimits::default()).unwrap(),
+        girt::refs::PackRefsOptions::ALL,
+    );
+    assert!(matches!(
+        result,
+        Err(girt::refs::PackRefsError::Reference(
+            ReferenceError::Unsupported(_)
+        ))
+    ));
+    assert!(root.path().join("refs/tags/t").exists());
+    assert!(!root.path().join("packed-refs").exists());
+}

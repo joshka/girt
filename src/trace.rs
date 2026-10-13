@@ -271,7 +271,8 @@ pub(crate) fn clone_finish(error: &crate::clone::CloneError, span: &tracing::Spa
         Initialization(_) | Open(_) => "repository",
         Fetch(e) => fetch_finish(e, span),
         Verification(e) => fetch(e),
-        Reference(e) => reference(e),
+        Reference(e) | PackRefs(crate::refs::PackRefsError::Reference(e)) => reference(e),
+        PackRefs(_) | Objects(_) => "corrupt",
         Publication(e) => transaction(e, span),
     }
 }
