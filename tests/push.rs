@@ -1099,3 +1099,38 @@ fn delta_push_then_incremental_update_preserves_payloads() {
     );
     git(dest.git_dir(), &["fsck", "--strict"], b"");
 }
+
+/// Git trusts referenced history, including non-tip ancestors, rather than fscking old trees.
+#[test]
+fn non_tip_receiver_boundary_does_not_scan_old_trees() {
+    let (source, repo, ids) = import("@100 0@200 1@300 1@400");
+    let (_root, dest) = receiver_with(&source, ids[2]);
+    let old_tree = String::from_utf8(git(source.path(), &["rev-parse", "c0^{tree}"], b"")).unwrap();
+    let old_tree = old_tree.trim();
+    fs::remove_file(dest.object_dir().join(&old_tree[..2]).join(&old_tree[2..])).unwrap();
+    // The new commit forks from c1, which is not an advertised tip.
+    let prepared = PreparedPush::new_excluding(
+        &repo.objects(PackLimits::default()).unwrap(),
+        vec![command("refs/heads/new", None, ids[3])],
+        &[ids[2]],
+        PushLimits::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(
+        send_local(dest.git_dir(), &prepared, &AtomicBool::new(false))
+            .unwrap()
+            .all_succeeded()
+    );
+    assert_eq!(tip(&dest, "refs/heads/new"), Some(ids[3]));
+    git(
+        source.path(),
+        &[
+            "push",
+            "--quiet",
+            dest.git_dir().to_str().unwrap(),
+            "c3:refs/heads/git-new",
+        ],
+        b"",
+    );
+}
