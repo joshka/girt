@@ -430,6 +430,8 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
         run: |
+          echo "Deliberate issue-172 failure probe"
+          exit 1
           # A manual run keeps the Rust jobs, whose inputs select focused checks, and skips the rest.
           if [ "$EVENT" = workflow_dispatch ]; then
             printf '%s\n' rust=true docs=false index=false references=false security=false >> "$GITHUB_OUTPUT"
