@@ -1,0 +1,153 @@
+name: Native platform validation
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-tests:
+    name: Build tests (${{ inputs.os }})
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: $/.github/actions/environment
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          shared-key: stable-test-archives
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install nextest
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-nextest@0.9.140
+      - name: Build native test archives
+        run: python .github/scripts/ci-tests.py build
+      - name: Upload native test archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tests-${{ inputs.os }}-${{ github.sha }}
+          path: ci-archives/
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
+          retention-days: 3
+      - name: Upload Cargo build timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: timings-${{ inputs.os }}
+          path: target/cargo-timings/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  test-shards:
+    name: Test (${{ inputs.os }}, shard ${{ matrix.shard }}/3)
+    needs: build-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/environment
+      - name: Install nextest
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-nextest@0.9.140
+      - name: Download matching native archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tests-${{ inputs.os }}-${{ github.sha }}
+          path: ci-archives/
+      - name: Run native test partition without compiling
+        env:
+          PARTITION: hash:${{ matrix.shard }}/3
+        run: python .github/scripts/ci-tests.py run
+      - name: Upload partition test inventory
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tests-${{ inputs.os }}-shard-${{ matrix.shard }}
+          path: ci-results/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  platform-checks:
+    name: Checks (${{ inputs.os }})
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - uses: $/.github/actions/environment
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          shared-key: stable-checks
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Documentation tests
+        run: cargo +stable test --locked --all-features --doc
+      - name: Core-only library
+        run: cargo +stable check --locked --lib --no-default-features
+      - name: HTTP-only library
+        run: cargo +stable check --locked --lib --no-default-features --features http
+      - name: Tracing SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
+      - name: SSH-only library
+        run: cargo +stable check --locked --lib --no-default-features --features ssh
+      - name: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
+        run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
+      - name: cargo +stable run --locked --example fetch_local
+        run: cargo +stable run --locked --example fetch_local
+      - name: cargo +stable run --locked --example push_local
+        run: cargo +stable run --locked --example push_local
+      - name: cargo +stable run --locked --features http --example http_local
+        run: cargo +stable run --locked --features http --example http_local
+      - name: cargo +stable run --locked --features ssh --example ssh_local
+        run: cargo +stable run --locked --features ssh --example ssh_local
+      - name: cargo +stable run --locked --example content_diff
+        run: cargo +stable run --locked --example content_diff
+      - name: cargo +stable run --locked --example index
+        run: cargo +stable run --locked --example index
+      - name: cargo +stable run --locked --example write_pack
+        run: cargo +stable run --locked --example write_pack
+      - name: cargo +stable run --locked --example init_repository
+        run: cargo +stable run --locked --example init_repository
+      - name: cargo +stable run --locked --features tracing --example tracing
+        run: cargo +stable run --locked --features tracing --example tracing
+      - name: cargo +stable run --locked --example reference_transaction
+        run: cargo +stable run --locked --example reference_transaction
+      - name: cargo +stable run --locked --example status
+        run: cargo +stable run --locked --example status
+      - name: cargo +stable run --locked --example checkout
+        run: cargo +stable run --locked --example checkout
+      - name: Rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc --locked --all-features --no-deps --document-private-items

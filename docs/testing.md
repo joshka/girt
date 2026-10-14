@@ -270,9 +270,12 @@ resource use: validate those contracts separately. No numerical code-coverage th
 
 ## Native Platform Coverage
 
-The platform workflow runs the full all-feature suite on Ubuntu 22.04/24.04 and macOS 14. Windows
-runs all-feature library units and doctests, an explicit core-only integration selection, and a
-separate HTTP-only runtime suite. All hosts independently compile core-only, HTTP-only, and SSH-only
+The platform workflow runs the full all-feature suite on Ubuntu 26.04 and macOS 14. Unix builds each
+feature configuration once, then runs three disjoint `nextest` archive shards on native runners.
+Build and shard jobs use the same checkout path because test fixtures include compile-time paths.
+Doctests, examples, library checks, Clippy and Rustdoc run in parallel jobs. Windows runs
+all-feature library units and doctests, an explicit core-only integration selection, and a separate
+HTTP-only runtime suite. All hosts independently compile core-only, HTTP-only, and SSH-only
 libraries and run all-feature/all-target Clippy. Unix also runs core-only units and selected
 both-format interoperability suites, plus isolated HTTP and SSH runtime suites, with tracing
 disabled. Windows runs core-only units and its portable selection without tracing. Compilation is

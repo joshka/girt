@@ -58,10 +58,11 @@ For performance-sensitive changes, run `just bench`. See
 and recorded results. Changes touching fetch, object reading, packing or retention also need the
 [large-repository benchmark](docs/jj-replacement-status.md#large-repository-benchmark).
 
-The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
-checks on macOS and Linux, with a separate Windows portable-test job. Its explicit
-[integration selection](docs/testing.md#native-platform-coverage) covers storage, objects,
-repository operations, remote mapping, references, and HTTP runtime suites. See
+The [CI workflow](.github/workflows/validation.yml) repeats runtime and interoperability checks. The
+[Unix platform workflow](.github/workflows/platform.yml) builds native test archives once and runs
+three native shards per OS, with checks and doctests in parallel. Windows uses separate feature
+lanes. Its explicit [integration selection](docs/testing.md#native-platform-coverage) covers
+storage, objects, repository operations, remote mapping, references, and HTTP runtime suites. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
 making support claims. Local cross-compilation does not replace executing the test suite on the
 target OS.

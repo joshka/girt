@@ -1,5 +1,5 @@
 # Record each test duration and flag slow fixtures without adding test timeouts.
-[profile.windows-ci]
+[profile.ci]
 slow-timeout = { period = "10s" }
 status-level = "pass"
 final-status-level = "slow"

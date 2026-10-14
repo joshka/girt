@@ -1,0 +1,31 @@
+name: Native test environment
+description: Record platform, compiler, Git and checkout/temp filesystems
+runs:
+  using: composite
+  steps:
+    - name: Compiler and Git
+      shell: bash
+      run: |
+        rustc +stable -Vv
+        git --version
+    - name: Unix storage and OS
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        uname -a
+        if [ "$RUNNER_OS" = Linux ]; then
+          cat /etc/os-release
+          df -T . "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')"
+        else
+          sw_vers
+          diskutil info "$(df . | tail -1 | awk '{print $1}')"
+          diskutil info "$(df "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')" | tail -1 | awk '{print $1}')"
+        fi
+    - name: Windows storage and OS
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber | ConvertTo-Json -Compress
+        Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystem, FileSystemLabel | ConvertTo-Json -Compress
+        Write-Output "Checkout directory: $env:GITHUB_WORKSPACE"
+        Write-Output "Temporary directory: $env:TEMP"
