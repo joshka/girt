@@ -753,7 +753,15 @@ pub(super) fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, ReferenceErr
 
 // The opened roots are canonical. Refuse symlink traversal below them, and symlink files.
 // This is a trusted-directory check, not a race-proof sandbox against malicious path swaps.
+#[cfg(test)]
+thread_local! {
+    /// Ancestor walks by [`check_path`] on this thread.
+    pub(crate) static PATH_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(super) fn check_path(path: &Path) -> Result<(), ReferenceError> {
+    #[cfg(test)]
+    PATH_CHECKS.with(|checks| checks.set(checks.get() + 1));
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {

@@ -74,6 +74,8 @@
 //! ```
 
 mod enumerate;
+#[cfg(test)]
+pub(crate) use enumerate::LOOSE_SCANS;
 mod imported;
 mod leaf_symlink;
 mod lock_wait;

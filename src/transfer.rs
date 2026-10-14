@@ -1509,3 +1509,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "transfer_fetch_tests.rs"]
+mod fetch_tests;

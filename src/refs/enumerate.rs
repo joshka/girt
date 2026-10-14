@@ -336,6 +336,14 @@ enum LooseScope {
     Private,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Repository roots whose loose references were scanned on this thread, for listing-count
+    /// regression tests.
+    pub(crate) static LOOSE_SCANS: std::cell::RefCell<Vec<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn collect_loose(
     format: crate::ObjectFormat,
     root: &Path,
@@ -344,6 +352,8 @@ fn collect_loose(
     entries: &mut BTreeMap<RefName, ReferenceObservation>,
     mut budget: Option<&mut ScanBudget<'_>>,
 ) -> Result<(), ReferenceError> {
+    #[cfg(test)]
+    LOOSE_SCANS.with(|scans| scans.borrow_mut().push(root.to_owned()));
     let mut pending = vec![(root.join("refs"), b"refs".to_vec())];
     while let Some((path, bytes)) = pending.pop() {
         if let Some(budget) = budget.as_deref_mut() {
@@ -605,6 +615,41 @@ mod tests {
                 .unwrap()
                 .list_namespace(&RefName::new(b"refs/heads").unwrap()),
             Err(ReferenceError::Malformed { .. })
+        ));
+    }
+
+    /// Listing walks `refs/` once, checking each directory and file as it goes. It must not walk
+    /// every ancestor again for each loose reference.
+    #[test]
+    fn listing_does_not_recheck_ancestors_per_reference() {
+        let (_root, repo) = fixture();
+        let id = "1111111111111111111111111111111111111111";
+        for n in 0..50 {
+            let dir = repo.git_dir().join(format!("refs/tags/group{}", n % 5));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(format!("t{n}")), format!("{id}\n")).unwrap();
+        }
+        let refs = repo.references().unwrap();
+        crate::refs::store::PATH_CHECKS.with(|checks| checks.set(0));
+        let listed = refs.list().unwrap();
+        assert!(listed.len() >= 50);
+        // Only the shared `packed-refs` file is checked, once, however many loose references exist.
+        assert_eq!(
+            crate::refs::store::PATH_CHECKS.with(std::cell::Cell::get),
+            1
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_reference_file_in_listing() {
+        let (_root, repo) = fixture();
+        let target = repo.git_dir().join("refs/heads/real");
+        fs::write(&target, b"1111111111111111111111111111111111111111\n").unwrap();
+        std::os::unix::fs::symlink(&target, repo.git_dir().join("refs/heads/alias")).unwrap();
+        assert!(matches!(
+            repo.references().unwrap().list(),
+            Err(ReferenceError::Unsupported(_))
         ));
     }
 
