@@ -319,6 +319,7 @@ pub struct ObjectFormatError {
 /// ```
 /// assert_eq!(girt::encode_blob(b"a\0\xff"), b"blob 3\0a\0\xff");
 /// ```
+#[cfg(test)]
 pub fn encode_blob(bytes: &[u8]) -> Vec<u8> {
     let mut encoded = object_header("blob", bytes.len()).into_bytes();
     encoded.extend_from_slice(bytes);
