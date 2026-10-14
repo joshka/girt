@@ -1194,6 +1194,124 @@ mod publication_tests {
         path
     }
 
+    fn open_pair(path: &Path, format: ObjectFormat) -> FilePack {
+        FilePack::open(
+            format,
+            path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn repeated_open_shares_index_without_reading_it(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "shared", format, b"content");
+        let first = open_pair(&path, format);
+        let second = open_pair(&path, format);
+        assert_eq!(first.index_bytes.as_ptr(), second.index_bytes.as_ptr());
+        assert_eq!(second.index.bytes_read.load(Ordering::Relaxed), 0);
+        drop(first);
+        drop(second);
+        let reopened = open_pair(&path, format);
+        assert_eq!(reopened.index.bytes_read.load(Ordering::Relaxed), 0);
+        reopened.verify(&AtomicBool::new(false)).unwrap();
+    }
+
+    #[test]
+    fn cached_open_still_charges_index_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "budget", ObjectFormat::Sha1, b"content");
+        let first = open_pair(&path, ObjectFormat::Sha1);
+        let mut budget = PackLimits::default();
+        budget.max_index_bytes = first.index.len - 1;
+        assert!(matches!(
+            FilePack::open(
+                ObjectFormat::Sha1,
+                &path,
+                &mut budget,
+                &AtomicBool::new(false)
+            ),
+            Err(Error::Limit("pack index bytes"))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_index_truncation_is_rejected_by_live_and_fresh_readers() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "truncated", ObjectFormat::Sha1, b"content");
+        let first = open_pair(&path, ObjectFormat::Sha1);
+        let second = open_pair(&path, ObjectFormat::Sha1);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(8)
+            .unwrap();
+        let id = ObjectId::for_blob(ObjectFormat::Sha1, b"content");
+        assert!(first.find(id).is_err());
+        assert!(second.find(id).is_err());
+        assert!(first.check_unchanged().is_err());
+        assert!(
+            FilePack::open(
+                ObjectFormat::Sha1,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn cached_pair_replacement_keeps_old_reader_and_validates_new_pair(
+        #[case] format: ObjectFormat,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "original", format, b"first");
+        let replacement = pair(root.path(), "replacement", format, b"other");
+        let old = open_pair(&path, format);
+        fs::rename(&path, path.with_extension("old-index")).unwrap();
+        fs::rename(path.with_extension("pack"), path.with_extension("old-pack")).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        fs::rename(
+            replacement.with_extension("pack"),
+            path.with_extension("pack"),
+        )
+        .unwrap();
+        let new = open_pair(&path, format);
+        let old_id = ObjectId::for_blob(format, b"first");
+        let new_id = ObjectId::for_blob(format, b"other");
+        old.check_unchanged().unwrap();
+        assert_eq!(
+            old.read(
+                old.find(old_id).unwrap().unwrap(),
+                ReadLimits::default(),
+                &AtomicBool::new(false)
+            )
+            .unwrap()
+            .data(),
+            b"first"
+        );
+        assert_eq!(
+            new.read(
+                new.find(new_id).unwrap().unwrap(),
+                ReadLimits::default(),
+                &AtomicBool::new(false)
+            )
+            .unwrap()
+            .data(),
+            b"other"
+        );
+        assert!(new.find(old_id).unwrap().is_none());
+    }
+
     // Original malformed framing, with independent artifact checksums and CRCs rebuilt so the
     // encoded-entry parser, rather than the outer checksum validator, rejects it.
     fn malformed_pair(root: &Path, framing: &[u8]) -> PathBuf {
