@@ -163,7 +163,13 @@ fn prepare_with_limits(f: &Fixture, roots: &[ObjectId], limits: PushLimits) -> P
 }
 
 fn publish(f: &Fixture, prepared: &PreparedPush) {
-    let report = girt::push::send_local(&f.dest, prepared, &AtomicBool::new(false)).unwrap();
+    let report = girt::push::send_local(
+        &f.dest,
+        girt::push::LocalPushRequest::new(prepared),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    )
+    .unwrap();
     assert!(report.all_succeeded());
     assert_eq!(git(&f.dest, &["cat-file", "blob", &f.blob], &[]), f.data);
     assert_eq!(
@@ -517,7 +523,12 @@ fn receiver_decode_budget_refuses_before_installing_or_publishing() {
         &["cat-file", "--batch-all-objects", "--batch-check"],
         &[],
     );
-    let result = girt::push::send_local(&f.dest, &prepared, &AtomicBool::new(false));
+    let result = girt::push::send_local(
+        &f.dest,
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    );
     assert!(
         matches!(result, Err(girt::push::PushError::NotSent(girt::push::PushFailure::Install(ref error)))
         if matches!(error.as_ref(), girt::fetch::FetchError::Pack(girt::ObjectReadError::Limit("cumulative decode bytes"))))

@@ -27,6 +27,11 @@ Native-fetch examples construct `LocalFetchRequest` and show controls and observ
 `LocalFetchObserver::default()` when notifications are unnecessary. Source construction and
 validation completion do not establish installation or publication, including in jj adapter docs.
 
+Native-push examples construct `LocalPushRequest`, then pass control and a validation observer.
+Explain inherited receiver configuration and reflog identity through `LocalPushRequest`, including
+jj adapter defaults. Validation completion precedes hooks, installation and reference publication;
+partial reports remain authoritative when a later step fails.
+
 ## Comment Spacing
 
 - Follow every Markdown heading with one empty doc-comment line before its content.

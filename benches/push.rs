@@ -175,7 +175,13 @@ fn push(c: &mut Criterion) {
                         root
                     },
                     |root| {
-                        let report = girt::push::send_local(root.path(), &fork, &cancel).unwrap();
+                        let report = girt::push::send_local(
+                            root.path(),
+                            girt::push::LocalPushRequest::new(&fork),
+                            girt::transport::TransportControl::new(&cancel),
+                            |_| {},
+                        )
+                        .unwrap();
                         assert!(report.all_succeeded());
                     },
                     BatchSize::SmallInput,
@@ -215,9 +221,14 @@ fn push(c: &mut Criterion) {
             b"",
         );
         assert!(
-            girt::push::send_local(dest.path(), &prepared, &cancel)
-                .unwrap()
-                .all_succeeded()
+            girt::push::send_local(
+                dest.path(),
+                girt::push::LocalPushRequest::new(&prepared),
+                girt::transport::TransportControl::new(&cancel),
+                |_| {}
+            )
+            .unwrap()
+            .all_succeeded()
         );
         assert!(fixture.root.path().exists());
         group.bench_function(format!("native-local-publish-{count}"), |b| {
@@ -233,8 +244,13 @@ fn push(c: &mut Criterion) {
                     root
                 },
                 |root| {
-                    girt::push::send_local(root.path().join("destination"), &prepared, &cancel)
-                        .unwrap()
+                    girt::push::send_local(
+                        root.path().join("destination"),
+                        girt::push::LocalPushRequest::new(&prepared),
+                        girt::transport::TransportControl::new(&cancel),
+                        |_| {},
+                    )
+                    .unwrap()
                 },
                 BatchSize::SmallInput,
             )

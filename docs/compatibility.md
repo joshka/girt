@@ -1158,9 +1158,9 @@ sideband channel-2 progress is returned as untrusted byte frames; channel-3 fata
 become per-ref rejection. HTTP and SSH retain received status and progress even when their owned
 exchange ends with cancellation, deadline or process failure.
 
-Native local push uses conditional per-ref transactions. `send_local_with_identity` supplies the
-identity for reflogs when `core.logAllRefUpdates` or an existing log requires an append; without it,
-the push refuses before object installation. Deletion removes the edited name's log. The report
+Native local push uses conditional per-ref transactions. `LocalPushRequest::with_identity` supplies
+the identity for reflogs when `core.logAllRefUpdates` or an existing log requires an append; without
+it, the push refuses before object installation. Deletion removes the edited name's log. The report
 retains separate reference and log effects on publication failure, so an appended or failed log is
 not inferred from the ref acknowledgement. Current-branch refuse, ignore and warn modes are
 supported, as are `receive.denyDeleteCurrent`, `receive.denyDeletes`, `receive.denyNonFastForwards`
@@ -1327,10 +1327,10 @@ platform and transport evidence is recorded separately.
 ## Owned Transport Interruption
 
 `TransportControl` carries a borrowed cancellation flag and an optional absolute monotonic deadline.
-`fetch::receive_local` and `push::send_local_with_control` use it for owned local Git servers.
-Explicit transport controls interrupt blocked pipes when their flag is set. Generic `receive` /
-`send` streams retain cooperative cancellation: only their owner can arrange to unblock an arbitrary
-`Read` or `Write` implementation.
+`fetch::receive_local` and `push::send_local` use it for owned local Git servers. Explicit transport
+controls interrupt blocked pipes when their flag is set. Generic `receive` / `send` streams retain
+cooperative cancellation: only their owner can arrange to unblock an arbitrary `Read` or `Write`
+implementation.
 
 The deadline expires at the caller's chosen `Instant`, includes time already elapsed before entry,
 and is never reset by traffic. Checks run before path resolution/spawn, at each owned pipe

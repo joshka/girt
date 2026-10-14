@@ -78,7 +78,12 @@
 //! )?;
 //! assert_eq!(prepared.object_count(), 2); // The commit and its empty tree.
 //!
-//! let report = send_local(destination.git_dir(), &prepared, &cancel)?;
+//! let report = send_local(
+//!     destination.git_dir(),
+//!     girt::push::LocalPushRequest::new(&prepared),
+//!     girt::transport::TransportControl::new(&cancel),
+//!     |_| {}
+//! )?;
 //! assert!(report.all_succeeded(), "individual references can be rejected: {report:?}");
 //! assert_eq!(destination.references()?.read(&main)?, Some(Target::Direct(commit)));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -116,11 +121,8 @@ mod protocol;
 mod quarantine;
 mod types;
 
-pub(crate) use local::send_local_preparing_observed;
-pub use local::{
-    LocalPushContext, send_local, send_local_with_context, send_local_with_control,
-    send_local_with_identity, send_local_with_progress,
-};
+pub use local::{LocalPushRequest, send_local};
+pub(crate) use local::{ReceiverPolicy, send_local_preparing_observed};
 pub use prepared::PreparedPush;
 pub use progress::PreparationProgress;
 #[cfg(any(fuzzing, test))]

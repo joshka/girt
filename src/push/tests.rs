@@ -1828,7 +1828,12 @@ fn local_receiver_rejects_missing_history(
 ) {
     let (destination, prepared, missing_id) =
         incomplete_receiver_history(missing_revision, live_revision, new_tree_revision, 0);
-    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    let result = send_local(
+        destination.path(),
+        crate::push::LocalPushRequest::new(&prepared),
+        crate::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    );
     assert!(matches!(
         result,
         Err(PushError::NotSent(PushFailure::Install(error)))
@@ -1981,7 +1986,12 @@ fn incomplete_receiver_history(
 fn local_receiver_rejects_incomplete_deep_history(#[case] missing_revision: &str) {
     let (destination, prepared, missing_id) =
         incomplete_receiver_history(missing_revision, "independent", "main^{tree}", 1000);
-    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    let result = send_local(
+        destination.path(),
+        crate::push::LocalPushRequest::new(&prepared),
+        crate::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    );
     assert!(matches!(
         result,
         Err(PushError::NotSent(PushFailure::Install(error)))
@@ -2013,7 +2023,12 @@ fn incomplete_received_history_never_reaches_quarantine_hook() {
     )
     .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let result = send_local(destination.path(), &prepared, &AtomicBool::new(false));
+    let result = send_local(
+        destination.path(),
+        crate::push::LocalPushRequest::new(&prepared),
+        crate::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    );
     assert!(matches!(
         result,
         Err(PushError::NotSent(PushFailure::Install(error)))

@@ -1,6 +1,7 @@
 use std::path::Path;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use std::process::Command;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use std::sync::atomic::AtomicBool;
 
 use super::{PreparedPush, PushError, PushReport};
@@ -14,6 +15,53 @@ use crate::packet::Wire;
 use crate::transport::Server;
 use crate::transport::TransportControl;
 
+/// Prepared native push and receiver configuration/identity policy.
+pub struct LocalPushRequest<'a> {
+    prepared: &'a PreparedPush,
+    config_inputs: Option<&'a ConfigInputs>,
+    identity: Option<&'a Signature>,
+}
+
+impl std::fmt::Debug for LocalPushRequest<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalPushRequest").finish_non_exhaustive()
+    }
+}
+
+impl<'a> LocalPushRequest<'a> {
+    /// Sends this artifact with no system, global or runtime configuration and no reflog identity.
+    ///
+    /// Only the destination's local and worktree configuration applies unless inherited inputs
+    /// are supplied with [`Self::with_config_inputs`].
+    pub fn new(prepared: &'a PreparedPush) -> Self {
+        Self {
+            prepared,
+            config_inputs: None,
+            identity: None,
+        }
+    }
+
+    /// Selects inherited receiver configuration without changing reflog identity.
+    ///
+    /// Supply the same effective sources and runtime pairs that the caller's Git push policy
+    /// would use. The destination adds its local and worktree configuration to these inputs.
+    #[must_use]
+    pub fn with_config_inputs(mut self, config_inputs: &'a ConfigInputs) -> Self {
+        self.config_inputs = Some(config_inputs);
+        self
+    }
+
+    /// Supplies or clears the identity used for reflog records actually written.
+    ///
+    /// Existing logs are appended even if automatic log creation is disabled; creation follows
+    /// receiver configuration. An invalid identity refuses the push before installation.
+    #[must_use]
+    pub fn with_identity(mut self, identity: Option<&'a Signature>) -> Self {
+        self.identity = identity;
+        self
+    }
+}
+
 /// Installs a prepared pack and conditionally updates a trusted local repository with girt.
 ///
 /// Opens an explicit path through [`crate::Repository::open`], checks receiver-history
@@ -24,7 +72,8 @@ use crate::transport::TransportControl;
 /// returns their output in [`PushReport::progress`]; `proc-receive`, `reference-transaction` and
 /// `push-to-checkout` hooks cause refusal before publication. Current-branch, hidden-ref and
 /// reflog behavior follows supported
-/// receive configuration; use [`send_local_with_identity`] when an append needs a caller identity.
+/// receive configuration; use [`LocalPushRequest::with_identity`] when append logging needs an
+/// identity; without one, required append logging refuses the push before installation.
 /// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
 /// Supports either object format and files or reftable references when prepared by
@@ -58,46 +107,45 @@ use crate::transport::TransportControl;
 /// platforms refuses before mutation; native transfers without hooks retain their existing platform
 /// support.
 ///
+/// The deadline excludes preparation and cannot interrupt one synchronous filesystem or
+/// compression operation. Receiver configuration adds its local/worktree sources to the inputs
+/// supplied by [`LocalPushRequest::with_config_inputs`]; no ambient environment is read.
+///
+/// Validation observers run synchronously before hooks, installation and publication. A pack-free
+/// push has no snapshots; completion marks validation only and later steps may still fail.
+/// Observers must return promptly and can set `control.cancel` for cooperative cancellation.
+/// Validation failure is [`PushError::NotSent`] without a completion notification.
+///
 /// # Errors
 ///
-/// Preflight and object installation failures are [`PushError::NotSent`] for ref effects. A
-/// reference preparation failure is a per-ref rejection, allowing other refs to succeed. A
-/// publication failure or interruption after installation is [`PushError::Uncertain`] with
-/// completed status evidence; inspect the destination before retrying.
+/// Preflight, inherited/local configuration resolution, invalid identity, and installation failures
+/// are [`PushError::NotSent`] for reference effects. Reference preparation failures reject one
+/// reference while others may succeed. Publication failure or interruption after installation is
+/// [`PushError::Uncertain`] with completed status evidence; inspect the destination before
+/// retrying. The cause distinguishes [`super::PushFailure::Cancelled`] and
+/// [`super::PushFailure::Deadline`] from receiver rejection.
+///
+/// # Panics
+///
+/// Observer panics unwind before incoming objects or references are published.
 pub fn send_local(
     destination: impl AsRef<Path>,
-    prepared: &PreparedPush,
-    cancel: &AtomicBool,
-) -> Result<PushReport, PushError> {
-    send_local_with_control(destination, prepared, TransportControl::new(cancel))
-}
-
-/// Sends a prepared push with caller-controlled transport interruption.
-///
-/// Uses [`send_local`]'s storage contract. The deadline does not cover push preparation or
-/// guarantee interruption during one synchronous filesystem or compression operation.
-///
-/// # Errors
-///
-/// Before primary installation, including during pre-receive, interruption is
-/// [`PushError::NotSent`]. After installation it is
-/// [`PushError::Uncertain`], retaining completed per-ref results; unknown refs may have changed.
-/// The cause distinguishes [`super::PushFailure::Cancelled`] and
-/// [`super::PushFailure::Deadline`] from rejection.
-pub fn send_local_with_control(
-    destination: impl AsRef<Path>,
-    prepared: &PreparedPush,
+    request: LocalPushRequest<'_>,
     control: TransportControl<'_>,
+    validation: impl FnMut(crate::fetch::ValidationProgress),
 ) -> Result<PushReport, PushError> {
     let inputs = ConfigInputs::default();
-    send_local_with_context(
-        destination,
-        prepared,
+    let policy = ReceiverPolicy {
+        config_inputs: request.config_inputs.unwrap_or(&inputs),
+        identity: request.identity,
+    };
+    send_local_preparing_observed(
+        destination.as_ref(),
+        request.prepared.format,
         control,
-        LocalPushContext {
-            config_inputs: &inputs,
-            identity: None,
-        },
+        policy,
+        |_| Ok(request.prepared),
+        validation,
     )
 }
 
@@ -107,108 +155,31 @@ pub fn send_local_with_control(
 /// inputs. No ambient environment is read. The caller must supply the same effective sources and
 /// runtime pairs that its Git push policy would use.
 #[non_exhaustive]
-pub struct LocalPushContext<'a> {
+pub(crate) struct ReceiverPolicy<'a> {
     /// System, global, and runtime configuration sources to inherit.
     pub config_inputs: &'a ConfigInputs,
     /// Identity for reflogs that the receive policy actually appends.
     pub identity: Option<&'a Signature>,
 }
 
-impl std::fmt::Debug for LocalPushContext<'_> {
+impl std::fmt::Debug for ReceiverPolicy<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalPushContext").finish_non_exhaustive()
+        f.debug_struct("ReceiverPolicy").finish_non_exhaustive()
     }
-}
-
-impl<'a> LocalPushContext<'a> {
-    /// Creates a push context with inherited configuration and no reflog identity.
-    pub fn new(config_inputs: &'a ConfigInputs) -> Self {
-        Self {
-            config_inputs,
-            identity: None,
-        }
-    }
-
-    /// Sets [`Self::config_inputs`].
-    #[must_use]
-    pub fn with_config_inputs(mut self, config_inputs: &'a ConfigInputs) -> Self {
-        self.config_inputs = config_inputs;
-        self
-    }
-
-    /// Sets [`Self::identity`].
-    #[must_use]
-    pub fn with_identity(mut self, identity: Option<&'a Signature>) -> Self {
-        self.identity = identity;
-        self
-    }
-}
-
-/// Sends a native local push with explicit inherited configuration.
-///
-/// Uses [`send_local_with_control`]'s partial-outcome contract. The supplied configuration is
-/// resolved before any object installation or reference publication. Unsupported receive policy
-/// refuses before any hook or object installation.
-///
-/// # Errors
-///
-/// Returns [`send_local_with_control`]'s storage, validation, policy, hook, cancellation and
-/// publication errors, plus errors resolving the supplied configuration. Inspect the retained
-/// partial outcomes before retrying: objects or references may already have been published.
-pub fn send_local_with_context(
-    destination: impl AsRef<Path>,
-    prepared: &PreparedPush,
-    control: TransportControl<'_>,
-    context: LocalPushContext<'_>,
-) -> Result<PushReport, PushError> {
-    send_local_with_progress(destination, prepared, control, context, |_| {})
-}
-
-/// Sends a native local push with synchronous pack-validation progress.
-///
-/// Uses [`send_local_with_context`]'s storage and partial-outcome contract. Snapshots report actual
-/// inflated entries and reconstructed deltas through [`crate::fetch::ValidationProgress`]. No pack
-/// means no snapshots. Completion describes validation before hooks, installation and ref updates;
-/// a subsequent push failure can follow validation completion. Observers must return promptly and
-/// can set `control.cancel` to request cooperative cancellation.
-///
-/// # Errors
-///
-/// Validation failure is [`PushError::NotSent`] without completion or primary object publication.
-/// Later errors retain [`send_local_with_context`]'s partial-outcome contract.
-///
-/// # Panics
-///
-/// Observer panics unwind before incoming objects or references are published.
-pub fn send_local_with_progress(
-    destination: impl AsRef<Path>,
-    prepared: &PreparedPush,
-    control: TransportControl<'_>,
-    context: LocalPushContext<'_>,
-    validation: impl FnMut(crate::fetch::ValidationProgress),
-) -> Result<PushReport, PushError> {
-    send_local_preparing_observed(
-        destination.as_ref(),
-        prepared.format,
-        control,
-        context,
-        |_| Ok(prepared),
-        validation,
-    )
 }
 
 /// Prepares a native local push from the destination's advertisement, then sends it.
 ///
 /// `prepare` runs after the destination's receive policy is checked and before installation; its
 /// preparation should exclude [`super::local_native::LocalAdvertisement::receiver_roots`].
-/// Uses [`send_local_with_context`]'s storage and partial-outcome contract. The destination's
+/// Uses [`send_local`]'s storage and partial-outcome contract. The destination's
 /// references are read again after preparation: a relied-on root that is no longer a reference
 /// target is [`super::PushFailure::KnowledgeChanged`], before installation.
 pub(crate) fn send_local_preparing_observed<P: std::borrow::Borrow<PreparedPush>>(
     destination: &Path,
     format: crate::ObjectFormat,
     control: TransportControl<'_>,
-    context: LocalPushContext<'_>,
+    context: ReceiverPolicy<'_>,
     prepare: impl FnOnce(&super::local_native::LocalAdvertisement<'_>) -> Result<P, super::PushFailure>,
     validation: impl FnMut(crate::fetch::ValidationProgress),
 ) -> Result<PushReport, PushError> {
@@ -248,35 +219,6 @@ pub(crate) fn send_local_preparing_observed<P: std::borrow::Borrow<PreparedPush>
     }
 
     result
-}
-
-/// Sends a native local push with an explicit reflog identity.
-///
-/// Git receive policy controls whether each successful update creates, appends, or deletes a
-/// reflog. Existing logs are appended even when automatic log creation is disabled. The identity
-/// is used only for records actually written; no environment identity is consulted.
-///
-/// # Errors
-///
-/// Uses [`send_local_with_control`]'s partial-outcome contract. An invalid identity refuses the
-/// push before object installation. A log publication failure retains separate reference and log
-/// effects in the uncertain report.
-pub fn send_local_with_identity(
-    destination: impl AsRef<Path>,
-    prepared: &PreparedPush,
-    control: TransportControl<'_>,
-    identity: &Signature,
-) -> Result<PushReport, PushError> {
-    let inputs = ConfigInputs::default();
-    send_local_with_context(
-        destination,
-        prepared,
-        control,
-        LocalPushContext {
-            config_inputs: &inputs,
-            identity: Some(identity),
-        },
-    )
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
