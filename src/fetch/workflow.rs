@@ -852,10 +852,12 @@ impl FetchReady {
             // Prove the received representation is still installed, and honor destination lookup
             // precedence before any ref can name this graph. Different copies stay checked.
             // History reachable from references that existed before the fetch was verified when
-            // those references were published; only new history is walked.
+            // those references were published; only new history is walked. Validation found the
+            // complete dependencies through verified edges from those same references, and
+            // installation checked that they are present.
             let mut verify_roots = self.received.wants().to_vec();
             verify_roots.extend(self.request.shallow_before.iter().copied());
-            let published = self
+            let mut published: crate::IdSet = self
                 .request
                 .snapshot
                 .values()
@@ -864,6 +866,7 @@ impl FetchReady {
                     Target::Symbolic(_) => None,
                 })
                 .collect();
+            published.extend(self.received.complete_dependencies());
             let shallow: Vec<_> = objects.shallow_roots().iter().collect();
             let verified =
                 super::verified::InstalledObjects::bind(&objects, &self.received, cancel)

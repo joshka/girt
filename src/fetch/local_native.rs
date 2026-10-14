@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
+use super::known::KnownObjects as _;
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
     NativeContents, ReceivedFetch,
@@ -124,6 +125,7 @@ pub(super) fn receive_depth_observed(
                 checksum: None,
                 objects: 0,
                 dependencies: Vec::new(),
+                complete: IdSet::default(),
                 shallow: Vec::new(),
                 limits,
             },
@@ -134,6 +136,7 @@ pub(super) fn receive_depth_observed(
     let mut observed = IdMap::<ObjectKind>::default();
     let mut selected = Vec::<ObjectId>::new();
     let mut dependencies = Vec::new();
+    let mut boundaries = super::boundaries::TreeBoundaries::new(known, limits);
     let mut shallow = Vec::new();
     let mut bytes = 0_usize;
     let mut edges = 0_usize;
@@ -208,6 +211,21 @@ pub(super) fn receive_depth_observed(
                         .map_err(|source| FetchError::LocalRead { id, source })?
                         .ok_or(FetchError::Missing(id))?
                 };
+                if depth.is_none() {
+                    match object_kind {
+                        ObjectKind::Commit => {
+                            if let Ok(commit) =
+                                crate::Commit::parse(source.object_format(), object.data())
+                            {
+                                boundaries.pair_commit(known, commit.tree(), commit.parents());
+                            }
+                        }
+                        ObjectKind::Tree => {
+                            boundaries.pair_tree(known, id, object.data());
+                        }
+                        _ => {}
+                    }
+                }
                 crate::edges::visit(id, object.kind(), object.data(), |target, kind| {
                     check(control)?;
                     if depth.is_some() && id == wants[0] && kind == ObjectKind::Commit {
@@ -230,6 +248,15 @@ pub(super) fn receive_depth_observed(
                         } else {
                             Err(FetchError::Kind(target))
                         };
+                    }
+                    // A complete parent's tree names this object. Send it again only if the
+                    // destination lost it.
+                    if boundaries.kind(target) == Some(kind)
+                        && known.stored_kind(target) == Some(kind)
+                    {
+                        observed.insert(target, kind);
+                        dependencies.push(target);
+                        return Ok(());
                     }
                     pending.push_back((target, Some(kind)));
                     Ok(())
@@ -268,6 +295,11 @@ pub(super) fn receive_depth_observed(
                 index: Vec::new(),
                 checksum: None,
                 objects: 0,
+                complete: dependencies
+                    .iter()
+                    .copied()
+                    .filter(|&id| boundaries.kind(id).is_some() || known.trusted_complete(id))
+                    .collect(),
                 dependencies,
                 shallow,
                 limits,

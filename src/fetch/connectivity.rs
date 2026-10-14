@@ -197,9 +197,7 @@ fn walk(
         Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
     };
     let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
-        Ok(objects
-            .kind(id, cancel)?
-            .or_else(|| known.get(id).map(|o| o.kind())))
+        Ok(objects.kind(id, cancel)?.or_else(|| known.known_kind(id)))
     };
     let shallow: IdSet = shallow.iter().copied().collect();
     for &id in &shallow {

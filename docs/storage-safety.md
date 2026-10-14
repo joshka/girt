@@ -140,6 +140,19 @@ a branch unproven and reject old corruption that Git would leave unvisited. Refe
 trusted complete, so this operation does not replace `git fsck`. Dependency reads, synchronized pack
 publication and conditional ref updates remain.
 
+Fetch and native local push also pair each received commit's tree with the tree of its first trusted
+complete parent. A checked read of that parent tree makes each of its typed edges a complete
+boundary of the kind its entry mode names; gitlinks and the empty tree never are. A changed subtree
+whose name maps to a tree in the parent's tree pairs recursively, so reads follow the changed paths.
+These boundaries are reachable from existing references through verified edges, which is the same
+trust as the parent commit. The native local source walk records such an edge as a dependency
+without reading it from the source, unless the destination's header lookup does not find it with
+that kind, in which case the object is sent again. A failed read or parse supplies no evidence.
+Unpaired received trees, such as those of commits whose parents arrive in the same fetch, use the
+ordinary walk. Installation checks every dependency's presence and size by header lookup.
+Publication then stops at complete dependencies as it stops at reference targets, and walks the
+others with checked reads.
+
 Import hashes every received object, parses its edges and proves typed connectivity before
 installation. On the eligible path below, that is the only identity check. The checked fallbacks can
 hash received objects again; they are kept rather than removed to make the single pass

@@ -8,7 +8,7 @@ use super::import::Imported;
 use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
-use crate::{IdMap, ObjectId, Repository};
+use crate::{IdMap, IdSet, ObjectId, Repository};
 
 /// Fetch borrows caller evidence; local receive owns evidence it may extend before connectivity.
 enum ValidationHistory<'a> {
@@ -41,6 +41,8 @@ pub struct ReceivedFetch {
     checksum: Option<ObjectId>,
     objects: usize,
     dependencies: Vec<ObjectId>,
+    /// Dependencies reachable from existing references, so publication need not walk them.
+    complete: IdSet,
     shallow: Vec<ObjectId>,
     limits: FetchLimits,
     pub(super) verified: super::verified::VerifiedObjects,
@@ -96,6 +98,7 @@ pub(crate) struct NativeContents {
     pub checksum: Option<ObjectId>,
     pub objects: usize,
     pub dependencies: Vec<ObjectId>,
+    pub complete: IdSet,
     pub shallow: Vec<ObjectId>,
     pub limits: FetchLimits,
 }
@@ -111,6 +114,7 @@ impl ReceivedFetch {
             checksum: None,
             objects: 0,
             dependencies: vec![],
+            complete: IdSet::default(),
             shallow: vec![],
             limits: FetchLimits::default(),
             verified: Default::default(),
@@ -131,6 +135,7 @@ impl ReceivedFetch {
             checksum: contents.checksum,
             objects: contents.objects,
             dependencies: contents.dependencies,
+            complete: contents.complete,
             shallow: contents.shallow,
             limits: contents.limits,
             verified: Default::default(),
@@ -155,6 +160,11 @@ impl ReceivedFetch {
         let format = advertisement.object_format()?;
         let mut result = Self::empty(advertisement);
         result.format = format;
+        result.complete = dependencies
+            .iter()
+            .copied()
+            .filter(|&id| known.trusted_complete(id))
+            .collect();
         result.dependencies = dependencies;
         result.shallow = known.shallow.clone();
         result.wants = wants;
@@ -238,14 +248,25 @@ impl ReceivedFetch {
             targets.dedup();
             history.discover_ancestors(&targets, limits, cancel)?;
         }
+        let boundaries =
+            super::boundaries::discover(&imported.objects, known.known(), &wants, limits, cancel)?;
+        let bounded = super::boundaries::Bounded {
+            known: known.known(),
+            boundaries: &boundaries,
+        };
         let mut dependencies = connectivity::validate_with_boundaries(
             &imported.objects,
-            known.known(),
+            &bounded,
             &wants,
             &shallow,
             limits,
             cancel,
         )?;
+        let mut complete = dependencies
+            .iter()
+            .copied()
+            .filter(|&id| bounded.trusted_complete(id))
+            .collect();
         let mut objects = imported.objects.len();
         if depth.is_some()
             && !dependencies.is_empty()
@@ -256,6 +277,7 @@ impl ReceivedFetch {
             materialize_dependencies(&mut imported, known.known(), &dependencies, cancel)?;
             imported.objects.record_read_costs()?;
             dependencies.clear();
+            complete = IdSet::default();
         }
         check_cancelled(cancel)?;
         let received = Self {
@@ -272,6 +294,7 @@ impl ReceivedFetch {
             checksum: (objects != 0).then_some(imported.checksum),
             objects,
             dependencies,
+            complete,
             shallow,
             limits,
         };
@@ -297,6 +320,11 @@ impl ReceivedFetch {
     /// Known-local objects the received objects depend on; installation rechecks them.
     pub(crate) fn dependencies(&self) -> &[ObjectId] {
         &self.dependencies
+    }
+
+    /// Dependencies trusted complete because existing references reach them.
+    pub(crate) fn complete_dependencies(&self) -> &IdSet {
+        &self.complete
     }
 
     /// Number of verified received objects, including server extras and materialized connectivity
@@ -500,17 +528,19 @@ impl ReceivedFetch {
                 let objects = repository
                     .objects(snapshot_limits)
                     .map_err(FetchError::Destination)?;
-                let mut bytes = self.limits.max_known_bytes;
+                // Presence only: publication reads unproven dependencies with checked reads,
+                // and existing references make the rest complete.
+                let mut bytes = self.limits.max_known_bytes as u64;
                 for &id in &self.dependencies {
                     check_cancelled(cancel)?;
                     let mut read = self.limits.known_read;
-                    read.max_object_bytes = read.max_object_bytes.min(bytes);
-                    let object = objects
-                        .read(id, read)
+                    read.max_object_bytes = read.max_object_bytes.min(bytes as usize);
+                    let (_, size) = objects
+                        .locate(id, read, cancel)
                         .map_err(|source| FetchError::LocalRead { id, source })?
                         .ok_or(FetchError::Missing(id))?;
                     bytes = bytes
-                        .checked_sub(object.data().len())
+                        .checked_sub(size)
                         .ok_or(FetchError::Limit("known bytes"))?;
                 }
             }

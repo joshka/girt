@@ -95,17 +95,22 @@ pub(crate) trait Source {
     }
 
     /// Decoded objects kept to avoid re-inflating shared delta bases, if this source has one.
-    fn base_cache(&self) -> Option<&BaseCache> {
+    fn base_cache(&self) -> Option<CacheView<'_>> {
         None
     }
 }
 
-/// Recently decoded pack entries, keyed by entry position, like Git's delta base cache.
+/// Recently decoded pack entries, keyed by scope and entry position, like Git's delta base cache.
 ///
 /// Reading a deltified object reconstructs its whole chain, and neighbouring objects usually
 /// share bases, so caching them avoids inflating the same bases repeatedly. Entries record
 /// whether their identity was checked; an unchecked entry is checked before being returned as
 /// the requested object.
+///
+/// Stored pack readers share one byte limit per process, as Git has one cache per process, so
+/// opening more stores does not multiply the memory it can hold. Each reader still sees only the
+/// entries it decoded from its own pinned files, and dropping it releases them. A receive-owned
+/// source keeps a private cache.
 pub(crate) struct BaseCache {
     inner: Mutex<CacheInner>,
 }
@@ -116,11 +121,15 @@ impl std::fmt::Debug for BaseCache {
     }
 }
 
+/// The reader that owns an entry; a private cache uses only scope zero.
+type Scope = u64;
+
 #[derive(Default)]
 struct CacheInner {
-    entries: HashMap<usize, Cached>,
-    order: VecDeque<usize>,
+    entries: HashMap<(Scope, usize), Cached>,
+    order: VecDeque<(Scope, usize)>,
     bytes: usize,
+    next_scope: Scope,
 }
 
 #[derive(Clone)]
@@ -128,6 +137,76 @@ struct Cached {
     kind: ObjectKind,
     data: Arc<Vec<u8>>,
     verified: bool,
+}
+
+/// One reader's entries in a cache.
+#[derive(Clone, Copy)]
+pub(crate) struct CacheView<'a> {
+    cache: &'a BaseCache,
+    scope: Scope,
+}
+
+/// A stored pack reader's entries in the process-wide cache, released when it is dropped.
+pub(crate) struct CacheScope {
+    cache: &'static BaseCache,
+    scope: Scope,
+}
+
+impl std::fmt::Debug for CacheScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheScope").finish_non_exhaustive()
+    }
+}
+
+#[cfg(not(test))]
+static SHARED: std::sync::LazyLock<BaseCache> = std::sync::LazyLock::new(BaseCache::new);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests count inflations per thread, so each test thread gets its own process-wide cache.
+    static SHARED: &'static BaseCache = Box::leak(Box::new(BaseCache::new()));
+}
+
+impl CacheScope {
+    /// Registers a new reader in the process-wide cache.
+    pub(crate) fn register() -> Self {
+        #[cfg(not(test))]
+        let cache: &'static BaseCache = &SHARED;
+        #[cfg(test)]
+        let cache = SHARED.with(|cache| *cache);
+        let mut inner = cache.lock();
+        inner.next_scope += 1;
+        let scope = inner.next_scope;
+        Self { cache, scope }
+    }
+
+    pub(crate) fn view(&self) -> CacheView<'_> {
+        CacheView {
+            cache: self.cache,
+            scope: self.scope,
+        }
+    }
+}
+
+impl Drop for CacheScope {
+    fn drop(&mut self) {
+        let scope = self.scope;
+        let mut inner = self.cache.lock();
+        let CacheInner {
+            entries,
+            order,
+            bytes,
+            ..
+        } = &mut *inner;
+        entries.retain(|&(owner, _), cached| {
+            let keep = owner != scope;
+            if !keep {
+                *bytes -= cached.data.len();
+            }
+            keep
+        });
+        order.retain(|&(owner, _)| owner != scope);
+    }
 }
 
 impl BaseCache {
@@ -140,17 +219,53 @@ impl BaseCache {
         }
     }
 
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
+        self.inner.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// This cache as a receive-owned source's private view.
+    pub(crate) fn view(&self) -> CacheView<'_> {
+        CacheView {
+            cache: self,
+            scope: 0,
+        }
+    }
+
+    #[cfg(test)]
     fn get(&self, position: usize) -> Option<Cached> {
-        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        inner.entries.get(&position).cloned()
+        self.view().get(position)
     }
 
     pub(crate) fn insert(&self, position: usize, object: &Object, verified: bool) {
-        self.insert_shared(position, object.kind, &object.data, verified);
+        self.view()
+            .insert_shared(position, object.kind, &object.data, verified);
+    }
+
+    #[cfg(test)]
+    fn insert_shared(
+        &self,
+        position: usize,
+        kind: ObjectKind,
+        data: &Arc<Vec<u8>>,
+        verified: bool,
+    ) {
+        self.view().insert_shared(position, kind, data, verified);
+    }
+
+    #[cfg(test)]
+    fn mark_verified(&self, position: usize) {
+        self.view().mark_verified(position);
+    }
+}
+
+impl CacheView<'_> {
+    fn get(&self, position: usize) -> Option<Cached> {
+        let inner = self.cache.lock();
+        inner.entries.get(&(self.scope, position)).cloned()
     }
 
     /// Shares a decoded payload with the cache without copying it.
-    pub(crate) fn insert_shared(
+    fn insert_shared(
         &self,
         position: usize,
         kind: ObjectKind,
@@ -159,15 +274,16 @@ impl BaseCache {
     ) {
         let size = data.len();
         // One large object shouldn't evict every shared base.
-        if size > Self::LIMIT / 8 {
+        if size > BaseCache::LIMIT / 8 {
             return;
         }
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(existing) = inner.entries.get_mut(&position) {
+        let key = (self.scope, position);
+        let mut inner = self.cache.lock();
+        if let Some(existing) = inner.entries.get_mut(&key) {
             existing.verified |= verified;
             return;
         }
-        while inner.bytes + size > Self::LIMIT {
+        while inner.bytes + size > BaseCache::LIMIT {
             let Some(oldest) = inner.order.pop_front() else {
                 break;
             };
@@ -176,9 +292,9 @@ impl BaseCache {
             }
         }
         inner.bytes += size;
-        inner.order.push_back(position);
+        inner.order.push_back(key);
         inner.entries.insert(
-            position,
+            key,
             Cached {
                 kind,
                 data: Arc::clone(data),
@@ -188,8 +304,8 @@ impl BaseCache {
     }
 
     fn mark_verified(&self, position: usize) {
-        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(entry) = inner.entries.get_mut(&position) {
+        let mut inner = self.cache.lock();
+        if let Some(entry) = inner.entries.get_mut(&(self.scope, position)) {
             entry.verified = true;
         }
     }
@@ -532,6 +648,33 @@ mod cache_tests {
         taken.fill(0);
         assert_eq!(clone.data(), &[7; 1024][..]);
         assert_eq!(clone.into_data(), vec![7; 1024]);
+    }
+
+    /// Pack readers share one byte limit but never each other's entries, and dropping a
+    /// reader releases its entries.
+    #[test]
+    fn readers_share_the_limit_but_not_entries() {
+        let first = CacheScope::register();
+        let second = CacheScope::register();
+        let data = Arc::new(b"cached".to_vec());
+        first.view().insert_shared(3, ObjectKind::Blob, &data, true);
+        assert!(first.view().get(3).is_some_and(|hit| hit.verified));
+        assert!(second.view().get(3).is_none(), "another reader misses");
+        let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
+        for position in 0..8 {
+            second
+                .view()
+                .insert_shared(position, ObjectKind::Blob, &filler, true);
+        }
+        assert!(
+            first.view().get(3).is_none(),
+            "one limit evicts across readers"
+        );
+        let cache = first.cache;
+        drop(second);
+        let inner = cache.lock();
+        assert_eq!(inner.bytes, 0);
+        assert!(inner.entries.is_empty());
     }
 
     /// Payloads up to an eighth of the limit are admitted; larger ones are not.
