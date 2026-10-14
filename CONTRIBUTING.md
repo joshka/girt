@@ -73,6 +73,30 @@ the MSRV and platform test jobs report as skipped. Any other path runs them. Its
 the single merge gate: it fails when any other CI job fails or is cancelled, and treats skipped jobs
 as passing. Add new CI jobs to its `needs` list.
 
+## API Compatibility Gate
+
+The `Semver` job checks Rust changes against the latest non-yanked stable release on crates.io with
+all features. The checker permits compatible additions and deprecations (`--release-type minor`)
+while rejecting its major-level API lints, including on 0.y releases. Package version bumps cannot
+waive violations. When that comparison detects a break, a second comparison against the first parent
+of the merge commit checked by CI distinguishes new breaks from breaks already merged for the next
+release. Only new breaks add the `breaking` label and fail `Semver policy` unless a maintainer has
+applied `next-breaking`. Unrelated pull requests can pass during a breaking-release batch. Both
+comparisons must finish successfully; tool, download, and build errors always fail and cannot be
+waived with a label.
+
+Batch deliberate breaks for the next breaking release; after adding `next-breaking`, rerun the
+failed policy job. The job fetches current PR labels on each attempt. Remove a stale `breaking`
+label after a later update resolves the break. The gate follows cargo-semver-checks' deny-level
+lints, including removed APIs and lost auto traits; it does not establish behavioral compatibility.
+Rust caches are saved only on main, so PR builds cannot crowd out the shared baseline cache.
+
+The check uses the existing CI concurrency group and both jobs feed `required`. A separate job
+writes labels without checking out or building PR code. Fork pull requests receive the label from
+the trusted `Label semver breaks` workflow after CI finishes; its workflow must be present on the
+default branch. The compatibility gate covers Linux with all features; platform-specific API
+differences still need review and the existing platform checks.
+
 ## Fuzzing
 
 The [`fuzz/`](fuzz) crate holds cargo-fuzz (libFuzzer) targets for parsers of untrusted input. Each
