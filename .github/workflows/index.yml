@@ -31,6 +31,14 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustc +stable -Vv
           git --version
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          shared-key: stable-area
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Unix filesystem
         if: runner.os != 'Windows'
         run: |
