@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use girt::ignore::{Case, Ignore, Limits, Source};
+use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -104,7 +104,7 @@ impl Fixture {
         for path in &self.paths {
             if self
                 .rules
-                .check(path, false)
+                .check(path, InputKind::File)
                 .unwrap()
                 .is_some_and(|m| m.ignored)
             {

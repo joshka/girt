@@ -393,8 +393,14 @@ impl<'a> References<'a> {
     ) -> Result<(), ReferenceError> {
         let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
-            return super::reftable::backend::single(self, name, Some(target), expected, false)
-                .map(|_| ());
+            return super::reftable::backend::single(
+                self,
+                name,
+                Some(target),
+                expected,
+                super::Dereference::Stored,
+            )
+            .map(|_| ());
         }
         validate_expected(self.object_format, &expected)?;
         if name.as_bytes() == b"HEAD"
@@ -439,7 +445,7 @@ impl<'a> References<'a> {
                 name,
                 Some(Target::Direct(id)),
                 expected,
-                true,
+                super::Dereference::Follow,
             )
             .map(|outcome| outcome.name);
         }
@@ -492,7 +498,14 @@ impl<'a> References<'a> {
     ) -> Result<(), ReferenceError> {
         let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
-            return super::reftable::backend::single(self, name, None, expected, false).map(|_| ());
+            return super::reftable::backend::single(
+                self,
+                name,
+                None,
+                expected,
+                super::Dereference::Stored,
+            )
+            .map(|_| ());
         }
         validate_expected(self.object_format, &expected)?;
         let packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;
@@ -529,8 +542,14 @@ impl<'a> References<'a> {
     ) -> Result<RefName, ReferenceError> {
         let _lock_operation = crate::locks::operation();
         if self.reference_backend == Backend::Reftable {
-            return super::reftable::backend::single(self, name, None, expected, true)
-                .map(|outcome| outcome.name);
+            return super::reftable::backend::single(
+                self,
+                name,
+                None,
+                expected,
+                super::Dereference::Follow,
+            )
+            .map(|outcome| outcome.name);
         }
         validate_expected(self.object_format, &expected)?;
         let packed_lock = Lock::acquire(self.common_dir.join("packed-refs"))?;

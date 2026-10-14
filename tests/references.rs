@@ -1140,7 +1140,11 @@ fn logged_edit(
             expected,
             transaction_log(b"transaction"),
         );
-        input.with_dereference(reference == "HEAD")
+        input.with_dereference(if reference == "HEAD" {
+            girt::refs::Dereference::Follow
+        } else {
+            girt::refs::Dereference::Stored
+        })
     }
 }
 

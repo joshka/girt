@@ -103,14 +103,15 @@ impl RemoteDiscovery {
         let object_format = advertisement.object_format()?;
         let mut names = HashSet::new();
         for reference in &advertisement.refs {
-            if reference.id.is_null() || !names.insert((reference.name.clone(), reference.peeled)) {
+            if reference.id.is_null() || !names.insert((reference.name.clone(), reference.kind)) {
                 return Err(FetchError::Protocol("invalid advertised ref"));
             }
         }
         for reference in &advertisement.refs {
-            if reference.peeled
+            if reference.kind == crate::fetch::AdvertisementKind::PeeledHint
                 && (!reference.name.as_bytes().starts_with(b"refs/tags/")
-                    || !names.contains(&(reference.name.clone(), false)))
+                    || !names
+                        .contains(&(reference.name.clone(), crate::fetch::AdvertisementKind::Tip)))
             {
                 return Err(FetchError::Protocol("unmatched peeled hint"));
             }
@@ -344,11 +345,11 @@ pub fn discover_local(
             .map_err(|_| FetchError::Protocol("local references"))?
             .read(&head)
             .map_err(|_| FetchError::Protocol("local HEAD"))?
-            && !discovered
-                .advertisement
-                .refs
-                .iter()
-                .any(|reference| reference.name == head && reference.id == id && !reference.peeled)
+            && !discovered.advertisement.refs.iter().any(|reference| {
+                reference.name == head
+                    && reference.id == id
+                    && reference.kind == crate::fetch::AdvertisementKind::Tip
+            })
         {
             return Err(FetchError::Protocol("local HEAD changed during discovery"));
         }
@@ -531,14 +532,19 @@ fn interpret_head_in(
     let head = advertisement
         .refs
         .iter()
-        .filter(|reference| reference.name.as_bytes() == b"HEAD" && !reference.peeled)
+        .filter(|reference| {
+            reference.name.as_bytes() == b"HEAD"
+                && reference.kind == crate::fetch::AdvertisementKind::Tip
+        })
         .map(|reference| reference.id)
         .next();
     if let Some(branch) = hint {
         let target = advertisement
             .refs
             .iter()
-            .find(|reference| reference.name == branch && !reference.peeled)
+            .find(|reference| {
+                reference.name == branch && reference.kind == crate::fetch::AdvertisementKind::Tip
+            })
             .map(|reference| reference.id);
         return match (head, target) {
             (Some(id), Some(target)) if id == target => Ok(RemoteHead::Symbolic { branch, id }),
@@ -557,7 +563,7 @@ fn interpret_head_in(
         .refs
         .iter()
         .filter(|reference| {
-            !reference.peeled
+            reference.kind == crate::fetch::AdvertisementKind::Tip
                 && reference.name.as_bytes().starts_with(b"refs/heads/")
                 && reference.id == id
         })
@@ -584,7 +590,7 @@ mod tests {
         super::super::AdvertisedRef {
             name: RefName::new(name).unwrap(),
             id,
-            peeled: false,
+            kind: crate::fetch::AdvertisementKind::Tip,
         }
     }
 

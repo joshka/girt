@@ -223,6 +223,16 @@ pub struct RefSource {
     pub id: ObjectId,
 }
 
+/// Whether a refspec requests a forced mapping; this does not authorize publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum ForceIntent {
+    /// No syntactic force request.
+    Normal,
+    /// The refspec carries `+`; the caller must separately authorize force.
+    Requested,
+}
+
 /// One pure selection, mapping, or push deletion; not an authorized reference update.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[non_exhaustive]
@@ -233,12 +243,16 @@ pub struct Mapping {
     pub destination: Option<RefName>,
     /// Syntactic `+` intent. Callers separately authorize force and validate expected old values,
     /// ancestry, object kinds, namespace restrictions and storage conflicts.
-    pub force: bool,
+    pub force: ForceIntent,
 }
 
 impl Mapping {
     /// Creates a mapping with explicit source, destination and force policy.
-    pub fn new(source: Option<RefSource>, destination: Option<RefName>, force: bool) -> Self {
+    pub fn new(
+        source: Option<RefSource>,
+        destination: Option<RefName>,
+        force: ForceIntent,
+    ) -> Self {
         Self {
             source,
             destination,
@@ -262,7 +276,7 @@ impl Mapping {
 
     /// Sets [`Self::force`].
     #[must_use]
-    pub fn with_force(mut self, force: bool) -> Self {
+    pub fn with_force(mut self, force: ForceIntent) -> Self {
         self.force = force;
         self
     }
@@ -401,7 +415,11 @@ impl Refspecs {
                 plan.add(Mapping {
                     source: None,
                     destination: spec.destination(b"")?,
-                    force: spec.force,
+                    force: if spec.force {
+                        ForceIntent::Requested
+                    } else {
+                        ForceIntent::Normal
+                    },
                 })?;
                 continue;
             }
@@ -418,7 +436,11 @@ impl Refspecs {
                     plan.add(Mapping {
                         source: Some(source.clone()),
                         destination: spec.destination(capture)?,
-                        force: spec.force,
+                        force: if spec.force {
+                            ForceIntent::Requested
+                        } else {
+                            ForceIntent::Normal
+                        },
                     })?;
                 }
             }
@@ -448,7 +470,7 @@ impl Refspecs {
         let sources: Vec<_> = advertisement
             .refs
             .iter()
-            .filter(|reference| !reference.peeled)
+            .filter(|reference| reference.kind == crate::fetch::AdvertisementKind::Tip)
             .map(|reference| RefSource {
                 name: reference.name.clone(),
                 id: reference.id,
@@ -474,7 +496,7 @@ impl Refspecs {
         let sources: Vec<_> = advertisement
             .refs
             .iter()
-            .filter(|reference| !reference.peeled)
+            .filter(|reference| reference.kind == crate::fetch::AdvertisementKind::Tip)
             .map(|reference| RefSource {
                 name: reference.name.clone(),
                 id: reference.id,

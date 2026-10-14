@@ -489,7 +489,7 @@ fn existing_append_selects_each_log_in_resolved_head_chain(
     let refs = repo.references().unwrap();
     let before = refs.reflog(&name("HEAD")).unwrap().unwrap();
     let mut operation = existing_edit("HEAD", second, Expected::Exists);
-    operation.dereference = true;
+    operation.dereference = girt::refs::Dereference::Follow;
     let result = refs.transaction(&[operation]).unwrap();
     assert_eq!(
         result[0].logs,

@@ -63,7 +63,7 @@
 //!         message: b"commit (initial)".to_vec(),
 //!     },
 //! );
-//! references.transaction(&[edit.with_dereference(true)])?;
+//! references.transaction(&[edit.with_dereference(girt::refs::Dereference::Follow)])?;
 //!
 //! let main = RefName::new("refs/heads/main")?;
 //! assert_eq!(references.read(&main)?, Some(Target::Direct(commit)));
@@ -99,7 +99,9 @@ pub use reflog::{Reflog, ReflogEntry, ReflogRecord};
 pub use store::{
     Backend, Expected, ReferenceError, ReferenceObservation, References, Resolution, Target,
 };
-pub use transaction::{LogOutcome, RefEdit, RefEditOutcome, RefOutcome, TransactionError};
+pub use transaction::{
+    Dereference, LogOutcome, RefEdit, RefEditOutcome, RefOutcome, TransactionError,
+};
 
 #[cfg(test)]
 mod observation_tests;

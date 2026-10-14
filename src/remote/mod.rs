@@ -58,7 +58,7 @@
 //!     mappings[0].destination,
 //!     Some(RefName::new("refs/remotes/origin/main")?)
 //! );
-//! assert!(mappings[0].force);
+//! assert_eq!(mappings[0].force, girt::remote::ForceIntent::Requested);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -89,10 +89,11 @@ pub use credential::{
     CredentialProgram, CredentialSession, Prompt, askpass,
 };
 pub use credential_store::CredentialStore;
-pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment};
+pub use endpoint::{Destination, EndpointError, Protocol, ProtocolEnvironment, ProtocolOrigin};
 pub use name::{InvalidRemoteName, RemoteNameError, validate_name};
 pub use refspec::{
-    Direction, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs, RefspecsError,
+    Direction, ForceIntent, Mapping, MappingError, RefSource, Refspec, RefspecError, Refspecs,
+    RefspecsError,
 };
 pub use url::{ParsedUrl, UrlError};
 pub use user_url::{UserUrlError, UserUrlParseError, UserUrlPathError, canonicalize_user_url};

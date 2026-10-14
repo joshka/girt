@@ -167,7 +167,9 @@ fn exact_duplicates_collapse_and_spec_order_precedes_source_order() {
         ]
     );
     assert_eq!(
-        plan.iter().map(|m| m.force).collect::<Vec<_>>(),
+        plan.iter()
+            .map(|m| m.force == crate::remote::ForceIntent::Requested)
+            .collect::<Vec<_>>(),
         vec![false, true, true]
     );
 }
@@ -268,17 +270,17 @@ fn advertisement_uses_named_tips_not_peeling_or_symbolic_target_names() {
             AdvertisedRef {
                 name: RefName::new(b"HEAD").unwrap(),
                 id: tip,
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             },
             AdvertisedRef {
                 name: RefName::new(b"refs/tags/v1").unwrap(),
                 id: tip,
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             },
             AdvertisedRef {
                 name: RefName::new(b"refs/tags/v1").unwrap(),
                 id: ObjectId::for_blob(crate::ObjectFormat::Sha1, b"peeled"),
-                peeled: true,
+                kind: crate::fetch::AdvertisementKind::PeeledHint,
             },
         ],
         capabilities: vec![b"symref=HEAD:refs/heads/main".to_vec()],

@@ -1200,7 +1200,7 @@ impl Repository {
             let deleted = status.command.deletes();
             let edit = crate::refs::RefEdit {
                 name,
-                dereference: false,
+                dereference: crate::refs::Dereference::Stored,
                 target: (!deleted).then_some(crate::refs::Target::Direct(status.command.new)),
                 expected: crate::refs::Expected::Any,
                 reflog: match (deleted, identity) {

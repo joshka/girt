@@ -13,20 +13,30 @@ use super::{
 };
 use crate::ObjectId;
 
+/// Which stored reference a conditional edit updates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum Dereference {
+    /// Edit the named reference itself.
+    Stored,
+    /// Follow symbolic references and edit the terminal stored reference.
+    Follow,
+}
+
 /// A conditional change to one stored name or one symbolic chain's terminal name.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct RefEdit {
-    /// Initial name; also the destination when `dereference` is false.
+    /// Initial name; also the destination when `dereference` is `Stored`.
     pub name: RefName,
     /// Follow up to 32 symbolic hops, keeping the chain unchanged.
     ///
     /// Only direct updates or deletion can be dereferenced. Preconditions apply to the terminal
-    /// stored value. With `false`, a direct replacement with append logging still locks and
+    /// stored value. With `Stored`, a direct replacement with append logging still locks and
     /// resolves the old symbolic chain for the log identity, but edits/logs only `name` and checks
     /// the precondition against its stored value. Symbolic replacement locks both old and new
     /// chains to record their terminal IDs. Overlapping operations are rejected.
-    pub dereference: bool,
+    pub dereference: Dereference,
     /// Replacement, or `None` to delete. Object existence/type is not checked.
     pub target: Option<Target>,
     /// Compared under locks before any publication.
@@ -45,7 +55,7 @@ impl RefEdit {
             target,
             expected,
             reflog,
-            dereference: false,
+            dereference: crate::refs::Dereference::Stored,
         }
     }
 
@@ -58,7 +68,7 @@ impl RefEdit {
 
     /// Sets [`Self::dereference`].
     #[must_use]
-    pub fn with_dereference(mut self, dereference: bool) -> Self {
+    pub fn with_dereference(mut self, dereference: Dereference) -> Self {
         self.dereference = dereference;
         self
     }
@@ -281,11 +291,12 @@ impl References<'_> {
     /// Applies a files-only transaction whose reflogs identify stored values without resolving
     /// symbolic references.
     ///
-    /// Every edit must have `dereference: false` and a direct replacement or deletion. The old
-    /// reflog ID is the stored direct ID, or null for a symbolic or absent value; the new ID is the
-    /// replacement ID, or null for deletion. Symbolic chains are never traversed or locked. Only
-    /// the edited name is rechecked under its reference lock, and the caller's exact expected
-    /// value remains authoritative. Conditional append policies compare stored targets.
+    /// Every edit must use [`Dereference::Stored`] and a direct
+    /// replacement or deletion. The old reflog ID is the stored direct ID, or null for a
+    /// symbolic or absent value; the new ID is the replacement ID, or null for deletion.
+    /// Symbolic chains are never traversed or locked. Only the edited name is rechecked under
+    /// its reference lock, and the caller's exact expected value remains authoritative.
+    /// Conditional append policies compare stored targets.
     ///
     /// Uses the same packed-reference coordination, reflog selection, lock waits, cancellation,
     /// cleanup and publication outcomes as [`Self::transaction_files_with_options`]. In particular,
@@ -349,7 +360,8 @@ impl References<'_> {
             }
             for (index, edit) in edits.iter().enumerate() {
                 if identity == LogIdentity::Stored
-                    && (edit.dereference || matches!(edit.target, Some(Target::Symbolic(_))))
+                    && (edit.dereference == crate::refs::Dereference::Follow
+                        || matches!(edit.target, Some(Target::Symbolic(_))))
                 {
                     return Err(TransactionError::Prepare {
                         operation: Some(index),
@@ -456,7 +468,7 @@ impl References<'_> {
                 {
                     let dependency = RefEdit {
                         name: target.clone(),
-                        dereference: true,
+                        dereference: crate::refs::Dereference::Follow,
                         target: None,
                         expected: Expected::Any,
                         reflog: Reflog::Preserve,
@@ -521,14 +533,14 @@ impl References<'_> {
                     )
                     .map_err(error)?;
                 }
-                let (name, actual) = if edit.dereference {
+                let (name, actual) = if edit.dereference == crate::refs::Dereference::Follow {
                     chain.last().unwrap()
                 } else {
                     chain.first().unwrap()
                 };
                 check_expected(actual.clone(), edit.expected.clone()).map_err(error)?;
                 let mut logs = Vec::new();
-                let logged_chain = if edit.dereference {
+                let logged_chain = if edit.dereference == crate::refs::Dereference::Follow {
                     &chain[..]
                 } else {
                     &chain[..1]
@@ -637,7 +649,8 @@ impl References<'_> {
         identity: LogIdentity,
     ) -> Result<Vec<(RefName, Option<Target>)>, ReferenceError> {
         let resolve_old = identity == LogIdentity::Resolved
-            && (edit.dereference || edit.reflog.append_fields().is_some());
+            && (edit.dereference == crate::refs::Dereference::Follow
+                || edit.reflog.append_fields().is_some());
         let mut chain = Vec::new();
         let mut name = edit.name.clone();
         loop {
@@ -676,7 +689,9 @@ pub(super) fn validate_edit(
         {
             return Err(ReferenceError::InvalidHeadTarget);
         }
-        if edit.dereference && matches!(target, Target::Symbolic(_)) {
+        if edit.dereference == crate::refs::Dereference::Follow
+            && matches!(target, Target::Symbolic(_))
+        {
             return Err(ReferenceError::Unsupported("resolved symbolic replacement"));
         }
     }

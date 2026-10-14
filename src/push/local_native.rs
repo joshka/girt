@@ -508,7 +508,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             }
             let edit = RefEdit {
                 name: command.name.clone(),
-                dereference: false,
+                dereference: crate::refs::Dereference::Stored,
                 target: (!command.deletes()).then_some(Target::Direct(command.new)),
                 expected: command
                     .expected

@@ -141,7 +141,7 @@ impl ColocationEdit<'_> {
         };
         let edit = RefEdit {
             name: RefName::new(b"HEAD").expect("HEAD is valid"),
-            dereference: false,
+            dereference: crate::refs::Dereference::Stored,
             target: Some(target),
             expected,
             reflog,

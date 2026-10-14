@@ -89,9 +89,13 @@ pub(super) fn plan(
     let head = ad
         .refs
         .iter()
-        .find(|r| !r.peeled && r.name.as_bytes() == b"HEAD");
+        .find(|r| r.kind == crate::fetch::AdvertisementKind::Tip && r.name.as_bytes() == b"HEAD");
     let mappings = specs(head.is_some()).map_advertisement(ad)?;
-    let tips: Vec<_> = ad.refs.iter().filter(|r| !r.peeled).collect();
+    let tips: Vec<_> = ad
+        .refs
+        .iter()
+        .filter(|r| r.kind == crate::fetch::AdvertisementKind::Tip)
+        .collect();
     let selected = match selection {
         BranchSelection::Branch(name) => {
             branch(name)?;

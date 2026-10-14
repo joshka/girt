@@ -493,7 +493,15 @@ fn add_ref(
     *remaining = remaining
         .checked_sub(bytes)
         .ok_or(FetchError::Limit("local advertisement bytes"))?;
-    advertised.push(AdvertisedRef { name, id, peeled });
+    advertised.push(AdvertisedRef {
+        name,
+        id,
+        kind: if peeled {
+            crate::fetch::AdvertisementKind::PeeledHint
+        } else {
+            crate::fetch::AdvertisementKind::Tip
+        },
+    });
     Ok(())
 }
 

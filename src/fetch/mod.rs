@@ -217,7 +217,8 @@ pub use local::{
 };
 pub(crate) use progress::ValidationObserver;
 pub use protocol::{
-    AdvertisedRef, Advertisement, receive, receive_with_known, receive_with_known_depth,
+    AdvertisedRef, Advertisement, AdvertisementKind, receive, receive_with_known,
+    receive_with_known_depth,
 };
 
 /// Resource bounds and optional positive commit depth for one wire fetch.

@@ -57,7 +57,11 @@ fn discovery_reports_http_head_without_fetch_rpc(#[case] format: girt::ObjectFor
     assert_eq!(server.requests().len(), 1);
 }
 fn all(a: &Advertisement) -> Vec<ObjectId> {
-    a.refs.iter().filter(|r| !r.peeled).map(|r| r.id).collect()
+    a.refs
+        .iter()
+        .filter(|r| r.kind == girt::fetch::AdvertisementKind::Tip)
+        .map(|r| r.id)
+        .collect()
 }
 fn destination() -> (tempfile::TempDir, Repository) {
     destination_for(girt::ObjectFormat::Sha1)
@@ -343,7 +347,13 @@ fn real_git_full_incremental_and_known_only_fetch() {
             .any(|line| line.split_whitespace().count() == 7)
     );
     verify(&f, &dest);
-    assert!(received.advertisement().refs.iter().any(|r| r.peeled));
+    assert!(
+        received
+            .advertisement()
+            .refs
+            .iter()
+            .any(|r| r.kind == girt::fetch::AdvertisementKind::PeeledHint)
+    );
     let known = KnownHistory::new(
         &dest.objects(PackLimits::default()).unwrap(),
         received.wants(),
@@ -2761,7 +2771,13 @@ fn requested_protocol_discovers_and_fetches_incrementally(
         rt.block_on(fetch::receive_http(&remote, all, None, limits, control))
             .unwrap(),
     );
-    assert!(received.advertisement().refs.iter().any(|r| r.peeled));
+    assert!(
+        received
+            .advertisement()
+            .refs
+            .iter()
+            .any(|r| r.kind == girt::fetch::AdvertisementKind::PeeledHint)
+    );
     let (_root, dest) = destination_for(format);
     received
         .install(&dest, PackLimits::default(), &cancel)

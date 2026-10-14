@@ -38,7 +38,14 @@ fn semantics(
 ) {
     assert_eq!(
         root(content)
-            .check(path, directory)
+            .check(
+                path,
+                if directory {
+                    InputKind::Directory
+                } else {
+                    InputKind::File
+                }
+            )
             .unwrap()
             .map(|m| m.ignored),
         expected
@@ -54,7 +61,7 @@ fn hierarchy_uses_depth_and_source_precedence_with_provenance() {
     rules.add(Source::Directory(b""), b"x\n").unwrap();
     rules.add(Source::Info, b"x\n").unwrap();
     assert_eq!(
-        rules.check(b"a/x", false).unwrap(),
+        rules.check(b"a/x", InputKind::File).unwrap(),
         Some(Match {
             ignored: false,
             source: 0,
@@ -63,14 +70,21 @@ fn hierarchy_uses_depth_and_source_precedence_with_provenance() {
         })
     );
     rules.add(Source::Command, b"x\n").unwrap();
-    assert_eq!(rules.check(b"a/x", false).unwrap().unwrap().source, 4);
+    assert_eq!(
+        rules
+            .check(b"a/x", InputKind::File)
+            .unwrap()
+            .unwrap()
+            .source,
+        4
+    );
 }
 #[test]
 fn blocked_parent_reports_ancestor_and_ignores_nested_source() {
     let mut rules = root(b"a/\n");
     rules.add(Source::Directory(b"a"), b"!*\n").unwrap();
     assert_eq!(
-        rules.check(b"a/x", false).unwrap(),
+        rules.check(b"a/x", InputKind::File).unwrap(),
         Some(Match {
             ignored: true,
             source: 0,
@@ -83,16 +97,28 @@ fn blocked_parent_reports_ancestor_and_ignores_nested_source() {
 fn direct_query_leaves_ancestor_policy_to_the_caller() {
     let mut rules = root(b"a/\n");
     rules.add(Source::Directory(b"a"), b"!x\n").unwrap();
-    assert!(rules.check(b"a/x", false).unwrap().unwrap().ignored);
-    assert!(!rules.check_direct(b"a/x", false).unwrap().unwrap().ignored);
-    assert_eq!(rules.check_direct(b"a/y", false).unwrap(), None);
-    assert_eq!(rules.check_direct(b"", false), Err(Error::Path));
+    assert!(
+        rules
+            .check(b"a/x", InputKind::File)
+            .unwrap()
+            .unwrap()
+            .ignored
+    );
+    assert!(
+        !rules
+            .check_direct(b"a/x", InputKind::File)
+            .unwrap()
+            .unwrap()
+            .ignored
+    );
+    assert_eq!(rules.check_direct(b"a/y", InputKind::File).unwrap(), None);
+    assert_eq!(rules.check_direct(b"", InputKind::File), Err(Error::Path));
 }
 #[test]
 fn equal_level_sources_append() {
     let mut rules = root(b"x\n");
     rules.add(Source::Directory(b""), b"!x\n").unwrap();
-    assert!(!rules.check(b"x", false).unwrap().unwrap().ignored);
+    assert!(!rules.check(b"x", InputKind::File).unwrap().unwrap().ignored);
 }
 #[rstest]
 #[case::empty(b"")]
@@ -103,7 +129,7 @@ fn equal_level_sources_append() {
 #[case::trailing(b"a/")]
 #[case::nul(b"a\0b")]
 fn invalid_query(#[case] path: &[u8]) {
-    assert_eq!(root(b"*").check(path, false), Err(Error::Path));
+    assert_eq!(root(b"*").check(path, InputKind::File), Err(Error::Path));
 }
 #[rstest]
 #[case::source_bytes(Limits { bytes: 3, ..Limits::default() }, b"long", "source bytes")]
@@ -118,8 +144,11 @@ fn failed_add_is_atomic(
     let mut rules = Ignore::new(Case::Sensitive, limits);
     rules.add(Source::Global, b"x").unwrap();
     assert_eq!(rules.add(Source::Info, content), Err(Error::Limit(limit)));
-    assert_eq!(rules.check(b"x", false).unwrap().unwrap().source, 0);
-    assert_eq!(rules.check(b"y", false).unwrap(), None);
+    assert_eq!(
+        rules.check(b"x", InputKind::File).unwrap().unwrap().source,
+        0
+    );
+    assert_eq!(rules.check(b"y", InputKind::File).unwrap(), None);
 }
 #[test]
 fn aggregate_bytes_include_directory_prefix() {
@@ -160,11 +189,11 @@ fn query_budget_is_not_a_negative_decision(#[case] work: usize) {
         .add(Source::Global, b"*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b")
         .unwrap();
     assert_eq!(
-        rules.check(&[b'a'; 100], false),
+        rules.check(&[b'a'; 100], InputKind::File),
         Err(Error::Limit("matching work"))
     );
     assert_eq!(
-        rules.check(&[b'a'; 100], false),
+        rules.check(&[b'a'; 100], InputKind::File),
         Err(Error::Limit("matching work"))
     );
 }
@@ -178,9 +207,9 @@ fn query_work_is_shared_across_ancestors() {
         },
     );
     rules.add(Source::Global, b"z").unwrap();
-    assert_eq!(rules.check(b"a", true), Ok(None));
+    assert_eq!(rules.check(b"a", InputKind::Directory), Ok(None));
     assert_eq!(
-        rules.check(b"a/b", false),
+        rules.check(b"a/b", InputKind::File),
         Err(Error::Limit("matching work"))
     );
 }
@@ -197,7 +226,10 @@ fn path_budget_applies_to_both_boundaries() {
         rules.add(Source::Directory(b"ab"), b""),
         Err(Error::Limit("path bytes"))
     );
-    assert_eq!(rules.check(b"ab", false), Err(Error::Limit("path bytes")));
+    assert_eq!(
+        rules.check(b"ab", InputKind::File),
+        Err(Error::Limit("path bytes"))
+    );
 }
 #[test]
 fn case_policy_includes_source_prefix_without_unicode_folding() {
@@ -205,9 +237,15 @@ fn case_policy_includes_source_prefix_without_unicode_folding() {
     rules
         .add(Source::Directory(b"DIR"), b"[A-Z]\n\xc3\x84")
         .unwrap();
-    assert!(rules.check(b"dir/a", false).unwrap().unwrap().ignored);
-    assert_eq!(rules.check(b"dir/\xc3\xa4", false).unwrap(), None);
-    assert_eq!(rules.check(b"directory/a", false).unwrap(), None);
+    assert!(
+        rules
+            .check(b"dir/a", InputKind::File)
+            .unwrap()
+            .unwrap()
+            .ignored
+    );
+    assert_eq!(rules.check(b"dir/\xc3\xa4", InputKind::File).unwrap(), None);
+    assert_eq!(rules.check(b"directory/a", InputKind::File).unwrap(), None);
 }
 /// Degenerate patterns in `a/.gitignore`, with the paths `git check-ignore --no-index` ignores
 /// (observed with Git 2.56).
@@ -228,7 +266,12 @@ fn degenerate_patterns_match_like_git(#[case] pattern: &[u8], #[case] ignored: &
     rules.add(Source::Directory(b"a"), pattern).unwrap();
     let actual: Vec<&[u8]> = [&b"a/b"[..], b"a/[", b"a/ ", b"a/b/c"]
         .into_iter()
-        .filter(|path| rules.check(path, false).unwrap().is_some_and(|m| m.ignored))
+        .filter(|path| {
+            rules
+                .check(path, InputKind::File)
+                .unwrap()
+                .is_some_and(|m| m.ignored)
+        })
         .collect();
     assert_eq!(actual, ignored);
 }
