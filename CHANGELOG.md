@@ -19,6 +19,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Implement redacted `Debug` for remote configuration editors, native push context and terminal
   event/stop handles.
 
+### Other
+
+- Pack references after fetch, as Git's automatic maintenance does ([#164](https://github.com/joshka/girt/pull/164))
+- Parse protocol v2 capabilities and delim/response-end pkt-lines ([#160](https://github.com/joshka/girt/pull/160))
+- Request selected references with v2 ls-refs ref-prefix ([#161](https://github.com/joshka/girt/pull/161))
+- Add bounded parser fuzzing for objects and packs ([#166](https://github.com/joshka/girt/pull/166))
+- Fuzz pkt-line and fetch and push protocol parsers ([#167](https://github.com/joshka/girt/pull/167))
+- Fuzz configuration, ignore, index and reference parsers ([#168](https://github.com/joshka/girt/pull/168))
+
 ## [0.7.2](https://github.com/joshka/girt/compare/v0.7.1...v0.7.2) - 2026-10-14
 
 ### Other
