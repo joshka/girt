@@ -1677,14 +1677,27 @@ fn received_proof_does_not_trust_an_earlier_mislabelled_pack(#[case] format: &st
             .read(source.first, ReadLimits::default())
             .is_err()
     );
-    let error = ready
+    ready
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))
-        .unwrap_err();
-    assert!(matches!(
-        *error.source,
-        FetchFinishFailure::BeforePublication(_)
-    ));
-    assert_eq!(stored(&repository, "refs/remotes/origin/main"), None);
+        .unwrap();
+    assert_eq!(
+        stored(&repository, "refs/remotes/origin/main"),
+        Some(Target::Direct(source.first))
+    );
+    let objects = repository.objects(PackLimits::default()).unwrap();
+    let first = objects
+        .read(source.first, ReadLimits::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.id(), source.first);
+    assert_eq!(
+        first.data(),
+        git(
+            source.root.path(),
+            &["cat-file", "commit", &source.first.to_string()],
+            b""
+        )
+    );
     assert!(
         !command(repository.git_dir(), &["fsck", "--full"], b"")
             .status

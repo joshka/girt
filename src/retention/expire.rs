@@ -35,7 +35,7 @@ pub struct ExpireReport {
 /// Why expiry stopped.
 #[derive(Debug, thiserror::Error)]
 pub enum ExpireCause {
-    /// A pinned pack or index changed before this mutation boundary.
+    /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
     PackChanged(Box<crate::ObjectReadError>),
     /// The caller could not exclude writers and dependent readers.

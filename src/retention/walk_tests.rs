@@ -219,3 +219,89 @@ pub(super) fn change_pack(path: &Path, truncate: bool) {
     file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(42))
         .unwrap();
 }
+
+#[cfg(unix)]
+use crate::pack_git;
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1(crate::ObjectFormat::Sha1)]
+#[case::sha256(crate::ObjectFormat::Sha256)]
+fn damage_rescued_after_complete_plan_refuses_prune(#[case] format: crate::ObjectFormat) {
+    let fixture = pack_git::Fixture::new(format, true, 4);
+    let expected = fixture
+        .records
+        .iter()
+        .find(|record| record.0 == fixture.ordinary)
+        .unwrap();
+    // Git skips writing already packed data; temporarily hide the index to generate a loose
+    // rescue copy before taking the retention snapshot.
+    let hidden = fixture.root.path().join("hidden.idx");
+    std::fs::rename(&fixture.index_path, &hidden).unwrap();
+    pack_git::git(
+        fixture.root.path(),
+        &["hash-object", "-w", "--stdin"],
+        &expected.2,
+    );
+    std::fs::rename(hidden, &fixture.index_path).unwrap();
+    let orphan = pack_git::git(
+        fixture.root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"deletable orphan",
+    );
+    let mut index = std::fs::read(&fixture.index_path).unwrap();
+    let width = format.digest_len();
+    let count = fixture.records.len();
+    let position = index[1032..1032 + count * width]
+        .chunks_exact(width)
+        .position(|name| name == fixture.ordinary.as_bytes())
+        .unwrap();
+    index[1032 + count * width + position * 4] ^= 1;
+    let end = index.len() - width;
+    let checksum = format.checksum(&index[..end]);
+    index[end..].copy_from_slice(checksum.as_bytes());
+    std::fs::remove_file(&fixture.index_path).unwrap();
+    std::fs::write(&fixture.index_path, index).unwrap();
+    let policy = RetentionPolicy {
+        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        ..Default::default()
+    };
+    let cancel = AtomicBool::new(false);
+    let session = super::inputs::Session::new(&fixture.repo, &policy, &cancel).unwrap();
+    assert!(session.plan.is_complete());
+    let store = session.plan.store.as_ref().unwrap();
+    assert_eq!(
+        store
+            .read(fixture.ordinary, crate::ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+        expected.2
+    );
+    let error = fixture
+        .repo
+        .prune_planned(&policy, &cancel, &session)
+        .unwrap_err();
+    assert!(
+        matches!(error.cause, super::PruneCause::PackChanged(ref source)
+        if matches!(source.as_ref(), crate::ObjectReadError::Path { source, .. } if source.kind() == std::io::ErrorKind::InvalidData))
+    );
+    assert!(error.report.deleted.is_empty());
+    assert_eq!(
+        pack_git::git(
+            fixture.root.path(),
+            &[
+                "cat-file",
+                "blob",
+                std::str::from_utf8(&orphan).unwrap().trim()
+            ],
+            b""
+        ),
+        b"deletable orphan"
+    );
+    assert!(
+        store
+            .read(fixture.delta, crate::ReadLimits::default())
+            .is_err()
+    );
+}

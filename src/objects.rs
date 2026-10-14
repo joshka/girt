@@ -207,10 +207,10 @@ impl ReadLimits {
 /// headers/counts, and index/pack trailer agreement. Like Git, it does not hash the whole index
 /// at open. It reads only the pack header and trailer; body corruption is detected when used.
 /// Reads check entry framing, v2 CRCs, zlib streams and delta programs throughout reconstruction,
-/// and verify the requested object's decoded identity, so a damaged index fails a read rather
-/// than returning other content. Legacy v1 indexes have no entry CRCs. [`Self::verify_packs`]
-/// explicitly checks index checksums, whole-pack checksums and CRCs; neither opening nor
-/// whole-pack verification is a full fsck.
+/// and verify the requested object's decoded identity, so a damaged index triggers verified
+/// fallback or an error rather than returning other content. Legacy v1 indexes have no entry CRCs.
+/// [`Self::verify_packs`] explicitly checks index checksums, whole-pack checksums and CRCs; neither
+/// opening nor whole-pack verification is a full fsck.
 ///
 /// Pack bytes are never retained in full. Bounded index bytes and offset tables stay in memory
 /// so identity lookups avoid repeated file seeks. Each pair pins two handles, shared internally
@@ -218,24 +218,33 @@ impl ReadLimits {
 /// entry's header and compressed bytes come from one read. Cloning shares pack handles, offset
 /// tables and delta base caches, while copying the bounded store topology. Each pack keeps
 /// recently decoded entries, up to 96 MiB, as delta bases; a cached entry is still
-/// identity-checked before it is returned. No negative cache is retained. [`PackLimits`] bounds
-/// aggregate opening work, index memory and handles; [`ReadLimits`] bounds each packed decode.
-/// Retention operations additionally share a single 256 KiB header window across packs on the
-/// calling thread, dropped when the operation ends. Windows artifact handles allow read/delete
-/// sharing and deny concurrent data writers.
+/// identity-checked before it is returned. Failed packed entries are remembered and skipped by
+/// subsequent content reads, shared by clones and preserved across refresh of unchanged pack
+/// generations (pinned size, modification time, native identity and trailer checksum).
+/// Metadata-only freshening of a still-pinned native artifact also preserves damage.
+/// [`PackLimits`] bounds aggregate opening work, index memory and handles; [`ReadLimits`] bounds
+/// each packed decode. Retention operations additionally share a single 256 KiB header window
+/// across packs on the calling thread, dropped when the operation ends. Windows artifact handles
+/// allow read/delete sharing and deny concurrent data writers.
 /// Concurrent reads and caller-owned results multiply memory use. Cancellation is available through
 /// [`crate::Repository::objects_controlled`] and [`Self::read_controlled`].
 ///
-/// Within each store, loose objects take precedence and are read fresh on each call. Corruption
-/// never falls through to a duplicate packed copy. Packs remain readable after Git repacks/deletes
-/// the original files where the OS permits unlinking open files; refresh to discover new packs.
-/// Artifacts must remain immutable while readers use them: pinned handles do not defend against
-/// in-place writes (including truncation). Atomic path replacement leaves pinned artifacts intact.
-/// Opening and refresh validate each pinned pair, but do not capture an atomic directory or
-/// topology snapshot. Exclude writers when a point-in-time view is required. [`Self::refresh`]
-/// makes one bounded attempt and leaves this reader unchanged on failure. Reads never refresh
-/// implicitly. The object directory and its ancestors must be trusted, as with [`LooseObjects`].
-/// This is not a snapshot of loose files or repository references.
+/// Within each store, packs are searched in index filename order, followed by fresh loose reads.
+/// Stores are searched primary first, then alternates in discovery order. A corrupt packed entry
+/// falls through to the remaining copies, each fully verified. A corrupt loose copy normally
+/// fails immediately; after packed damage, it also falls through to the remaining stores.
+/// Known damaged entries remain excluded for this handle's lifetime. Refresh retains small
+/// generation records without retaining old artifact handles or index tables. These records grow
+/// with distinct pack generations, including freshened metadata, opened by the handle and its
+/// clones. Packs remain readable
+/// after Git repacks/deletes the original files where the OS permits unlinking open files; refresh
+/// to discover new packs. Artifacts must remain immutable while readers use them: pinned handles do
+/// not defend against in-place writes (including truncation). Atomic path replacement leaves pinned
+/// artifacts intact. Opening and refresh validate each pinned pair, but do not capture an atomic
+/// directory or topology snapshot. Exclude writers when a point-in-time view is required.
+/// [`Self::refresh`] makes one bounded attempt and leaves this reader unchanged on failure. Reads
+/// never refresh implicitly. The object directory and its ancestors must be trusted, as with
+/// [`LooseObjects`]. This is not a snapshot of loose files or repository references.
 ///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
@@ -294,6 +303,8 @@ pub struct Objects {
     stores: Vec<Store>,
     directory: PathBuf,
     pub(crate) shallow: crate::ShallowRoots,
+    /// Artifact-generation evidence survives refresh without retaining old handles/tables.
+    damage_history: Arc<crate::pack::DamageHistory>,
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +314,22 @@ struct Store {
     packs: Vec<Arc<FilePack>>,
     /// `.pack` path of each entry in `packs`, in the same order.
     pack_paths: Vec<PathBuf>,
+}
+
+fn share_pack_damage(
+    stores: &mut [Store],
+    history: &crate::pack::DamageHistory,
+) -> Result<(), ObjectReadError> {
+    for store in stores {
+        for pack in &mut store.packs {
+            // Only unpublished, freshly opened pairs enter this helper.
+            let pack = Arc::get_mut(pack).ok_or(ObjectReadError::Corrupt(
+                "pack shared before opening completed",
+            ))?;
+            history.share(pack);
+        }
+    }
+    Ok(())
 }
 
 impl Objects {
@@ -370,9 +397,12 @@ impl Objects {
             for directory in directories {
                 stores.push(Store::open(format, &directory, &mut budget, cancelled)?);
             }
+            let damage_history = Arc::new(crate::pack::DamageHistory::default());
+            share_pack_damage(&mut stores, &damage_history)?;
             Ok(Self {
                 format,
                 stores,
+                damage_history,
                 directory,
                 shallow: crate::ShallowRoots::empty(format),
             })
@@ -435,9 +465,10 @@ impl Objects {
         alternates: AlternateLimits,
         cancelled: &AtomicBool,
     ) -> Result<(), ObjectReadError> {
-        let candidate =
+        let mut candidate =
             Self::open_controlled(self.format, &self.directory, packs, alternates, cancelled)?;
         check_cancelled(cancelled)?;
+        share_pack_damage(&mut candidate.stores, &self.damage_history)?;
         self.stores = candidate.stores;
         Ok(())
     }
@@ -595,6 +626,8 @@ impl Objects {
     /// # Errors
     ///
     /// Returns checksum/CRC corruption, artifact I/O errors or [`ObjectReadError::Cancelled`].
+    /// Also refuses packed damage remembered by prior reads, including identity-only failures;
+    /// that contextual error retains the path, offset and original corruption cause.
     pub fn verify_packs(&self, cancelled: &AtomicBool) -> Result<(), ObjectReadError> {
         check_cancelled(cancelled)?;
         for store in &self.stores {
@@ -620,14 +653,23 @@ impl Objects {
     /// absent.
     ///
     /// The payload is uninterpreted. Parse it separately if structured fields are needed.
-    /// A missing loose path falls through to the snapshot's indexed packs in filename order.
+    /// Searches each store's pinned packs in filename order, then its live loose files, primary
+    /// before alternates. Packed corruption retries remaining copies with full identity checks.
+    /// Failed packed entries are remembered for this handle and its clones; refresh preserves
+    /// evidence for the same artifacts. Reads never refresh storage implicitly.
     ///
     /// # Errors
     ///
     /// Returns storage errors for corrupt/unsupported objects, I/O failures, missing delta bases,
     /// cycles, incompatible identity formats, or exhausted resource limits. An invalid loose object
-    /// or indexed candidate fails immediately rather than being treated as absent. No
-    /// filesystem changes occur.
+    /// fails immediately unless this read is already retrying packed corruption. If all copies are
+    /// absent or damaged after a packed failure, the error names that pack; its source chain
+    /// includes the entry offset and concrete corruption cause. Packed damage uses
+    /// [`ObjectReadError::Path`] with an `InvalidData` I/O source. Cancellation,
+    /// resource limits, unsupported headers, missing/external delta bases and ordinary I/O
+    /// failures do not mark entries bad or trigger fallback. Only the first packed corruption
+    /// cause is reported, including when a later loose copy is also corrupt. No filesystem changes
+    /// occur.
     pub fn read(
         &self,
         id: ObjectId,
@@ -663,6 +705,7 @@ impl Objects {
         let operation = || {
             check_cancelled(cancelled)?;
             let loose_limit = limits.max_object_bytes.min(limits.max_decode_bytes);
+            let mut damage = None;
             for store in &self.stores {
                 check_cancelled(cancelled)?;
                 // Like Git, look in packs first: most objects are packed, and an object ID
@@ -670,9 +713,16 @@ impl Objects {
                 for pack in &store.packs {
                     check_cancelled(cancelled)?;
                     if let Some(position) = pack.find(id)? {
-                        let object = pack.read(position, limits, cancelled)?;
-                        check_cancelled(cancelled)?;
-                        return Ok(Some(object));
+                        match pack.read_candidate(position, limits, cancelled) {
+                            Ok(object) => {
+                                check_cancelled(cancelled)?;
+                                return Ok(Some(object));
+                            }
+                            Err(crate::pack::ReadFailure::Damaged(error)) => {
+                                damage.get_or_insert(error);
+                            }
+                            Err(crate::pack::ReadFailure::Other(error)) => return Err(error),
+                        }
                     }
                 }
                 match store.loose.read_raw(id, loose_limit) {
@@ -681,10 +731,14 @@ impl Objects {
                         return Ok(Some(object));
                     }
                     Err(crate::Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(crate::Error::Corrupt(_)) if damage.is_some() => {}
                     Err(error) => return Err(error.into()),
                 }
             }
             check_cancelled(cancelled)?;
+            if let Some(error) = damage {
+                return Err(error);
+            }
             // Git treats the canonical empty tree as present in every repository, even when it
             // is not stored.
             if id == self.format.hash_object(ObjectKind::Tree, b"") {
@@ -711,7 +765,8 @@ impl Objects {
     /// Reads `id` for a selection walk without hashing a packed payload; see [`UnverifiedObject`].
     ///
     /// Store precedence, limits and errors match [`Self::read_controlled`]. Loose objects are
-    /// still identity-checked: their only integrity check is the hash.
+    /// still identity-checked: their only integrity check is the hash. After a packed failure or
+    /// known bad entry, every fallback uses full identity checks.
     pub(crate) fn read_unverified(
         &self,
         id: ObjectId,
@@ -725,9 +780,23 @@ impl Objects {
             for pack in &store.packs {
                 check_cancelled(cancelled)?;
                 if let Some(position) = pack.find(id)? {
-                    let object = pack.read_unverified(position, limits, cancelled)?;
-                    check_cancelled(cancelled)?;
-                    return Ok(Some(object));
+                    match pack.read_candidate_unverified(position, limits, cancelled) {
+                        Ok(object) => {
+                            check_cancelled(cancelled)?;
+                            return Ok(Some(object));
+                        }
+                        Err(crate::pack::ReadFailure::Damaged(_)) => {
+                            // Restart with full identity checks: known bad entries are skipped,
+                            // and no unchecked fallback can supply selection edges.
+                            return self.read_controlled(id, limits, cancelled).map(|object| {
+                                object.map(|object| UnverifiedObject {
+                                    kind: object.kind,
+                                    data: object.data,
+                                })
+                            });
+                        }
+                        Err(crate::pack::ReadFailure::Other(error)) => return Err(error),
+                    }
                 }
             }
             match store.loose.read_raw(id, loose_limit) {
@@ -1093,7 +1162,9 @@ pub enum ObjectReadError {
     /// A recognized storage feature is outside the implemented subset.
     #[error("unsupported object storage: {0}")]
     Unsupported(&'static str),
-    /// Filesystem access failed at this artifact or directory.
+    /// Filesystem access failed at this artifact or directory, or a damaged packed read exhausted
+    /// its fallback copies. For packed corruption, the `InvalidData` source carries the offset
+    /// and the original corruption error through its source chain.
     #[error("object storage at {path}")]
     Path {
         /// Artifact or directory being accessed.
@@ -1148,3 +1219,7 @@ fn charge_copy_entry(entries: &mut usize, max: usize) -> Result<(), ObjectReadEr
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "objects/tests.rs"]
+mod tests;

@@ -413,14 +413,14 @@ impl Repository {
         ) {
             Ok(store) => store,
             Err(error) => {
-                plan.fail(error.to_string());
+                plan.fail(error_detail(&error));
                 return plan;
             }
         };
         // Opening checks index structure only. A plan authorizes deletion, so it also requires
         // every pinned index's checksum before trusting the identities that index claims.
         if let Err(error) = store.verify_indexes(cancel) {
-            plan.fail(error.to_string());
+            plan.fail(error_detail(&error));
             return plan;
         }
         plan.alternate_stores = store
@@ -476,7 +476,7 @@ impl Repository {
                     let cutoffs = match expiry.cutoffs(record.source.name()) {
                         Ok(cutoffs) => cutoffs,
                         Err(error) => {
-                            plan.fail(error.to_string());
+                            plan.fail(error_detail(&error));
                             return plan;
                         }
                     };
@@ -526,7 +526,7 @@ impl Repository {
         let has_candidates = match prune::candidates(self, policy, cancel) {
             Ok(candidates) => !candidates.is_empty(),
             Err(error) => {
-                plan.fail(error.to_string());
+                plan.fail(error_detail(&error));
                 return plan;
             }
         };
@@ -547,7 +547,7 @@ impl Repository {
                 match fs::symlink_metadata(path) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        plan.fail(error.to_string());
+                        plan.fail(error_detail(&error));
                         return plan;
                     }
                     Ok(_) => {
@@ -559,7 +559,7 @@ impl Repository {
             // Classification follows normal store precedence, which can select another pack.
             // Authenticate all pinned pack headers before this protection inventory uses them.
             if let Err(error) = store.verify_packs(cancel) {
-                plan.fail(error.to_string());
+                plan.fail(error_detail(&error));
                 return plan;
             }
             let mut protected_roots = BTreeSet::new();
@@ -571,7 +571,7 @@ impl Repository {
                     let id = match id {
                         Ok(id) => id,
                         Err(error) => {
-                            plan.fail(error.to_string());
+                            plan.fail(error_detail(&error));
                             return plan;
                         }
                     };
@@ -582,7 +582,7 @@ impl Repository {
                             return plan;
                         }
                         Err(error) => {
-                            plan.fail(error.to_string());
+                            plan.fail(error_detail(&error));
                             return plan;
                         }
                     };
@@ -621,15 +621,26 @@ impl Repository {
             if let Err(error) =
                 store.check_retention_blob_kinds(policy.read, policy.max_entries, cancel, is_blob)
             {
-                plan.fail(error.to_string());
+                plan.fail(error_detail(&error));
             }
         }
         if let Err(error) = store.check_packs_unchanged(cancel) {
-            plan.fail(error.to_string());
+            plan.fail(error_detail(&error));
         }
         plan.store = Some(store);
         plan
     }
+}
+
+fn error_detail(error: &dyn std::error::Error) -> String {
+    let mut detail = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        detail.push_str(": ");
+        detail.push_str(&error.to_string());
+        source = error.source();
+    }
+    detail
 }
 
 fn collect_roots(
@@ -968,7 +979,7 @@ fn walk(
         // binds its kind; a damaged graph header could otherwise erase edges and allow pruning.
         let object = store
             .read_controlled(id, policy.read, cancel)
-            .map_err(|e| e.to_string())?
+            .map_err(|error| error_detail(&error))?
             .ok_or_else(|| format!("missing reachable object {id}"))?;
         if expected
             .get(&id)

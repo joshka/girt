@@ -21,7 +21,7 @@ pub struct MaintenanceReport {
 /// Why maintenance stopped; a phase error carries that phase's partial effects.
 #[derive(Debug, thiserror::Error)]
 pub enum MaintenanceCause {
-    /// A pinned pack or index changed before this mutation boundary.
+    /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
     PackChanged(Box<crate::ObjectReadError>),
     /// The caller could not hold a repository-wide exclusion boundary.
