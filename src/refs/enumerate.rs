@@ -67,9 +67,9 @@ impl References<'_> {
     /// result is stable after return but is not a point-in-time snapshot: concurrent creation or
     /// deletion may be included or missed, and values can come from different times. A loose
     /// file that disappears during traversal is ignored; a previously read packed value can
-    /// remain in the result. Callers must use an expected value when acting on these observations.
-    /// Memory use is proportional to packed data, discovered refs, and pending directories;
-    /// there is no configurable resource limit.
+    /// remain in the result. Callers must use an expected value when acting on
+    /// these observations. Memory use is proportional to packed data, discovered refs, and
+    /// pending directories; there is no configurable resource limit.
     ///
     /// # Errors
     ///
@@ -354,20 +354,30 @@ fn collect_loose(
 ) -> Result<(), ReferenceError> {
     #[cfg(test)]
     LOOSE_SCANS.with(|scans| scans.borrow_mut().push(root.to_owned()));
-    let mut pending = vec![(root.join("refs"), b"refs".to_vec())];
-    while let Some((path, bytes)) = pending.pop() {
+    let mut pending = vec![(root.join("refs"), b"refs".to_vec(), None::<fs::FileType>)];
+    while let Some((path, bytes, file_type)) = pending.pop() {
         if let Some(budget) = budget.as_deref_mut() {
             budget.check()?;
         }
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => return Err(io_error(&path, source)),
+        // Recheck directories before descending, retaining the trusted-directory contract.
+        // Leaves use the directory-provided type; their no-follow open checks the current file.
+        let file_type = match file_type {
+            Some(file_type) if !file_type.is_dir() => file_type,
+            _ => match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata.file_type(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(io_error(&path, source)),
+            },
         };
-        let is_private = if metadata.is_dir() || metadata.file_type().is_symlink() {
+        let name = if file_type.is_dir() || file_type.is_symlink() {
+            None
+        } else {
+            RefName::new(&bytes).ok()
+        };
+        let is_private = if file_type.is_dir() || file_type.is_symlink() {
             private(&bytes)
         } else {
-            RefName::new(&bytes).is_ok_and(|name| name.per_worktree())
+            name.as_ref().is_some_and(RefName::per_worktree)
         };
         let excluded = match scope {
             LooseScope::All => false,
@@ -377,15 +387,22 @@ fn collect_loose(
         if bytes != b"refs" && excluded {
             continue;
         }
-        if metadata.file_type().is_symlink() {
+        if file_type.is_symlink() {
             return Err(ReferenceError::Unsupported(
                 "filesystem symlink in reference path",
             ));
         }
-        if metadata.is_dir() {
+        if file_type.is_dir() {
             let children = match fs::read_dir(&path) {
                 Ok(children) => children,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    continue;
+                }
                 Err(source) => return Err(io_error(&path, source)),
             };
             for child in children {
@@ -417,14 +434,17 @@ fn collect_loose(
                 }) {
                     continue;
                 }
-                pending.push((child.path(), name));
+                let file_type = match child.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(source) => return Err(io_error(&child.path(), source)),
+                };
+                pending.push((child.path(), name, Some(file_type)));
             }
         } else if selected(&bytes, namespace) {
-            let name = RefName::new(bytes)
-                .map_err(|_| malformed(&path, "invalid loose reference name"))?;
-            // The walk has checked every directory below the canonical root and this entry's own
-            // metadata, so the leaf is read without walking its ancestors again.
-            if !metadata.is_file() {
+            let name = name.ok_or_else(|| malformed(&path, "invalid loose reference name"))?;
+            // The walk checked the directories; the no-follow leaf open checks its current type.
+            if !file_type.is_file() {
                 return Err(ReferenceError::Unsupported("non-regular reference file"));
             }
             let value = if let Some(budget) = budget.as_deref_mut() {
@@ -494,6 +514,11 @@ fn open_walked(path: &Path) -> Result<Option<fs::File>, ReferenceError> {
         Err(source) => return Err(io_error(path, source)),
     };
     let metadata = file.metadata().map_err(|source| io_error(path, source))?;
+    // A leaf can disappear and become a directory while Git resolves a file/directory name
+    // conflict. Like a disappeared leaf, it may be missed by this live inventory.
+    if metadata.is_dir() {
+        return Ok(None);
+    }
     if !metadata.is_file() {
         return Err(ReferenceError::Unsupported("non-regular reference file"));
     }
@@ -752,6 +777,7 @@ mod tests {
             Err(ReferenceError::Unsupported(_))
         ));
         assert_eq!(read_walked(&dir.path().join("gone")).unwrap(), None);
+        assert_eq!(read_walked(dir.path()).unwrap(), None);
     }
 
     /// Reads continue to end of file however few bytes each read returns.
