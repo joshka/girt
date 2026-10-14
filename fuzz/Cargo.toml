@@ -53,3 +53,31 @@ path = "fuzz_targets/pack.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "pkt_line"
+path = "fuzz_targets/pkt_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetch_discovery"
+path = "fuzz_targets/fetch_discovery.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fetch_receive"
+path = "fuzz_targets/fetch_receive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "push"
+path = "fuzz_targets/push.rs"
+test = false
+doc = false
+bench = false

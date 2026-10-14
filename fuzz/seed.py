@@ -133,6 +133,65 @@ def delta_seeds(corpus):
         corpus.add("delta", name, u32(len(base)) + base + program)
 
 
+def pkt(data):
+    return f"{len(data) + 4:04x}".encode() + data
+
+
+def service(repo, program, request=b"", version=None, advertise=False):
+    env = dict(ENV, GIT_PROTOCOL=f"version={version}") if version else ENV
+    args = ["git", program, "--stateless-rpc"] + (["--advertise-refs"] if advertise else []) + [str(repo)]
+    return subprocess.run(args, input=request, env=env, check=True, capture_output=True).stdout
+
+
+def first_ref(advertisement):
+    """The first advertised (id, name) of a v0 advertisement."""
+    length = int(advertisement[:4], 16)
+    line = advertisement[4:length].split(b"\0")[0].rstrip(b"\n")
+    oid, name = line.split(b" ", 1)
+    return oid, name
+
+
+def advertised_names(advertisement):
+    names, rest = [], advertisement
+    while rest[:4] not in (b"", b"0000"):
+        length = int(rest[:4], 16)
+        line = rest[4:length].split(b"\0")[0].rstrip(b"\n")
+        names.append(line.split(b" ", 1)[1])
+        rest = rest[length:]
+    return names
+
+
+def protocol_seeds(corpus, repo, format):
+    """Upload-pack and receive-pack exchanges observed from the Git executable."""
+    v0 = service(repo, "upload-pack", advertise=True)
+    v2_caps = service(repo, "upload-pack", version=2, advertise=True)
+    ls_refs = pkt(b"command=ls-refs\n") + b"0001" + pkt(b"peel\n") + pkt(b"symrefs\n") + b"0000"
+    if format == "sha256":
+        ls_refs = pkt(b"command=ls-refs\n") + pkt(b"object-format=sha256\n") + ls_refs[20:]
+    v2_refs = service(repo, "upload-pack", ls_refs, version=2)
+    corpus.add("fetch_discovery", f"{format}-v0", v0)
+    corpus.add("fetch_discovery", f"{format}-v1", pkt(b"version 1\n") + v0)
+    corpus.add("fetch_discovery", f"{format}-v2", v2_caps + v2_refs)
+    oid, _ = first_ref(v0)
+    request = pkt(b"want " + oid + b" side-band-64k ofs-delta\n") + b"0000" + pkt(b"done\n")
+    response = service(repo, "upload-pack", request)
+    corpus.add("fetch_receive", format, v0 + response)
+    for name, stream in [("v0", v0), ("v2-caps", v2_caps), ("v2-refs", v2_refs), ("fetch", response)]:
+        corpus.add("pkt_line", f"{format}-{name}", stream)
+
+    selector = FORMATS[format]
+    receive = service(repo, "receive-pack", advertise=True)
+    names = sorted(advertised_names(receive))[:4]
+    status = [pkt(b"unpack ok\n")]
+    for position, name in enumerate(names):
+        status.append(pkt((b"ok " if position % 2 == 0 else b"ng ") + name + (b"\n" if position % 2 == 0 else b" stale info\n")))
+    status = b"".join(status) + b"0000"
+    sideband = b"".join(pkt(b"\x01" + status[i:i + 1000]) for i in range(0, len(status), 1000)) + b"0000"
+    for flags, report in [(0, status), (4, sideband)]:
+        flags |= selector
+        corpus.add("push", f"{format}-{flags}", bytes([flags]) + u32(len(receive)) + receive + report)
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent / "corpus")
     corpus = Corpus(root)
@@ -141,6 +200,7 @@ def main():
             repo = build_repository(Path(scratch) / format, format)
             object_seeds(corpus, repo, format)
             pack_seeds(corpus, repo, format)
+            protocol_seeds(corpus, repo, format)
     delta_seeds(corpus)
     print(f"wrote {corpus.count} seeds under {root}")
 

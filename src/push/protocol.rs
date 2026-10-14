@@ -529,3 +529,55 @@ fn split(bytes: &[u8], separator: u8) -> Option<(&[u8], &[u8])> {
 fn line(bytes: &[u8]) -> &[u8] {
     bytes.strip_suffix(b"\n").unwrap_or(bytes)
 }
+
+/// Parses a receive-pack advertisement, then a status report for commands on its first refs.
+///
+/// Every other selected ref is deleted, so reports can name both updates and deletions. See
+/// [`crate::fuzzing::push`] for the input framing.
+#[cfg(any(fuzzing, test))]
+pub(crate) fn fuzz_exchange(
+    format: crate::ObjectFormat,
+    advertisement: &[u8],
+    report: &[u8],
+    caps: (bool, bool),
+    limits: super::PushLimits,
+    cancel: &AtomicBool,
+) {
+    let mut reader = advertisement;
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: limits.max_advertisement_bytes,
+        cancel,
+    };
+    let Ok((_, offered)) = advertise_for_selection(&mut wire, format, limits) else {
+        return;
+    };
+    let mut names: Vec<_> = offered.refs.iter().collect();
+    names.sort();
+    let commands: Vec<_> = names
+        .into_iter()
+        .take(4)
+        .enumerate()
+        .map(|(position, (name, &id))| super::PushCommand {
+            name: name.clone(),
+            expected: Some(id),
+            new: if position % 2 == 0 { id } else { ObjectId::null(format) },
+            force: super::ForcePolicy::default(),
+        })
+        .collect();
+    let mut status = PushReport::pending(&commands);
+    let mut reader = report;
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: limits.max_status_bytes,
+        cancel,
+    };
+    let (report_v2, sideband) = caps;
+    let caps = Capabilities {
+        report_v2,
+        sideband,
+    };
+    if read_response(&mut wire, &mut status, caps, limits.max_status_bytes).is_ok() {
+        assert_eq!(status.refs.len(), commands.len());
+    }
+}

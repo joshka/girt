@@ -191,17 +191,112 @@ pub fn pack(data: &[u8]) {
     let _ = file.verify(&NOT_CANCELLED);
 }
 
+fn fetch_limits() -> crate::fetch::FetchLimits {
+    crate::fetch::FetchLimits {
+        max_wire_bytes: 4 * MAX_BYTES,
+        max_advertisement_bytes: MAX_BYTES,
+        max_refs: MAX_VISITS,
+        max_wants: MAX_VISITS,
+        max_haves: 32,
+        max_shallow_roots: MAX_VISITS,
+        max_known_objects: MAX_VISITS,
+        max_known_bytes: MAX_BYTES,
+        max_known_edges: 4 * MAX_VISITS,
+        known_read: read_limits(),
+        max_pack_bytes: 2 * MAX_BYTES,
+        max_objects: 4 * MAX_VISITS,
+        max_object_bytes: MAX_BYTES,
+        max_delta_bytes: MAX_BYTES,
+        max_decode_bytes: 4 * MAX_BYTES,
+        max_delta_depth: 16,
+        max_resolution_steps: 100_000,
+        max_connectivity_edges: 100_000,
+        max_threads: 1,
+    }
+}
+
+/// Decodes a pkt-line stream and checks that re-encoding reproduces the bytes consumed.
+pub fn pkt_line(data: &[u8]) {
+    let mut reader = data;
+    let mut wire = crate::packet::Wire {
+        reader: &mut reader,
+        remaining: data.len(),
+        cancel: &NOT_CANCELLED,
+    };
+    let mut encoded = Vec::new();
+    for _ in 0..MAX_VISITS {
+        match wire.packet() {
+            Ok(Some(packet)) => crate::packet::packet(&mut encoded, &packet, &NOT_CANCELLED)
+                .expect("decoded packet re-encodes"),
+            Ok(None) => encoded.extend_from_slice(b"0000"),
+            Err(_) => return,
+        }
+        let consumed = data.get(..encoded.len()).expect("encoding fits the input");
+        assert!(consumed.eq_ignore_ascii_case(&encoded));
+    }
+}
+
+/// Discovers refs from a v0, v1 or v2 upload-pack session.
+pub fn fetch_discovery(data: &[u8]) {
+    let mut reader = data;
+    let mut requests = Vec::new();
+    let limits = fetch_limits();
+    let _ = crate::fetch::discover_session(&mut reader, &mut requests, limits, &NOT_CANCELLED);
+}
+
+/// Receives a v0 fetch response for the first advertised ref, validating any pack it carries.
+pub fn fetch_receive(data: &[u8]) {
+    let mut reader = data;
+    let select = |advertisement: &crate::fetch::Advertisement| {
+        advertisement.refs.iter().take(1).map(|r| r.id).collect()
+    };
+    let _ = crate::fetch::receive(
+        &mut reader,
+        &mut std::io::sink(),
+        select,
+        fetch_limits(),
+        &NOT_CANCELLED,
+        |_| std::ops::ControlFlow::Continue(()),
+    );
+}
+
+/// Parses `[flags][advertisement part][report]` as a receive-pack exchange.
+///
+/// Flag bits select SHA-256, `report-status-v2` and side-band status framing.
+pub fn push(data: &[u8]) {
+    let mut input = Input(data);
+    let flags = input.byte();
+    let format = if flags & 1 == 0 {
+        ObjectFormat::Sha1
+    } else {
+        ObjectFormat::Sha256
+    };
+    let advertisement = input.part();
+    let limits = crate::push::PushLimits {
+        max_advertisement_bytes: MAX_BYTES,
+        max_refs: MAX_VISITS,
+        max_status_bytes: MAX_BYTES,
+        ..crate::push::PushLimits::default()
+    };
+    let caps = (flags & 2 != 0, flags & 4 != 0);
+    crate::push::fuzz_exchange(format, advertisement, input.rest(), caps, limits, &NOT_CANCELLED);
+}
+
 #[cfg(test)]
 mod tests {
     /// Every entry point tolerates empty and short inputs; fuzzing explores the rest.
     #[test]
     fn entry_points_accept_trivial_inputs() {
-        let entries: [fn(&[u8]); 5] = [
+        let entries: [fn(&[u8]); 9] = [
             super::object,
             super::loose,
             super::delta,
             super::pack_index,
             super::pack,
+            super::pkt_line,
+            super::fetch_discovery,
+            super::fetch_receive,
+            super::push,
         ];
         for entry in entries {
             for input in [&b""[..], b"\0", b"\x01\x02", b"\xff\xff\xff\xff\xff\xff"] {
