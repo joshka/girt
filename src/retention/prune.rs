@@ -84,16 +84,17 @@ impl Repository {
     /// Removes old unreachable loose objects from this repository's primary store.
     ///
     /// The caller supplies a repository-wide isolation boundary through `isolation`. Inside that
-    /// boundary this operation inventories primary loose entries. If none are older than
-    /// `recent_cutoff`, it returns an empty report without validating object history. Otherwise it
-    /// builds one complete plan, inventories loose entries twice, and revalidates root-bearing
-    /// metadata and storage fingerprints before the first deletion. All reflog candidates are
-    /// retained regardless of the policy's expiry cutoffs; this operation does not expire reflogs,
-    /// repack, or remove packs or alternate storage. It removes only regular primary loose files
-    /// older than `recent_cutoff` whose identities are outside the complete reachable closure. This
-    /// does not depend on R32's additive publication for object availability. Files exactly at the
-    /// cutoff are retained; Git's inclusive prune expiry can remove them ([tracking
-    /// issue](https://github.com/joshka/girt/issues/109)).
+    /// boundary this operation inventories primary loose entries. With no `recent_cutoff`, or if
+    /// none are at or before its instant, it returns an empty report without validating object
+    /// history. Otherwise it builds one complete plan, inventories loose entries twice, and
+    /// revalidates root-bearing metadata and storage fingerprints before the first deletion.
+    /// All reflog candidates are retained regardless of the policy's expiry cutoffs; this
+    /// operation does not expire reflogs, repack, or remove packs or alternate storage. It
+    /// removes only regular primary loose files at or before `recent_cutoff` whose identities
+    /// are outside the complete reachable closure. This does not depend on R32's additive
+    /// publication for object availability. The inclusive loose cutoff matches Git prune
+    /// expiry; files newer than the exact instant remain roots, including subsecond
+    /// modification times.
     ///
     /// A complete scan or matching generations cannot exclude an external Git process. The
     /// isolation implementation must exclude those processes and old readers until the returned
@@ -346,7 +347,10 @@ pub(super) fn candidates(
             let id = ObjectId::from_hex(repository.object_format(), &format!("{prefix}{suffix}"))
                 .map_err(|error| PruneCause::Incomplete(error.to_string()))?;
             let modified = metadata.modified().map_err(PruneCause::Io)?;
-            if modified < policy.recent_cutoff {
+            if policy
+                .recent_cutoff
+                .is_some_and(|cutoff| modified <= cutoff)
+            {
                 result.push(Candidate {
                     id,
                     path,
@@ -432,7 +436,7 @@ mod tests {
         git(root.path(), &["init", "--bare", "--template=", "."], b"");
         let repo = Repository::open(root.path()).unwrap();
         let policy = RetentionPolicy {
-            recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+            recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
             ..Default::default()
         };
         (root, repo, policy)
@@ -491,6 +495,79 @@ mod tests {
         assert_eq!(
             git(root.path(), &["cat-file", "blob", &old], b""),
             "old candidate"
+        );
+    }
+
+    fn timestamp_handle(path: &Path) -> fs::File {
+        #[cfg(not(windows))]
+        {
+            fs::File::open(path).unwrap()
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            use windows_sys::Win32::Storage::FileSystem::FILE_WRITE_ATTRIBUTES;
+            fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .open(path)
+                .unwrap()
+        }
+    }
+
+    #[test]
+    fn default_policy_preserves_epoch_zero_loose_object() {
+        let (root, repo, _) = fixture();
+        let id = git(
+            root.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"epoch zero",
+        );
+        let path = root.path().join("objects").join(&id[..2]).join(&id[2..]);
+        timestamp_handle(&path)
+            .set_modified(std::time::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().modified().unwrap(),
+            std::time::UNIX_EPOCH
+        );
+        let report = repo
+            .prune_unreachable_loose_at(
+                &RetentionPolicy::default(),
+                &AtomicBool::new(false),
+                || {},
+                || {},
+                |path| fs::remove_file(path),
+            )
+            .unwrap();
+        assert!(report.deleted.is_empty());
+        assert_eq!(
+            git(root.path(), &["cat-file", "blob", &id], b""),
+            "epoch zero"
+        );
+    }
+
+    #[test]
+    fn freshened_candidate_refuses_before_deletion() {
+        let (root, repo, policy) = fixture();
+        let id = git(root.path(), &["hash-object", "-w", "--stdin"], b"freshened");
+        let path = root.path().join("objects").join(&id[..2]).join(&id[2..]);
+        let newer = policy.recent_cutoff.unwrap() + Duration::from_secs(1);
+        let file = timestamp_handle(&path);
+        let result = repo.prune_unreachable_loose_at(
+            &policy,
+            &AtomicBool::new(false),
+            || file.set_modified(newer).unwrap(),
+            || {},
+            |path| fs::remove_file(path),
+        );
+        let error = result.unwrap_err();
+        assert!(matches!(error.cause, PruneCause::Changed));
+        assert!(error.report.deleted.is_empty());
+        assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), newer);
+        assert_eq!(
+            git(root.path(), &["cat-file", "blob", &id], b""),
+            "freshened"
         );
     }
 

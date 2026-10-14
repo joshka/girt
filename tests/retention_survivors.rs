@@ -283,7 +283,7 @@ fn retirement_applies_recent_cutoff_to_unreachable_objects(
     let omitted = id(root, b"abc1");
     let fresh = loose(root, b"fresh root");
     let mut p = policy(vec![id(root, b"abc0"), fresh]);
-    p.recent_cutoff = UNIX_EPOCH + Duration::from_secs(cutoff);
+    p.recent_cutoff = Some(UNIX_EPOCH + Duration::from_secs(cutoff));
     assert_eq!(read(root, omitted, p.read), Ok(b"abc1".to_vec()));
     Repository::open(root)
         .unwrap()
@@ -302,7 +302,7 @@ fn protected_growth(keep: bool) {
     let object = id(root, b"abc0");
     let mut p = policy(vec![object]);
     if !keep {
-        p.recent_cutoff = UNIX_EPOCH;
+        p.recent_cutoff = Some(UNIX_EPOCH);
     }
     let mut copies = Vec::new();
     let mut sizes = Vec::new();
@@ -365,7 +365,7 @@ fn recent_extra_keeps_its_last_readable_copy() {
     let y = id(root, b"abc1");
     assert!(has_readable_pack_copy(root, y, b"abc1"));
     let mut p = policy(vec![loose(root, b"fresh root")]);
-    p.recent_cutoff = UNIX_EPOCH;
+    p.recent_cutoff = Some(UNIX_EPOCH);
     let result = Repository::open(root).unwrap().retire_old_packs(
         &mut Exclusive,
         &p,
@@ -538,7 +538,7 @@ fn recent_unreachable_commit_keeps_older_packed_dependencies() {
         "Git retains recent commit blob"
     );
     let mut p = policy(vec![fresh]);
-    p.recent_cutoff = SystemTime::now() - Duration::from_secs(3600);
+    p.recent_cutoff = Some(SystemTime::now() - Duration::from_secs(3600));
     assert!(read(root, commit, p.read).is_ok());
     assert!(read(root, tree, p.read).is_ok());
     assert!(read(root, blob, p.read).is_ok());

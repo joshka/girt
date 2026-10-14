@@ -123,7 +123,7 @@ fn retention_walk_reads_each_entry_once() {
     );
     let repository = Repository::open(dir.path()).unwrap();
     let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
         packs: PackLimits::trusted(),
         ..RetentionPolicy::trusted()
     };
@@ -195,7 +195,7 @@ pub(super) fn header_fixture() -> (
         .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
         .unwrap();
     let policy = RetentionPolicy {
-        recent_cutoff: std::time::UNIX_EPOCH + Duration::from_secs(1),
+        recent_cutoff: Some(std::time::UNIX_EPOCH + Duration::from_secs(1)),
         ..RetentionPolicy::trusted()
     };
     (root, repo, policy, pack)
@@ -263,7 +263,7 @@ fn damage_rescued_after_complete_plan_refuses_prune(#[case] format: crate::Objec
     std::fs::remove_file(&fixture.index_path).unwrap();
     std::fs::write(&fixture.index_path, index).unwrap();
     let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+        recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
         ..Default::default()
     };
     let cancel = AtomicBool::new(false);
