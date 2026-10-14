@@ -286,7 +286,7 @@ pub(crate) struct FilePack {
     /// Set once the index's own checksum has been verified, before its identities label reused
     /// bytes.
     index_verified: std::sync::OnceLock<()>,
-    base_cache: super::reader::BaseCache,
+    base_cache: super::reader::CacheScope,
     /// Resolved base kind and depth of each delta entry, by index position; see [`ChainKinds`].
     chain_kinds: ChainKinds,
     damage: Arc<Damage>,
@@ -714,7 +714,7 @@ impl FilePack {
             table: index,
             _shared_index: shared_index,
             index_verified: std::sync::OnceLock::new(),
-            base_cache: super::reader::BaseCache::new(),
+            base_cache: super::reader::CacheScope::register(),
             chain_kinds: ChainKinds::default(),
             damage: Arc::new(Damage::default()),
         })
@@ -1202,8 +1202,8 @@ impl Source for FilePack {
         self.find(id)
     }
 
-    fn base_cache(&self) -> Option<&super::reader::BaseCache> {
-        Some(&self.base_cache)
+    fn base_cache(&self) -> Option<super::reader::CacheView<'_>> {
+        Some(self.base_cache.view())
     }
 
     fn at_offset(&self, offset: usize) -> Result<usize, Error> {

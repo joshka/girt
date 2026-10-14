@@ -666,8 +666,8 @@ impl Source for IndexedObjects {
     fn identity_verified(&self, position: usize) -> bool {
         self.entries[position].resolved.is_some()
     }
-    fn base_cache(&self) -> Option<&BaseCache> {
-        Some(&self.cache)
+    fn base_cache(&self) -> Option<crate::pack::reader::CacheView<'_>> {
+        Some(self.cache.view())
     }
 }
 impl IndexedObjects {

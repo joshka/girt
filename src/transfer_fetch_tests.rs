@@ -223,3 +223,313 @@ fn reference_changed_during_transfer_is_not_clobbered(#[case] race: Race) {
     assert_eq!(git(&dest, &["rev-parse", name]).trim(), other);
     git(&dest, &["fsck", "--strict", "--no-dangling"]);
 }
+
+/// An origin with `files` blobs at the root, in `a` and in `a/b`, and a destination that Git
+/// fetched it into. Git packs the destination's objects unless `loose`.
+fn wide(
+    format: &str,
+    files: usize,
+    loose: bool,
+) -> (tempfile::TempDir, std::path::PathBuf, Repository) {
+    let root = tempfile::tempdir().unwrap();
+    let origin = root.path().join("origin");
+    std::fs::create_dir_all(origin.join("a/b")).unwrap();
+    git(
+        &origin,
+        &[
+            "init",
+            "-q",
+            &format!("--object-format={format}"),
+            "-b",
+            "main",
+            ".",
+        ],
+    );
+    git(&origin, &["config", "gc.auto", "0"]);
+    for n in 0..files {
+        std::fs::write(origin.join(format!("f{n}")), format!("root {n}\n")).unwrap();
+        std::fs::write(origin.join(format!("a/h{n}")), format!("a {n}\n")).unwrap();
+        std::fs::write(origin.join(format!("a/b/g{n}")), format!("b {n}\n")).unwrap();
+    }
+    git(&origin, &["add", "."]);
+    git(&origin, &["commit", "-q", "-m", "base"]);
+    let dest = root.path().join("dest.git");
+    git(
+        root.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            &format!("--object-format={format}"),
+            "dest.git",
+        ],
+    );
+    git(
+        &dest,
+        &["remote", "add", "origin", &origin.to_string_lossy()],
+    );
+    let limit = if loose {
+        "fetch.unpackLimit=1000000"
+    } else {
+        "fetch.unpackLimit=1"
+    };
+    let mut args = vec!["-c", limit, "fetch", "-q", "origin"];
+    args.extend(SPECS);
+    git(&dest, &args);
+    (root, origin, Repository::open(&dest).unwrap())
+}
+
+fn try_fetch(repository: &Repository) -> Result<FetchOutcome, TransferError> {
+    repository.fetch(
+        "origin",
+        &FetchOptions::new(SPECS).prune(true),
+        &Environment::from_process(),
+        &mut NoCallbacks,
+    )
+}
+
+fn loose_path(repository: &Repository, id: &str) -> std::path::PathBuf {
+    repository
+        .git_dir()
+        .join("objects")
+        .join(&id[..2])
+        .join(&id[2..])
+}
+
+/// Destination pack entries inflated by a one-commit fetch that edits `a/b/g0`.
+fn nested_edit_inflations(format: &str, files: usize) -> usize {
+    let (_root, origin, repository) = wide(format, files, false);
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    crate::pack::counters::reset();
+    fetch(&repository);
+    let inflations =
+        crate::pack::counters::INFLATIONS.with(|counts| counts.borrow().values().sum::<usize>());
+    let refs = |dir: &Path| git(dir, &["for-each-ref", "--format=%(refname) %(objectname)"]);
+    assert_eq!(
+        refs(repository.git_dir()).trim(),
+        format!(
+            "refs/remotes/origin/main {}",
+            git(&origin, &["rev-parse", "HEAD"]).trim()
+        )
+    );
+    git(repository.git_dir(), &["fsck", "--strict", "--no-dangling"]);
+    inflations
+}
+
+/// Validation stops at objects named by the parent's trees, which existing references make
+/// complete, so a one-commit fetch reads the changed paths rather than the unchanged tree.
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn one_commit_fetch_reads_only_changed_paths(#[case] format: &str) {
+    let small = nested_edit_inflations(format, 20);
+    let large = nested_edit_inflations(format, 400);
+    assert!(small <= 16, "{small} inflations for 60 unchanged blobs");
+    assert!(
+        large <= small + 4,
+        "{large} inflations for 1200 unchanged blobs, {small} for 60"
+    );
+}
+
+/// An unchanged object missing from a damaged destination is sent again rather than trusted,
+/// because the parent's tree only names it.
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn unchanged_object_missing_from_destination_is_received(#[case] format: &str) {
+    let (_root, origin, repository) = wide(format, 3, true);
+    let unchanged = git(&origin, &["rev-parse", "HEAD:a/h1"]);
+    std::fs::remove_file(loose_path(&repository, unchanged.trim())).unwrap();
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    fetch(&repository);
+    git(repository.git_dir(), &["fsck", "--strict", "--no-dangling"]);
+}
+
+/// An unchanged dependency removed after the walk and before installation fails the fetch before
+/// any reference moves.
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn dependency_removed_before_installation_is_rejected(#[case] format: &str) {
+    let (_root, origin, repository) = wide(format, 3, true);
+    let before = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    let unchanged = git(&origin, &["rev-parse", "HEAD:a/h1"]);
+    let path = loose_path(&repository, unchanged.trim());
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    let mut callbacks = DuringTransfer(Some(|| std::fs::remove_file(&path).unwrap()));
+    let result = repository.fetch(
+        "origin",
+        &FetchOptions::new(SPECS).prune(true),
+        &Environment::from_process(),
+        &mut callbacks,
+    );
+    assert!(
+        callbacks.0.is_none(),
+        "the removal must run during the transfer"
+    );
+    assert!(result.is_err(), "{result:?}");
+    let after = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    assert_eq!(after, before);
+}
+
+/// A new tree naming an object the origin does not have is rejected without moving references.
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn missing_received_object_is_rejected(#[case] format: &str) {
+    let (_root, origin, repository) = wide(format, 3, false);
+    let before = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    let missing = git_input(&origin, &["hash-object", "--stdin"], "never stored\n");
+    let listing = git(&origin, &["ls-tree", "HEAD"]);
+    let tree = git_input(
+        &origin,
+        &["mktree", "--missing"],
+        &format!("{listing}100644 blob {missing}\tabsent\n"),
+    );
+    let parent = git(&origin, &["rev-parse", "HEAD"]);
+    let commit = git(
+        &origin,
+        &["commit-tree", &tree, "-p", parent.trim(), "-m", "broken"],
+    );
+    git(&origin, &["update-ref", "refs/heads/main", commit.trim()]);
+    let result = try_fetch(&repository);
+    assert!(result.is_err(), "{result:?}");
+    let after = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    assert_eq!(after, before);
+}
+
+/// A new blob whose stored bytes are another object's is rejected without moving references.
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn corrupt_received_object_is_rejected(#[case] format: &str) {
+    let (_root, origin, repository) = wide(format, 3, false);
+    let before = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    let edited = git(&origin, &["rev-parse", "HEAD:a/b/g0"]);
+    let other = git(&origin, &["rev-parse", "HEAD:a/b/g1"]);
+    let object = |id: &str| origin.join(".git/objects").join(&id[..2]).join(&id[2..]);
+    let target = object(edited.trim());
+    let mut permissions = std::fs::metadata(&target).unwrap().permissions();
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "test replaces a loose object"
+    )]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&target, permissions).unwrap();
+    std::fs::copy(object(other.trim()), &target).unwrap();
+    let result = try_fetch(&repository);
+    assert!(result.is_err(), "{result:?}");
+    let after = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    assert_eq!(after, before);
+}
+
+/// Runs Git with `input` on standard input, returning its trimmed output.
+fn git_input(directory: &Path, args: &[&str], input: &str) -> String {
+    let mut child = Command::new("git")
+        .current_dir(directory)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Where the destination's unchanged object is selected from when a wrong-kind copy replaces it.
+#[derive(Clone, Copy, Debug)]
+enum Selected {
+    /// The destination's own loose object.
+    Primary,
+    /// The destination's loose object, ahead of a correct copy in an alternate store.
+    AheadOfAlternate,
+}
+
+/// A complete dependency whose selected representation has another kind than the parent's tree
+/// requires fails the fetch before any reference moves, even with a correct copy in an alternate.
+#[rstest::rstest]
+#[case::primary(Selected::Primary)]
+#[case::ahead_of_alternate(Selected::AheadOfAlternate)]
+fn wrong_kind_complete_dependency_is_rejected(#[case] selected: Selected) {
+    let (root, origin, repository) = wide("sha1", 3, true);
+    if let Selected::AheadOfAlternate = selected {
+        let alternate = root.path().join("alternate.git");
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                "--no-local",
+                &origin.to_string_lossy(),
+                "alternate.git",
+            ],
+        );
+        std::fs::write(
+            repository.git_dir().join("objects/info/alternates"),
+            format!("{}\n", alternate.join("objects").display()),
+        )
+        .unwrap();
+    }
+    let before = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    let unchanged = git(&origin, &["rev-parse", "HEAD:a/h1"]);
+    let tree = git(&origin, &["rev-parse", "HEAD:a"]);
+    let path = loose_path(&repository, unchanged.trim());
+    let tree_file = origin
+        .join(".git/objects")
+        .join(&tree.trim()[..2])
+        .join(&tree.trim()[2..]);
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    let mut callbacks = DuringTransfer(Some(|| {
+        std::fs::remove_file(&path).unwrap();
+        std::fs::copy(&tree_file, &path).unwrap();
+    }));
+    let result = repository.fetch(
+        "origin",
+        &FetchOptions::new(SPECS).prune(true),
+        &Environment::from_process(),
+        &mut callbacks,
+    );
+    assert!(
+        callbacks.0.is_none(),
+        "the replacement must run during the transfer"
+    );
+    assert!(
+        result.is_err(),
+        "fetch accepted a wrong-kind dependency: {result:?}"
+    );
+    let after = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    assert_eq!(after, before);
+}

@@ -38,6 +38,11 @@ pub(crate) trait KnownObjects {
     /// Returns a known object.
     fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>>;
 
+    /// Returns a known object's kind.
+    fn known_kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        self.get(id).map(|object| object.kind())
+    }
+
     /// Whether a known object's history is trusted to be complete, so connectivity checks can
     /// stop at it rather than walking its history.
     fn trusted_complete(&self, _id: ObjectId) -> bool {
@@ -100,7 +105,7 @@ impl Ancestor {
     }
 }
 
-fn discovery_read(limits: FetchLimits, bytes: usize) -> crate::ReadLimits {
+pub(super) fn discovery_read(limits: FetchLimits, bytes: usize) -> crate::ReadLimits {
     let mut read = limits.known_read;
     read.max_object_bytes = read.max_object_bytes.min(bytes).min(DISCOVERY_OBJECT_BYTES);
     read.max_decode_bytes = read.max_decode_bytes.min(8 * DISCOVERY_OBJECT_BYTES);
@@ -206,6 +211,16 @@ impl KnownHistory {
                 .flatten()
                 .map(|(kind, _, _)| kind)
         })
+    }
+
+    /// The kind of a stored object, from its header rather than a decode.
+    pub(super) fn stored_kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        self.store
+            .as_ref()?
+            .locate(id, crate::ReadLimits::trusted(), &AtomicBool::new(false))
+            .ok()
+            .flatten()
+            .map(|(kind, _)| kind)
     }
 
     pub(super) fn complete_kind(&self, id: ObjectId) -> Option<ObjectKind> {

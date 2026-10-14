@@ -173,6 +173,7 @@ pub use workflow::{
     FetchUpdate, FetchUpdateKind, FetchWorkflowError, RetainedFetchFinishError, RetainedFetchReady,
 };
 
+mod boundaries;
 mod bytes;
 mod connectivity;
 mod discovery;
