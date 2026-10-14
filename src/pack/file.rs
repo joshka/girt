@@ -155,12 +155,12 @@ impl Stamp {
 }
 
 #[cfg(unix)]
-fn read_exact_at(file: &File, offset: u64, output: &mut [u8]) -> io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, offset: u64, output: &mut [u8]) -> io::Result<()> {
     std::os::unix::fs::FileExt::read_exact_at(file, output, offset)
 }
 
 #[cfg(windows)]
-fn read_exact_at(file: &File, mut offset: u64, mut output: &mut [u8]) -> io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, mut offset: u64, mut output: &mut [u8]) -> io::Result<()> {
     // Positioned reads on Windows move the shared cursor, which no other read here relies on.
     while !output.is_empty() {
         match std::os::windows::fs::FileExt::seek_read(file, output, offset) {

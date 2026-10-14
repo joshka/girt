@@ -18,6 +18,12 @@
 //! HTTP and SSH downloads keep network I/O separate from synchronous pack validation. Callers
 //! bound worker concurrency and join validation work before dropping its owned result.
 //!
+//! Native local receive and pack validation each use up to [`FetchLimits::max_threads`] scoped
+//! worker threads, joined before the call returns; one runs everything on the calling thread.
+//! Validating a pack of at least 1,024 objects hashes and parses decoded objects on workers, with
+//! at most 64 MiB of payloads and parsed tree edges waiting. Native local receive reads queued
+//! source objects ahead of its walk, which still applies every check in queue order.
+//!
 //! Only remote-tracking and tag destinations are supported by default, with explicit caller-owned
 //! tag namespaces available; see [`FetchRequest`] for worktree safety and caller coordination.
 //! `FETCH_HEAD` and implicit tags remain caller policy.

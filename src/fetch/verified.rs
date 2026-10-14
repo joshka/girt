@@ -37,50 +37,45 @@ pub(super) struct TreeProof<'a> {
 impl VerifiedObjects {
     /// Records an identity-checked object's kind, size and structure.
     pub fn insert(&mut self, id: ObjectId, object: &Object) {
-        let structure = if object.kind() == ObjectKind::Tree {
-            let trees = &mut self.trees;
-            let parsed = crate::edges::visit::<super::FetchError>(
-                id,
-                ObjectKind::Tree,
-                object.data(),
-                |target, kind| {
-                    trees.edges += 1;
-                    if *trees.kinds.entry(target).or_insert(kind) != kind {
-                        trees.unproven = true;
+        self.record(id, Described::new(id, object));
+    }
+
+    /// Records a description computed by [`Described::new`], possibly on another thread.
+    pub fn record(&mut self, id: ObjectId, described: Described) {
+        let Described {
+            kind,
+            bytes,
+            parsed,
+        } = described;
+        let structure = match parsed {
+            Parsed::Edges(edges) => Structure::Edges(edges),
+            Parsed::Tree(entries) => {
+                self.trees.edges += entries.len();
+                for (target, kind) in entries {
+                    if *self.trees.kinds.entry(target).or_insert(kind) != kind {
+                        self.trees.unproven = true;
                     }
-                    Ok(())
-                },
-            );
-            if parsed.is_ok() {
+                }
                 Structure::Tree
-            } else {
-                trees.unproven = true;
+            }
+            Parsed::Malformed => {
+                if kind == ObjectKind::Tree {
+                    self.trees.unproven = true;
+                }
                 Structure::Malformed
             }
-        } else {
-            let mut edges = Vec::new();
-            let parsed = crate::edges::visit::<super::FetchError>(
-                id,
-                object.kind(),
-                object.data(),
-                |id, kind| {
-                    edges.push((id, kind));
-                    Ok(())
-                },
-            );
-            parsed.map_or(Structure::Malformed, |()| Structure::Edges(edges))
         };
         self.objects.insert(
             id,
             VerifiedObject {
-                kind: object.kind(),
-                bytes: object.data().len(),
+                kind,
+                bytes,
                 structure,
                 read: ReadLimits {
-                    max_object_bytes: object.data().len(),
+                    max_object_bytes: bytes,
                     max_delta_bytes: 0,
                     max_delta_depth: 0,
-                    max_decode_bytes: object.data().len(),
+                    max_decode_bytes: bytes,
                     max_input_bytes: 0,
                 },
             },
@@ -105,6 +100,44 @@ impl VerifiedObjects {
             targets: &self.trees.kinds,
             edges: self.trees.edges,
         })
+    }
+}
+
+/// An identity-checked object's kind, size and parsed edges, before it joins [`VerifiedObjects`].
+pub(super) struct Described {
+    kind: ObjectKind,
+    bytes: usize,
+    parsed: Parsed,
+}
+
+enum Parsed {
+    Edges(Vec<(ObjectId, ObjectKind)>),
+    Tree(Vec<(ObjectId, ObjectKind)>),
+    Malformed,
+}
+
+impl Described {
+    /// Parses `object`'s typed edges; needs no shared state, so it can run on any thread.
+    pub fn new(id: ObjectId, object: &Object) -> Self {
+        let mut edges = Vec::new();
+        let parsed = crate::edges::visit::<super::FetchError>(
+            id,
+            object.kind(),
+            object.data(),
+            |id, kind| {
+                edges.push((id, kind));
+                Ok(())
+            },
+        );
+        Self {
+            kind: object.kind(),
+            bytes: object.data().len(),
+            parsed: match parsed {
+                Err(_) => Parsed::Malformed,
+                Ok(()) if object.kind() == ObjectKind::Tree => Parsed::Tree(edges),
+                Ok(()) => Parsed::Edges(edges),
+            },
+        }
     }
 }
 
