@@ -284,6 +284,9 @@ pub struct FetchLimits {
     pub max_resolution_steps: usize,
     /// Reachable edge occurrences, including duplicates (default 4 million).
     pub max_connectivity_edges: usize,
+    /// Worker threads one transfer may add for reading and validation (default 8). Zero or one
+    /// runs everything on the calling thread. Fewer are used when the host has fewer.
+    pub max_threads: usize,
 }
 
 impl Default for FetchLimits {
@@ -307,6 +310,7 @@ impl Default for FetchLimits {
             max_delta_depth: 64,
             max_resolution_steps: 10_000_000,
             max_connectivity_edges: 4_000_000,
+            max_threads: 8,
         }
     }
 }
@@ -341,6 +345,7 @@ impl FetchLimits {
             max_delta_depth: 10_000,
             max_resolution_steps: UNBOUNDED,
             max_connectivity_edges: UNBOUNDED,
+            max_threads: 8,
         }
     }
 }

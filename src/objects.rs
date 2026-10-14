@@ -823,6 +823,40 @@ impl Objects {
         limits: ReadLimits,
         cancel: &AtomicBool,
     ) -> Result<Option<(ObjectKind, usize, Option<crate::pack::Packed>)>, ObjectReadError> {
+        Ok(match self.locate_transfer(id, limits, cancel)? {
+            None => None,
+            Some(Transfer::Packed(pack, packed)) => {
+                let (kind, length) = pack.object_header(packed.position, limits)?;
+                Some((kind, length, Some(packed)))
+            }
+            Some(Transfer::Stored(kind, length)) => Some((kind, length, None)),
+        })
+    }
+
+    /// Locates like [`Self::transfer_object`] without reading a packed entry's header.
+    ///
+    /// Returns `None` for a missing object and `Some(None)` for one that is not packed, which is
+    /// still checked. Whoever copies a packed entry reads and limits its header.
+    pub(crate) fn transfer_location(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Option<crate::pack::Packed>>, ObjectReadError> {
+        Ok(self
+            .locate_transfer(id, limits, cancel)?
+            .map(|transfer| match transfer {
+                Transfer::Packed(_, packed) => Some(packed),
+                Transfer::Stored(..) => None,
+            }))
+    }
+
+    fn locate_transfer(
+        &self,
+        id: ObjectId,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Option<Transfer<'_>>, ObjectReadError> {
         id.require_format(self.format).map_err(crate::Error::from)?;
         let mut pack_index = 0;
         for store in &self.stores {
@@ -830,15 +864,13 @@ impl Objects {
             for pack in &store.packs {
                 check_cancelled(cancel)?;
                 if let Some(position) = pack.find(id)? {
-                    let (kind, length) = pack.object_header(position, limits)?;
-                    return Ok(Some((
-                        kind,
-                        length,
-                        Some(crate::pack::Packed {
+                    return Ok(Some(Transfer::Packed(
+                        pack,
+                        crate::pack::Packed {
                             id,
                             pack: pack_index,
                             position,
-                        }),
+                        },
                     )));
                 }
                 pack_index += 1;
@@ -847,13 +879,15 @@ impl Objects {
                 .loose
                 .read_raw(id, limits.max_object_bytes.min(limits.max_decode_bytes))
             {
-                Ok(object) => return Ok(Some((object.kind(), object.data().len(), None))),
+                Ok(object) => {
+                    return Ok(Some(Transfer::Stored(object.kind(), object.data().len())));
+                }
                 Err(crate::Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
             }
         }
         if id == self.format.hash_object(ObjectKind::Tree, b"") {
-            return Ok(Some((ObjectKind::Tree, 0, None)));
+            return Ok(Some(Transfer::Stored(ObjectKind::Tree, 0)));
         }
         Ok(None)
     }
@@ -872,6 +906,13 @@ impl Objects {
             })
             .collect()
     }
+}
+
+/// Where a transfer finds an object: a pack entry it can copy, or a checked loose or implicit
+/// object it must re-encode.
+enum Transfer<'a> {
+    Packed(&'a FilePack, crate::pack::Packed),
+    Stored(ObjectKind, usize),
 }
 
 impl Store {

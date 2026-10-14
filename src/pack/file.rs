@@ -218,6 +218,8 @@ pub(crate) struct FilePack {
     /// bytes.
     index_verified: std::sync::OnceLock<()>,
     base_cache: super::reader::BaseCache,
+    /// Resolved base kind and depth of each delta entry, by index position; see [`ChainKinds`].
+    chain_kinds: ChainKinds,
 }
 
 impl FilePack {
@@ -294,6 +296,7 @@ impl FilePack {
             table: index,
             index_verified: std::sync::OnceLock::new(),
             base_cache: super::reader::BaseCache::new(),
+            chain_kinds: ChainKinds::default(),
         })
     }
 
@@ -592,6 +595,55 @@ impl FilePack {
 /// Resolved kinds and delta depths of entries in one pack, keyed by entry index.
 pub(crate) type BaseKinds = std::collections::HashMap<usize, (ObjectKind, usize)>;
 
+/// Base kinds and depths of delta entries whose chains have been resolved, by index position.
+///
+/// A pinned pack's bytes never change, so a resolved chain stays valid for the pack's lifetime.
+/// Each entry takes one byte: zero while unknown, else the kind's pack type code in the low three
+/// bits and the depth above it. Chains deeper than the byte can record are resolved each time.
+#[derive(Debug, Default)]
+struct ChainKinds(std::sync::OnceLock<Box<[std::sync::atomic::AtomicU8]>>);
+
+impl ChainKinds {
+    const MAX_DEPTH: usize = u8::MAX as usize >> 3;
+
+    fn get(&self, position: usize) -> Option<(ObjectKind, usize)> {
+        let value = self
+            .0
+            .get()?
+            .get(position)?
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let kind = match value & 7 {
+            1 => ObjectKind::Commit,
+            2 => ObjectKind::Tree,
+            3 => ObjectKind::Blob,
+            4 => ObjectKind::Tag,
+            _ => return None,
+        };
+        Some((kind, usize::from(value >> 3)))
+    }
+
+    fn remember(&self, entries: usize, position: usize, kind: ObjectKind, depth: usize) {
+        if depth > Self::MAX_DEPTH {
+            return;
+        }
+        let code: u8 = match kind {
+            ObjectKind::Commit => 1,
+            ObjectKind::Tree => 2,
+            ObjectKind::Blob => 3,
+            ObjectKind::Tag => 4,
+        };
+        let slots = self
+            .0
+            .get_or_init(|| (0..entries).map(|_| Default::default()).collect());
+        if let Some(slot) = slots.get(position) {
+            slot.store(
+                code | (depth as u8) << 3,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+}
+
 /// Keeps source corruption distinct from output failures during raw reuse.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CopyError {
@@ -603,6 +655,9 @@ pub(crate) enum CopyError {
 
 impl FilePack {
     /// Reads only framing and delta size prefixes, never a reconstructed blob payload.
+    ///
+    /// The requested entry's header is always read. A delta's kind comes from its chain's base,
+    /// which is resolved once per pack and then remembered for every entry on the chain.
     pub(crate) fn object_header(
         &self,
         position: usize,
@@ -610,8 +665,18 @@ impl FilePack {
     ) -> Result<(crate::ObjectKind, usize), Error> {
         let mut current = position;
         let mut length = None;
+        let mut chain = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        loop {
+        let (kind, base_depth) = loop {
+            if !chain.is_empty()
+                && let Some((kind, depth)) = self.chain_kinds.get(current)
+            {
+                // A remembered chain is acyclic; only the combined depth needs checking.
+                if chain.len() + depth > limits.max_delta_depth {
+                    return Err(Error::Limit("delta depth"));
+                }
+                break (kind, depth);
+            }
             if !seen.insert(current) {
                 return Err(Error::Corrupt("delta cycle"));
             }
@@ -627,6 +692,7 @@ impl FilePack {
                 if length.is_none() {
                     length = Some(self.delta_result_size(&entry, &header)?);
                 }
+                chain.push(current);
                 current = base;
             } else {
                 let kind = match header.kind {
@@ -636,13 +702,24 @@ impl FilePack {
                     4 => crate::ObjectKind::Tag,
                     other => return Err(Error::ObjectType(other)),
                 };
-                let length = length.unwrap_or(header.length);
-                if length > limits.max_object_bytes {
-                    return Err(Error::Limit("object bytes"));
+                if length.is_none() {
+                    length = Some(header.length);
+                } else {
+                    self.chain_kinds
+                        .remember(self.table.len(), current, kind, 0);
                 }
-                return Ok((kind, length));
+                break (kind, 0);
             }
+        };
+        for (above, &delta) in chain.iter().rev().enumerate() {
+            self.chain_kinds
+                .remember(self.table.len(), delta, kind, base_depth + above + 1);
         }
+        let length = length.ok_or(Error::Corrupt("pack entry size"))?;
+        if length > limits.max_object_bytes {
+            return Err(Error::Limit("object bytes"));
+        }
+        Ok((kind, length))
     }
 
     /// Copies an entry's bytes while checking the original framing and stream CRC.

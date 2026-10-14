@@ -242,6 +242,8 @@ impl PreparedPush {
                 limits.compression,
                 (limits.read, cancel),
                 limits.read.max_delta_depth,
+                // Receive-pack accepts REF_DELTA without the optional OFS capability.
+                crate::pack::DeltaFraming::Identity,
                 &mut || {
                     if cancel.load(Ordering::Relaxed) {
                         Err(io::Error::other("push cancelled").into())

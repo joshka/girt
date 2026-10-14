@@ -68,9 +68,19 @@ pub(crate) fn write_reusing(
         compression,
         read,
         read.0.max_delta_depth,
+        DeltaFraming::Offset,
         check,
         &mut |_, _| {},
     )
+}
+
+/// How a copied delta names a base written earlier in the same pack.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeltaFraming {
+    /// OFS_DELTA distances, as Git writes for fetch; the receiver must accept them.
+    Offset,
+    /// REF_DELTA identities, which every receive-pack accepts.
+    Identity,
 }
 
 /// Transfer identities are hints from the source index. The receiver must derive them independently
@@ -85,6 +95,7 @@ pub(crate) fn write_transfer(
     compression: PackCompression,
     read: (ReadLimits, &AtomicBool),
     max_depth: usize,
+    framing: DeltaFraming,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
     observe: &mut impl FnMut(u64, u64),
 ) -> Result<(PackWritten, IdSet), ReuseError> {
@@ -104,8 +115,9 @@ pub(crate) fn write_transfer(
     let mut fresh = Vec::new();
     for &id in ids {
         check()?;
-        let (_, _, location) = store
-            .transfer_object(id, read.0, read.1)
+        // The copy below reads and limits each packed entry's header itself.
+        let location = store
+            .transfer_location(id, read.0, read.1)
             .map_err(|source| ReuseError::Read { id, source })?
             .ok_or(ReuseError::Read {
                 id,
@@ -130,6 +142,7 @@ pub(crate) fn write_transfer(
         compression,
         read,
         max_depth,
+        framing,
         check,
         observe,
     )?;
@@ -149,6 +162,7 @@ fn write_reusing_impl(
     compression: PackCompression,
     read: (ReadLimits, &AtomicBool),
     max_depth: usize,
+    framing: DeltaFraming,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
     observe: &mut impl FnMut(u64, u64),
 ) -> Result<PackWritten, ReuseError> {
@@ -269,8 +283,7 @@ fn write_reusing_impl(
                 Some(base) => match written.get(&(source_index, base)) {
                     Some(&(base_offset, base_depth)) if base_depth < max_depth => {
                         depth = base_depth + 1;
-                        if stored.is_some() {
-                            // REF framing needs no optional OFS capability on receive-pack.
+                        if framing == DeltaFraming::Identity {
                             pack.put(&entry_header_code(7, header.length as u64))?;
                             pack.put(source.entry(base).map_err(read_error)?.id.as_bytes())?;
                         } else {

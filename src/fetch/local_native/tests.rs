@@ -266,3 +266,95 @@ fn local_clone_pack_is_spooled_and_removed_on_drop() {
     drop(received);
     assert!(!path.exists());
 }
+
+/// A Git-written history of nested trees across many commits, so the walk reads ahead.
+fn git_history(format: ObjectFormat) -> (tempfile::TempDir, Repository, ObjectId) {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", path.join("absent-config"))
+            .env("GIT_AUTHOR_NAME", "A")
+            .env("GIT_AUTHOR_EMAIL", "a@example.com")
+            .env("GIT_COMMITTER_NAME", "A")
+            .env("GIT_COMMITTER_EMAIL", "a@example.com")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q", &format!("--object-format={format}"), "."]);
+    // A background `gc --auto` would repack and delete loose objects while the test reads them.
+    git(&["config", "gc.auto", "0"]);
+    git(&["config", "maintenance.auto", "false"]);
+    for round in 0..12 {
+        for file in 0..40 {
+            let dir = path.join(format!("d{}/e{}", file % 4, file % 3));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!("f{file}")),
+                format!("{file} {}\n", round * (file % 5)),
+            )
+            .unwrap();
+        }
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            &format!("r{round}"),
+        ]);
+    }
+    let head = git(&["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let repo = Repository::open(path.join(".git")).unwrap();
+    (root, repo, head)
+}
+
+/// Every worker count, including none, reads the same objects in the same order and writes the
+/// same pack. A small decode allowance is still refused while workers read ahead.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn worker_counts_select_identical_packs_and_keep_limits(#[case] format: ObjectFormat) {
+    let (_root, repo, head) = git_history(format);
+    let run = |max_threads, max_decode_bytes| {
+        let mut events = Vec::new();
+        let received = receive(
+            &repo,
+            |_| vec![head],
+            &KnownHistory::default(),
+            FetchLimits {
+                max_threads,
+                max_decode_bytes,
+                ..FetchLimits::default()
+            },
+            TransportControl::new(&AtomicBool::new(false)),
+            |_| ControlFlow::Continue(()),
+            |event| events.push(event),
+        );
+        (received, events)
+    };
+    let (inline, inline_events) = run(1, FetchLimits::default().max_decode_bytes);
+    let inline = inline.unwrap();
+    let inline_pack = std::fs::read(inline.temporary_pack_path().unwrap()).unwrap();
+    for threads in [0, 2, 8] {
+        let (received, events) = run(threads, FetchLimits::default().max_decode_bytes);
+        let received = received.unwrap();
+        assert_eq!(events, inline_events, "{threads} threads");
+        assert_eq!(
+            std::fs::read(received.temporary_pack_path().unwrap()).unwrap(),
+            inline_pack,
+            "{threads} threads"
+        );
+    }
+    for threads in [1, 8] {
+        assert!(matches!(
+            run(threads, 4096).0,
+            Err(FetchError::Limit("local bytes"))
+        ));
+    }
+}

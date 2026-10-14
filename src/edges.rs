@@ -1,6 +1,6 @@
 //! Typed edges in supported Git payloads; traversal and budgets belong to callers.
 
-use crate::{Commit, EntryMode, ObjectId, ObjectKind, Tag, Tree};
+use crate::{Commit, EntryMode, ObjectId, ObjectKind, Tag};
 
 /// Visits edges in payload order, preserving duplicates and skipping external gitlinks.
 /// Parsing validates readable commit/tag syntax and tree entry constraints, without
@@ -25,12 +25,16 @@ pub(crate) fn visit<E: From<Error>>(
             }
         }
         ObjectKind::Tree => {
-            let tree = Tree::parse(format, data).map_err(|source| Error::Tree { id, source })?;
-            for entry in tree.entries() {
-                match entry.mode {
+            // Check the whole payload first so a malformed tree reports no edges, as before.
+            let entries = || crate::tree::RawEntries::new(format, data);
+            if let Some(Err(source)) = entries().find(Result::is_err) {
+                return Err(Error::Tree { id, source }.into());
+            }
+            for (mode, _, target) in entries().flatten() {
+                match mode {
                     EntryMode::Gitlink => {}
-                    EntryMode::Tree => edge(entry.id, ObjectKind::Tree)?,
-                    _ => edge(entry.id, ObjectKind::Blob)?,
+                    EntryMode::Tree => edge(target, ObjectKind::Tree)?,
+                    _ => edge(target, ObjectKind::Blob)?,
                 }
             }
         }
