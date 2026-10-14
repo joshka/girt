@@ -1,5 +1,6 @@
 //! Native `credential.helper = store` against `git credential-store`; Git required. The
-//! authenticated HTTP fetch through the store is in `http.rs`.
+//! authenticated HTTP fetch through the store is in `http.rs`. Credentials never involve object
+//! IDs, so the object format (SHA-1 or SHA-256) does not apply.
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;

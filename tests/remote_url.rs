@@ -1,4 +1,7 @@
 //! Public URL presentation behavior against an independently created Git repository.
+//!
+//! URL parsing never reads object IDs, so SHA-256 repositories need no separate case here; SHA-256
+//! remote mapping is covered in `remotes.rs`.
 
 #[cfg(unix)]
 #[test]
