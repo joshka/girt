@@ -1801,9 +1801,11 @@ fn orchestration_installs_and_publishes_on_owned_worker() {
     );
 }
 
-#[test]
-fn clone_download_finishes_on_owned_worker_without_checkout() {
-    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+#[rstest]
+fn clone_download_finishes_on_owned_worker_without_checkout(
+    #[values(girt::ObjectFormat::Sha1, girt::ObjectFormat::Sha256)] format: girt::ObjectFormat,
+) {
+    let f = Fixture::new(format, true, 4);
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1838,6 +1840,11 @@ fn clone_download_finishes_on_owned_worker_without_checkout() {
         .unwrap()
     });
     let repo = report.repository.unwrap();
+    assert_eq!(repo.object_format(), format);
+    assert_eq!(
+        git(repo.git_dir(), &["rev-parse", "--show-object-format"], b""),
+        format!("{format}\n").as_bytes()
+    );
     assert_eq!(
         tip(&repo, "refs/heads/main"),
         tip(&f.repo, "refs/heads/main")

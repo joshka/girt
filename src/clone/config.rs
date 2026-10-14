@@ -3,10 +3,15 @@ use std::io::{self, Write};
 
 use super::CloneHead;
 use crate::repository::initial_config;
-use crate::{InitKind, Repository};
+use crate::{InitKind, ObjectFormat, Repository};
 
-pub(super) fn contents(kind: InitKind, url: &[u8], head: &CloneHead) -> Vec<u8> {
-    let mut bytes = initial_config(kind);
+pub(super) fn contents(
+    kind: InitKind,
+    format: ObjectFormat,
+    url: &[u8],
+    head: &CloneHead,
+) -> Vec<u8> {
+    let mut bytes = initial_config(kind, format);
     bytes.extend_from_slice(b"[remote \"origin\"]\n\turl = ");
     quoted(&mut bytes, url);
     bytes.extend_from_slice(
@@ -53,7 +58,7 @@ pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Re
     let mut file = crate::locks::SharedFile::from(file);
     let cleanup = crate::locks::Guard::new(&lock, &file, identity);
     let result = (|| {
-        if fs::read(&destination)? != initial_config(kind) {
+        if fs::read(&destination)? != initial_config(kind, repo.object_format()) {
             return Err(io::Error::other(
                 "clone initialization configuration changed",
             ));
@@ -81,7 +86,7 @@ mod tests {
     fn preserves_quoted_url_bytes_and_branch_configuration() {
         let url = b" /repo/\"quote\\tab\tline\n\xff ";
         let head = CloneHead::Unborn(RefName::new("refs/heads/topic").unwrap());
-        let bytes = contents(InitKind::Worktree, url, &head);
+        let bytes = contents(InitKind::Worktree, ObjectFormat::Sha1, url, &head);
         let config = Config::parse(&bytes).unwrap();
         let remote = Remote::find(&config, b"origin").unwrap().unwrap();
         assert_eq!(remote.fetch_url(), Some(url.as_slice()));

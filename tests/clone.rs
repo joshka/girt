@@ -12,7 +12,7 @@ use girt::fetch::{FetchError, FetchLimits, FetchRequest, FetchUpdateLimits, Know
 use girt::refs::{RefName, Reflog, Target};
 use girt::remote::Remote;
 use girt::transport::TransportControl;
-use girt::{InitKind, ObjectId, Repository};
+use girt::{InitKind, ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
 fn command(path: &Path, args: &[&str], input: &[u8]) -> Output {
@@ -66,13 +66,16 @@ struct Source {
 }
 impl Source {
     fn new() -> Self {
+        Self::with_format(ObjectFormat::Sha1)
+    }
+    fn with_format(format: ObjectFormat) -> Self {
         let root = tempfile::tempdir().unwrap();
         git(
             root.path(),
             &[
                 "init",
                 "--bare",
-                "--object-format=sha1",
+                &format!("--object-format={format}"),
                 "--template=",
                 "--initial-branch=main",
                 ".",
@@ -154,13 +157,21 @@ fn stored(repo: &Repository, value: &str) -> Option<Target> {
 #[rstest]
 #[case::bare(InitKind::Bare)]
 #[case::ordinary(InitKind::Worktree)]
-fn populated_clone_and_subsequent_fetch_use_persisted_configuration(#[case] kind: InitKind) {
-    let source = Source::new();
+fn populated_clone_and_subsequent_fetch_use_persisted_configuration(
+    #[case] kind: InitKind,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let source = Source::with_format(format);
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("copy");
     let report = clone(&source, &path, kind, BranchSelection::Default);
     assert!(report.reserved && report.initialized && report.configured);
     let repo = report.repository.unwrap();
+    assert_eq!(repo.object_format(), format);
+    assert_eq!(
+        git(repo.git_dir(), &["rev-parse", "--show-object-format"], b""),
+        format!("{format}\n").as_bytes()
+    );
     assert_eq!(
         stored(&repo, "HEAD"),
         Some(Target::Symbolic(name("refs/heads/main")))
@@ -788,9 +799,11 @@ fn head_and_reflog_policies_compose_in_each_layout(
 }
 
 #[cfg(unix)]
-#[test]
-fn clone_packs_fetched_refs_like_git() {
-    let source = Source::new();
+#[rstest]
+fn clone_packs_fetched_refs_like_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let source = Source::with_format(format);
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("girt");
     let report = clone(&source, &path, InitKind::Worktree, BranchSelection::Default);
