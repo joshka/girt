@@ -26,8 +26,8 @@ use girt::fetch::{self, Advertisement, FetchError, FetchLimits, KnownHistory};
 use girt::push::{self, ForcePolicy, PreparedPush, PushCommand, PushError, PushLimits, Status};
 use girt::refs::RefName;
 use girt::remote::{ProtocolEnvironment, Remote};
-use girt::transport::TransportControl;
 use girt::transport::ssh::{SshEnvironment, SshError, SshRemote};
+use girt::transport::{RequestedProtocol, TransportControl};
 use girt::{Config, ObjectId, PackCompression, PackLimits, ReadLimits, Repository};
 use pack_git::{Fixture, git};
 use rstest::rstest;
@@ -1407,4 +1407,184 @@ fn python_cleanup_regressions() {
     ));
     let mut process = ssh_git::fixture_process::Process::spawn(&mut command, true);
     process.complete(std::time::Duration::from_secs(60));
+}
+
+fn validated(downloaded: fetch::DownloadedFetch) -> fetch::ReceivedFetch {
+    downloaded
+        .validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        .unwrap()
+}
+
+#[rstest]
+#[case::v2_sha1(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V2,
+    "none",
+    fetch::ProtocolVersion::V2
+)]
+#[case::v2_sha256(
+    girt::ObjectFormat::Sha256,
+    RequestedProtocol::V2,
+    "none",
+    fetch::ProtocolVersion::V2
+)]
+#[case::v1(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V1,
+    "none",
+    fetch::ProtocolVersion::V1
+)]
+#[case::v0(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V0,
+    "none",
+    fetch::ProtocolVersion::V0
+)]
+#[case::v2_falls_back(
+    girt::ObjectFormat::Sha256,
+    RequestedProtocol::V2,
+    "strip-protocol",
+    fetch::ProtocolVersion::V0
+)]
+fn ssh_requested_protocol_discovers_and_fetches_incrementally(
+    #[case] format: girt::ObjectFormat,
+    #[case] requested: RequestedProtocol,
+    #[case] fault: &str,
+    #[case] expected: fetch::ProtocolVersion,
+) {
+    let f = Fixture::new(format, true, 8);
+    let server = Server::new(f.root.path(), fault);
+    let remote = server.remote("config").with_protocol(requested);
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let limits = FetchLimits::default();
+    let rt = runtime();
+    let discovered = rt
+        .block_on(fetch::discover_ssh(&remote, limits, control))
+        .unwrap();
+    assert_eq!(discovered.version, expected);
+    assert_eq!(discovered.object_format, format);
+    assert!(matches!(
+        discovered.head,
+        fetch::RemoteHead::Symbolic { .. }
+    ));
+
+    let received = validated(
+        rt.block_on(fetch::receive_ssh(&remote, all, None, limits, control))
+            .unwrap(),
+    );
+    assert!(received.advertisement().refs.iter().any(|r| r.peeled));
+    let (_root, dest) = destination_for(format);
+    received
+        .install(&dest, PackLimits::default(), &cancel)
+        .unwrap();
+    verify(&f, &dest);
+
+    let known = Arc::new(
+        KnownHistory::new(
+            &dest.objects(PackLimits::default()).unwrap(),
+            received.wants(),
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    // A known-only selection ends the session without a fetch command.
+    let noop = validated(
+        rt.block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            Some(Arc::clone(&known)),
+            limits,
+            control,
+        ))
+        .unwrap(),
+    );
+    assert_eq!(noop.pack_bytes(), 0);
+    let new = next(&f);
+    let incremental = validated(
+        rt.block_on(fetch::receive_ssh(
+            &remote,
+            all,
+            Some(known),
+            limits,
+            control,
+        ))
+        .unwrap(),
+    );
+    assert_eq!(incremental.object_count(), 1);
+    incremental
+        .install(&dest, PackLimits::default(), &cancel)
+        .unwrap();
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(new, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    git(dest.git_dir(), &["fsck", "--full"], b"");
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn v2_ssh_depth_fetch_reports_boundary_and_live_progress(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), "none");
+    let remote = server.remote("config").with_protocol(RequestedProtocol::V2);
+    let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
+    let downloaded = runtime()
+        .block_on(fetch::receive_ssh_with_progress(
+            &remote,
+            all,
+            None,
+            fetch::FetchOptions::default().with_depth(NonZeroU32::new(1)),
+            TransportControl::new(&cancel),
+            |_| {},
+            |bytes| notices.push(bytes.to_vec()),
+        ))
+        .unwrap();
+    let mut replay = Vec::new();
+    let received = downloaded
+        .validate(&cancel, |bytes| {
+            replay.push(bytes.to_vec());
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert!(!received.shallow_roots().is_empty());
+    assert!(!notices.is_empty(), "v2 progress is delivered live");
+    assert_eq!(notices, replay);
+}
+
+#[rstest]
+#[case::v0(RequestedProtocol::V0)]
+#[case::v1(RequestedProtocol::V1)]
+fn unsolicited_v2_answer_is_rejected_before_any_command(#[case] requested: RequestedProtocol) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "force-v2");
+    let remote = server.remote("config").with_protocol(requested);
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let rt = runtime();
+    let discovered = rt.block_on(fetch::discover_ssh(&remote, FetchLimits::default(), control));
+    assert!(matches!(
+        discovered,
+        Err(FetchError::Unsupported("protocol version"))
+    ));
+    let received = rt.block_on(fetch::receive_ssh(
+        &remote,
+        all,
+        None,
+        FetchLimits::default(),
+        control,
+    ));
+    assert!(matches!(
+        received,
+        Err(FetchError::Unsupported("protocol version"))
+    ));
+    let trace = std::fs::read_to_string(server.root.join("trace")).unwrap();
+    assert!(trace.contains("version 2"));
+    assert!(!trace.contains("command="), "no v2 command was sent");
 }

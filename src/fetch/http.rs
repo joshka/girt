@@ -2,16 +2,90 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use super::live_progress::LiveProgress;
+use super::v2::Capabilities;
 use super::{Advertisement, DownloadedFetch, FetchError, FetchLimits, KnownHistory, protocol};
 use crate::ObjectId;
 use crate::packet::Wire;
 use crate::transport::TransportControl;
 use crate::transport::http::{HttpRemote, RequestBody};
 
+/// Reads an HTTP upload-pack advertisement and, for a v2 server, lists every reference with one
+/// `ls-refs` request. Returns the advertisement, its dialect and version, and the response bytes
+/// consumed, all
+/// within `max_advertisement_bytes`.
+pub(super) async fn open(
+    remote: &HttpRemote,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+) -> Result<
+    (
+        Advertisement,
+        protocol::Dialect,
+        super::ProtocolVersion,
+        usize,
+    ),
+    FetchError,
+> {
+    let budget = limits.max_advertisement_bytes.min(limits.max_wire_bytes);
+    let (bytes, advertisement_bytes) = remote.discover("git-upload-pack", budget, control).await?;
+    let mut reader = bytes.as_slice();
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: budget,
+        cancel: control.cancel,
+    };
+    if !bytes.starts_with(b"000eversion 2\n") {
+        let (advertisement, version) = protocol::advertise_with_version(&mut wire, limits)?;
+        wire.end()?;
+        return Ok((
+            advertisement,
+            protocol::Dialect::V0,
+            version,
+            advertisement_bytes,
+        ));
+    }
+    // Only a v2 request may be answered with v2; nothing is sent after an unsolicited answer.
+    if remote.protocol() != crate::transport::RequestedProtocol::V2 {
+        return Err(FetchError::Unsupported("protocol version"));
+    }
+    wire.packet()?;
+    let capabilities = Capabilities::read(&mut wire, limits)?;
+    wire.end()?;
+    let mut request = Vec::new();
+    capabilities.write_ls_refs(&mut request, &[], limits, control.cancel)?;
+    control.check()?;
+    let response = remote
+        .exchange(
+            "git-upload-pack",
+            Some(RequestBody::new(request, Vec::new())?),
+            budget.saturating_sub(advertisement_bytes),
+            control,
+        )
+        .await;
+    response.result?;
+    let mut reader = response.body.as_slice();
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: budget.saturating_sub(advertisement_bytes),
+        cancel: control.cancel,
+    };
+    let advertisement = capabilities.read_ls_refs(&mut wire, limits)?;
+    wire.end()?;
+    advertisement.object_format()?;
+    Ok((
+        advertisement,
+        protocol::Dialect::V2(capabilities),
+        super::ProtocolVersion::V2,
+        advertisement_bytes + response.body.len(),
+    ))
+}
+
 /// Downloads objects through explicit smart-HTTP discovery and one upload-pack RPC.
 ///
-/// Uses protocol v0 and the same selection, capability, bounded have batch, pack and connectivity
-/// contracts as [`super::receive_with_known`]. Pass `None` for a full transfer.
+/// Requests the endpoint's [`HttpRemote::protocol`] (v0 unless changed). A v2 server adds one
+/// `ls-refs` request before the fetch RPC; v0/v1 responses are accepted either way. Uses the same
+/// selection, capability, bounded have batch, pack and connectivity contracts as
+/// [`super::receive_with_known`]. Pass `None` for a full transfer.
 /// Known-only/empty selections need discovery but send no RPC. Call [`DownloadedFetch::validate`]
 /// on a synchronous worker before [`super::ReceivedFetch::install`]. Installation rechecks known
 /// dependencies.
@@ -125,21 +199,8 @@ pub async fn receive_http_with_depth_and_progress(
         let empty = KnownHistory::default();
         let history = known.as_deref().unwrap_or(&empty);
         protocol::validate_known(history, limits, control.cancel)?;
-        let (bytes, advertisement_bytes) = remote
-            .discover(
-                "git-upload-pack",
-                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-                control,
-            )
-            .await?;
-        let mut reader = bytes.as_slice();
-        let mut wire = Wire {
-            reader: &mut reader,
-            remaining: limits.max_wire_bytes,
-            cancel: control.cancel,
-        };
-        let (advertisement, _) = protocol::advertise_with_version(&mut wire, limits)?;
-        wire.end()?;
+        let (advertisement, dialect, _, advertisement_bytes) =
+            open(remote, limits, control).await?;
         let wants = select(&advertisement);
         if depth.is_none()
             && known
@@ -158,7 +219,7 @@ pub async fn receive_http_with_depth_and_progress(
         let negotiation = protocol::request(
             &mut request,
             &advertisement,
-            &protocol::Dialect::V0,
+            &dialect,
             wants,
             history,
             depth,
@@ -178,7 +239,11 @@ pub async fn receive_http_with_depth_and_progress(
                 body: Vec::new().into(),
             });
         }
-        let mut live = LiveProgress::new(depth.is_some(), limits.max_shallow_roots);
+        let mut live = if negotiation.is_v2() {
+            LiveProgress::new_v2(limits.max_shallow_roots)
+        } else {
+            LiveProgress::new(depth.is_some(), limits.max_shallow_roots)
+        };
         let mut validate_prefix = |bytes: &[u8]| {
             let mut reader = bytes;
             let mut wire = Wire {

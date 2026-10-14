@@ -66,6 +66,8 @@
 pub mod ssh;
 
 mod control;
+mod protocol;
+pub use protocol::RequestedProtocol;
 #[cfg(feature = "http")]
 pub mod http;
 pub use control::TransportControl;

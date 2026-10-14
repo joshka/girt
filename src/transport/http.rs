@@ -6,8 +6,9 @@
 //! [`TransportControl`] supplies cancellation and a deadline for owned
 //! waits; the application owns the Tokio runtime and synchronous fetch validation worker.
 //!
-//! [`HttpRemote`] binds credentials to one repository URL. Fetch and push use protocol v0 over
-//! HTTP/1.1. [`HttpSettings`] resolves an R21 destination, HTTP configuration and explicit
+//! [`HttpRemote`] binds credentials to one repository URL. Over HTTP/1.1, upload-pack (fetch and
+//! discovery) speaks v0, v1 or v2 as selected by [`HttpRemote::with_protocol`]; receive-pack (push)
+//! speaks v0/v1. [`HttpSettings`] resolves an R21 destination, HTTP configuration and explicit
 //! application environment. The legacy [`HttpRemote::new`] remains an explicit, redirect-free
 //! constructor. Cookies, automatic mutating retries and HTTP content compression are disabled.
 //!
@@ -92,6 +93,7 @@ pub struct HttpRemote {
     credential_approved: Mutex<bool>,
     follow_initial_redirect: bool,
     redirected_base: Mutex<Option<Url>>,
+    protocol: super::RequestedProtocol,
 }
 
 impl std::fmt::Debug for HttpRemote {
@@ -233,6 +235,23 @@ impl HttpRemote {
         Ok(self)
     }
 
+    /// Selects the upload-pack protocol version requested with a `Git-Protocol` header.
+    ///
+    /// The default is v0, which sends no header. The header accompanies every upload-pack request,
+    /// including redirect and authentication retries, and never a receive-pack request. The server
+    /// decides: a v0/v1 response to a v2 request is accepted, so v2 is safe to request from servers
+    /// or proxies that ignore the header.
+    #[must_use]
+    pub fn with_protocol(mut self, protocol: super::RequestedProtocol) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    /// The upload-pack protocol version this endpoint requests.
+    pub fn protocol(&self) -> super::RequestedProtocol {
+        self.protocol
+    }
+
     /// Creates an endpoint with explicit headers and optional additional PEM trust roots.
     ///
     /// Headers may be `Authorization`, `User-Agent`, or application-specific `X-*` fields. Values
@@ -364,6 +383,7 @@ impl HttpRemote {
             credential_approved: Mutex::new(false),
             follow_initial_redirect: false,
             redirected_base: Mutex::new(None),
+            protocol: super::RequestedProtocol::V0,
         })
     }
 
@@ -377,13 +397,18 @@ impl HttpRemote {
         response.result?;
         let prelude = format!("# service={service}\n");
         let expected = format!("{:04x}{prelude}0000", prelude.len() + 4);
-        if !response.body.starts_with(expected.as_bytes()) {
+        let wire_bytes = response.body.len();
+        if response.body.starts_with(expected.as_bytes()) {
+            response.body.drain(..expected.len());
+        } else if !(self.protocol == super::RequestedProtocol::V2
+            && service == "git-upload-pack"
+            && response.body.starts_with(b"000eversion 2\n"))
+        {
+            // Observed: `git http-backend` omits the service prelude from v2 advertisements.
             return Err(HttpError::Protocol(
                 "missing service advertisement (dumb HTTP unsupported)",
             ));
         }
-        let wire_bytes = response.body.len();
-        response.body.drain(..expected.len());
         Ok((response.body, wire_bytes))
     }
 
@@ -425,6 +450,19 @@ impl HttpRemote {
         output
     }
 
+    fn protocol_header(&self, service: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if service == "git-upload-pack"
+            && let Some(value) = self.protocol.parameter()
+        {
+            headers.insert(
+                "Git-Protocol",
+                reqwest::header::HeaderValue::from_static(value),
+            );
+        }
+        headers
+    }
+
     pub(crate) async fn transfer(
         &self,
         service: &str,
@@ -462,7 +500,8 @@ impl HttpRemote {
         request = request
             .headers(self.headers.clone())
             .header("Accept", &media)
-            .header("Accept-Encoding", "identity");
+            .header("Accept-Encoding", "identity")
+            .headers(self.protocol_header(service));
         if rpc && let Some(session) = &self.credential {
             request = request.header("Authorization", basic_authorization(session)?);
         }
@@ -511,7 +550,8 @@ impl HttpRemote {
                 .get(redirected.clone())
                 .headers(self.headers.clone())
                 .header("Accept", &media)
-                .header("Accept-Encoding", "identity");
+                .header("Accept-Encoding", "identity")
+                .headers(self.protocol_header(service));
             response = controlled(request.send(), control)
                 .await?
                 .map_err(|_| HttpError::Network)?;
@@ -531,6 +571,7 @@ impl HttpRemote {
                 .headers(self.headers.clone())
                 .header("Accept", &media)
                 .header("Accept-Encoding", "identity")
+                .headers(self.protocol_header(service))
                 .header("Authorization", basic_authorization(session)?);
             response = controlled(request.send(), control)
                 .await?

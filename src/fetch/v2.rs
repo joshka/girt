@@ -147,9 +147,7 @@ impl Capabilities {
     }
     /// Runs one `ls-refs` command and returns its references as an advertisement.
     ///
-    /// Requests `peel`, `symrefs`, `unborn` when advertised, and one `ref-prefix` per prefix. The
-    /// returned capabilities are this advertisement's lines plus a `symref=HEAD:<branch>` hint
-    /// when HEAD names a branch, matching the v0 HEAD interpretation.
+    /// See [`Self::write_ls_refs`] and [`Self::read_ls_refs`] for the two halves.
     pub(super) fn ls_refs(
         &self,
         wire: &mut Wire<'_, impl Read>,
@@ -157,11 +155,23 @@ impl Capabilities {
         prefixes: &[&[u8]],
         limits: FetchLimits,
     ) -> Result<Advertisement, FetchError> {
+        self.write_ls_refs(writer, prefixes, limits, wire.cancel)?;
+        self.read_ls_refs(wire, limits)
+    }
+
+    /// Writes an `ls-refs` request for `peel`, `symrefs`, advertised `unborn`, and one
+    /// `ref-prefix` per prefix.
+    pub(super) fn write_ls_refs(
+        &self,
+        writer: &mut impl Write,
+        prefixes: &[&[u8]],
+        limits: FetchLimits,
+        cancel: &AtomicBool,
+    ) -> Result<(), FetchError> {
         if !self.has(b"ls-refs") {
             return Err(FetchError::Unsupported("v2 ls-refs"));
         }
         validate_prefixes(prefixes, limits)?;
-        let cancel = wire.cancel;
         self.write_command(writer, b"ls-refs", cancel)?;
         packet(writer, b"peel\n", cancel)?;
         packet(writer, b"symrefs\n", cancel)?;
@@ -176,6 +186,16 @@ impl Capabilities {
         }
         put(writer, b"0000", cancel)?;
         writer.flush()?;
+        Ok(())
+    }
+
+    /// Reads an `ls-refs` response. The returned capabilities are this advertisement's lines plus
+    /// a `symref=HEAD:<branch>` hint when HEAD names a branch, matching v0 HEAD interpretation.
+    pub(super) fn read_ls_refs(
+        &self,
+        wire: &mut Wire<'_, impl Read>,
+        limits: FetchLimits,
+    ) -> Result<Advertisement, FetchError> {
         let (refs, head) = read_refs(wire, limits, self.format)?;
         let mut capabilities = self.advertised_lines();
         if let Some(branch) = head {

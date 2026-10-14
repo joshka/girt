@@ -309,6 +309,13 @@ def service(args):
         time.sleep(10)
         return 1
     env = {"PATH": args.path, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    # sshd passes GIT_PROTOCOL through AcceptEnv; drop it to emulate a server without v2.
+    if "GIT_PROTOCOL" in os.environ and args.fault != "strip-protocol":
+        env["GIT_PROTOCOL"] = os.environ["GIT_PROTOCOL"]
+    # Emulate a server that answers v2 whatever the client requested, tracing what it receives.
+    if args.fault == "force-v2":
+        env["GIT_PROTOCOL"] = "version=2"
+        env["GIT_TRACE_PACKET"] = str(root / "trace")
     if args.fault == "malformed":
         os.write(1, b"ZZZZ")
         return 1
@@ -383,6 +390,7 @@ X11Forwarding no
 PermitTunnel no
 PermitTTY no
 ForceCommand {command}
+AcceptEnv GIT_PROTOCOL
 LogLevel ERROR
 """
         (root / "sshd_config").write_text(config)

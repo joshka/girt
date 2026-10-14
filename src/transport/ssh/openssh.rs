@@ -128,6 +128,7 @@ impl SshRemote {
             arguments,
             policy: LaunchPolicy::OpenSsh(options.environment),
             terminal: None,
+            protocol: crate::transport::RequestedProtocol::V0,
         })
     }
 }

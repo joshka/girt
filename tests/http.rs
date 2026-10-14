@@ -23,8 +23,8 @@ use girt::push::{
 };
 use girt::refs::RefName;
 use girt::remote::{ProtocolEnvironment, Remote};
-use girt::transport::TransportControl;
 use girt::transport::http::{HttpEnvironment, HttpError, HttpRemote, HttpSettings};
+use girt::transport::{RequestedProtocol, TransportControl};
 use girt::{ObjectId, PackCompression, PackLimits, ReadLimits, Repository};
 use http_git::Server;
 use pack_git::{Fixture, git};
@@ -2188,7 +2188,8 @@ fn configured_https_and_git_use_explicit_ca_and_proxy_precedence() {
             .unwrap()
             .contains(&expected.to_string())
     );
-    assert_eq!(proxy.requests(), ["CONNECT", "CONNECT"]);
+    // girt's v0 discovery, then Git's default v2 `ls-remote`: advertisement and `ls-refs`.
+    assert_eq!(proxy.requests(), ["CONNECT", "CONNECT", "CONNECT"]);
 }
 
 #[path = "support/push_response.rs"]
@@ -2688,4 +2689,187 @@ fn http_fetch_authenticates_from_native_store_without_running_git() {
         format!("protocol=http\nhost={host}\n\n").as_bytes(),
     );
     assert_eq!(answer, "username=u s@r/%\npassword=p:w/d%+#?é\n".as_bytes());
+}
+
+fn validated(downloaded: fetch::DownloadedFetch) -> fetch::ReceivedFetch {
+    downloaded
+        .validate(&AtomicBool::new(false), |_| ControlFlow::Continue(()))
+        .unwrap()
+}
+
+#[rstest]
+#[case::v2_sha1(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V2,
+    "",
+    fetch::ProtocolVersion::V2
+)]
+#[case::v2_sha256(
+    girt::ObjectFormat::Sha256,
+    RequestedProtocol::V2,
+    "",
+    fetch::ProtocolVersion::V2
+)]
+#[case::v1(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V1,
+    "",
+    fetch::ProtocolVersion::V1
+)]
+#[case::v0(
+    girt::ObjectFormat::Sha1,
+    RequestedProtocol::V0,
+    "",
+    fetch::ProtocolVersion::V0
+)]
+#[case::v2_falls_back(
+    girt::ObjectFormat::Sha256,
+    RequestedProtocol::V2,
+    "strip-protocol",
+    fetch::ProtocolVersion::V0
+)]
+fn requested_protocol_discovers_and_fetches_incrementally(
+    #[case] format: girt::ObjectFormat,
+    #[case] requested: RequestedProtocol,
+    #[case] fault: &str,
+    #[case] expected: fetch::ProtocolVersion,
+) {
+    let f = Fixture::new(format, true, 8);
+    let server = Server::new(f.root.path(), fault, "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[])
+        .unwrap()
+        .with_protocol(requested);
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let limits = FetchLimits::default();
+    let rt = runtime();
+    let discovered = rt
+        .block_on(fetch::discover_http(&remote, limits, control))
+        .unwrap();
+    assert_eq!(discovered.version, expected);
+    assert_eq!(discovered.object_format, format);
+    assert!(discovered.supports_current_fetch());
+    assert!(matches!(
+        discovered.head,
+        fetch::RemoteHead::Symbolic { .. }
+    ));
+    let v2 = expected == fetch::ProtocolVersion::V2;
+    // V2 discovery adds one `ls-refs` POST.
+    assert_eq!(server.requests().len(), if v2 { 2 } else { 1 });
+
+    let received = validated(
+        rt.block_on(fetch::receive_http(&remote, all, None, limits, control))
+            .unwrap(),
+    );
+    assert!(received.advertisement().refs.iter().any(|r| r.peeled));
+    let (_root, dest) = destination_for(format);
+    received
+        .install(&dest, PackLimits::default(), &cancel)
+        .unwrap();
+    verify(&f, &dest);
+
+    let known = Arc::new(
+        KnownHistory::new(
+            &dest.objects(PackLimits::default()).unwrap(),
+            received.wants(),
+            limits,
+            &cancel,
+        )
+        .unwrap(),
+    );
+    let new = next(&f);
+    let mut notices = Vec::new();
+    let incremental = rt
+        .block_on(fetch::receive_http_with_progress(
+            &remote,
+            all,
+            Some(known),
+            limits,
+            control,
+            |bytes| notices.push(bytes.to_vec()),
+        ))
+        .unwrap();
+    let incremental = validated(incremental);
+    assert_eq!(incremental.object_count(), 1);
+    incremental
+        .install(&dest, PackLimits::default(), &cancel)
+        .unwrap();
+    assert!(
+        dest.objects(PackLimits::default())
+            .unwrap()
+            .read(new, ReadLimits::default())
+            .unwrap()
+            .is_some()
+    );
+    git(dest.git_dir(), &["fsck", "--full"], b"");
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn v2_http_depth_fetch_reports_boundary_and_live_progress(#[case] format: girt::ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let server = Server::new(fixture.root.path(), "", "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[])
+        .unwrap()
+        .with_protocol(RequestedProtocol::V2);
+    let cancel = AtomicBool::new(false);
+    let mut notices = Vec::new();
+    let downloaded = runtime()
+        .block_on(fetch::receive_http_with_depth_and_progress(
+            &remote,
+            all,
+            None,
+            NonZeroU32::new(1),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            |bytes| notices.push(bytes.to_vec()),
+        ))
+        .unwrap();
+    let mut replay = Vec::new();
+    let received = downloaded
+        .validate(&cancel, |bytes| {
+            replay.push(bytes.to_vec());
+            ControlFlow::Continue(())
+        })
+        .unwrap();
+    assert!(!received.shallow_roots().is_empty());
+    assert!(!notices.is_empty(), "v2 progress is delivered live");
+    assert_eq!(notices, replay);
+}
+
+#[rstest]
+#[case::prelude_v0("v2", RequestedProtocol::V0)]
+#[case::bare_v0("force-v2", RequestedProtocol::V0)]
+#[case::bare_v1("force-v2", RequestedProtocol::V1)]
+fn unsolicited_v2_answer_is_rejected_before_any_command(
+    #[case] fault: &str,
+    #[case] requested: RequestedProtocol,
+) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), fault, "", None);
+    let remote = HttpRemote::new(&server.url, &[], &[])
+        .unwrap()
+        .with_protocol(requested);
+    let cancel = AtomicBool::new(false);
+    let control = TransportControl::new(&cancel);
+    let rt = runtime();
+    let discovered = rt.block_on(fetch::discover_http(&remote, FetchLimits::default(), control));
+    let received = rt.block_on(fetch::receive_http(
+        &remote,
+        all,
+        None,
+        FetchLimits::default(),
+        control,
+    ));
+    for error in [discovered.unwrap_err(), received.unwrap_err()] {
+        // The prelude form reaches the v2 opener; the bare form lacks the v0/v1 service prelude.
+        assert!(
+            matches!(error, FetchError::Unsupported("protocol version"))
+                || matches!(error, FetchError::Http(HttpError::Protocol(_))),
+            "{error:?}"
+        );
+    }
+    // No ls-refs or fetch POST follows either advertisement.
+    assert_eq!(server.requests(), ["GET", "GET"]);
 }

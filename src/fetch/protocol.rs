@@ -307,6 +307,17 @@ pub(super) fn open(
     Ok(result)
 }
 
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+impl Negotiation {
+    /// Reports whether the response uses v2 sections rather than v0 acknowledgements.
+    pub(super) fn is_v2(&self) -> bool {
+        self.v2
+    }
+}
+
 pub(super) fn validate_known(
     known: &KnownHistory,
     limits: FetchLimits,

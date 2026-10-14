@@ -93,6 +93,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "CONTENT_LENGTH": str(size),
             "REMOTE_USER": "fixture",
         }
+        # Like a CGI server, forward the Git-Protocol header unless emulating a server without v2.
+        if self.headers.get("Git-Protocol") and fault != "strip-protocol":
+            env["HTTP_GIT_PROTOCOL"] = self.headers["Git-Protocol"]
+        # Emulate a server that answers v2 whatever the client requested.
+        if fault == "force-v2":
+            env["HTTP_GIT_PROTOCOL"] = "version=2"
         # Windows process startup needs SystemRoot; retain only these OS locations, not Git overrides.
         for key in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
             if key in os.environ:
