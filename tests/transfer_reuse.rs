@@ -264,7 +264,7 @@ fn local_fetch_stops_at_haves_but_sends_other_history() {
         .loose_objects()
         .write_blob(b"destination only")
         .unwrap();
-    let known = KnownHistory::new_local(
+    let known = KnownHistory::new(
         &dest.objects(PackLimits::trusted()).unwrap(),
         &[unrelated],
         FetchLimits::trusted(),
@@ -287,7 +287,7 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     let repo = Repository::open(source.path()).unwrap();
     let objects = repo.objects(PackLimits::trusted()).unwrap();
     let dest = Repository::init(format, root.path().join("full.git"), InitKind::Bare).unwrap();
-    let full = PreparedPush::new_local(
+    let full = PreparedPush::new(
         &objects,
         vec![
             PushCommand::new(
@@ -320,7 +320,7 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
         .parse()
         .unwrap();
     let subset = Repository::init(format, root.path().join("subset.git"), InitKind::Bare).unwrap();
-    let one = PreparedPush::new_local(
+    let one = PreparedPush::new(
         &objects,
         vec![
             PushCommand::new(RefName::new("refs/tags/blob").unwrap(), None, id)
@@ -950,7 +950,7 @@ fn store_assisted_fetch_materializes_the_canonical_empty_tree(
                 commit_path.to_str().unwrap(),
             ],
         );
-        KnownHistory::new_local(
+        KnownHistory::new(
             &dest.objects(PackLimits::trusted()).unwrap(),
             &[tip(source.path())],
             FetchLimits::trusted(),

@@ -19,7 +19,7 @@ use crate::refs::RefName;
 /// options. [`PreparedPush::with_progress`] requests sideband when available; channel-2 frames
 /// remain untrusted bytes in the report. Protocol versions, shallow advertisements and peeled
 /// hints are rejected. Roots used
-/// by [`PreparedPush::new_excluding`] must appear as a current advertised tip or `.have`; otherwise
+/// by [`PreparedPush::new`] must appear as a current advertised tip or `.have`; otherwise
 /// the push fails before transmission. Hidden refs remain subject to the server's exact old-value
 /// and visibility policies.
 ///
@@ -181,7 +181,7 @@ impl PushAdvertisement {
     /// Returns every advertised tip and `.have` ID, sorted and deduplicated.
     ///
     /// The receiver claims each one's closure, so these are the receiver roots that
-    /// [`PreparedPush::new_excluding`] can exclude, as `git send-pack` excludes advertised history.
+    /// [`PreparedPush::new`] can exclude, as `git send-pack` excludes advertised history.
     pub fn receiver_roots(&self) -> Vec<ObjectId> {
         let mut roots: Vec<_> = self.refs.values().chain(&self.haves).copied().collect();
         roots.sort_unstable();

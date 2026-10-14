@@ -231,7 +231,7 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
 }
 fn prepared(f: &Fixture, commands: Vec<PushCommand>, roots: &[ObjectId]) -> PreparedPush {
     let limits = PushLimits::default().with_compression(PackCompression::Delta(Default::default()));
-    PreparedPush::new_excluding(
+    PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands,
         roots,
@@ -804,6 +804,7 @@ fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectF
     let initial = PreparedPush::new(
         &objects,
         vec![command("refs/for/main", None, id)],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -831,7 +832,7 @@ fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectF
         command("refs/tags/deletable", None, id),
         command("refs/for/main", Some(id), ObjectId::null(format)),
     ];
-    let mixed = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel).unwrap();
+    let mixed = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel).unwrap();
     let report = rt
         .block_on(push::send_http(&remote, mixed, control))
         .unwrap();
@@ -851,6 +852,7 @@ fn mixed_push_commands_and_deletion_agree_with_git(#[case] format: girt::ObjectF
             Some(id),
             ObjectId::null(format),
         )],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -883,6 +885,7 @@ fn push_options_require_advertisement_and_reach_git() {
         PreparedPush::new(
             &objects,
             vec![command("refs/heads/main", None, id)],
+            &[],
             PushLimits::default(),
             &cancel,
         )
@@ -923,6 +926,7 @@ fn stale_wire_lease_preserves_independent_success(#[case] format: girt::ObjectFo
     let initial = PreparedPush::new(
         &objects,
         vec![command("refs/heads/main", None, id)],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -949,6 +953,7 @@ fn stale_wire_lease_preserves_independent_success(#[case] format: girt::ObjectFo
             command("refs/heads/main", None, id),
             command("refs/tags/independent", None, id),
         ],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -1499,6 +1504,7 @@ fn cancellation_during_stalled_upload_is_uncertain() {
     let prepared = PreparedPush::new(
         &source.objects(PackLimits::default()).unwrap(),
         vec![command("refs/tags/large", None, id)],
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -2218,6 +2224,7 @@ fn plain_prepared(limits: PushLimits) -> PreparedPush {
             None,
             tip(&source.repo, "refs/heads/main"),
         )],
+        &[],
         limits,
         &AtomicBool::new(false),
     )

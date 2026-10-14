@@ -42,6 +42,7 @@ fn push(c: &mut Criterion) {
         let prepared = PreparedPush::new(
             &objects,
             vec![command.clone()],
+            &[],
             PushLimits::default(),
             &cancel,
         )
@@ -58,6 +59,7 @@ fn push(c: &mut Criterion) {
                 PreparedPush::new(
                     black_box(&objects),
                     vec![command.clone()],
+                    &[],
                     PushLimits::default(),
                     &cancel,
                 )
@@ -87,11 +89,12 @@ fn push(c: &mut Criterion) {
         let full = PreparedPush::new(
             &objects,
             vec![update.clone()],
+            &[],
             PushLimits::default(),
             &cancel,
         )
         .unwrap();
-        let reduced = PreparedPush::new_excluding(
+        let reduced = PreparedPush::new(
             &objects,
             vec![update.clone()],
             &[old],
@@ -111,6 +114,7 @@ fn push(c: &mut Criterion) {
                 PreparedPush::new(
                     black_box(&objects),
                     vec![update.clone()],
+                    &[],
                     PushLimits::default(),
                     &cancel,
                 )
@@ -119,7 +123,7 @@ fn push(c: &mut Criterion) {
         });
         group.bench_function(format!("transfer-excluding-{count}"), |b| {
             b.iter(|| {
-                PreparedPush::new_excluding(
+                PreparedPush::new(
                     black_box(&objects),
                     vec![update.clone()],
                     &[old],
@@ -142,7 +146,7 @@ fn push(c: &mut Criterion) {
                     .write_commit(&girt::Commit::new(receiver_fields).unwrap())
                     .unwrap();
             }
-            let fork = PreparedPush::new_excluding(
+            let fork = PreparedPush::new(
                 &objects,
                 vec![
                     PushCommand::new(RefName::new("refs/heads/fork").unwrap(), None, next)
@@ -275,7 +279,7 @@ fn blob_edits(c: &mut Criterion) {
         let limits = PushLimits::default().with_compression(compression);
         group.bench_function(name, |b| {
             b.iter(|| {
-                PreparedPush::new_excluding(
+                PreparedPush::new(
                     black_box(&objects),
                     vec![command.clone()],
                     &[base],

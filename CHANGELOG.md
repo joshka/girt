@@ -38,6 +38,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `workflow::remote_head(&repository, ...)`. Import environment, callbacks, options and outcomes
   from `girt::workflow`. jj's synchronous adapter keeps the same refspec, credential, runtime and
   automatic-maintenance behavior. Core fetch/push plans and artifacts retain their namespaces.
+- `KnownHistory::new_local` is removed in favor of `new`. `PreparedPush::new` now takes explicit
+  receiver roots (`&[]` for a full transfer), replacing `new_excluding` and `new_local`.
+  `new_local_with_progress` becomes `new_with_progress`. jj adapters select receiver roots
+  explicitly; preparation, validation, cancellation and cleanup contracts are unchanged.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 

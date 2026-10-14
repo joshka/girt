@@ -295,7 +295,7 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
 }
 fn prepared(f: &Fixture, commands: Vec<PushCommand>, roots: &[ObjectId]) -> PreparedPush {
     let limits = PushLimits::default().with_compression(PackCompression::Delta(Default::default()));
-    PreparedPush::new_excluding(
+    PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands,
         roots,
@@ -729,6 +729,7 @@ fn ssh_pushes_arbitrary_ref_and_deletes_with_lease(#[case] format: girt::ObjectF
     let initial = PreparedPush::new(
         &objects,
         vec![command("refs/for/main", None, id)],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -744,6 +745,7 @@ fn ssh_pushes_arbitrary_ref_and_deletes_with_lease(#[case] format: girt::ObjectF
     let deletion = PreparedPush::new(
         &objects,
         vec![command("refs/for/main", Some(id), ObjectId::null(format))],
+        &[],
         PushLimits::default(),
         &cancel,
     )
@@ -1064,6 +1066,7 @@ fn blocked_upload_expires_with_unknown_outcome() {
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/tags/large", None, id)],
+        &[],
         PushLimits::default(),
         &cancel,
     )

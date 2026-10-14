@@ -70,6 +70,7 @@ mod supported {
                 PushCommand::new(RefName::new("refs/tags/example")?, None, id)
                     .with_force(ForcePolicy::FastForwardOnly),
             ],
+            &[],
             PushLimits::default(),
             &cancel,
         )?;

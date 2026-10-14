@@ -85,6 +85,7 @@ impl Fixture {
         PreparedPush::new(
             &self.repo.objects(PackLimits::default()).unwrap(),
             commands,
+            &[],
             limits,
             &AtomicBool::new(false),
         )
@@ -762,6 +763,7 @@ fn preparation_cancellation_changes_no_storage() {
                 crate::ObjectFormat::Sha1,
                 b"absent"
             ))],
+            &[],
             PushLimits::default(),
             &AtomicBool::new(true)
         ),
@@ -1067,7 +1069,7 @@ fn excludes_nested_tags_and_skips_external_gitlinks() {
     );
     let inner = f.tag(tree, ObjectKind::Tree);
     let outer = f.tag(inner, ObjectKind::Tag);
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(outer)],
         &[inner, inner],
@@ -1087,7 +1089,7 @@ fn receiver_root_closure_is_trusted_without_local_validation() {
         ObjectId::for_blob(crate::ObjectFormat::Sha1, b"missing"),
         EntryMode::Blob,
     );
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(tree)],
         &[tree],
@@ -1110,7 +1112,7 @@ fn missing_new_object_fails_despite_receiver_roots() {
         EntryMode::Blob,
     );
     let new = f.commit(tree, vec![old]);
-    let result = PreparedPush::new_excluding(
+    let result = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(old), new)],
         &[old],
@@ -1126,7 +1128,7 @@ fn unrelated_present_root_is_not_relied_on() {
     let f = Fixture::new();
     let unrelated = f.repo.loose_objects().write_blob(b"unrelated").unwrap();
     let tip = f.commit(f.tree_with(b"tip"), vec![]);
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, tip)],
         &[unrelated],
@@ -1153,7 +1155,7 @@ fn bounds_exclusion_edges_separately(#[case] max_edges: usize, #[case] error: Op
     let known = Tree::new(crate::ObjectFormat::Sha1, entries.to_vec()).unwrap();
     let old = f.commit(f.repo.loose_objects().write_tree(&known).unwrap(), vec![]);
     let new = f.commit(f.tree_with(b"new"), vec![old]);
-    let result = PreparedPush::new_excluding(
+    let result = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(old), new)],
         &[old],
@@ -1191,7 +1193,7 @@ fn prepare_over(
     new: ObjectId,
     observe: impl FnMut(PreparationProgress),
 ) -> Result<PreparedPush, PushFailure> {
-    PreparedPush::new_local_with_progress(
+    PreparedPush::new_with_progress(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(old), new)],
         &[old],
@@ -1246,7 +1248,7 @@ fn fast_forward_proof_ignores_commit_dates(
 ) {
     let f = Fixture::new();
     let ids = history(&f, spec);
-    let result = PreparedPush::new_excluding(
+    let result = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(ids[old]), ids[new])],
         &[ids[old]][..roots],
@@ -1314,7 +1316,7 @@ fn tags_send_objects_outside_marked_closure(
     let f = Fixture::new();
     let ids = skewed_history(&f);
     let tag = tag(&f, &ids);
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(tag)],
         &[ids[3]],
@@ -1329,7 +1331,7 @@ fn tags_send_objects_outside_marked_closure(
 fn bounds_receiver_root_occurrences() {
     let f = Fixture::new();
     let blob = f.blob();
-    let result = PreparedPush::new_excluding(
+    let result = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(blob)],
         &[blob, blob],
@@ -1346,7 +1348,7 @@ fn bounds_receiver_root_occurrences() {
 fn advertised_have_can_prove_exclusion_without_matching_a_command() {
     let f = Fixture::new();
     let blob = f.blob();
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![tag_command(blob)],
         &[blob],
@@ -1432,7 +1434,7 @@ fn preparation_progress_observes_source_and_pack(#[case] format: crate::ObjectFo
     let id = repo.loose_objects().write_blob(b"source bytes").unwrap();
     let objects = repo.objects(PackLimits::default()).unwrap();
     let mut events = Vec::new();
-    let prepared = PreparedPush::new_local_with_progress(
+    let prepared = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(id)],
         &[],
@@ -1461,7 +1463,7 @@ fn preparation_progress_counts_shared_objects_once_and_excludes_known_pack_entri
     let tree = f.tree(blob, EntryMode::Blob);
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let mut events = Vec::new();
-    let prepared = PreparedPush::new_local_with_progress(
+    let prepared = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(tree), command("refs/tags/also", None, tree)],
         &[blob],
@@ -1494,7 +1496,7 @@ fn preparation_progress_cancellation_has_no_prepared_result(#[case] stop: Prepar
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
     let mut events = Vec::new();
-    let result = PreparedPush::new_local_with_progress(
+    let result = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(f.blob())],
         &[],
@@ -1517,7 +1519,7 @@ fn preparation_progress_completion_is_not_retroactively_cancelled() {
     let f = Fixture::new();
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
-    let prepared = PreparedPush::new_local_with_progress(
+    let prepared = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(f.blob())],
         &[],
@@ -1539,7 +1541,7 @@ fn preparation_progress_empty_batch_has_no_pack_events() {
     let f = Fixture::new();
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let mut events = Vec::new();
-    let prepared = PreparedPush::new_local_with_progress(
+    let prepared = PreparedPush::new_with_progress(
         &objects,
         vec![],
         &[],
@@ -1568,7 +1570,7 @@ fn preparation_progress_deletion_only_has_no_pack_events() {
         ObjectId::null(crate::ObjectFormat::Sha1),
     );
     let mut events = Vec::new();
-    let prepared = PreparedPush::new_local_with_progress(
+    let prepared = PreparedPush::new_with_progress(
         &objects,
         vec![delete],
         &[],
@@ -1593,7 +1595,7 @@ fn preparation_progress_missing_object_has_no_completion() {
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let missing = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"absent");
     let mut events = Vec::new();
-    let result = PreparedPush::new_local_with_progress(
+    let result = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(missing)],
         &[],
@@ -1612,7 +1614,7 @@ fn preparation_progress_index_failure_has_no_completion() {
     let mut limits = PushLimits::default();
     limits.pack.max_index_bytes = 0;
     let mut events = Vec::new();
-    let result = PreparedPush::new_local_with_progress(
+    let result = PreparedPush::new_with_progress(
         &objects,
         vec![tag_command(f.blob())],
         &[],
@@ -1639,7 +1641,7 @@ fn preparation_progress_preserves_prepared_bytes() {
     let objects = f.repo.objects(PackLimits::default()).unwrap();
     let commands = vec![tag_command(f.blob())];
     let cancel = AtomicBool::new(false);
-    let original = PreparedPush::new_local(
+    let original = PreparedPush::new(
         &objects,
         commands.clone(),
         &[],
@@ -1647,7 +1649,7 @@ fn preparation_progress_preserves_prepared_bytes() {
         &cancel,
     )
     .unwrap();
-    let observed = PreparedPush::new_local_with_progress(
+    let observed = PreparedPush::new_with_progress(
         &objects,
         commands,
         &[],
@@ -1736,7 +1738,7 @@ fn external_delta_base_requires_live_advertisement_without_history_exclusion() {
     let base = loose.write_blob(&data).unwrap();
     data[32768] = 43;
     let tip = loose.write_blob(&data).unwrap();
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/tags/test", None, tip)],
         &[base],
@@ -1960,7 +1962,7 @@ fn incomplete_receiver_history(
             .join(&missing[2..]),
     )
     .unwrap();
-    let mut prepared = PreparedPush::new_excluding(
+    let mut prepared = PreparedPush::new(
         &source.objects(PackLimits::default()).unwrap(),
         vec![command("refs/tags/tip", None, new)],
         &[old],

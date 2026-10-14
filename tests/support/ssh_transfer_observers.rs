@@ -150,6 +150,7 @@ fn prepared(format: ObjectFormat, limits: PushLimits) -> push::PreparedPush {
     push::PreparedPush::new(
         &source.repo.objects(girt::PackLimits::default()).unwrap(),
         vec![super::command("refs/heads/main", None, id)],
+        &[],
         limits,
         &AtomicBool::new(false),
     )
@@ -678,6 +679,7 @@ fn selection_prepared(format: ObjectFormat) -> push::PreparedPush {
             super::command("refs/heads/other", None, id),
             super::command("refs/heads/delete", Some(id), ObjectId::null(format)),
         ],
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
