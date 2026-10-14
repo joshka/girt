@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
+use super::v2::Capabilities;
 use super::{Advertisement, FetchError, FetchLimits, local_native, protocol};
 use crate::packet::{Wire, packet, put};
 use crate::refs::RefName;
@@ -232,13 +233,14 @@ fn discover_v2(
     writer: &mut impl Write,
     limits: FetchLimits,
 ) -> Result<RemoteDiscovery, FetchError> {
-    let mut capabilities = read_v2_capabilities(&mut wire, limits)?;
-    let format = capability_format(&capabilities)?;
-    if !capabilities.iter().any(|cap| cap.starts_with(b"ls-refs")) {
+    let capabilities = Capabilities::read(&mut wire, limits)?;
+    let format = capabilities.object_format();
+    if !capabilities.has(b"ls-refs") {
         return Err(FetchError::Unsupported("v2 ls-refs"));
     }
-    write_ls_refs(writer, format, &capabilities, wire.cancel)?;
+    write_ls_refs(writer, &capabilities, wire.cancel)?;
     let (refs, head_hint) = read_v2_refs(&mut wire, limits, format)?;
+    let mut capabilities = capabilities.advertised_lines();
     if let Some(branch) = head_hint {
         let mut hint = b"symref=HEAD:".to_vec();
         hint.extend_from_slice(branch.as_bytes());
@@ -249,40 +251,15 @@ fn discover_v2(
     Ok(discovered)
 }
 
-fn read_v2_capabilities(
-    wire: &mut Wire<'_, impl Read>,
-    limits: FetchLimits,
-) -> Result<Vec<Vec<u8>>, FetchError> {
-    let mut capabilities = Vec::new();
-    while let Some(line) = wire.packet()? {
-        let line = line
-            .strip_suffix(b"\n")
-            .ok_or(FetchError::Protocol("v2 capability line"))?;
-        if line.is_empty() || line.contains(&0) || line.iter().any(u8::is_ascii_control) {
-            return Err(FetchError::Protocol("v2 capability token"));
-        }
-        if capabilities.len() == limits.max_refs {
-            return Err(FetchError::Limit("v2 capabilities"));
-        }
-        capabilities.push(line.to_vec());
-    }
-    Ok(capabilities)
-}
-
 fn write_ls_refs(
     writer: &mut impl Write,
-    format: ObjectFormat,
-    capabilities: &[Vec<u8>],
+    capabilities: &Capabilities,
     cancel: &AtomicBool,
 ) -> Result<(), FetchError> {
-    packet(writer, b"command=ls-refs\n", cancel)?;
-    if format == ObjectFormat::Sha256 {
-        packet(writer, b"object-format=sha256\n", cancel)?;
-    }
-    put(writer, b"0001", cancel)?;
+    capabilities.write_command(writer, b"ls-refs", cancel)?;
     packet(writer, b"peel\n", cancel)?;
     packet(writer, b"symrefs\n", cancel)?;
-    if capabilities.iter().any(|cap| cap == b"ls-refs=unborn") {
+    if capabilities.has_feature(b"ls-refs", b"unborn") {
         packet(writer, b"unborn\n", cancel)?;
     }
     put(writer, b"0000", cancel)?;
@@ -378,14 +355,6 @@ fn read_v2_refs(
         }
     }
     Ok((refs, head_hint))
-}
-
-fn capability_format(capabilities: &[Vec<u8>]) -> Result<ObjectFormat, FetchError> {
-    let advertisement = Advertisement {
-        refs: Vec::new(),
-        capabilities: capabilities.to_vec(),
-    };
-    advertisement.object_format()
 }
 
 /// Lists a trusted local repository through girt without starting Git or changing storage.
@@ -717,6 +686,58 @@ mod tests {
                 expected: ObjectFormat::Sha1,
                 actual: ObjectFormat::Sha256
             }))
+        ));
+    }
+
+    fn v2_discovery(capabilities: &[&[u8]], refs: &[&[u8]]) -> Result<RemoteDiscovery, FetchError> {
+        let cancel = AtomicBool::new(false);
+        let mut input = Vec::new();
+        packet(&mut input, b"version 2\n", &cancel).unwrap();
+        for line in capabilities {
+            packet(&mut input, line, &cancel).unwrap();
+        }
+        input.extend_from_slice(b"0000");
+        for line in refs {
+            packet(&mut input, line, &cancel).unwrap();
+        }
+        input.extend_from_slice(b"0000");
+        discover_session(
+            &mut input.as_slice(),
+            &mut Vec::new(),
+            FetchLimits::default(),
+            &cancel,
+        )
+    }
+
+    #[test]
+    fn v2_symref_capability_cannot_invent_unborn_head() {
+        let discovered = v2_discovery(
+            &[
+                b"ls-refs\n",
+                b"symref=HEAD:refs/heads/main\n",
+                b"other=kept\n",
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(discovered.head, RemoteHead::Missing);
+        assert!(discovered.advertises(b"other=kept"));
+        assert!(!discovered.advertises(b"symref=HEAD:refs/heads/main"));
+    }
+
+    #[test]
+    fn v2_symref_capability_does_not_duplicate_ls_refs_head() {
+        let id = "1111111111111111111111111111111111111111";
+        let head = format!("{id} HEAD symref-target:refs/heads/main\n");
+        let main = format!("{id} refs/heads/main\n");
+        let discovered = v2_discovery(
+            &[b"ls-refs\n", b"symref=HEAD:refs/heads/other\n"],
+            &[head.as_bytes(), main.as_bytes()],
+        )
+        .unwrap();
+        assert!(matches!(
+            discovered.head,
+            RemoteHead::Symbolic { branch, .. } if branch.as_bytes() == b"refs/heads/main"
         ));
     }
 

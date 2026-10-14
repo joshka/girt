@@ -196,6 +196,7 @@ mod known;
 mod local;
 mod local_native;
 mod protocol;
+mod v2;
 
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
