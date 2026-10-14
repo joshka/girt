@@ -102,11 +102,9 @@ fn endpoint_queries(
 #[case::parents(10, 0, "parent occurrences")]
 fn graph_limits(#[case] max_commits: usize, #[case] max_parents: usize, #[case] expected: &str) {
     let h = History::new(&[vec![], vec![0]], false);
-    let limits = HistoryLimits {
-        max_commits,
-        max_parents,
-        ..HistoryLimits::default()
-    };
+    let limits = HistoryLimits::default()
+        .with_max_commits(max_commits)
+        .with_max_parents(max_parents);
     assert!(
         matches!(h.objects().walk(&[h.ids[1]],limits), Err(HistoryError::Limit(name)) if name == expected)
     );
@@ -162,11 +160,9 @@ fn per_object_limits_preserve_storage_error() {
 #[test]
 fn exact_limits_accept_duplicate_edges() {
     let h = History::new(&[vec![], vec![0, 0]], false);
-    let limits = HistoryLimits {
-        max_commits: 2,
-        max_parents: 2,
-        ..HistoryLimits::default()
-    };
+    let limits = HistoryLimits::default()
+        .with_max_commits(2)
+        .with_max_parents(2);
     assert_eq!(
         h.objects().walk(&[h.ids[1]], limits).unwrap(),
         vec![h.ids[1], h.ids[0]]

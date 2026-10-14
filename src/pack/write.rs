@@ -29,6 +29,7 @@ pub struct PackObject<'a> {
 /// borrowed and compressed directly to the sink by the ordinary policy. Delta compression adds
 /// the scratch/work bounds documented on [`DeltaOptions`]. These are not total process heap limits.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PackWriteLimits {
     /// Maximum input occurrences, also bounded by `u32::MAX` (default one million).
     pub max_objects: u32,
@@ -40,6 +41,43 @@ pub struct PackWriteLimits {
     pub max_pack_bytes: u64,
     /// Maximum index bytes including both checksums (default 64 MiB).
     pub max_index_bytes: u64,
+}
+
+impl PackWriteLimits {
+    /// Sets [`Self::max_objects`].
+    #[must_use]
+    pub fn with_max_objects(mut self, max_objects: u32) -> Self {
+        self.max_objects = max_objects;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: u64) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub fn with_max_input_bytes(mut self, max_input_bytes: u64) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_pack_bytes`].
+    #[must_use]
+    pub fn with_max_pack_bytes(mut self, max_pack_bytes: u64) -> Self {
+        self.max_pack_bytes = max_pack_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_index_bytes`].
+    #[must_use]
+    pub fn with_max_index_bytes(mut self, max_index_bytes: u64) -> Self {
+        self.max_index_bytes = max_index_bytes;
+        self
+    }
 }
 
 impl Default for PackWriteLimits {
@@ -73,6 +111,7 @@ impl PackWriteLimits {
 
 /// Completed artifact lengths and identity; no files have been installed by the library.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PackWritten {
     /// Repository-format checksum of the pack before its trailer, suitable for a `pack-<hash>`
     /// basename.
@@ -89,6 +128,7 @@ pub struct PackWritten {
 
 /// Failure to validate inputs or finish a caller-owned artifact pair.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PackWriteError {
     /// A supplied identity differs from the selected pack format.
     #[error(transparent)]
@@ -202,10 +242,7 @@ pub fn write_pack(
 ///     })
 ///     .collect();
 /// let (mut pack, mut index) = (Vec::new(), Vec::new());
-/// let policy = PackCompression::Delta(DeltaOptions {
-///     max_depth: 2,
-///     ..DeltaOptions::default()
-/// });
+/// let policy = PackCompression::Delta(DeltaOptions::default().with_max_depth(2));
 /// let written = write_pack_with_compression(
 ///     girt::ObjectFormat::Sha1,
 ///     &inputs,

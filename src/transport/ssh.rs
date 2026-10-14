@@ -66,6 +66,7 @@ use crate::remote::{Destination, Protocol};
 /// `configured` must exactly match the selected `GIT_SSH_COMMAND`, `GIT_SSH`, or
 /// `core.sshCommand` value. The application parses and approves its meaning, then supplies an
 /// absolute executable and literal arguments. The command never passes through a shell in girt.
+#[non_exhaustive]
 pub struct ApprovedSshCommand {
     /// Exact configured value, including whitespace and case.
     pub configured: Vec<u8>,
@@ -73,6 +74,38 @@ pub struct ApprovedSshCommand {
     pub executable: PathBuf,
     /// Application-approved literal arguments before the destination and service.
     pub arguments: Vec<String>,
+}
+
+impl ApprovedSshCommand {
+    /// Records the application-approved command spelling, executable and literal arguments.
+    pub fn new(configured: Vec<u8>, executable: PathBuf, arguments: Vec<String>) -> Self {
+        Self {
+            configured,
+            executable,
+            arguments,
+        }
+    }
+
+    /// Sets [`Self::configured`].
+    #[must_use]
+    pub fn with_configured(mut self, configured: Vec<u8>) -> Self {
+        self.configured = configured;
+        self
+    }
+
+    /// Sets [`Self::executable`].
+    #[must_use]
+    pub fn with_executable(mut self, executable: PathBuf) -> Self {
+        self.executable = executable;
+        self
+    }
+
+    /// Sets [`Self::arguments`].
+    #[must_use]
+    pub fn with_arguments(mut self, arguments: Vec<String>) -> Self {
+        self.arguments = arguments;
+        self
+    }
 }
 
 impl std::fmt::Debug for ApprovedSshCommand {
@@ -83,6 +116,7 @@ impl std::fmt::Debug for ApprovedSshCommand {
 
 /// Explicit application environment and trust inputs for a configured SSH destination.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct SshEnvironment {
     /// `GIT_SSH_COMMAND`, taking precedence over `core.sshCommand` and `GIT_SSH`.
     pub git_ssh_command: Option<Vec<u8>>,
@@ -104,6 +138,78 @@ pub struct SshEnvironment {
     pub askpass: Option<PathBuf>,
     /// Explicit executable search path for approved command dependencies.
     pub path_environment: Option<OsString>,
+}
+
+impl SshEnvironment {
+    /// Sets [`Self::git_ssh_command`].
+    #[must_use]
+    pub fn with_git_ssh_command(mut self, git_ssh_command: Option<Vec<u8>>) -> Self {
+        self.git_ssh_command = git_ssh_command;
+        self
+    }
+
+    /// Sets [`Self::git_ssh`].
+    #[must_use]
+    pub fn with_git_ssh(mut self, git_ssh: Option<Vec<u8>>) -> Self {
+        self.git_ssh = git_ssh;
+        self
+    }
+
+    /// Sets [`Self::git_ssh_variant`].
+    #[must_use]
+    pub fn with_git_ssh_variant(mut self, git_ssh_variant: Option<Vec<u8>>) -> Self {
+        self.git_ssh_variant = git_ssh_variant;
+        self
+    }
+
+    /// Sets [`Self::approved_command`].
+    #[must_use]
+    pub fn with_approved_command(mut self, approved_command: Option<ApprovedSshCommand>) -> Self {
+        self.approved_command = approved_command;
+        self
+    }
+
+    /// Sets [`Self::default_executable`].
+    #[must_use]
+    pub fn with_default_executable(mut self, default_executable: PathBuf) -> Self {
+        self.default_executable = default_executable;
+        self
+    }
+
+    /// Sets [`Self::config_file`].
+    #[must_use]
+    pub fn with_config_file(mut self, config_file: PathBuf) -> Self {
+        self.config_file = config_file;
+        self
+    }
+
+    /// Sets [`Self::default_user`].
+    #[must_use]
+    pub fn with_default_user(mut self, default_user: String) -> Self {
+        self.default_user = default_user;
+        self
+    }
+
+    /// Sets [`Self::agent_socket`].
+    #[must_use]
+    pub fn with_agent_socket(mut self, agent_socket: Option<PathBuf>) -> Self {
+        self.agent_socket = agent_socket;
+        self
+    }
+
+    /// Sets [`Self::askpass`].
+    #[must_use]
+    pub fn with_askpass(mut self, askpass: Option<PathBuf>) -> Self {
+        self.askpass = askpass;
+        self
+    }
+
+    /// Sets [`Self::path_environment`].
+    #[must_use]
+    pub fn with_path_environment(mut self, path_environment: Option<OsString>) -> Self {
+        self.path_environment = path_environment;
+        self
+    }
 }
 
 impl std::fmt::Debug for SshEnvironment {
@@ -187,6 +293,7 @@ impl std::fmt::Debug for SshRemote {
 
 /// Sanitized process/SSH failure, distinct from Git protocol rejection reports.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SshError {
     /// Unsupported or unsafe endpoint/configuration shape; values are not included.
     #[error("invalid SSH configuration: {0}")]

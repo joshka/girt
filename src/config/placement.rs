@@ -8,6 +8,7 @@ use super::parse::SectionOccurrence;
 /// Both modes validate sources in forward, depth-first directive order and retain the same source
 /// provenance and resource limits. This selects output placement, not parsing or trust policy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum IncludePlacement {
     /// Expand each include at its directive, preserving Git's ordinary configuration order.
     #[default]

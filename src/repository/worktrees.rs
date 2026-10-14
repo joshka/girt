@@ -7,6 +7,7 @@ use super::{OpenError, Repository, canonical, io_error, metadata_path, read, rea
 
 /// One linked registration, including damaged or inaccessible entries.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Worktree {
     /// Absolute registration directory. This identity is retained even when inspection fails.
     pub git_dir: PathBuf,
@@ -18,6 +19,7 @@ pub struct Worktree {
 
 /// Checkout availability at the instant it was inspected, not a lasting filesystem guarantee.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum WorktreeState {
     /// The backlink and forward gitfile agree and the checkout is a directory.
     Available,
@@ -31,6 +33,7 @@ pub enum WorktreeState {
 
 /// Inventory-wide failure. Individual registration failures remain in [`Worktree::state`].
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum WorktreeError {
     /// Could not enumerate the registrations directory.
     #[error(transparent)]

@@ -2,6 +2,7 @@
 
 /// A value-free configured URL validation diagnostic.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfiguredUrlError {
     /// The supported URL form requires a repository path.
     #[error("remote URL has no repository path")]

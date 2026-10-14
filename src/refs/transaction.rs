@@ -15,6 +15,7 @@ use crate::ObjectId;
 
 /// A conditional change to one stored name or one symbolic chain's terminal name.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RefEdit {
     /// Initial name; also the destination when `dereference` is false.
     pub name: RefName,
@@ -34,8 +35,59 @@ pub struct RefEdit {
     pub reflog: Reflog,
 }
 
+impl RefEdit {
+    /// Creates an edit of the stored name with explicit precondition and history policy.
+    ///
+    /// A `target` of `None` deletes the reference; `Some` replaces its stored target.
+    pub fn new(name: RefName, target: Option<Target>, expected: Expected, reflog: Reflog) -> Self {
+        Self {
+            name,
+            target,
+            expected,
+            reflog,
+            dereference: false,
+        }
+    }
+
+    /// Sets [`Self::name`].
+    #[must_use]
+    pub fn with_name(mut self, name: RefName) -> Self {
+        self.name = name;
+        self
+    }
+
+    /// Sets [`Self::dereference`].
+    #[must_use]
+    pub fn with_dereference(mut self, dereference: bool) -> Self {
+        self.dereference = dereference;
+        self
+    }
+
+    /// Sets [`Self::target`].
+    #[must_use]
+    pub fn with_target(mut self, target: Option<Target>) -> Self {
+        self.target = target;
+        self
+    }
+
+    /// Sets [`Self::expected`].
+    #[must_use]
+    pub fn with_expected(mut self, expected: Expected) -> Self {
+        self.expected = expected;
+        self
+    }
+
+    /// Sets [`Self::reflog`].
+    #[must_use]
+    pub fn with_reflog(mut self, reflog: Reflog) -> Self {
+        self.reflog = reflog;
+        self
+    }
+}
+
 /// Reference publication state at the time a transaction returns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RefOutcome {
     /// No reference publication was attempted successfully for this operation.
     Unchanged,
@@ -49,6 +101,7 @@ pub enum RefOutcome {
 
 /// Reflog mutation state at the time a transaction returns.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LogOutcome {
     /// No log mutation was attempted.
     NotAttempted,
@@ -68,6 +121,7 @@ pub enum LogOutcome {
 
 /// Effects for one input operation, retained in input order.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct RefEditOutcome {
     /// Terminal destination (or original name for a stored edit).
     pub name: RefName,
@@ -80,6 +134,7 @@ pub struct RefEditOutcome {
 
 /// Failure before publication or a report of effects already made.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TransactionError {
     /// No reference or log contents were changed. Empty directories can remain.
     #[error("reference transaction preparation failed")]
@@ -209,10 +264,7 @@ impl References<'_> {
     /// use std::time::Duration;
     /// use girt::refs::{FilesTransactionOptions, LockWait};
     /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
-    /// let options = FilesTransactionOptions {
-    ///     reference_lock_wait: LockWait::For(Duration::from_millis(100)),
-    ///     packed_refs_lock_wait: LockWait::For(Duration::from_secs(1)),
-    /// };
+    /// let options = FilesTransactionOptions::default().with_reference_lock_wait(LockWait::For(Duration::from_millis(100))).with_packed_refs_lock_wait(LockWait::For(Duration::from_secs(1)));
     /// repo.references()?.transaction_files_with_options(edits, options, &AtomicBool::new(false))?;
     /// # Ok(())
     /// # }

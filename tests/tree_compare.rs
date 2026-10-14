@@ -53,6 +53,24 @@ fn tree(root: &Path, entries: &[(&str, ObjectId, &[u8])]) -> ObjectId {
     id(&git(root, &["mktree", "-z", "--missing"], &input))
 }
 
+/// Comparable fields shared by the library report and independently decoded Git output.
+#[derive(Debug, Eq, PartialEq)]
+struct Change {
+    path: Vec<u8>,
+    old: Option<TreeValue>,
+    new: Option<TreeValue>,
+}
+
+impl From<TreeChange> for Change {
+    fn from(change: TreeChange) -> Self {
+        Self {
+            path: change.path,
+            old: change.old,
+            new: change.new,
+        }
+    }
+}
+
 struct Fixture {
     root: tempfile::TempDir,
     old: ObjectId,
@@ -125,8 +143,8 @@ impl Fixture {
         }
     }
 
-    fn compare(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Vec<TreeChange> {
-        Repository::open(self.root.path())
+    fn compare(&self, old: Option<ObjectId>, new: Option<ObjectId>) -> Vec<Change> {
+        let changes = Repository::open(self.root.path())
             .unwrap()
             .objects(PackLimits::default())
             .unwrap()
@@ -136,10 +154,11 @@ impl Fixture {
                 TreeCompareLimits::default(),
                 &AtomicBool::new(false),
             )
-            .unwrap()
+            .unwrap();
+        changes.into_iter().map(Change::from).collect()
     }
 
-    fn expected(&self, old: ObjectId, new: ObjectId) -> Vec<TreeChange> {
+    fn expected(&self, old: ObjectId, new: ObjectId) -> Vec<Change> {
         let output = git(
             self.root.path(),
             &[
@@ -170,7 +189,7 @@ impl Fixture {
                     .unwrap()
                     .split_whitespace()
                     .collect();
-                TreeChange {
+                Change {
                     path: record[1].to_vec(),
                     old: raw_value(&header[0][1..], header[2]),
                     new: raw_value(header[1], header[3]),

@@ -349,10 +349,9 @@ fn git_v0_depth_reports_boundary_without_installing(#[case] format: ObjectFormat
         &mut writer,
         |_| vec![tip],
         &KnownHistory::default(),
-        FetchOptions {
-            depth: NonZeroU32::new(1),
-            limits: FetchLimits::default(),
-        },
+        FetchOptions::default()
+            .with_depth(NonZeroU32::new(1))
+            .with_limits(FetchLimits::default()),
         &AtomicBool::new(false),
         |_| ControlFlow::Continue(()),
     );
@@ -420,10 +419,9 @@ fn git_v0_deepens_verified_shallow_history(#[case] format: ObjectFormat) {
         &mut ordinary_writer,
         |_| vec![tip],
         &known,
-        FetchOptions {
-            depth: None,
-            limits: FetchLimits::default(),
-        },
+        FetchOptions::default()
+            .with_depth(None)
+            .with_limits(FetchLimits::default()),
         &cancel,
         |_| ControlFlow::Continue(()),
     );
@@ -452,10 +450,9 @@ fn git_v0_deepens_verified_shallow_history(#[case] format: ObjectFormat) {
         &mut writer,
         |_| vec![tip],
         &known,
-        FetchOptions {
-            depth: NonZeroU32::new(3),
-            limits: FetchLimits::default(),
-        },
+        FetchOptions::default()
+            .with_depth(NonZeroU32::new(3))
+            .with_limits(FetchLimits::default()),
         &cancel,
         |_| ControlFlow::Continue(()),
     );

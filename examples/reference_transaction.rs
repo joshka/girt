@@ -29,26 +29,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let head = girt::refs::RefName::new("HEAD")?;
     let tag = girt::refs::RefName::new("refs/tags/initial")?;
     let edits = [
-        RefEdit {
-            name: head.clone(),
-            dereference: true,
-            target: Some(girt::refs::Target::Direct(id)),
-            expected: Expected::Absent,
-            reflog: Reflog::Append {
-                committer: committer.clone(),
-                message: b"initial publication".to_vec(),
-            },
+        {
+            let input = RefEdit::new(
+                head.clone(),
+                Some(girt::refs::Target::Direct(id)),
+                Expected::Absent,
+                Reflog::Append {
+                    committer: committer.clone(),
+                    message: b"initial publication".to_vec(),
+                },
+            );
+            input.with_dereference(true)
         },
-        RefEdit {
-            name: tag.clone(),
-            dereference: false,
-            target: Some(girt::refs::Target::Direct(id)),
-            expected: Expected::Absent,
-            reflog: Reflog::Append {
+        RefEdit::new(
+            tag.clone(),
+            Some(girt::refs::Target::Direct(id)),
+            Expected::Absent,
+            Reflog::Append {
                 committer: committer.clone(),
                 message: b"mark initial".to_vec(),
             },
-        },
+        ),
     ];
     let refs = repo.references()?;
     match refs.transaction(&edits) {
@@ -62,35 +63,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Partial publication: {error:?}");
             return Err(error.into());
         }
+        Err(error) => return Err(error.into()),
     }
-    refs.transaction(&[RefEdit {
-        name: tag.clone(),
-        dereference: false,
-        target: None,
-        expected: Expected::Value(girt::refs::Target::Direct(id)),
-        reflog: Reflog::Append {
+    refs.transaction(&[RefEdit::new(
+        tag.clone(),
+        None,
+        Expected::Value(girt::refs::Target::Direct(id)),
+        Reflog::Append {
             committer,
             message: b"remove temporary tag".to_vec(),
         },
-    }])?;
+    )])?;
     assert_eq!(refs.reflog(&head)?.unwrap().len(), 1);
     assert_eq!(refs.reflog(&tag)?.unwrap().len(), 2);
     assert_eq!(refs.read(&tag)?, None);
     // A retention ref may already exist at this value, but must never overwrite another value.
     let keep = girt::refs::RefName::new("refs/jj/keep-example")?;
-    refs.transaction(&[RefEdit {
-        name: keep.clone(),
-        dereference: false,
-        target: Some(girt::refs::Target::Direct(id)),
-        expected: Expected::AbsentOr(girt::refs::Target::Direct(id)),
-        reflog: Reflog::Preserve,
-    }])?;
-    refs.transaction(&[RefEdit {
-        name: keep,
-        dereference: false,
-        target: None,
-        expected: Expected::Exists,
-        reflog: Reflog::Delete,
-    }])?;
+    refs.transaction(&[RefEdit::new(
+        keep.clone(),
+        Some(girt::refs::Target::Direct(id)),
+        Expected::AbsentOr(girt::refs::Target::Direct(id)),
+        Reflog::Preserve,
+    )])?;
+    refs.transaction(&[RefEdit::new(keep, None, Expected::Exists, Reflog::Delete)])?;
     Ok(())
 }

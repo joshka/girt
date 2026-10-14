@@ -166,6 +166,7 @@ fn porcelain(report: &Report) -> Vec<u8> {
         Some(Change::Deleted) => b'D',
         Some(Change::Modified(_)) => b'M',
         Some(Change::Obstructed { .. }) => panic!("unexpected obstruction"),
+        Some(change) => panic!("unsupported change in porcelain test: {change:?}"),
     };
     if (x, y) == (b' ', b' ') {
         return Vec::new();
@@ -583,9 +584,9 @@ fn missing_baseline_tree_is_not_an_empty_tree() {
 }
 
 #[rstest]
-#[case::object_bytes(Limits { max_object_bytes: 0, ..Limits::default() })]
-#[case::tree_reads(Limits { trees: girt::TreeCompareLimits { max_trees: 0, ..Default::default() }, ..Limits::default() })]
-#[case::index_bytes(Limits { index: girt::index::Limits { max_bytes: 0, ..Default::default() }, ..Limits::default() })]
+#[case::object_bytes(Limits::default().with_max_object_bytes(0))]
+#[case::tree_reads(Limits::default().with_trees(girt::TreeCompareLimits::default().with_max_trees(0)))]
+#[case::index_bytes(Limits::default().with_index(girt::index::Limits::default().with_max_bytes(0)))]
 fn workflow_enforces_composed_resource_bounds(#[case] limits: Limits) {
     let (_temp, repo) = fixture();
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"old"));

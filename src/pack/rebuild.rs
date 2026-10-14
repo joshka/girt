@@ -14,6 +14,7 @@ use crate::{ObjectFormat, ObjectId, ObjectReadError};
 /// settings up to 256 MiB; raise them for larger packs or deeper delta chains (Git's aggressive
 /// repack uses depth 250).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct IndexRebuildLimits {
     /// Maximum `.pack` file size.
     pub max_pack_bytes: usize,
@@ -29,6 +30,57 @@ pub struct IndexRebuildLimits {
     pub max_delta_depth: usize,
     /// Maximum delta resolution steps.
     pub max_resolution_steps: usize,
+}
+
+impl IndexRebuildLimits {
+    /// Sets [`Self::max_pack_bytes`].
+    #[must_use]
+    pub fn with_max_pack_bytes(mut self, max_pack_bytes: usize) -> Self {
+        self.max_pack_bytes = max_pack_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_objects`].
+    #[must_use]
+    pub fn with_max_objects(mut self, max_objects: usize) -> Self {
+        self.max_objects = max_objects;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_bytes`].
+    #[must_use]
+    pub fn with_max_delta_bytes(mut self, max_delta_bytes: usize) -> Self {
+        self.max_delta_bytes = max_delta_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_decode_bytes`].
+    #[must_use]
+    pub fn with_max_decode_bytes(mut self, max_decode_bytes: usize) -> Self {
+        self.max_decode_bytes = max_decode_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_depth`].
+    #[must_use]
+    pub fn with_max_delta_depth(mut self, max_delta_depth: usize) -> Self {
+        self.max_delta_depth = max_delta_depth;
+        self
+    }
+
+    /// Sets [`Self::max_resolution_steps`].
+    #[must_use]
+    pub fn with_max_resolution_steps(mut self, max_resolution_steps: usize) -> Self {
+        self.max_resolution_steps = max_resolution_steps;
+        self
+    }
 }
 
 impl Default for IndexRebuildLimits {
@@ -63,6 +115,7 @@ impl IndexRebuildLimits {
 
 /// What [`rebuild_index`] did to the index file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IndexRebuildOutcome {
     /// No index existed; the rebuilt one was published.
     Created,

@@ -9,6 +9,7 @@ use crate::{ObjectId, Objects, PeelError, PeelFailure, PeelLimits};
 
 /// Which loose references [`References::pack`] moves into `packed-refs`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PackScope {
     /// Only `refs/tags/`, like `git pack-refs` without `--all`.
     ///
@@ -20,6 +21,7 @@ pub enum PackScope {
 
 /// When [`References::pack`] rewrites `packed-refs`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PackTrigger {
     /// Always rewrite, even with no loose candidates.
     Always,
@@ -33,6 +35,7 @@ pub enum PackTrigger {
 
 /// Options for [`References::pack`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct PackRefsOptions {
     /// Loose references to pack.
     pub scope: PackScope,
@@ -40,6 +43,29 @@ pub struct PackRefsOptions {
     pub trigger: PackTrigger,
     /// How long to wait for `packed-refs.lock`. Loose reference locks are never awaited.
     pub lock_wait: LockWait,
+}
+
+impl PackRefsOptions {
+    /// Sets [`Self::scope`].
+    #[must_use]
+    pub fn with_scope(mut self, scope: PackScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Sets [`Self::trigger`].
+    #[must_use]
+    pub fn with_trigger(mut self, trigger: PackTrigger) -> Self {
+        self.trigger = trigger;
+        self
+    }
+
+    /// Sets [`Self::lock_wait`].
+    #[must_use]
+    pub fn with_lock_wait(mut self, lock_wait: LockWait) -> Self {
+        self.lock_wait = lock_wait;
+        self
+    }
 }
 
 impl PackRefsOptions {
@@ -61,6 +87,7 @@ impl PackRefsOptions {
 
 /// Effects of [`References::pack`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct PackRefsReport {
     /// Whether `packed-refs` was replaced. False when the automatic threshold was not reached.
     pub rewritten: bool,
@@ -80,6 +107,7 @@ pub struct PackRefsReport {
 /// A pack failure; `packed-refs` was not replaced unless [`Self::Unconfirmed`] or [`Self::Prune`]
 /// is returned.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PackRefsError {
     /// Locking, reading or publishing failed before `packed-refs` was replaced.
     #[error("packing references")]

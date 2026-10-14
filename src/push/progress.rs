@@ -6,6 +6,7 @@
 /// acceptance or reference publication. Set the preparation cancellation flag to stop at the next
 /// cooperative check; one storage read, hash or compression call cannot be interrupted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PreparationProgress {
     /// Objects examined in storage so far, including known receiver history read to find the
     /// exclusion boundary. Selected packed blobs use framing instead of decoded payloads. The total

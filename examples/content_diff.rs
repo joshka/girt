@@ -74,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("  + {}", escaped(&text.new_bytes()[edit.new_bytes.clone()]));
                 }
             }
+            _ => return Err("unsupported content diff kind".into()),
         }
     }
     Ok(())

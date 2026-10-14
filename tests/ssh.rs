@@ -58,14 +58,12 @@ fn configured_remote(
     SshRemote::configured(
         &config,
         &destination,
-        SshEnvironment {
-            default_executable: "/usr/bin/ssh".into(),
-            config_file: server.root.join(config_name),
-            default_user: server.user.clone(),
-            askpass,
-            agent_socket,
-            ..SshEnvironment::default()
-        },
+        SshEnvironment::default()
+            .with_default_executable("/usr/bin/ssh".into())
+            .with_config_file(server.root.join(config_name))
+            .with_default_user(server.user.clone())
+            .with_askpass(askpass)
+            .with_agent_socket(agent_socket),
     )
     .unwrap()
 }
@@ -287,18 +285,11 @@ fn tip(repo: &Repository, name: &str) -> ObjectId {
         .unwrap()
 }
 fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand {
-    PushCommand {
-        name: RefName::new(name).unwrap(),
-        expected,
-        new,
-        force: ForcePolicy::FastForwardOnly,
-    }
+    PushCommand::new(RefName::new(name).unwrap(), expected, new)
+        .with_force(ForcePolicy::FastForwardOnly)
 }
 fn prepared(f: &Fixture, commands: Vec<PushCommand>, roots: &[ObjectId]) -> PreparedPush {
-    let limits = PushLimits {
-        compression: PackCompression::Delta(Default::default()),
-        ..Default::default()
-    };
+    let limits = PushLimits::default().with_compression(PackCompression::Delta(Default::default()));
     PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands,
@@ -584,7 +575,7 @@ fn configured_agent_uses_application_socket() {
 
 #[rstest]
 #[case::cancelled(true, FetchLimits::default())]
-#[case::decode_limit(false, FetchLimits { max_decode_bytes: 0, ..FetchLimits::default() })]
+#[case::decode_limit(false, FetchLimits::default().with_max_decode_bytes(0))]
 fn failed_worker_validation_releases_negotiated_history(
     #[case] cancelled: bool,
     #[case] limits: FetchLimits,
@@ -668,15 +659,17 @@ fn real_git_delta_push_incremental_and_empty_commands() {
     let control = TransportControl::new(&cancel);
     let old = tip(&f.repo, "refs/heads/main");
     let tag = tip(&f.repo, "refs/tags/packed");
-    let initial = prepared(
-        &f,
-        vec![
-            command("refs/heads/main", None, old),
-            command("refs/tags/packed", None, tag),
-        ],
-        &[],
-    )
-    .with_progress();
+    let initial = {
+        let input = prepared(
+            &f,
+            vec![
+                command("refs/heads/main", None, old),
+                command("refs/tags/packed", None, tag),
+            ],
+            &[],
+        );
+        input.with_progress()
+    };
     let rt = runtime();
     assert!(
         rt.block_on(push::send_ssh(&remote, &initial, control))
@@ -760,10 +753,7 @@ fn ssh_pushes_arbitrary_ref_and_deletes_with_lease(#[case] format: girt::ObjectF
 }
 
 fn deadline(cancel: &AtomicBool) -> TransportControl<'_> {
-    TransportControl {
-        cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    }
+    TransportControl::new(cancel).with_deadline(Some(Instant::now() + Duration::from_secs(5)))
 }
 
 #[rstest]
@@ -921,10 +911,8 @@ fn stalled_service_has_a_deadline() {
             all,
             None,
             FetchLimits::default(),
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(Instant::now() + Duration::from_secs(2)),
-            },
+            TransportControl::new(&cancel)
+                .with_deadline(Some(Instant::now() + Duration::from_secs(2))),
         ))
         .unwrap_err();
     assert!(matches!(error, FetchError::Deadline), "{error:?}");
@@ -1038,10 +1026,8 @@ fn stalled_ssh_handshake_expires_without_using_an_account() {
                 all,
                 None,
                 FetchLimits::default(),
-                TransportControl {
-                    cancel: &cancel,
-                    deadline: Some(Instant::now() + Duration::from_millis(300)),
-                },
+                TransportControl::new(&cancel)
+                    .with_deadline(Some(Instant::now() + Duration::from_millis(300))),
             ))
             .unwrap_err();
         assert!(matches!(error, FetchError::Deadline));
@@ -1076,10 +1062,8 @@ fn blocked_upload_expires_with_unknown_outcome() {
         .block_on(push::send_ssh(
             &server.remote("config"),
             &prepared,
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(Instant::now() + Duration::from_secs(2)),
-            },
+            TransportControl::new(&cancel)
+                .with_deadline(Some(Instant::now() + Duration::from_secs(2))),
         ))
         .unwrap_err();
     let PushError::Uncertain { cause, report } = error else {
@@ -1132,8 +1116,8 @@ fn malformed_advertisement_is_rejected() {
 }
 
 #[rstest]
-#[case::advertisement(FetchLimits { max_advertisement_bytes: 4, ..FetchLimits::default() })]
-#[case::body(FetchLimits { max_wire_bytes: 1024, ..FetchLimits::default() })]
+#[case::advertisement(FetchLimits::default().with_max_advertisement_bytes(4))]
+#[case::body(FetchLimits::default().with_max_wire_bytes(1024))]
 fn download_respects_wire_budgets(#[case] limits: FetchLimits) {
     let f = Fixture::new(girt::ObjectFormat::Sha1, false, 4);
     let server = Server::new(f.root.path(), "none");

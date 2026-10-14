@@ -11,15 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &global,
         b"[remote \"origin\"]\nurl=https://example.com/project\n",
     )?;
-    let inputs = ConfigInputs {
-        files: vec![ConfigFile {
-            path: global,
-            scope: ConfigScope::Global,
-            optional: false,
-        }],
-        command: Some(Config::parse(b"[demo]\nmode=explicit\n")?),
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default()
+        .with_files(vec![
+            ConfigFile::new(global, ConfigScope::Global).with_optional(false),
+        ])
+        .with_command(Some(Config::parse(b"[demo]\nmode=explicit\n")?));
     let repository = Repository::open_with_config(&path, &inputs)?;
     let remote = girt::remote::Remote::find(repository.config(), b"origin")?.unwrap();
     assert_eq!(

@@ -81,6 +81,7 @@ pub(super) struct SectionOccurrence {
 
 /// One variable occurrence, retaining spelling, bytes and source location.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Entry {
     /// Physical line where this variable begins, or zero for supplied decoded entries.
     pub line: usize,
@@ -99,6 +100,7 @@ pub struct Entry {
 /// Invalid syntax, decoded names, or construction limits in supplied configuration.
 #[derive(Debug, Error)]
 #[error("configuration line {line}: {reason}")]
+#[non_exhaustive]
 pub struct ConfigError {
     /// One-based physical line, or input section ordinal for decoded construction.
     pub line: usize,
@@ -760,6 +762,7 @@ mod tests {
 /// A configuration value does not have the requested type.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("invalid value for {section}.{name}: {value:?}")]
+#[non_exhaustive]
 pub struct InvalidValue {
     /// Section name as requested.
     pub section: String,

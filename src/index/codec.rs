@@ -36,6 +36,7 @@ pub struct Index {
 /// On-disk entry framing. V3 adds extended flags; V4 also compresses adjacent paths.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u32)]
+#[non_exhaustive]
 pub enum Version {
     /// Padded paths without extended flags.
     #[default]
@@ -86,6 +87,7 @@ impl Extension {
 /// Storage can retain original, parsed and encoded buffers
 /// simultaneously and reads at most `max_bytes + 1` bytes to detect an oversized file.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Maximum complete encoded bytes; default 256 MiB.
     pub max_bytes: usize,
@@ -95,6 +97,36 @@ pub struct Limits {
     pub max_path_bytes: usize,
     /// Maximum optional extensions; default 64.
     pub max_extensions: usize,
+}
+
+impl Limits {
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_extensions`].
+    #[must_use]
+    pub fn with_max_extensions(mut self, max_extensions: usize) -> Self {
+        self.max_extensions = max_extensions;
+        self
+    }
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -124,6 +156,7 @@ impl Limits {
 
 /// Index format, unsupported feature or resource-limit failure.
 #[derive(Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// A supplied identity differs from the selected index format.
     #[error(transparent)]

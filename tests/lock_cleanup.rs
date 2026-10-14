@@ -205,11 +205,9 @@ fn cleanup_cancels_a_pending_packed_ref_wait_without_stealing_the_lock() {
             started.send(()).unwrap();
             references.pack(
                 &objects,
-                girt::refs::PackRefsOptions {
-                    // Bounded independently if cancellation regresses.
-                    lock_wait: girt::refs::LockWait::For(Duration::from_secs(5)),
-                    ..girt::refs::PackRefsOptions::ALL
-                },
+                // Bounded independently if cancellation regresses.
+                girt::refs::PackRefsOptions::ALL
+                    .with_lock_wait(girt::refs::LockWait::For(Duration::from_secs(5))),
             )
         });
         ready.recv().unwrap();

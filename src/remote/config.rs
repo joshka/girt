@@ -50,6 +50,7 @@ impl std::fmt::Debug for RemoteUrls {
 
 /// A named remote contains a missing value or unsupported refspec.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RemoteError {
     /// URL/refspec keys require `=` and a value (empty URLs reset the list).
     #[error("remote key {key}, occurrence {occurrence}, requires a value")]

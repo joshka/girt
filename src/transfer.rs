@@ -232,6 +232,7 @@ impl FetchOptions {
 
 /// One local reference changed by a fetch.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct FetchedRef {
     /// Local reference name.
     pub name: RefName,
@@ -243,6 +244,7 @@ pub struct FetchedRef {
 
 /// The result of a successful fetch.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct FetchOutcome {
     /// Local references that were created, updated or pruned.
     pub updated: Vec<FetchedRef>,

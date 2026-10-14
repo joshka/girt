@@ -166,10 +166,8 @@ fn fetch(c: &mut Criterion) {
                     fixture.root.path(),
                     |_| vec![next],
                     FetchLimits::default(),
-                    TransportControl {
-                        cancel: &cancel,
-                        deadline: Some(Instant::now() + Duration::from_secs(30)),
-                    },
+                    TransportControl::new(&cancel)
+                        .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
                     |_| ControlFlow::Continue(()),
                 )
                 .unwrap()
@@ -182,10 +180,8 @@ fn fetch(c: &mut Criterion) {
                     |_| vec![next],
                     &known,
                     FetchLimits::default(),
-                    TransportControl {
-                        cancel: &cancel,
-                        deadline: Some(Instant::now() + Duration::from_secs(30)),
-                    },
+                    TransportControl::new(&cancel)
+                        .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
                     |_| ControlFlow::Continue(()),
                 )
                 .unwrap()
@@ -197,10 +193,8 @@ fn fetch(c: &mut Criterion) {
                     fixture.root.path(),
                     |_| vec![tag],
                     FetchLimits::default(),
-                    TransportControl {
-                        cancel: &cancel,
-                        deadline: Some(Instant::now() + Duration::from_secs(30)),
-                    },
+                    TransportControl::new(&cancel)
+                        .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
                     |_| ControlFlow::Continue(()),
                 )
                 .unwrap()

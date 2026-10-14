@@ -16,6 +16,7 @@ use crate::remote::{Destination, Protocol};
 /// Missing `ssh.variant` means the caller asserts that the chosen executable speaks OpenSSH.
 /// Shell parsing, executable-name inference and automatic variant probing are not performed.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct OpenSshOptions {
     /// Absolute OpenSSH executable when no command override is selected.
     pub default_executable: PathBuf,
@@ -28,6 +29,29 @@ pub struct OpenSshOptions {
     /// and display variables. Values are passed literally. `GIT_PROTOCOL` must be absent or
     /// `version=0`; OpenSSH configuration must not send another protocol version either.
     pub environment: BTreeMap<OsString, OsString>,
+}
+
+impl OpenSshOptions {
+    /// Sets [`Self::default_executable`].
+    #[must_use]
+    pub fn with_default_executable(mut self, default_executable: PathBuf) -> Self {
+        self.default_executable = default_executable;
+        self
+    }
+
+    /// Sets [`Self::approved_command`].
+    #[must_use]
+    pub fn with_approved_command(mut self, approved_command: Option<ApprovedSshCommand>) -> Self {
+        self.approved_command = approved_command;
+        self
+    }
+
+    /// Sets [`Self::environment`].
+    #[must_use]
+    pub fn with_environment(mut self, environment: BTreeMap<OsString, OsString>) -> Self {
+        self.environment = environment;
+        self
+    }
 }
 
 impl std::fmt::Debug for OpenSshOptions {

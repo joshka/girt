@@ -7,6 +7,7 @@ use crate::{
 
 /// Work limits for resolving one object through a chain of annotated tags.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct PeelLimits {
     /// Maximum tag edges followed. Zero still permits reading a terminal object.
     pub max_tags: usize,
@@ -14,6 +15,29 @@ pub struct PeelLimits {
     pub max_bytes: usize,
     /// Per-read object and delta-work limits.
     pub read: ReadLimits,
+}
+
+impl PeelLimits {
+    /// Sets [`Self::max_tags`].
+    #[must_use]
+    pub fn with_max_tags(mut self, max_tags: usize) -> Self {
+        self.max_tags = max_tags;
+        self
+    }
+
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
 }
 impl Default for PeelLimits {
     fn default() -> Self {
@@ -41,6 +65,7 @@ impl PeelLimits {
 
 /// Resolved identity and kind, retaining the original tip and every intervening tag identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct PeeledObject {
     /// Original requested identity, also retained when it was already a terminal object.
     pub original: ObjectId,
@@ -55,6 +80,7 @@ pub struct PeeledObject {
 /// A failed read-only resolution, with the exact link being examined.
 #[derive(Debug, thiserror::Error)]
 #[error("peeling {original} at {id}")]
+#[non_exhaustive]
 pub struct PeelError {
     /// Original requested tip.
     pub original: ObjectId,
@@ -71,6 +97,7 @@ pub struct PeelError {
 
 /// Reasons a tag chain cannot be resolved. No failure changes storage.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PeelFailure {
     /// The requested object is absent.
     #[error("missing object")]

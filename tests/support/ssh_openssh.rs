@@ -34,10 +34,7 @@ fn script(root: &Path, body: &str) -> PathBuf {
 }
 
 fn control(cancel: &AtomicBool) -> TransportControl<'_> {
-    TransportControl {
-        cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    }
+    TransportControl::new(cancel).with_deadline(Some(Instant::now() + Duration::from_secs(5)))
 }
 
 #[rstest]
@@ -76,11 +73,9 @@ fn ordinary_argv_matches_git_and_environment_is_explicit(#[case] url: &str) {
     .into();
     let remote = remote(
         url,
-        OpenSshOptions {
-            default_executable: executable,
-            environment,
-            ..Default::default()
-        },
+        OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_environment(environment),
     );
     let cancel = AtomicBool::new(false);
     super::runtime()
@@ -108,15 +103,13 @@ fn server_remote(server: &super::Server, config_name: &str) -> SshRemote {
     .into();
     remote(
         &format!("ssh://fixture{}", server.repository),
-        OpenSshOptions {
-            approved_command: Some(ApprovedSshCommand {
-                configured: b"approved".to_vec(),
-                executable: "/usr/bin/ssh".into(),
-                arguments: vec!["-F".into(), config.to_str().unwrap().into()],
-            }),
-            environment,
-            ..Default::default()
-        },
+        OpenSshOptions::default()
+            .with_approved_command(Some(ApprovedSshCommand::new(
+                b"approved".to_vec(),
+                "/usr/bin/ssh".into(),
+                vec!["-F".into(), config.to_str().unwrap().into()],
+            )))
+            .with_environment(environment),
     )
 }
 
@@ -161,11 +154,9 @@ fn ordinary_launched_failure_is_not_retried() {
     let capture = root.path().join("capture");
     let remote = remote(
         "host:repo",
-        OpenSshOptions {
-            default_executable: executable,
-            environment: [("CAPTURE".into(), capture.clone().into_os_string())].into(),
-            ..Default::default()
-        },
+        OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_environment([("CAPTURE".into(), capture.clone().into_os_string())].into()),
     );
     let cancel = AtomicBool::new(false);
     let error = super::runtime()
@@ -189,11 +180,9 @@ fn ordinary_cancellation_reaps_the_launched_process() {
     let capture = root.path().join("pid");
     let remote = remote(
         "host:repo",
-        OpenSshOptions {
-            default_executable: executable,
-            environment: [("CAPTURE".into(), capture.clone().into_os_string())].into(),
-            ..Default::default()
-        },
+        OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_environment([("CAPTURE".into(), capture.clone().into_os_string())].into()),
     );
     let cancel = AtomicBool::new(false);
     let (error, pid) = super::runtime().block_on(async {

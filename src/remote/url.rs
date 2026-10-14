@@ -40,6 +40,7 @@ impl std::fmt::Debug for ParsedUrl<'_> {
 
 /// A value-free parsing or local-path expansion error.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UrlError {
     /// Input is empty, contains NUL, or has an incomplete URL authority.
     #[error("invalid remote URL syntax")]

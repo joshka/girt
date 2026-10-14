@@ -750,10 +750,7 @@ fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
         fixture.root.path(),
         select_all,
         &known,
-        FetchLimits {
-            max_haves: 0,
-            ..FetchLimits::default()
-        },
+        FetchLimits::default().with_max_haves(0),
         girt::transport::TransportControl::new(&AtomicBool::new(false)),
         |_| ControlFlow::Continue(()),
     )
@@ -780,10 +777,7 @@ fn installation_honors_destination_snapshot_limits_and_allows_retry() {
         .unwrap();
     let known = known(&repo, initial.wants());
     let received = negotiated(fixture.root.path(), &known);
-    let too_small = PackLimits {
-        max_packs: 0,
-        ..PackLimits::default()
-    };
+    let too_small = PackLimits::default().with_max_packs(0);
     assert!(
         received
             .install(&repo, too_small, &AtomicBool::new(false))
@@ -809,10 +803,7 @@ fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
         64u64.to_be_bytes()
     );
     // The dependency queue visits each entry once and each delta edge once.
-    let limits = FetchLimits {
-        max_resolution_steps: 65 + 64,
-        ..FetchLimits::default()
-    };
+    let limits = FetchLimits::default().with_max_resolution_steps(65 + 64);
     let receive = |limits| {
         girt::fetch::receive(
             &mut wire.as_slice(),
@@ -825,10 +816,7 @@ fn reverse_forward_delta_chain_is_git_compatible_and_work_bounded() {
     };
     assert_eq!(receive(limits).unwrap().object_count(), 65);
     assert!(matches!(
-        receive(FetchLimits {
-            max_resolution_steps: 65 + 64 - 1,
-            ..limits
-        }),
+        receive((limits).with_max_resolution_steps(65 + 64 - 1)),
         Err(FetchError::Limit("delta resolution steps"))
     ));
 }
@@ -860,11 +848,9 @@ fn known_only_installation_can_exceed_default_snapshot_count() {
     let installed = initial
         .install(&repo, PackLimits::default(), &AtomicBool::new(false))
         .unwrap();
-    let snapshot = PackLimits {
-        max_packs: 257,
-        max_open_files: 514,
-        ..PackLimits::default()
-    };
+    let snapshot = PackLimits::default()
+        .with_max_packs(257)
+        .with_max_open_files(514);
     repeat_snapshot_pair(&repo, installed.checksum.unwrap(), snapshot.max_packs);
     let objects = repo.objects(snapshot).unwrap();
     let known = girt::fetch::KnownHistory::new(

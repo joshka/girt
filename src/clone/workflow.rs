@@ -386,6 +386,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), CloneFailure> {
 
 /// Completed phases, including on failure. No field implies rollback or crash durability.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CloneReport {
     /// Requested path; inspect here for residual files after failure.
     pub destination: PathBuf,
@@ -410,6 +411,7 @@ pub struct CloneReport {
 
 /// Transfer or planning failure with no destination effects.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CloneTransferError {
     /// Advertisement/default branch could not be selected.
     #[error(transparent)]
@@ -422,6 +424,7 @@ pub enum CloneTransferError {
 /// Finish failure preserving completed phases and precise nested publication effects.
 #[derive(Debug, thiserror::Error)]
 #[error("clone failed")]
+#[non_exhaustive]
 pub struct CloneError {
     /// Completed phases; residual state is never automatically removed.
     pub report: Box<CloneReport>,
@@ -432,6 +435,7 @@ pub struct CloneError {
 
 /// Preparation or finish phase failure; URL contents are omitted from diagnostics.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CloneFailure {
     /// Existing files/directories/symlinks are not accepted.
     #[error("clone destination already exists: {0}")]

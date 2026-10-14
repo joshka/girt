@@ -1035,6 +1035,7 @@ impl RetainedFetchReady {
 /// Retained workflow failure with completed effects and ownership of any acquired marker.
 #[derive(Debug, thiserror::Error)]
 #[error("fetch finish failed")]
+#[non_exhaustive]
 pub struct RetainedFetchFinishError {
     /// Completed effects. No successful installation does not exclude partial pack artifacts.
     pub report: Box<FetchReport>,
@@ -1047,6 +1048,7 @@ pub struct RetainedFetchFinishError {
 
 /// One advertised source and its proposed local effect, preserving refspec order.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct FetchUpdate {
     /// Actual advertised source, optional destination and force intent.
     pub mapping: Mapping,
@@ -1058,6 +1060,7 @@ pub struct FetchUpdate {
 
 /// Decision based on the advertised identity and captured destination, before publication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum FetchUpdateKind {
     /// Objects selected without a reference destination; no `FETCH_HEAD` is written.
     SourceOnly,
@@ -1093,6 +1096,7 @@ impl FetchUpdateKind {
 
 /// Transfer statistics and separately observable installation/publication effects.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct FetchReport {
     /// Decisions against the captured local values; not evidence of publication by themselves.
     pub updates: Vec<FetchUpdate>,
@@ -1114,6 +1118,7 @@ pub struct FetchReport {
 
 /// Planning failed without changing repository contents.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchPlanError {
     /// Received boundaries differ without an explicit depth request.
     #[error("shallow boundary change requires explicit depth request")]
@@ -1146,6 +1151,7 @@ pub enum FetchPlanError {
 
 /// A failure before any installation or reference publication.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchWorkflowError {
     /// Mapping or destination policy rejected the actual advertisement.
     #[error(transparent)]
@@ -1158,6 +1164,7 @@ pub enum FetchWorkflowError {
 /// Installation/publication failure retaining completed effects.
 #[derive(Debug, thiserror::Error)]
 #[error("fetch finish failed")]
+#[non_exhaustive]
 pub struct FetchFinishError {
     /// Transfer and installation effects before failure; installed objects are never rolled back.
     pub report: Box<FetchReport>,
@@ -1169,6 +1176,7 @@ pub struct FetchFinishError {
 
 /// Failed phase after validated transfer.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchFinishFailure {
     /// Installation failed; refs unchanged, possibly leaving an unindexed pack.
     #[error("fetch installation")]

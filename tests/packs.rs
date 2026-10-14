@@ -143,10 +143,10 @@ fn snapshots_survive_repack_and_new_reader_reads_repacked_repository(
 }
 
 #[rstest]
-#[case::bytes_sha1(girt::ObjectFormat::Sha1, PackLimits { max_bytes: 10, ..PackLimits::default() })]
-#[case::bytes_sha256(girt::ObjectFormat::Sha256, PackLimits { max_bytes: 10, ..PackLimits::default() })]
-#[case::count_sha1(girt::ObjectFormat::Sha1, PackLimits { max_packs: 0, ..PackLimits::default() })]
-#[case::count_sha256(girt::ObjectFormat::Sha256, PackLimits { max_packs: 0, ..PackLimits::default() })]
+#[case::bytes_sha1(girt::ObjectFormat::Sha1, PackLimits::default().with_max_bytes(10))]
+#[case::bytes_sha256(girt::ObjectFormat::Sha256, PackLimits::default().with_max_bytes(10))]
+#[case::count_sha1(girt::ObjectFormat::Sha1, PackLimits::default().with_max_packs(0))]
+#[case::count_sha256(girt::ObjectFormat::Sha256, PackLimits::default().with_max_packs(0))]
 fn bounds_snapshot_loading(#[case] format: girt::ObjectFormat, #[case] limits: PackLimits) {
     let fixture = Fixture::new(format, true, 4);
     assert!(matches!(
@@ -398,6 +398,7 @@ fn rewrite_pack_version(fixture: &Fixture, version: u32, index: u32) {
     let checksum = match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes.extend_from_slice(&checksum);
     fs::remove_file(&path).unwrap();
@@ -476,9 +477,9 @@ fn reads_symlinked_object_directory(#[case] format: girt::ObjectFormat) {
 }
 
 #[rstest]
-#[case::index_bytes(PackLimits { max_index_bytes: 1, ..PackLimits::default() }, "pack index bytes")]
-#[case::handles(PackLimits { max_open_files: 1, ..PackLimits::default() }, "pack file handles")]
-#[case::directory(PackLimits { max_directory_entries: 0, ..PackLimits::default() }, "pack directory entries")]
+#[case::index_bytes(PackLimits::default().with_max_index_bytes(1), "pack index bytes")]
+#[case::handles(PackLimits::default().with_max_open_files(1), "pack file handles")]
+#[case::directory(PackLimits::default().with_max_directory_entries(0), "pack directory entries")]
 fn rejects_file_resource_limits(#[case] limits: PackLimits, #[case] expected: &str) {
     let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     assert!(
@@ -497,18 +498,13 @@ fn exact_file_limits_and_compressed_work(#[case] format: girt::ObjectFormat) {
     let pack_bytes = fs::metadata(fixture.index_path.with_extension("pack"))
         .unwrap()
         .len() as usize;
-    let limits = PackLimits {
-        max_bytes: index_bytes + pack_bytes,
-        max_index_bytes: index_bytes,
-        max_open_files: 2,
-        max_packs: 1,
-        ..PackLimits::default()
-    };
+    let limits = PackLimits::default()
+        .with_max_bytes(index_bytes + pack_bytes)
+        .with_max_index_bytes(index_bytes)
+        .with_max_open_files(2)
+        .with_max_packs(1);
     let objects = fixture.repo.objects(limits).unwrap();
-    let read = ReadLimits {
-        max_input_bytes: 0,
-        ..ReadLimits::default()
-    };
+    let read = ReadLimits::default().with_max_input_bytes(0);
     assert!(matches!(
         objects.read(fixture.delta, read),
         Err(ObjectReadError::Limit("compressed entry bytes"))
@@ -613,6 +609,7 @@ fn rehash_index(format: girt::ObjectFormat, bytes: &mut [u8]) {
     let checksum = match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes[end..].copy_from_slice(&checksum);
 }
@@ -1404,10 +1401,8 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
     let inventory = pack_inventory(copies.fixture.repo.object_dir());
     let pack = fs::read(&copies.damaged).unwrap();
     let index = fs::read(copies.damaged.with_extension("idx")).unwrap();
-    let policy = girt::retention::RetentionPolicy {
-        recent_cutoff: std::time::SystemTime::now() + std::time::Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy = girt::retention::RetentionPolicy::default()
+        .with_recent_cutoff(std::time::SystemTime::now() + std::time::Duration::from_secs(60));
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let plan = copies.fixture.repo.plan_retention(&policy, &cancel);
     assert!(
@@ -1514,10 +1509,7 @@ fn read_limit_does_not_poison_a_pack_entry() {
     assert!(matches!(
         objects.read(
             fixture.ordinary,
-            ReadLimits {
-                max_object_bytes: 1,
-                ..Default::default()
-            }
+            ReadLimits::default().with_max_object_bytes(1)
         ),
         Err(ObjectReadError::Limit(_))
     ));

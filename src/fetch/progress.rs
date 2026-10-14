@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicBool;
 /// Observers run synchronously and must return promptly. Cancellation remains controlled by
 /// [`crate::transport::TransportControl`]; callbacks cannot undo a completed operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LocalFetchProgress {
     /// Unique selected source objects examined so far. The total is not yet known.
     /// Structured objects are decoded; packed blobs use framing and delta-size prefixes. Known
@@ -33,6 +34,7 @@ pub enum LocalFetchProgress {
 /// construction, thin-pack rewriting and selected-tip connectivity can still fail. Only
 /// `complete` marks successful validation. Installation and reference publication remain separate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ValidationProgress {
     /// Successfully inflated pack entries and the pack header's entry count, `(done, total)`.
     /// Includes delta programs; it does not imply reconstructed or connected objects.

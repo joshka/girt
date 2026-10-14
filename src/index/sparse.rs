@@ -10,6 +10,7 @@ use crate::{EntryMode, ObjectId, ObjectKind, Objects, ReadLimits, Tree};
 /// A bounded tree payload is parsed before counting its entries. Memory includes that tree,
 /// pending directory paths and the complete draft index; this is not a precise heap budget.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SparseLimits {
     /// Maximum tree occurrences read, including repeated identities; default 100,000.
     pub max_trees: usize,
@@ -23,6 +24,50 @@ pub struct SparseLimits {
     pub max_path_bytes: usize,
     /// Independent object reconstruction bounds for each tree read.
     pub read: ReadLimits,
+}
+
+impl SparseLimits {
+    /// Sets [`Self::max_trees`].
+    #[must_use]
+    pub fn with_max_trees(mut self, max_trees: usize) -> Self {
+        self.max_trees = max_trees;
+        self
+    }
+
+    /// Sets [`Self::max_tree_bytes`].
+    #[must_use]
+    pub fn with_max_tree_bytes(mut self, max_tree_bytes: usize) -> Self {
+        self.max_tree_bytes = max_tree_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
 }
 impl Default for SparseLimits {
     fn default() -> Self {
@@ -39,6 +84,7 @@ impl Default for SparseLimits {
 
 /// Sparse expansion failure; the original index remains unchanged.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SparseError {
     /// Output validation, object format or resource failure.
     #[error(transparent)]

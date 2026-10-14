@@ -28,15 +28,15 @@ impl Fixture {
             .unwrap()
             .fetch_destination(&config, &ProtocolEnvironment::default())
             .unwrap();
-        let options = OpenSshOptions {
-            default_executable: executable,
-            environment: [
-                ("PATH".into(), std::env::var_os("PATH").unwrap()),
-                ("FIXTURE_ROOT".into(), root.path().as_os_str().to_owned()),
-            ]
-            .into(),
-            ..Default::default()
-        };
+        let options = OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_environment(
+                [
+                    ("PATH".into(), std::env::var_os("PATH").unwrap()),
+                    ("FIXTURE_ROOT".into(), root.path().as_os_str().to_owned()),
+                ]
+                .into(),
+            );
         let remote = SshRemote::openssh(&config, &destination, options).unwrap();
         Self { root, remote }
     }
@@ -55,10 +55,7 @@ impl Fixture {
 }
 
 fn control(cancel: &AtomicBool) -> TransportControl<'_> {
-    TransportControl {
-        cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    }
+    TransportControl::new(cancel).with_deadline(Some(Instant::now() + Duration::from_secs(5)))
 }
 
 #[test]
@@ -113,10 +110,8 @@ fn flooding_diagnostics_obey_deadline_and_reap_process() {
     let fixture = Fixture::new("while True: os.write(2,b'x'*4096)");
     let cancel = AtomicBool::new(false);
     let mut received = 0;
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    };
+    let control =
+        TransportControl::new(&cancel).with_deadline(Some(Instant::now() + Duration::from_secs(5)));
     let error = super::runtime()
         .block_on(fetch::discover_ssh_with_diagnostics(
             &fixture.remote,

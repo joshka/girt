@@ -54,16 +54,16 @@
 //!
 //! let references = repository.references()?;
 //! let head = RefName::new("HEAD")?;
-//! references.transaction(&[RefEdit {
-//!     name: head.clone(),
-//!     dereference: true,
-//!     target: Some(Target::Direct(commit)),
-//!     expected: Expected::Absent,
-//!     reflog: Reflog::Append {
+//! let edit = RefEdit::new(
+//!     head.clone(),
+//!     Some(Target::Direct(commit)),
+//!     Expected::Absent,
+//!     Reflog::Append {
 //!         committer: person,
 //!         message: b"commit (initial)".to_vec(),
 //!     },
-//! }])?;
+//! );
+//! references.transaction(&[edit.with_dereference(true)])?;
 //!
 //! let main = RefName::new("refs/heads/main")?;
 //! assert_eq!(references.read(&main)?, Some(Target::Direct(commit)));

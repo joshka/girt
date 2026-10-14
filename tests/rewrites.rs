@@ -81,10 +81,7 @@ fn modified_source(
         .detect_rewrites(
             Some(old),
             Some(new),
-            Options {
-                copies,
-                ..Options::default()
-            },
+            Options::default().with_copies(copies),
             Limits::default(),
             None,
             &AtomicBool::new(false),
@@ -125,10 +122,7 @@ fn modified_postimage_reports_preimage_id(#[values("sha1", "sha256")] format: &s
         .detect_rewrites(
             Some(old),
             Some(new),
-            Options {
-                copies: Copies::ModifiedPostimage,
-                ..Options::default()
-            },
+            Options::default().with_copies(Copies::ModifiedPostimage),
             Limits::default(),
             None,
             &AtomicBool::new(false),
@@ -149,11 +143,9 @@ fn skips_approximate_binary_but_keeps_exact(#[values("sha1", "sha256")] format: 
     let old = f.tree(&[("100644", source, b"old")]);
     let edited_tree = f.tree(&[("100644", edited, b"new")]);
     let exact_tree = f.tree(&[("100644", source, b"new")]);
-    let options = Options {
-        approximate_binary: false,
-        candidate_limit: 0,
-        ..Options::default()
-    };
+    let options = Options::default()
+        .with_approximate_binary(false)
+        .with_candidate_limit(0);
     let objects = f.objects();
     let edited_records = objects
         .detect_rewrites(
@@ -191,10 +183,7 @@ fn ties_filter_after_inference(#[values("sha1", "sha256")] format: &str) {
         ("100644", blob, b"e"),
     ]);
     let objects = f.objects();
-    let options = Options {
-        copies: Copies::Modified,
-        ..Options::default()
-    };
+    let options = Options::default().with_copies(Copies::Modified);
     let all = objects
         .detect_rewrites(
             Some(old),
@@ -292,10 +281,7 @@ fn exact_precedes_candidate_limit(
     let result = f.objects().detect_rewrites(
         Some(old),
         Some(new),
-        Options {
-            candidate_limit: 0,
-            ..Options::default()
-        },
+        Options::default().with_candidate_limit(0),
         Limits::default(),
         None,
         &AtomicBool::new(false),
@@ -332,9 +318,9 @@ fn cancelled_before_storage(#[values("sha1", "sha256")] format: &str) {
 }
 
 #[rstest]
-#[case::pairs(Limits { max_pairs: 0, ..Limits::default() }, "pairs")]
-#[case::work(Limits { max_work: 0, ..Limits::default() }, "work")]
-#[case::spans(Limits { max_spans: 0, ..Limits::default() }, "spans")]
+#[case::pairs(Limits::default().with_max_pairs(0), "pairs")]
+#[case::work(Limits::default().with_max_work(0), "work")]
+#[case::spans(Limits::default().with_max_spans(0), "spans")]
 fn budgets(#[case] limits: Limits, #[case] expected: &str) {
     let f = Fixture::new("sha1");
     let old = f.tree(&[("100644", f.blob(b"a\nb\nc\n"), b"old")]);
@@ -357,10 +343,7 @@ fn empty_policy(#[case] track_empty: bool, #[case] count: usize) {
         .detect_rewrites(
             Some(old),
             Some(new),
-            Options {
-                track_empty,
-                ..Options::default()
-            },
+            Options::default().with_track_empty(track_empty),
             Limits::default(),
             None,
             &AtomicBool::new(false),
@@ -379,10 +362,7 @@ fn exact_only_rejects_reordered_spans(#[values("sha1", "sha256")] format: &str) 
             .detect_rewrites(
                 Some(old),
                 Some(new),
-                Options {
-                    similarity: 100,
-                    ..Options::default()
-                },
+                Options::default().with_similarity(100),
                 Limits::default(),
                 None,
                 &AtomicBool::new(false)
@@ -405,10 +385,7 @@ fn modified_source_includes_mode_only(#[case] mode: &str, #[case] count: usize) 
         .detect_rewrites(
             Some(old),
             Some(new),
-            Options {
-                copies: Copies::Modified,
-                ..Options::default()
-            },
+            Options::default().with_copies(Copies::Modified),
             Limits::default(),
             None,
             &AtomicBool::new(false),
@@ -459,7 +436,7 @@ fn blob_budget_applies_before_exact_matches(#[values("sha1", "sha256")] format: 
     let old = f.tree(&[("100644", blob, b"old")]);
     let new = f.tree(&[("100644", blob, b"new")]);
     assert!(
-        matches!(f.objects().detect_rewrites(Some(old), Some(new), Options::default(), Limits { max_blob_bytes: 0, ..Limits::default() }, None, &AtomicBool::new(false)), Err(Error::Read { id, .. }) if id == blob)
+        matches!(f.objects().detect_rewrites(Some(old), Some(new), Options::default(), Limits::default().with_max_blob_bytes(0), None, &AtomicBool::new(false)), Err(Error::Read { id, .. }) if id == blob)
     );
 }
 
@@ -469,6 +446,6 @@ fn blob_budget_applies_before_exact_matches(#[values("sha1", "sha256")] format: 
 fn invalid_similarity(#[case] similarity: u8) {
     let f = Fixture::new("sha1");
     assert!(
-        matches!(f.objects().detect_rewrites(None, None, Options { similarity, ..Options::default() }, Limits::default(), None, &AtomicBool::new(false)), Err(Error::Similarity(value)) if value == similarity)
+        matches!(f.objects().detect_rewrites(None, None, Options::default().with_similarity(similarity), Limits::default(), None, &AtomicBool::new(false)), Err(Error::Similarity(value)) if value == similarity)
     );
 }

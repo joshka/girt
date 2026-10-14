@@ -14,6 +14,7 @@ use crate::{ObjectFormat, ObjectId, Repository};
 
 /// Protocol family used to obtain the reference inventory.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ProtocolVersion {
     /// Native local reference inspection, with no wire protocol.
     Native,
@@ -27,6 +28,7 @@ pub enum ProtocolVersion {
 
 /// The remote's advertised HEAD, with no branch guessed when the wire is ambiguous.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RemoteHead {
     /// HEAD explicitly names a branch and resolves to its advertised ID.
     Symbolic {
@@ -69,6 +71,7 @@ pub enum RemoteHead {
 /// advertisement from the actual transfer session. Discovery retains unknown capability tokens
 /// for inspection but never requests them. No object is downloaded or local repository mutated.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RemoteDiscovery {
     /// Advertised references and raw capability tokens.
     pub advertisement: Advertisement,

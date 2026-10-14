@@ -26,6 +26,7 @@ pub struct TreeValue {
 /// Compare IDs to distinguish content identity changes from mode/type changes. A mode change
 /// alone still produces a record. Trees themselves are omitted, including empty directories.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct TreeChange {
     /// Relative slash-separated Git path bytes, without UTF-8 conversion or a trailing slash.
     pub path: Vec<u8>,
@@ -44,6 +45,7 @@ pub struct TreeChange {
 /// count check. Memory is O(total tree bytes + entries + generated path bytes + changes), plus
 /// the existing pack snapshot and per-read decoding workspace. These are not exact heap limits.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct TreeCompareLimits {
     /// Maximum tree reads across both sides (default 100,000).
     pub max_trees: usize,
@@ -59,6 +61,57 @@ pub struct TreeCompareLimits {
     pub max_changes: usize,
     /// Independent storage reconstruction bounds for each read.
     pub read: ReadLimits,
+}
+
+impl TreeCompareLimits {
+    /// Sets [`Self::max_trees`].
+    #[must_use]
+    pub fn with_max_trees(mut self, max_trees: usize) -> Self {
+        self.max_trees = max_trees;
+        self
+    }
+
+    /// Sets [`Self::max_tree_bytes`].
+    #[must_use]
+    pub fn with_max_tree_bytes(mut self, max_tree_bytes: usize) -> Self {
+        self.max_tree_bytes = max_tree_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_changes`].
+    #[must_use]
+    pub fn with_max_changes(mut self, max_changes: usize) -> Self {
+        self.max_changes = max_changes;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
 }
 
 impl Default for TreeCompareLimits {
@@ -347,6 +400,7 @@ fn charge(remaining: &mut usize, count: usize, name: &'static str) -> Result<(),
 
 /// A structural comparison failed; no partial result is returned.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TreeCompareError {
     /// A root uses a format unsupported by the SHA-1 tree reader.
     #[error(transparent)]

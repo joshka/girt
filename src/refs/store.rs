@@ -74,6 +74,7 @@ pub struct References<'a> {
 /// to recognize an already-known commit; otherwise callers must validate the object themselves.
 /// Symbolic and loose references have no hint. Separate observations need not share a generation.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ReferenceObservation {
     /// Exact requested reference name, including supported pseudorefs such as HEAD.
     pub name: RefName,
@@ -85,6 +86,7 @@ pub struct ReferenceObservation {
 
 /// On-disk reference storage selected by repository configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Backend {
     /// Loose references, packed references and files reflogs.
     Files,
@@ -94,6 +96,7 @@ pub enum Backend {
 
 /// The stored value of one reference, before symbolic resolution.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Target {
     /// Repository-format object identity. Existence and object type are not checked.
     Direct(ObjectId),
@@ -103,6 +106,7 @@ pub enum Target {
 
 /// A precondition checked under locks against the destination's stored value.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Expected {
     /// Accept any valid current value or absence.
     Any,
@@ -133,6 +137,7 @@ impl std::fmt::Display for DisplayTarget<'_> {
 
 /// The terminal name and optional object identity reached by symbolic resolution.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Resolution {
     /// Last name visited; also identifies the missing target of an unborn/dangling chain.
     pub name: RefName,
@@ -142,6 +147,7 @@ pub struct Resolution {
 
 /// Reference validation, storage, resolution, or update failure.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ReferenceError {
     /// Reftable codec or resource failure.
     #[error(transparent)]

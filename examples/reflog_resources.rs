@@ -58,16 +58,15 @@ fn probe(
         .records()
         .iter()
         .map(|r| match r {
-            ImportedRecord::File { bytes, .. } => bytes.len(),
-            ImportedRecord::Reftable { value, .. } => {
-                value.name.len()
-                    + value.email.len()
-                    + value.message.len()
-                    + 2 * format.digest_len()
-                    + 18
-            }
+            ImportedRecord::File { bytes, .. } => Ok(bytes.len()),
+            ImportedRecord::Reftable { value, .. } => Ok(value.name.len()
+                + value.email.len()
+                + value.message.len()
+                + 2 * format.digest_len()
+                + 18),
+            _ => Err("unsupported imported reflog record"),
         })
-        .sum();
+        .sum::<Result<usize, _>>()?;
     drop(retained);
     let after = descriptors();
     let mut samples = Vec::new();

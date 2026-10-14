@@ -68,10 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect()
         },
         FetchLimits::default(),
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(30)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| ControlFlow::Continue(()),
     )?;
     let result = received.install(&destination, girt::PackLimits::default(), &cancel)?;
@@ -97,10 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |_| vec![commit],
         &known,
         FetchLimits::default(),
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(30)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| ControlFlow::Continue(()),
     )?;
     // Recheck known dependencies in the destination even when no pack was needed.

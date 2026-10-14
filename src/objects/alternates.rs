@@ -11,6 +11,7 @@ use super::ObjectReadError;
 /// Discovery is iterative and visits canonical directories once. Limits include the primary
 /// store, repeated/missing path records and all metadata read. No process environment is read.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct AlternateLimits {
     /// Maximum distinct existing directories, including the primary (default 1,024).
     pub max_stores: usize,
@@ -23,6 +24,36 @@ pub struct AlternateLimits {
     /// Charges native encoded path lengths before joining each record to its parent. This
     /// bounds pending path allocation even when a long parent has many children.
     pub max_path_bytes: usize,
+}
+
+impl AlternateLimits {
+    /// Sets [`Self::max_stores`].
+    #[must_use]
+    pub fn with_max_stores(mut self, max_stores: usize) -> Self {
+        self.max_stores = max_stores;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
 }
 
 impl Default for AlternateLimits {

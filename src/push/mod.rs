@@ -72,12 +72,7 @@
 //!     Repository::init(ObjectFormat::Sha1, directory.path().join("remote.git"), InitKind::Bare)?;
 //! let cancel = AtomicBool::new(false);
 //! let objects = source.objects(PackLimits::default())?;
-//! let command = PushCommand {
-//!     name: main.clone(),
-//!     expected: None,
-//!     new: commit,
-//!     force: ForcePolicy::FastForwardOnly,
-//! };
+//! let command = PushCommand::new(main.clone(), None, commit).with_force(ForcePolicy::FastForwardOnly);
 //! let prepared = PreparedPush::new(&objects, vec![command], PushLimits::default(), &cancel)?;
 //! assert_eq!(prepared.object_count(), 2); // The commit and its empty tree.
 //!

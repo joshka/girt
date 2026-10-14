@@ -18,7 +18,34 @@ pub(crate) use id_hash::{IdMap, IdSet, PeerIdMap, PeerIdSet};
 /// Object codecs, loose/packed storage, references, index v2/v3/v4, and wire fetch/push support
 /// both formats. A repository selects one format from its local configuration; this type does not
 /// translate identities between formats.
+///
+/// Match future formats explicitly rather than assuming the current hashes are the whole set:
+///
+/// ```
+/// use girt::ObjectFormat;
+///
+/// let description = match ObjectFormat::Sha1 {
+///     ObjectFormat::Sha1 => "SHA-1",
+///     ObjectFormat::Sha256 => "SHA-256",
+///     _ => "another Git hash format",
+/// };
+/// assert_eq!(description, "SHA-1");
+/// ```
+///
+/// External exhaustive matches are rejected so adding a hash format remains compatible:
+///
+/// ```compile_fail,E0004
+/// use girt::ObjectFormat;
+///
+/// fn hash_name(format: ObjectFormat) -> &'static str {
+///     match format {
+///         ObjectFormat::Sha1 => "sha1",
+///         ObjectFormat::Sha256 => "sha256",
+///     }
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
 pub enum ObjectFormat {
     /// Git's SHA-1 object format, with 20-byte identities.
     Sha1,
@@ -42,6 +69,7 @@ impl fmt::Display for ObjectFormat {
 /// hexadecimal digits; display is lowercase. Abbreviations are rejected. Hashing does not provide
 /// collision detection or translate identities between formats.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum ObjectId {
     /// A SHA-1 digest.
     Sha1([u8; 20]),

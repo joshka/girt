@@ -286,6 +286,7 @@ impl TreeEntry {
 
 /// Supported modes with their exact octal spelling in an encoded tree payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum EntryMode {
     /// Regular, non-executable blob (`100644`).
     Blob,
@@ -338,6 +339,7 @@ impl EntryMode {
 
 /// A tree payload could not be parsed, or entries failed structural validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum TreeError {
     /// An entry identity differs from the selected tree format.
     #[error(transparent)]

@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let marker = match record.kind {
             Kind::Rename => 'R',
             Kind::Copy => 'C',
+            _ => return Err("unsupported rewrite kind".into()),
         };
         write!(output, "{marker}{:03}\0", record.similarity)?;
         output.write_all(&record.source)?;

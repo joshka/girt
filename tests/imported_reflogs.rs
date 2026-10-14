@@ -44,12 +44,11 @@ fn data(tip: ObjectId, tail: &[u8]) -> Vec<u8> {
     .concat()
 }
 fn append(tip: ObjectId, message: &[u8]) -> RefEdit {
-    RefEdit {
-        name: head(),
-        dereference: false,
-        target: Some(Target::Direct(tip)),
-        expected: Expected::Exists,
-        reflog: Reflog::Append {
+    RefEdit::new(
+        head(),
+        Some(Target::Direct(tip)),
+        Expected::Exists,
+        Reflog::Append {
             committer: Signature {
                 name: b"A".to_vec(),
                 email: b"a@b".to_vec(),
@@ -58,7 +57,7 @@ fn append(tip: ObjectId, message: &[u8]) -> RefEdit {
             },
             message: message.to_vec(),
         },
-    }
+    )
 }
 
 #[rstest]
@@ -235,10 +234,7 @@ fn large_history_limits_are_explicit(
     let limited = refs
         .imported_reflog(
             &head(),
-            ReflogLimits {
-                records: 12,
-                ..ReflogLimits::default()
-            },
+            ReflogLimits::default().with_records(12),
             &AtomicBool::new(false),
         )
         .unwrap()
@@ -278,10 +274,7 @@ fn reads_original_git_binary_history(
         .unwrap()
         .imported_reflog(
             &head(),
-            ReflogLimits {
-                retained_bytes: 1,
-                ..ReflogLimits::default()
-            },
+            ReflogLimits::default().with_retained_bytes(1),
             &AtomicBool::new(false),
         )
         .unwrap()
@@ -341,13 +334,7 @@ fn binary_unsigned_fields_and_stack_failures_remain_explicit(
     );
     assert_eq!(log.recoverable_roots().collect::<Vec<_>>(), [tip]);
     assert_eq!(log.records()[0].fields().unwrap().message, b"a\0b\r");
-    let limits = StackLimits {
-        records: Limits {
-            bytes: 1,
-            ..Limits::default()
-        },
-        ..StackLimits::default()
-    };
+    let limits = StackLimits::default().with_records(Limits::default().with_bytes(1));
     assert!(
         repo.references()
             .unwrap()

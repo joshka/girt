@@ -60,17 +60,12 @@ fn loose(root: &Path, bytes: &[u8]) -> ObjectId {
         .unwrap()
 }
 fn policy(heads: Vec<ObjectId>) -> RetentionPolicy {
-    RetentionPolicy {
-        heads,
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..RetentionPolicy::default()
-    }
+    RetentionPolicy::default()
+        .with_heads(heads)
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
 }
 fn limits() -> RepackLimits {
-    RepackLimits {
-        compression: PackCompression::Ordinary,
-        ..RepackLimits::default()
-    }
+    RepackLimits::default().with_compression(PackCompression::Ordinary)
 }
 struct Exclusive;
 impl MaintenanceIsolation for Exclusive {

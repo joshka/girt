@@ -35,12 +35,8 @@ fn destination(bare: bool) -> (tempfile::TempDir, Repository) {
     (root, repo)
 }
 fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand {
-    PushCommand {
-        name: RefName::new(name).unwrap(),
-        expected,
-        new,
-        force: ForcePolicy::FastForwardOnly,
-    }
+    PushCommand::new(RefName::new(name).unwrap(), expected, new)
+        .with_force(ForcePolicy::FastForwardOnly)
 }
 fn prepare(repo: &Repository, commands: Vec<PushCommand>) -> PreparedPush {
     let roots: Vec<_> = commands.iter().filter_map(|c| c.expected).collect();
@@ -618,10 +614,7 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
         ),
         Err(PushFailure::WouldForce(_))
     ));
-    let forced = PushCommand {
-        force: ForcePolicy::Allow,
-        ..c
-    };
+    let forced = (c).with_force(ForcePolicy::Allow);
     assert!(push(&f.repo, &dest, vec![forced]).unwrap().all_succeeded());
     assert_eq!(tip(&dest, "refs/tags/published"), Some(new));
 }
@@ -665,10 +658,7 @@ fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bo
     let result = send_local_with_control(
         dest.git_dir(),
         &prepared,
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now()),
-        },
+        TransportControl::new(&cancel).with_deadline(Some(Instant::now())),
     );
     assert!(matches!(
         result,
@@ -770,10 +760,9 @@ fn receiver_root_missing_locally_preserves_full_forced_transfer() {
         &["update-ref", "refs/tags/foreign", &foreign.to_string()],
         b"",
     );
-    let commands = vec![PushCommand {
-        force: ForcePolicy::Allow,
-        ..command("refs/tags/foreign", Some(foreign), main(&f))
-    }];
+    let commands = vec![
+        (command("refs/tags/foreign", Some(foreign), main(&f))).with_force(ForcePolicy::Allow),
+    ];
     let prepared = PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands.clone(),
@@ -863,10 +852,7 @@ fn divergent_receiver_tip_excludes_shared_history() {
         .unwrap()
         .all_succeeded()
     );
-    let update = PushCommand {
-        force: ForcePolicy::Allow,
-        ..command("refs/heads/main", Some(right), left)
-    };
+    let update = (command("refs/heads/main", Some(right), left)).with_force(ForcePolicy::Allow);
     let prepared = prepare(&f.repo, vec![update]);
     assert_eq!(prepared.object_count(), 1);
     assert!(
@@ -1024,15 +1010,10 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         command("refs/heads/main", None, main(&fixture)),
         command("refs/tags/packed", None, fixture.records.last().unwrap().0),
     ];
-    let ordinary_limits = PushLimits {
-        compression: girt::PackCompression::Ordinary,
-        ..PushLimits::default()
-    };
+    let ordinary_limits = PushLimits::default().with_compression(girt::PackCompression::Ordinary);
     let ordinary = PreparedPush::new(&objects, commands.clone(), ordinary_limits, &cancel).unwrap();
-    let limits = PushLimits {
-        compression: girt::PackCompression::Delta(girt::DeltaOptions::default()),
-        ..PushLimits::default()
-    };
+    let limits = PushLimits::default()
+        .with_compression(girt::PackCompression::Delta(girt::DeltaOptions::default()));
     let prepared = PreparedPush::new(&objects, commands, limits, &cancel).unwrap();
     // Git has already deltified every packed input; both policies preserve those streams.
     // The incremental loose-object transfer below still exercises fresh delta search.
@@ -1271,10 +1252,7 @@ fn hook_output_limit_truncates_without_aborting_publication() {
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, main(&f))],
         &[],
-        PushLimits {
-            max_status_bytes: 30,
-            ..Default::default()
-        },
+        PushLimits::default().with_max_status_bytes(30),
         &AtomicBool::new(false),
     )
     .unwrap();
@@ -1462,20 +1440,16 @@ fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
                 &f.repo.objects(PackLimits::default()).unwrap(),
                 vec![command("refs/heads/main", None, main(&f))],
                 &[],
-                PushLimits {
-                    max_status_bytes: 30,
-                    ..Default::default()
-                },
+                PushLimits::default().with_max_status_bytes(30),
                 &AtomicBool::new(false),
             )
             .unwrap();
             let report = girt::push::send_local_with_control(
                 dest.git_dir(),
                 &prepared,
-                girt::transport::TransportControl {
-                    cancel: &AtomicBool::new(false),
-                    deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
-                },
+                girt::transport::TransportControl::new(&AtomicBool::new(false)).with_deadline(
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
+                ),
             )
             .unwrap();
             assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);

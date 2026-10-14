@@ -20,6 +20,7 @@ pub struct ShallowRoots {
 
 /// Failure reading shallow metadata; no repository files are changed.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ShallowError {
     /// Filesystem failure, including inaccessible metadata.
     #[error("cannot read shallow metadata {path}")]

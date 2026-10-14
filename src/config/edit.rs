@@ -42,6 +42,7 @@ pub struct ConfigEdit {
 
 /// Synchronous config storage failure, retaining path and underlying causes.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum EditError {
     /// Input or edited output exceeds the caller byte budget.
     #[error("configuration byte limit exceeded")]

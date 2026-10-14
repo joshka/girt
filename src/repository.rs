@@ -30,6 +30,7 @@ pub use worktrees::{Worktree, WorktreeError, WorktreeState};
 /// An explicit choice affects only the links written by that operation. It does not edit
 /// `extensions.relativeWorktrees` or change the default of later operations.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum WorktreeLinkStyle {
     /// Follow the repository's direct `extensions.relativeWorktrees` setting.
     #[default]
@@ -647,6 +648,7 @@ impl std::fmt::Debug for Repository {
 
 /// Failure to open a repository from a path or discovered location.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum OpenError {
     /// Reftable HEAD metadata could not be read for branch-conditional configuration.
     #[error(transparent)]

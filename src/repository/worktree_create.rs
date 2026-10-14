@@ -15,6 +15,7 @@ use crate::refs::{Backend, RefName, References, Target};
 /// Uses full file flush on macOS and `File::sync_all` elsewhere. Directory entries are not
 /// synchronized; success is not a power-loss durability guarantee.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct WorktreeDurability {
     /// Synchronize the selected index lock before publication.
     pub index: bool,
@@ -23,12 +24,29 @@ pub struct WorktreeDurability {
     pub references: bool,
 }
 
+impl WorktreeDurability {
+    /// Sets [`Self::index`].
+    #[must_use]
+    pub fn with_index(mut self, index: bool) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Sets [`Self::references`].
+    #[must_use]
+    pub fn with_references(mut self, references: bool) -> Self {
+        self.references = references;
+        self
+    }
+}
+
 /// Explicit policy captured by the caller before creating an orphan worktree.
 ///
 /// No environment or effective configuration is read for these fields. The caller owns source
 /// selection and any transformation of private configuration. Defaults preserve the existing
 /// creation API's private-index, umask and unsynchronized behavior.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct OrphanWorktreeOptions {
     /// Link spelling for this operation; does not enable repository extensions.
     pub link_style: WorktreeLinkStyle,
@@ -43,6 +61,50 @@ pub struct OrphanWorktreeOptions {
     pub shared_permissions: SharedPermissions,
     /// Selected file synchronization before completion.
     pub durability: WorktreeDurability,
+}
+
+impl OrphanWorktreeOptions {
+    /// Sets [`Self::link_style`].
+    #[must_use]
+    pub fn with_link_style(mut self, link_style: WorktreeLinkStyle) -> Self {
+        self.link_style = link_style;
+        self
+    }
+
+    /// Sets [`Self::index_path`].
+    #[must_use]
+    pub fn with_index_path(mut self, index_path: Option<PathBuf>) -> Self {
+        self.index_path = index_path;
+        self
+    }
+
+    /// Sets [`Self::index_limits`].
+    #[must_use]
+    pub fn with_index_limits(mut self, index_limits: crate::index::Limits) -> Self {
+        self.index_limits = index_limits;
+        self
+    }
+
+    /// Sets [`Self::private_config`].
+    #[must_use]
+    pub fn with_private_config(mut self, private_config: Option<Vec<u8>>) -> Self {
+        self.private_config = private_config;
+        self
+    }
+
+    /// Sets [`Self::shared_permissions`].
+    #[must_use]
+    pub fn with_shared_permissions(mut self, shared_permissions: SharedPermissions) -> Self {
+        self.shared_permissions = shared_permissions;
+        self
+    }
+
+    /// Sets [`Self::durability`].
+    #[must_use]
+    pub fn with_durability(mut self, durability: WorktreeDurability) -> Self {
+        self.durability = durability;
+        self
+    }
 }
 
 /// A refusal or partial creation failure. A registered directory in an error is retained.
@@ -309,14 +371,13 @@ impl Repository {
     /// use girt::refs::RefName;
     /// use girt::{OrphanWorktreeOptions, Repository, SharedPermissions, WorktreeDurability};
     /// let repository = Repository::open("main")?;
-    /// let options = OrphanWorktreeOptions {
-    ///     shared_permissions: SharedPermissions::Group,
-    ///     durability: WorktreeDurability {
-    ///         index: true,
-    ///         references: true,
-    ///     },
-    ///     ..Default::default()
-    /// };
+    /// let options = OrphanWorktreeOptions::default()
+    ///     .with_shared_permissions(SharedPermissions::Group)
+    ///     .with_durability(
+    ///         WorktreeDurability::default()
+    ///             .with_index(true)
+    ///             .with_references(true),
+    ///     );
     /// let branch = RefName::new(b"refs/heads/new-work")?;
     /// let linked = repository.create_orphan_worktree_with_options("linked", &branch, 128, options)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

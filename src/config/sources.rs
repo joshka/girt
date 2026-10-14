@@ -4,6 +4,7 @@ use super::Config;
 
 /// Precedence class, ordered from lowest to highest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum ConfigScope {
     /// Installation configuration.
     System,
@@ -21,6 +22,7 @@ pub enum ConfigScope {
 
 /// A file selected by the caller; relative paths use the process working directory at resolution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ConfigFile {
     /// OS-native source path.
     pub path: PathBuf,
@@ -29,6 +31,38 @@ pub struct ConfigFile {
     pub scope: ConfigScope,
     /// Ignore NotFound only; permission and parse failures always propagate.
     pub optional: bool,
+}
+
+impl ConfigFile {
+    /// Creates a required configuration file source; use [`Self::with_optional`] to allow absence.
+    pub fn new(path: PathBuf, scope: ConfigScope) -> Self {
+        Self {
+            path,
+            scope,
+            optional: false,
+        }
+    }
+
+    /// Sets [`Self::path`].
+    #[must_use]
+    pub fn with_path(mut self, path: PathBuf) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Sets [`Self::scope`].
+    #[must_use]
+    pub fn with_scope(mut self, scope: ConfigScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Sets [`Self::optional`].
+    #[must_use]
+    pub fn with_optional(mut self, optional: bool) -> Self {
+        self.optional = optional;
+        self
+    }
 }
 
 /// A physical variable location. Paths and values are never emitted through tracing.
@@ -42,6 +76,7 @@ pub struct SourceLocation {
 
 /// Provenance of one effective occurrence, including its outermost-first include ancestry.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Origin {
     /// Root source precedence class.
     pub scope: ConfigScope,
@@ -53,6 +88,7 @@ pub struct Origin {
 
 /// Explicit context for path expansion and conditional includes; no ambient environment lookup.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct IncludeContext {
     /// Home directory for `~/` expansion.
     pub home: Option<PathBuf>,
@@ -66,8 +102,46 @@ pub struct IncludeContext {
     pub branch: Option<Vec<u8>>,
 }
 
+impl IncludeContext {
+    /// Sets [`Self::home`].
+    #[must_use]
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
+        self
+    }
+
+    /// Sets [`Self::user_homes`].
+    #[must_use]
+    pub fn with_user_homes(mut self, user_homes: Vec<(Vec<u8>, PathBuf)>) -> Self {
+        self.user_homes = user_homes;
+        self
+    }
+
+    /// Sets [`Self::prefix`].
+    #[must_use]
+    pub fn with_prefix(mut self, prefix: Option<PathBuf>) -> Self {
+        self.prefix = prefix;
+        self
+    }
+
+    /// Sets [`Self::git_dirs`].
+    #[must_use]
+    pub fn with_git_dirs(mut self, git_dirs: Vec<PathBuf>) -> Self {
+        self.git_dirs = git_dirs;
+        self
+    }
+
+    /// Sets [`Self::branch`].
+    #[must_use]
+    pub fn with_branch(mut self, branch: Option<Vec<u8>>) -> Self {
+        self.branch = branch;
+        self
+    }
+}
+
 /// Finite work budgets applied independently to scan and effective expansion.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ResolveLimits {
     /// Maximum nested include edges; roots have depth zero. Default: 10.
     pub depth: usize,
@@ -81,6 +155,36 @@ pub struct ResolveLimits {
     pub entries: usize,
     /// Maximum wildcard pattern × candidate work cells per match. Default: 1,000,000.
     pub match_cells: usize,
+}
+
+impl ResolveLimits {
+    /// Sets [`Self::depth`].
+    #[must_use]
+    pub fn with_depth(mut self, depth: usize) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    /// Sets [`Self::bytes`].
+    #[must_use]
+    pub fn with_bytes(mut self, bytes: usize) -> Self {
+        self.bytes = bytes;
+        self
+    }
+
+    /// Sets [`Self::entries`].
+    #[must_use]
+    pub fn with_entries(mut self, entries: usize) -> Self {
+        self.entries = entries;
+        self
+    }
+
+    /// Sets [`Self::match_cells`].
+    #[must_use]
+    pub fn with_match_cells(mut self, match_cells: usize) -> Self {
+        self.match_cells = match_cells;
+        self
+    }
 }
 
 impl Default for ResolveLimits {
@@ -102,6 +206,7 @@ impl Default for ResolveLimits {
 /// Each call rereads sources; an existing snapshot never changes. Concurrent external writers can
 /// yield a mixed snapshot across files; no locks, writes, or environment mutation occur.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ConfigInputs {
     /// Explicit system/global/local/worktree files. Optionality belongs to each source.
     pub files: Vec<ConfigFile>,
@@ -113,6 +218,43 @@ pub struct ConfigInputs {
     pub command: Option<Config>,
     /// Resource budgets.
     pub limits: ResolveLimits,
+}
+
+impl ConfigInputs {
+    /// Sets [`Self::files`].
+    #[must_use]
+    pub fn with_files(mut self, files: Vec<ConfigFile>) -> Self {
+        self.files = files;
+        self
+    }
+
+    /// Sets [`Self::context`].
+    #[must_use]
+    pub fn with_context(mut self, context: IncludeContext) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Sets [`Self::environment`].
+    #[must_use]
+    pub fn with_environment(mut self, environment: Option<Config>) -> Self {
+        self.environment = environment;
+        self
+    }
+
+    /// Sets [`Self::command`].
+    #[must_use]
+    pub fn with_command(mut self, command: Option<Config>) -> Self {
+        self.command = command;
+        self
+    }
+
+    /// Sets [`Self::limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: ResolveLimits) -> Self {
+        self.limits = limits;
+        self
+    }
 }
 
 impl ConfigInputs {

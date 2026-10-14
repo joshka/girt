@@ -80,10 +80,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Repository::open(PathBuf::from(path))?;
     let pack_directory = repository.object_dir().join("pack");
     let initial_bytes = pack_bytes(&pack_directory)?;
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let cancel = AtomicBool::new(false);
     let running = AtomicBool::new(true);
     let start = Instant::now();

@@ -36,10 +36,8 @@ fn retention(c: &mut Criterion) {
             .is_some()
     );
     let repository = Repository::open(history.root.path()).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let cancel = AtomicBool::new(false);
     assert!(repository.plan_retention(&policy, &cancel).is_complete());
     c.bench_function("retention/packed-linear-256", |bench| {

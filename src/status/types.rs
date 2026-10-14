@@ -2,6 +2,7 @@ use crate::{ObjectId, TreeChange, TreeCompareLimits, TreeValue, index};
 
 /// Snapshot against which staged entries are compared.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum Baseline {
     /// Resolve this worktree's HEAD. An unborn branch means an empty tree; detached HEAD works.
     Head,
@@ -11,6 +12,7 @@ pub enum Baseline {
 
 /// Deliberate policy for files absent from the index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Untracked {
     /// Visit only directories needed to find tracked paths; report no untracked names.
     Omit,
@@ -21,6 +23,7 @@ pub enum Untracked {
 
 /// Bounds for status phases; these are work/allocation ceilings, not exact heap limits.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Applied separately to the initial and final index read.
     pub index: index::Limits,
@@ -44,6 +47,78 @@ pub struct Limits {
     /// Nested directory depth, capped at 128 even if larger (default 64).
     pub max_depth: usize,
 }
+
+impl Limits {
+    /// Sets [`Self::index`].
+    #[must_use]
+    pub fn with_index(mut self, index: index::Limits) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Sets [`Self::trees`].
+    #[must_use]
+    pub fn with_trees(mut self, trees: TreeCompareLimits) -> Self {
+        self.trees = trees;
+        self
+    }
+
+    /// Sets [`Self::packs`].
+    #[must_use]
+    pub fn with_packs(mut self, packs: crate::PackLimits) -> Self {
+        self.packs = packs;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: crate::ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_file_bytes`].
+    #[must_use]
+    pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
+        self.max_file_bytes = max_file_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_worktree_bytes`].
+    #[must_use]
+    pub fn with_max_worktree_bytes(mut self, max_worktree_bytes: usize) -> Self {
+        self.max_worktree_bytes = max_worktree_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_directory_entries`].
+    #[must_use]
+    pub fn with_max_directory_entries(mut self, max_directory_entries: usize) -> Self {
+        self.max_directory_entries = max_directory_entries;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+}
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -63,6 +138,7 @@ impl Default for Limits {
 
 /// Explicit interpretation of every successful status result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Comparison {
     /// Literal bytes, owner executable bit and native symlinks; no normalization/config policy.
     RawBytesAndPosixModes,
@@ -75,6 +151,7 @@ pub enum Comparison {
 /// Assume-valid entries are verified exactly like other entries. All index blob targets, including
 /// conflict stages, are verified; baseline leaf targets and gitlink commit targets are not read.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Report {
     /// Always explicit so raw comparison cannot be confused with normalized Git status.
     pub comparison: Comparison,
@@ -101,6 +178,7 @@ pub struct Report {
 
 /// An index leaf whose observed worktree value differs or could not be inspected as a leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct WorktreeChange {
     /// Original index path bytes.
     pub path: Vec<u8>,
@@ -112,6 +190,7 @@ pub struct WorktreeChange {
 
 /// Literal worktree difference from one index leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Change {
     /// The exact byte name or one of its ancestor directories was absent.
     Deleted,
@@ -127,6 +206,7 @@ pub enum Change {
 
 /// Status failed without returning a partial report or changing repository data.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// Platform, bare repository, filename, or filesystem feature outside the supported scope.
     #[error("unsupported status observation at {path:?}: {reason}")]

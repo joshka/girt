@@ -132,14 +132,12 @@ fn composed_maintenance_expires_replaces_and_prunes(#[case] format: &str) {
         .join(&orphan_hex[..2])
         .join(&orphan_hex[2..]);
     assert!(orphan_path.exists());
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: Some(4_000_000_000),
             disconnected_before: Some(4_000_000_000),
-        },
-        ..Default::default()
-    };
+        });
     let result = repo
         .run_maintenance(
             &mut FixtureIsolation,
@@ -225,14 +223,12 @@ fn composed_reftable_maintenance_preserves_live_git_objects(#[case] format: &str
         &["repack", "-ad", "--no-write-bitmap-index"],
         b"",
     );
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(4_000_000_000),
-        },
-        ..Default::default()
-    };
+        });
     let report = repository
         .run_maintenance(
             &mut FixtureIsolation,
@@ -289,10 +285,8 @@ fn isolated_loose_prune_keeps_git_roots_and_reflog_history(#[case] format: &str)
         .join("objects")
         .join(&orphan.to_string()[..2])
         .join(&orphan.to_string()[2..]);
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let result = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -312,10 +306,8 @@ fn isolated_loose_prune_keeps_git_roots_and_reflog_history(#[case] format: &str)
 fn loose_prune_refuses_without_isolation() {
     let (root, repo, _, _) = fixture();
     let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let error = repo
         .prune_unreachable_loose(&mut RefusingIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -344,10 +336,8 @@ fn incomplete_scan_refuses_loose_deletion() {
     let (root, repo, _, _) = fixture();
     let orphan = git(root.path(), &["hash-object", "-w", "--stdin"], b"orphan\n");
     fs::write(root.path().join("refs/heads/broken"), b"invalid\n").unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let error = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -371,10 +361,8 @@ fn loose_prune_refreshes_shallow_state_before_scanning() {
     fs::write(root.path().join("shallow"), format!("{child}\n")).unwrap();
     let stale = Repository::open(root.path()).unwrap();
     fs::remove_file(root.path().join("shallow")).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let report = stale
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -392,14 +380,12 @@ fn loose_prune_refreshes_shallow_state_before_scanning() {
 fn isolated_files_reflog_expiry_preserves_live_git_objects(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
     let path = root.path().join("logs/refs/heads/deleted");
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(1700000001),
-        },
-        ..Default::default()
-    };
+        });
     let report = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -439,13 +425,12 @@ fn reflog_expiry_refuses_without_isolation() {
     let (root, repo, _, _) = fixture();
     let path = root.path().join("logs/refs/heads/deleted");
     let before = fs::read(&path).unwrap();
-    let policy = RetentionPolicy {
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default().with_reflog_expiry(
+        girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(1700000001),
         },
-        ..Default::default()
-    };
+    );
     let error = repo
         .expire_reflogs(&mut RefusingIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -549,14 +534,12 @@ fn isolated_reftable_expiry_removes_selected_history(#[case] format: &str) {
             girt::refs::Expected::Value(girt::refs::Target::Direct(tip)),
         )
         .unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(4_000_000_000),
-        },
-        ..Default::default()
-    };
+        });
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(!plan.reflog_expiry_candidates.is_empty());
@@ -616,10 +599,8 @@ fn isolated_pack_retirement_preserves_git_readability(#[case] format: &str) {
         .find(|path| path.extension().is_some_and(|extension| extension == "idx"))
         .unwrap();
     let canonical_index = old_index.canonicalize().unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let report = repo
         .retire_old_packs(
             &mut FixtureIsolation,
@@ -702,10 +683,8 @@ fn retirement_reuses_git_deltas_and_compresses_loose_objects(#[case] format: &st
         &["update-ref", "refs/heads/main", &parent],
         b"",
     );
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let report = repo
         .retire_old_packs(
             &mut FixtureIsolation,
@@ -757,10 +736,8 @@ fn kept_pack_is_not_retired() {
         })
         .unwrap();
     fs::write(old_pack.with_extension("keep"), b"keep\n").unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let report = repo
         .retire_old_packs(
             &mut FixtureIsolation,
@@ -795,10 +772,8 @@ fn failed_replacement_keeps_old_pack() {
     let error = repo
         .retire_old_packs(
             &mut FixtureIsolation,
-            &RetentionPolicy {
-                recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-                ..Default::default()
-            },
+            &RetentionPolicy::default()
+                .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60)),
             limits,
             &AtomicBool::new(false),
         )
@@ -844,10 +819,8 @@ fn pack_retirement_refuses_without_directory_durability() {
 fn published_repack_is_git_usable_and_preserves_readers(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
     let mut reader = repo.objects(PackLimits::default()).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let result = repo
         .repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false))
         .unwrap();
@@ -989,11 +962,9 @@ fn repack_refuses_incomplete_plan_and_prepublication_cancellation() {
         ),
         Err(RepackError::Cancelled)
     ));
-    let policy = RetentionPolicy {
-        heads: vec![second],
-        max_entries: 0,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default()
+        .with_heads(vec![second])
+        .with_max_entries(0);
     assert!(matches!(
         repo.repack_retained(&policy, RepackLimits::default(), &AtomicBool::new(false)),
         Err(RepackError::Incomplete(_))
@@ -1030,10 +1001,8 @@ fn repack_limit_fails_before_creating_artifacts() {
 #[case::sha256("sha256")]
 fn deleted_reflog_and_git_closure_are_retained(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert_eq!(plan.outcome, RetentionOutcome::Complete);
     assert!(plan.roots.contains(&first));
@@ -1079,20 +1048,16 @@ fn damaged_history_and_missing_object_cannot_complete() {
         ),
     )
     .unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(!plan.is_complete());
     assert!(plan.roots.contains(&second));
     fs::remove_file(log).unwrap();
     let missing: ObjectId = "1111111111111111111111111111111111111111".parse().unwrap();
-    let policy = RetentionPolicy {
-        heads: vec![missing],
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default()
+        .with_heads(vec![missing])
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(!plan.is_complete());
     assert!(plan.roots.contains(&missing));
@@ -1101,14 +1066,12 @@ fn damaged_history_and_missing_object_cannot_complete() {
 #[test]
 fn expiry_candidates_do_not_remove_live_or_reflog_observation() {
     let (_root, repo, first, second) = fixture();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(1700000001),
-        },
-        ..Default::default()
-    };
+        });
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.roots.contains(&second));
@@ -1143,14 +1106,12 @@ fn expiry_positions_distinguish_private_heads_and_dedupe_shared_logs(#[case] for
     fs::create_dir_all(linked.git_dir().join("logs")).unwrap();
     fs::write(repo.git_dir().join("logs/HEAD"), &record).unwrap();
     fs::write(linked.git_dir().join("logs/HEAD"), &record).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: Some(1700000001),
             disconnected_before: Some(1700000001),
-        },
-        ..Default::default()
-    };
+        });
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     let head = girt::refs::RefName::new(b"HEAD").unwrap();
@@ -1196,10 +1157,8 @@ fn detached_linked_head_and_private_index_are_roots() {
         ],
         b"",
     );
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.strong_roots.contains(&second));
@@ -1209,10 +1168,7 @@ fn detached_linked_head_and_private_index_are_roots() {
 #[test]
 fn bounded_and_cancelled_scans_report_incomplete() {
     let (_root, repo, _, _) = fixture();
-    let policy = RetentionPolicy {
-        max_entries: 0,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_max_entries(0);
     assert!(
         !repo
             .plan_retention(&policy, &AtomicBool::new(false))
@@ -1272,10 +1228,8 @@ fn reftable_history_survives_reference_deletion_without_log_edit(#[case] format:
             girt::refs::Expected::Value(girt::refs::Target::Direct(tip)),
         )
         .unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.roots.contains(&tip));
@@ -1287,10 +1241,8 @@ fn pseudoref_roots_and_recent_objects_hook_policy_are_explicit() {
     let (root, repo, _first, second) = fixture();
     fs::remove_file(root.path().join("logs/refs/heads/deleted")).unwrap();
     fs::write(root.path().join("ORIG_HEAD"), format!("{second}\n")).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.strong_roots.contains(&second));
@@ -1307,10 +1259,7 @@ fn pseudoref_roots_and_recent_objects_hook_policy_are_explicit() {
 #[test]
 fn aggregate_reflog_budget_keeps_recovered_candidates() {
     let (_root, repo, _first, second) = fixture();
-    let policy = RetentionPolicy {
-        max_reflog_bytes: 0,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_max_reflog_bytes(0);
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(!plan.is_complete());
     assert!(plan.roots.contains(&second));
@@ -1326,10 +1275,8 @@ fn kept_pack_is_reported_for_later_repacking() {
         .find(|path| path.extension().is_some_and(|ext| ext == "pack"))
         .unwrap();
     fs::write(pack.with_extension("keep"), b"").unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(
@@ -1362,11 +1309,9 @@ fn alternate_objects_are_read_but_not_owned() {
     )
     .unwrap();
     let repo = Repository::open(&primary).unwrap();
-    let policy = RetentionPolicy {
-        heads: vec![blob],
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default()
+        .with_heads(vec![blob])
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.required.contains(&blob));
@@ -1425,10 +1370,8 @@ fn unavailable_checkout_keeps_private_head() {
         b"",
     );
     fs::remove_file(checkout.join(".git")).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.strong_roots.contains(&second));
@@ -1442,10 +1385,8 @@ fn declared_shallow_boundary_does_not_require_missing_parent() {
     let hex = first.to_string();
     fs::remove_file(root.path().join("objects").join(&hex[..2]).join(&hex[2..])).unwrap();
     let repo = Repository::open(root.path()).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.reachable.contains(&second));
@@ -1455,10 +1396,7 @@ fn declared_shallow_boundary_does_not_require_missing_parent() {
 #[test]
 fn reference_inventory_budget_blocks_completion() {
     let (_root, repo, _first, _second) = fixture();
-    let policy = RetentionPolicy {
-        max_reference_bytes: 0,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_max_reference_bytes(0);
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(!plan.is_complete());
 }
@@ -1467,10 +1405,8 @@ fn reference_inventory_budget_blocks_completion() {
 fn symbolic_reference_through_head_retains_target() {
     let (root, repo, first, _second) = fixture();
     fs::write(root.path().join("refs/heads/alias"), b"ref: HEAD\n").unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.strong_roots.contains(&first));
@@ -1481,10 +1417,8 @@ fn symbolic_reference_through_head_retains_target() {
 #[case::sha256("sha256")]
 fn git_gc_preserves_planned_history_and_repository_use(#[case] format: &str) {
     let (root, repo, first, second) = fixture_format(format);
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     git(root.path(), &["config", "gc.reflogExpire", "never"], b"");
@@ -1620,10 +1554,8 @@ fn retained_registration_roots_survive_checkout_reuse(#[case] format: &str) {
         reference
     );
     assert!(git(private.git_dir(), &["ls-files", "--stage"], b"").contains(&blob));
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.strong_roots.contains(&head));
@@ -1821,10 +1753,8 @@ fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
     let repo = Repository::open(root.path()).unwrap();
     let published = repo
         .repack_retained(
-            &RetentionPolicy {
-                recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-                ..RetentionPolicy::default()
-            },
+            &RetentionPolicy::default()
+                .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60)),
             RepackLimits::default(),
             &AtomicBool::new(false),
         )
@@ -1862,14 +1792,12 @@ fn repack_copies_git_deltas_byte_for_byte(#[case] format: &str) {
 }
 
 fn gc_policy() -> RetentionPolicy {
-    RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: Some(1_800_000_000),
             disconnected_before: Some(1_800_000_000),
-        },
-        ..RetentionPolicy::default()
-    }
+        })
 }
 
 #[cfg(unix)]
@@ -2056,13 +1984,7 @@ fn max_bytes_counts_decoded_graph_objects_only(#[case] format: &str) {
     .parse()
     .unwrap();
     publish_blob_root(root.path(), blob, false);
-    let plan = repo.plan_retention(
-        &RetentionPolicy {
-            max_bytes: 4096,
-            ..gc_policy()
-        },
-        &AtomicBool::new(false),
-    );
+    let plan = repo.plan_retention(&(gc_policy()).with_max_bytes(4096), &AtomicBool::new(false));
     assert!(plan.is_complete(), "{:?}", plan.outcome);
     assert!(plan.required.contains(&blob));
 }
@@ -2078,10 +2000,7 @@ fn composite_gc_refuses_limits_before_mutation(#[case] format: &str) {
     let error = repo
         .collect_garbage(
             &mut FixtureIsolation,
-            &RetentionPolicy {
-                max_entries: 1,
-                ..gc_policy()
-            },
+            &(gc_policy()).with_max_entries(1),
             &AtomicBool::new(false),
         )
         .unwrap_err();
@@ -2124,14 +2043,12 @@ fn expire_and_prune_match_git_gc_retained_set_and_reflogs(#[case] format: &str) 
         .unwrap();
     repo.collect_garbage(
         &mut FixtureIsolation,
-        &RetentionPolicy {
-            recent_cutoff: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
-            reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+        &(gc_policy())
+            .with_recent_cutoff(SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000))
+            .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
                 live_before: Some(1_600_000_000),
                 disconnected_before: Some(1_800_000_000),
-            },
-            ..gc_policy()
-        },
+            }),
         &AtomicBool::new(false),
     )
     .unwrap();
@@ -2271,13 +2188,12 @@ fn recent_pack_does_not_classify_unreachable_history_as_live(#[case] format: &st
         b"",
     );
     let plan = repo.plan_retention(
-        &RetentionPolicy {
-            reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+        &RetentionPolicy::default().with_reflog_expiry(
+            girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
                 live_before: Some(1_600_000_000),
                 disconnected_before: Some(1_800_000_000),
             },
-            ..RetentionPolicy::default()
-        },
+        ),
         &AtomicBool::new(false),
     );
     assert!(plan.is_complete(), "{:?}", plan.outcome);
@@ -2325,10 +2241,7 @@ fn protected_pack_keeps_old_loose_descendants(
     protect_and_backdate(root.path(), &checksum, keep);
     collect_with_optional_repack(
         &repo,
-        &RetentionPolicy {
-            recent_cutoff: SystemTime::now() - Duration::from_secs(86400),
-            ..gc_policy()
-        },
+        &(gc_policy()).with_recent_cutoff(SystemTime::now() - Duration::from_secs(86400)),
         repack,
     );
     assert_eq!(
@@ -2442,10 +2355,7 @@ fn recent_unindexed_pack_refuses_before_loose_deletion(#[case] format: &str) {
     let error = repo
         .collect_garbage(
             &mut FixtureIsolation,
-            &RetentionPolicy {
-                recent_cutoff: SystemTime::now() - Duration::from_secs(86400),
-                ..gc_policy()
-            },
+            &(gc_policy()).with_recent_cutoff(SystemTime::now() - Duration::from_secs(86400)),
             &AtomicBool::new(false),
         )
         .unwrap_err();
@@ -2591,6 +2501,7 @@ fn mislabel_single_entry_index(path: &Path, format: girt::ObjectFormat, id: Obje
     let checksum = match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes[end..].copy_from_slice(&checksum);
     use std::os::unix::fs::PermissionsExt;
@@ -2667,10 +2578,8 @@ fn damaged_index_checksum_refuses_deletion(#[case] maintenance: bool) {
     fs::remove_file(&index).unwrap();
     fs::write(&index, &bytes).unwrap();
     let repo = Repository::open(root.path()).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let cancel = AtomicBool::new(false);
     if maintenance {
         let error = repo
@@ -2781,13 +2690,12 @@ fn expiry_at_cutoff_does_not_audit_history(#[case] format: &str) {
         b"",
     );
     assert_eq!(fs::read(&path).unwrap(), before);
-    let policy = RetentionPolicy {
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default().with_reflog_expiry(
+        girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: Some(1700000000),
             disconnected_before: Some(1700000000),
         },
-        ..Default::default()
-    };
+    );
     let report = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -2801,13 +2709,12 @@ fn eligible_expiry_with_missing_history_refuses_without_rewrite() {
     let (root, repo) = missing_packed_history("sha1");
     let path = root.path().join("logs/refs/heads/main");
     let before = fs::read(&path).unwrap();
-    let policy = RetentionPolicy {
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default().with_reflog_expiry(
+        girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: None,
             disconnected_before: Some(1700000001),
         },
-        ..Default::default()
-    };
+    );
     let error = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -2820,10 +2727,8 @@ fn eligible_expiry_with_missing_history_refuses_without_rewrite() {
 fn old_loose_candidate_with_missing_history_refuses_without_deletion() {
     let (root, repo) = missing_packed_history("sha1");
     let id = git(root.path(), &["hash-object", "-w", "--stdin"], b"only copy");
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..Default::default()
-    };
+    let policy =
+        RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let error = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -2844,10 +2749,7 @@ fn prune_empty_inventory_still_enforces_scan_bounds(
 ) {
     let (root, repo) = missing_packed_history("sha1");
     let before = fs::read(root.path().join("logs/refs/heads/main")).unwrap();
-    let policy = RetentionPolicy {
-        max_entries: entries,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_max_entries(entries);
     let error = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(cancelled))
         .unwrap_err();
@@ -2866,11 +2768,9 @@ fn expiry_noop_still_enforces_observation_budgets(#[case] entries: usize, #[case
     let (root, repo) = missing_packed_history("sha1");
     let path = root.path().join("logs/refs/heads/main");
     let before = fs::read(&path).unwrap();
-    let policy = RetentionPolicy {
-        max_entries: entries,
-        max_reflog_bytes: bytes,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default()
+        .with_max_entries(entries)
+        .with_max_reflog_bytes(bytes);
     let error = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap_err();
@@ -2887,10 +2787,7 @@ fn recent_loose_candidate_is_preserved_without_a_history_walk() {
         &["hash-object", "-w", "--stdin"],
         b"recent only copy",
     );
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::UNIX_EPOCH,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_recent_cutoff(SystemTime::UNIX_EPOCH);
     // Git 2.55 still walks damaged roots when recent loose objects exist. Use a healthy
     // independently generated history for its retention oracle, then test girt's no-op contract.
     let (oracle, _, _, _) = fixture();
@@ -2958,13 +2855,12 @@ fn reftable_noop_expiry_preserves_missing_history_stack(#[case] format: &str) {
     let (root, repo) = missing_packed_history_backend(format, "reftable");
     let path = root.path().join("reftable/tables.list");
     let before = fs::read(&path).unwrap();
-    let policy = RetentionPolicy {
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
+    let policy = RetentionPolicy::default().with_reflog_expiry(
+        girt::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
             live_before: Some(1700000000),
             disconnected_before: Some(1700000000),
         },
-        ..Default::default()
-    };
+    );
     let report = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -3004,10 +2900,7 @@ fn loose_cutoff_equality_is_conservative_relative_to_git() {
         b"",
     );
     assert!(!loose_path(oracle.path(), id).exists());
-    let policy = RetentionPolicy {
-        recent_cutoff: cutoff,
-        ..Default::default()
-    };
+    let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
     let report = repo
         .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -3091,13 +2984,11 @@ fn configured_expiry_keeps_the_same_records_as_git(
     let expected = fs::read(&log).unwrap();
     fs::write(&log, original).unwrap();
     let repository = Repository::open(root.path()).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::Configured(
             girt::retention::ReflogExpiry::from_config(repository.config(), 1_800_000_000).unwrap(),
-        ),
-        ..Default::default()
-    };
+        ));
     repository
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -3206,29 +3097,16 @@ fn layered_expiry_keeps_the_same_records_as_git(
     let expected = fs::read(&log).unwrap();
     fs::write(&log, original).unwrap();
     // Caller order deliberately differs from scope order; resolution must still match Git.
-    let inputs = ConfigInputs {
-        files: vec![
-            ConfigFile {
-                path: global,
-                scope: ConfigScope::Global,
-                optional: false,
-            },
-            ConfigFile {
-                path: system,
-                scope: ConfigScope::System,
-                optional: false,
-            },
-        ],
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default().with_files(vec![
+        ConfigFile::new(global, ConfigScope::Global).with_optional(false),
+        ConfigFile::new(system, ConfigScope::System).with_optional(false),
+    ]);
     let repository = Repository::open_with_config(root.path(), &inputs).unwrap();
-    let policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
+    let policy = RetentionPolicy::default()
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
+        .with_reflog_expiry(girt::retention::ReflogExpiryPolicy::Configured(
             girt::retention::ReflogExpiry::from_config(repository.config(), 1_800_000_000).unwrap(),
-        ),
-        ..Default::default()
-    };
+        ));
     repository
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();
@@ -3265,12 +3143,11 @@ fn configured_noop_expiry_does_not_audit_missing_history(#[case] format: &str) {
     let before = fs::read(&path).unwrap();
     git(root.path(), &["reflog", "expire", "refs/heads/main"], b"");
     assert_eq!(fs::read(&path).unwrap(), before);
-    let policy = RetentionPolicy {
-        reflog_expiry: girt::retention::ReflogExpiryPolicy::Configured(
+    let policy = RetentionPolicy::default().with_reflog_expiry(
+        girt::retention::ReflogExpiryPolicy::Configured(
             girt::retention::ReflogExpiry::from_config(repo.config(), 1_800_000_000).unwrap(),
         ),
-        ..Default::default()
-    };
+    );
     let report = repo
         .expire_reflogs(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
         .unwrap();

@@ -61,18 +61,15 @@ mod supported {
             .loose_objects()
             .write_blob(b"Disposable SSH example\n")?;
         let cancel = AtomicBool::new(false);
-        let control = TransportControl {
-            cancel: &cancel,
-            deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(30)),
-        };
+        let control = TransportControl::new(&cancel).with_deadline(Some(
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        ));
         let prepared = PreparedPush::new(
             &source_repo.objects(PackLimits::default())?,
-            vec![PushCommand {
-                name: RefName::new("refs/tags/example")?,
-                expected: None,
-                new: id,
-                force: ForcePolicy::FastForwardOnly,
-            }],
+            vec![
+                PushCommand::new(RefName::new("refs/tags/example")?, None, id)
+                    .with_force(ForcePolicy::FastForwardOnly),
+            ],
             PushLimits::default(),
             &cancel,
         )?;

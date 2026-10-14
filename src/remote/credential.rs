@@ -15,6 +15,7 @@ use crate::config::boolean;
 ///
 /// Components must not contain CR, LF, or NUL. A path is sent only when `use_http_path` is true.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CredentialContext {
     /// URL scheme, such as `https`.
     pub protocol: Vec<u8>,
@@ -26,6 +27,46 @@ pub struct CredentialContext {
     pub use_http_path: bool,
 }
 
+impl CredentialContext {
+    /// Creates a context without a path; HTTP path matching is disabled.
+    pub fn new(protocol: Vec<u8>, host: Vec<u8>) -> Self {
+        Self {
+            protocol,
+            host,
+            path: None,
+            use_http_path: false,
+        }
+    }
+
+    /// Sets [`Self::protocol`].
+    #[must_use]
+    pub fn with_protocol(mut self, protocol: Vec<u8>) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    /// Sets [`Self::host`].
+    #[must_use]
+    pub fn with_host(mut self, host: Vec<u8>) -> Self {
+        self.host = host;
+        self
+    }
+
+    /// Sets [`Self::path`].
+    #[must_use]
+    pub fn with_path(mut self, path: Option<Vec<u8>>) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Sets [`Self::use_http_path`].
+    #[must_use]
+    pub fn with_use_http_path(mut self, use_http_path: bool) -> Self {
+        self.use_http_path = use_http_path;
+        self
+    }
+}
+
 impl std::fmt::Debug for CredentialContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialContext").finish_non_exhaustive()
@@ -34,11 +75,36 @@ impl std::fmt::Debug for CredentialContext {
 
 /// Secret-bearing helper response. Debug deliberately omits all values.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub struct Credential {
     /// Username returned by a helper or prompt.
     pub username: Option<Vec<u8>>,
     /// Password or token returned by a helper or prompt.
     pub password: Option<Vec<u8>>,
+}
+
+impl Credential {
+    /// Creates an empty credential with no username or password.
+    pub fn new() -> Self {
+        Self {
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Sets [`Self::username`].
+    #[must_use]
+    pub fn with_username(mut self, username: Option<Vec<u8>>) -> Self {
+        self.username = username;
+        self
+    }
+
+    /// Sets [`Self::password`].
+    #[must_use]
+    pub fn with_password(mut self, password: Option<Vec<u8>>) -> Self {
+        self.password = password;
+        self
+    }
 }
 
 impl std::fmt::Debug for Credential {
@@ -56,6 +122,7 @@ impl Credential {
 
 /// An application-approved executable and arguments. No shell interpretation is performed.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CredentialProgram {
     /// Executable path or name resolved through the caller's approved PATH.
     pub executable: PathBuf,
@@ -67,6 +134,49 @@ pub struct CredentialProgram {
     pub environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
 }
 
+impl CredentialProgram {
+    /// Creates a program with no arguments or environment entries and no environment inheritance.
+    pub fn new(executable: PathBuf) -> Self {
+        Self {
+            executable,
+            arguments: Vec::new(),
+            inherit_environment: false,
+            environment: Vec::new(),
+        }
+    }
+
+    /// Sets [`Self::executable`].
+    #[must_use]
+    pub fn with_executable(mut self, executable: PathBuf) -> Self {
+        self.executable = executable;
+        self
+    }
+
+    /// Sets [`Self::arguments`].
+    #[must_use]
+    pub fn with_arguments(mut self, arguments: Vec<std::ffi::OsString>) -> Self {
+        self.arguments = arguments;
+        self
+    }
+
+    /// Sets [`Self::inherit_environment`].
+    #[must_use]
+    pub fn with_inherit_environment(mut self, inherit_environment: bool) -> Self {
+        self.inherit_environment = inherit_environment;
+        self
+    }
+
+    /// Sets [`Self::environment`].
+    #[must_use]
+    pub fn with_environment(
+        mut self,
+        environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    ) -> Self {
+        self.environment = environment;
+        self
+    }
+}
+
 impl std::fmt::Debug for CredentialProgram {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialProgram").finish_non_exhaustive()
@@ -75,6 +185,7 @@ impl std::fmt::Debug for CredentialProgram {
 
 /// A configured helper that the application explicitly mapped to a trusted implementation.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct CredentialHelper {
     /// Exact configuration value; used only to match the selected helper order.
     pub configured_name: Vec<u8>,
@@ -82,8 +193,33 @@ pub struct CredentialHelper {
     pub backend: CredentialBackend,
 }
 
+impl CredentialHelper {
+    /// Creates a helper from its configured name and explicitly approved backend.
+    pub fn new(configured_name: Vec<u8>, backend: CredentialBackend) -> Self {
+        Self {
+            configured_name,
+            backend,
+        }
+    }
+
+    /// Sets [`Self::configured_name`].
+    #[must_use]
+    pub fn with_configured_name(mut self, configured_name: Vec<u8>) -> Self {
+        self.configured_name = configured_name;
+        self
+    }
+
+    /// Sets [`Self::backend`].
+    #[must_use]
+    pub fn with_backend(mut self, backend: CredentialBackend) -> Self {
+        self.backend = backend;
+        self
+    }
+}
+
 /// How a credential helper runs.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum CredentialBackend {
     /// An approved external process speaking Git's credential helper protocol.
     Program(CredentialProgram),
@@ -99,6 +235,7 @@ impl std::fmt::Debug for CredentialHelper {
 
 /// Value-free error with a stage for recovery decisions.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CredentialError {
     /// A context or protocol response is invalid.
     #[error("invalid credential {0}")]
@@ -139,17 +276,15 @@ pub enum CredentialError {
 /// use girt::remote::{CredentialContext, CredentialSession, Prompt};
 ///
 /// let config = Config::parse(b"").unwrap();
-/// let context = CredentialContext {
-///     protocol: b"https".to_vec(),
-///     host: b"example.invalid".to_vec(),
-///     path: Some(b"repo".to_vec()),
-///     use_http_path: false,
-/// };
+/// let context = CredentialContext::new(b"https".to_vec(), b"example.invalid".to_vec())
+///     .with_path(Some(b"repo".to_vec()))
+///     .with_use_http_path(false);
 /// let cancel = AtomicBool::new(false);
 /// let mut prompt = |field| {
 ///     Some(match field {
 ///         Prompt::Username => b"sample-user".to_vec(),
 ///         Prompt::Password => b"synthetic-secret".to_vec(),
+///         _ => return None,
 ///     })
 /// };
 /// let session =
@@ -339,6 +474,7 @@ impl CredentialSession {
 
 /// A field requested by the application-owned prompt callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Prompt {
     /// The account name for the endpoint.
     Username,

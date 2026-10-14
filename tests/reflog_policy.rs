@@ -85,12 +85,11 @@ fn fixture(
 }
 
 fn edit(reference: &str, target: ObjectId, expected: Expected) -> RefEdit {
-    RefEdit {
-        name: name(reference),
-        dereference: false,
-        target: Some(Target::Direct(target)),
+    RefEdit::new(
+        name(reference),
+        Some(Target::Direct(target)),
         expected,
-        reflog: Reflog::AppendIfChanged {
+        Reflog::AppendIfChanged {
             committer: Signature {
                 name: b"C. Recorder".to_vec(),
                 email: b"committer@example.com".to_vec(),
@@ -99,7 +98,7 @@ fn edit(reference: &str, target: ObjectId, expected: Expected) -> RefEdit {
             },
             message: b"conditional update".to_vec(),
         },
-    }
+    )
 }
 
 fn git_update(root: &std::path::Path, reference: &str, target: ObjectId) {
@@ -370,13 +369,12 @@ fn existing_append_does_not_revive_deleted_logs_matching_git(
     git_update(root.path(), "refs/heads/main", first);
     git_update(oracle_root.path(), "refs/heads/main", first);
     let refs = repo.references().unwrap();
-    refs.transaction(&[RefEdit {
-        name: name("refs/heads/main"),
-        dereference: false,
-        target: None,
-        expected: Expected::Exists,
-        reflog: Reflog::Delete,
-    }])
+    refs.transaction(&[RefEdit::new(
+        name("refs/heads/main"),
+        None,
+        Expected::Exists,
+        Reflog::Delete,
+    )])
     .unwrap();
     git::git(
         oracle_root.path(),

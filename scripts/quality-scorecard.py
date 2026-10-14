@@ -554,7 +554,7 @@ def idiomatic(doc, items, types, style):
                percent(len(error_enums) - len(exhaustive_errors), len(error_enums)), 100, unit="%",
                detail=exhaustive_errors[:20]),
         metric("public enums marked #[non_exhaustive]", percent(len(enums) - len(exhaustive_enums), len(enums)),
-               None, unit="%", note="informational; closed sets such as ObjectFormat may stay exhaustive"),
+               None, unit="%", note="informational; closed sets such as ObjectKind and index::Stage may stay exhaustive"),
         metric("public types that are Send + Sync", percent(len(types) - len(not_send_sync), len(types)), 100,
                unit="%", detail=not_send_sync[:20]),
         metric("public types implementing Debug", percent(len(types) - len(no_debug), len(types)), 100, unit="%",

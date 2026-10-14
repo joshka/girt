@@ -34,16 +34,18 @@ fn workflow(c: &mut Criterion) {
         .unwrap(),
     );
     for count in [10, 10_000] {
-        let advertisement = Advertisement {
-            refs: (0..count)
-                .map(|i| AdvertisedRef {
-                    name: RefName::new(format!("refs/tags/{i}")).unwrap(),
-                    id: ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
-                    peeled: false,
+        let advertisement = Advertisement::new(
+            (0..count)
+                .map(|i| {
+                    AdvertisedRef::new(
+                        RefName::new(format!("refs/tags/{i}")).unwrap(),
+                        ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
+                        false,
+                    )
                 })
                 .collect(),
-            capabilities: Vec::new(),
-        };
+            Vec::new(),
+        );
         group.bench_with_input(
             BenchmarkId::new("plan", count),
             &advertisement,

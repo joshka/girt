@@ -51,6 +51,33 @@ different acceptance rules. Choose practical deterministic ambiguity resolution 
 Safety, resource, and unsupported restrictions need evidence, explicit errors, and a GitHub issue
 when they block required compatibility. No finite corpus establishes every edge case.
 
+## Public Type Evolution
+
+Use `#[non_exhaustive]` wherever a public type can reasonably change over time. Adding variants or
+fields to these types must not force another breaking release. Callers match extensible enums with
+an explicit fallback and construct extensible structs through supported constructors. Marking a
+previously exhaustive type non-exhaustive is itself breaking, so decide when introducing the type.
+
+- Mark public error enums and their cause/kind enums non-exhaustive almost always.
+- Mark other public enums non-exhaustive when their set can grow, including hash/object formats,
+  protocols, capabilities, policies, maintenance outcomes and progress phases.
+- Leave an enum exhaustive only when growth is truly implausible, and justify the closed set in its
+  Rustdoc. `ObjectKind` represents Git's four fundamental object kinds; `index::Stage` represents
+  the four values of an on-disk two-bit field. Both remain exhaustive.
+- Mark public structs non-exhaustive when they are likely to gain fields, including options, limits,
+  reports, outcomes, statistics and error context. Inputs need `Default` plus `with_*` methods, or
+  `new` for required data; preserve direct field mutation when useful. Read-only reports need only
+  the attribute. Opaque structs with private fields already permit field additions through their
+  existing construction APIs.
+- Leave fixed-shape data and exact format records alone, such as validated name newtypes,
+  signatures, timestamps and raw reftable records. An object identifier enum that selects hash
+  formats can grow even though each individual digest has a fixed shape.
+
+Keep fallback behavior explicit: propagate unknown errors, reject unsupported operational choices,
+and report unknown progress or outcomes conservatively. Do not silently treat a future variant as
+success. Non-exhaustiveness permits compatible additions; it does not make removals, field type
+changes or changes to existing semantics compatible.
+
 ## Errors
 
 - Use `thiserror` to derive library error implementations. Keep concrete error types and variants

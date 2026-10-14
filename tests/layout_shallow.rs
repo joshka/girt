@@ -480,13 +480,7 @@ fn shallow_boundaries_apply_to_ancestry_and_merge_bases_without_changing_bytes(
         b"1\n"
     );
     assert!(matches!(
-        objects.walk(
-            &[tip],
-            HistoryLimits {
-                max_commits: 0,
-                ..HistoryLimits::default()
-            }
-        ),
+        objects.walk(&[tip], HistoryLimits::default().with_max_commits(0)),
         Err(HistoryError::Limit(_))
     ));
 }

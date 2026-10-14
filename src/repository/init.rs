@@ -11,6 +11,7 @@ use crate::refs::RefName;
 
 /// Layout to create with [`Repository::init`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum InitKind {
     /// Put metadata in `.git` under the destination worktree directory.
     Worktree,
@@ -90,6 +91,7 @@ impl InitOptions {
 
 /// Initialization refusal, filesystem failure, or final metadata validation failure.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum InitError {
     /// A destination or repository marker already exists; it was not modified.
     #[error("initialization destination already exists: {0}")]

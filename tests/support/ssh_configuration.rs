@@ -90,20 +90,18 @@ impl Commands {
         SshRemote::configured(
             &config,
             &destination,
-            SshEnvironment {
-                git_ssh_command: command.then(|| self.value("command")),
-                git_ssh: legacy.then(|| self.value("legacy")),
-                git_ssh_variant: Some(b"ssh".to_vec()),
-                approved_command: Some(ApprovedSshCommand {
-                    configured: self.value(selected),
-                    executable: self.path(selected),
-                    arguments: vec!["literal ; $(touch must-not-exist)".into()],
-                }),
-                default_executable: self.path("default"),
-                config_file: "/dev/null".into(),
-                default_user: "default".into(),
-                ..SshEnvironment::default()
-            },
+            SshEnvironment::default()
+                .with_git_ssh_command(command.then(|| self.value("command")))
+                .with_git_ssh(legacy.then(|| self.value("legacy")))
+                .with_git_ssh_variant(Some(b"ssh".to_vec()))
+                .with_approved_command(Some(ApprovedSshCommand::new(
+                    self.value(selected),
+                    self.path(selected),
+                    vec!["literal ; $(touch must-not-exist)".into()],
+                )))
+                .with_default_executable(self.path("default"))
+                .with_config_file("/dev/null".into())
+                .with_default_user("default".into()),
         )
         .unwrap()
     }
@@ -137,10 +135,8 @@ fn command_selection_matches_git(
 
     let remote = fixture.native(command, config, legacy, selected);
     let cancel = AtomicBool::new(false);
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(5)),
-    };
+    let control =
+        TransportControl::new(&cancel).with_deadline(Some(Instant::now() + Duration::from_secs(5)));
     let result = super::runtime().block_on(fetch::discover_ssh(
         &remote,
         FetchLimits::default(),

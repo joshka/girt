@@ -19,6 +19,7 @@ use crate::{ObjectId, ObjectReadError, Repository};
 
 /// Additive publication and known old-artifact removals from one isolated attempt.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct RetireReport {
     /// Replacement pair visibly published by R32; later synchronization or verification may fail.
     pub published: Option<RepackPublished>,
@@ -30,6 +31,7 @@ pub struct RetireReport {
 
 /// Why old pack retirement stopped.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RetireCause {
     /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
@@ -66,6 +68,7 @@ pub enum RetireCause {
 /// Failure with the known successful effects and any uncertain artifact.
 #[derive(Debug, thiserror::Error)]
 #[error("pack retirement failed")]
+#[non_exhaustive]
 pub struct RetireFailure {
     /// Failure class.
     #[source]

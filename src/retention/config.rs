@@ -8,12 +8,29 @@ use crate::refs::RefName;
 /// `None` disables a rule. A disconnected record can qualify under either cutoff; the general
 /// cutoff also applies to live records. Timestamps are Unix seconds and comparison is strict.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ReflogCutoffs {
     /// Expire any record with a timestamp strictly before this value.
     pub general: Option<i128>,
 
     /// Also expire disconnected records strictly before this value.
     pub unreachable: Option<i128>,
+}
+
+impl ReflogCutoffs {
+    /// Sets [`Self::general`].
+    #[must_use]
+    pub fn with_general(mut self, general: Option<i128>) -> Self {
+        self.general = general;
+        self
+    }
+
+    /// Sets [`Self::unreachable`].
+    #[must_use]
+    pub fn with_unreachable(mut self, unreachable: Option<i128>) -> Self {
+        self.unreachable = unreachable;
+        self
+    }
 }
 
 /// Git reflog expiry settings resolved against one caller-supplied Unix clock.
@@ -57,6 +74,7 @@ struct Pattern {
 
 /// Reflog configuration cannot safely select an expiry policy.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ReflogExpiryError {
     /// Malformed or unsupported date expression, including an implicit boolean.
     #[error("invalid or unsupported reflog expiry configuration")]

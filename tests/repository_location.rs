@@ -175,11 +175,10 @@ fn logical_alias_includes_and_explicit_environment_are_retained(
     )
     .unwrap();
     let mut inputs = ConfigInputs::default();
-    inputs.files.push(girt::config::ConfigFile {
-        path: inherited,
-        scope: girt::config::ConfigScope::Global,
-        optional: false,
-    });
+    inputs.files.push(
+        girt::config::ConfigFile::new(inherited, girt::config::ConfigScope::Global)
+            .with_optional(false),
+    );
     let before: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
     let location = RepositoryLocation::at_git_dir(&alias).unwrap();
     let metadata = location.read_metadata_with_config(&inputs).unwrap();

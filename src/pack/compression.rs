@@ -2,6 +2,7 @@ use super::write::PackWriteError;
 
 /// Outgoing pack compression policy. All entries use zlib level 6.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub enum PackCompression {
     /// Stream fresh ordinary entries with fixed compression scratch space (the default).
     /// Store-backed transfer writers can preserve existing compressed delta entries.
@@ -40,6 +41,7 @@ pub enum PackCompression {
 /// configured size (or `u32::MAX`) use the streaming ordinary path. Zero bounds disable search;
 /// no option value is invalid. Small objects under eight bytes also use ordinary entries.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct DeltaOptions {
     /// Preceding pack entries inspected per object (default 16), including unsuitable entries.
     pub window: usize,
@@ -53,6 +55,50 @@ pub struct DeltaOptions {
     pub max_depth: usize,
     /// Minimum complete-entry savings against ordinary encoding (default 16 bytes).
     pub min_savings: usize,
+}
+
+impl DeltaOptions {
+    /// Sets [`Self::window`].
+    #[must_use]
+    pub fn with_window(mut self, window: usize) -> Self {
+        self.window = window;
+        self
+    }
+
+    /// Sets [`Self::max_candidates`].
+    #[must_use]
+    pub fn with_max_candidates(mut self, max_candidates: usize) -> Self {
+        self.max_candidates = max_candidates;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_work`].
+    #[must_use]
+    pub fn with_max_work(mut self, max_work: u64) -> Self {
+        self.max_work = max_work;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Sets [`Self::min_savings`].
+    #[must_use]
+    pub fn with_min_savings(mut self, min_savings: usize) -> Self {
+        self.min_savings = min_savings;
+        self
+    }
 }
 
 impl Default for DeltaOptions {
@@ -76,6 +122,7 @@ impl DeltaOptions {
 
 /// Search accounting for a completed pack; excludes ordinary hashing and zlib work.
 #[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct DeltaStats {
     /// Number of emitted delta entries.
     pub entries: u32,

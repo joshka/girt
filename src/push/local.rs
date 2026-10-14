@@ -106,11 +106,42 @@ pub fn send_local_with_control(
 /// The destination and its linked worktrees add their own local/worktree configuration to these
 /// inputs. No ambient environment is read. The caller must supply the same effective sources and
 /// runtime pairs that its Git push policy would use.
+#[non_exhaustive]
 pub struct LocalPushContext<'a> {
     /// System, global, and runtime configuration sources to inherit.
     pub config_inputs: &'a ConfigInputs,
     /// Identity for reflogs that the receive policy actually appends.
     pub identity: Option<&'a Signature>,
+}
+
+impl std::fmt::Debug for LocalPushContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalPushContext").finish_non_exhaustive()
+    }
+}
+
+impl<'a> LocalPushContext<'a> {
+    /// Creates a push context with inherited configuration and no reflog identity.
+    pub fn new(config_inputs: &'a ConfigInputs) -> Self {
+        Self {
+            config_inputs,
+            identity: None,
+        }
+    }
+
+    /// Sets [`Self::config_inputs`].
+    #[must_use]
+    pub fn with_config_inputs(mut self, config_inputs: &'a ConfigInputs) -> Self {
+        self.config_inputs = config_inputs;
+        self
+    }
+
+    /// Sets [`Self::identity`].
+    #[must_use]
+    pub fn with_identity(mut self, identity: Option<&'a Signature>) -> Self {
+        self.identity = identity;
+        self
+    }
 }
 
 /// Sends a native local push with explicit inherited configuration.

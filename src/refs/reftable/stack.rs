@@ -19,6 +19,7 @@ use crate::refs::store::{Lock, check_path, io_error, malformed};
 
 /// Bounds shared by every table in one stack operation.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct StackLimits {
     /// Maximum table count and simultaneously pinned file handles.
     pub tables: usize,
@@ -26,6 +27,29 @@ pub struct StackLimits {
     pub list_bytes: usize,
     /// Aggregate encoded, decoded and record limits, plus per-block/string limits.
     pub records: Limits,
+}
+
+impl StackLimits {
+    /// Sets [`Self::tables`].
+    #[must_use]
+    pub fn with_tables(mut self, tables: usize) -> Self {
+        self.tables = tables;
+        self
+    }
+
+    /// Sets [`Self::list_bytes`].
+    #[must_use]
+    pub fn with_list_bytes(mut self, list_bytes: usize) -> Self {
+        self.list_bytes = list_bytes;
+        self
+    }
+
+    /// Sets [`Self::records`].
+    #[must_use]
+    pub fn with_records(mut self, records: Limits) -> Self {
+        self.records = records;
+        self
+    }
 }
 
 impl Default for StackLimits {
@@ -59,6 +83,7 @@ impl StackLimits {
 /// listed file fails the single opening attempt; the caller may explicitly retry. In-place table
 /// mutation, adversarial path replacement and network filesystems are outside this contract.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Snapshot {
     /// Merged records, including tombstones. Newer tables override older records with the same
     /// key.
@@ -180,6 +205,7 @@ impl Snapshot {
 /// The replacement stack is already visible on success. Failed obsolete-file cleanup never
 /// reverses publication. Retrying compaction is safe but is not an obsolete-file cleanup service.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Compaction {
     /// Number of input tables replaced.
     pub input_tables: usize,

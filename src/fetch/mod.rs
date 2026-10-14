@@ -221,12 +221,29 @@ pub use protocol::{
 /// `depth` counts commits from each selected tip. `None` requests no depth change. A positive
 /// depth can return shallow boundaries; ordinary installation rejects such a result until
 /// coordinated boundary publication is available.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct FetchOptions {
     /// Wire, decoding, and graph budgets.
     pub limits: FetchLimits,
     /// Requested commit depth, or no depth change.
     pub depth: Option<NonZeroU32>,
+}
+
+impl FetchOptions {
+    /// Sets [`Self::limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: FetchLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Sets [`Self::depth`].
+    #[must_use]
+    pub fn with_depth(mut self, depth: Option<NonZeroU32>) -> Self {
+        self.depth = depth;
+        self
+    }
 }
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
@@ -245,6 +262,7 @@ pub struct FetchOptions {
 /// memory; they are not a hard process heap or wall-clock limit. Zero bounds allow only the
 /// corresponding empty operation. Counters include duplicate input occurrences where applicable.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct FetchLimits {
     /// Total received pkt-line bytes, framing included (default 512 MiB).
     pub max_wire_bytes: usize,
@@ -294,6 +312,141 @@ pub struct FetchLimits {
     /// Worker threads one transfer may add for reading and validation (default 8). Zero or one
     /// runs everything on the calling thread. Fewer are used when the host has fewer.
     pub max_threads: usize,
+}
+
+impl FetchLimits {
+    /// Sets [`Self::max_wire_bytes`].
+    #[must_use]
+    pub fn with_max_wire_bytes(mut self, max_wire_bytes: usize) -> Self {
+        self.max_wire_bytes = max_wire_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_advertisement_bytes`].
+    #[must_use]
+    pub fn with_max_advertisement_bytes(mut self, max_advertisement_bytes: usize) -> Self {
+        self.max_advertisement_bytes = max_advertisement_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_refs`].
+    #[must_use]
+    pub fn with_max_refs(mut self, max_refs: usize) -> Self {
+        self.max_refs = max_refs;
+        self
+    }
+
+    /// Sets [`Self::max_wants`].
+    #[must_use]
+    pub fn with_max_wants(mut self, max_wants: usize) -> Self {
+        self.max_wants = max_wants;
+        self
+    }
+
+    /// Sets [`Self::max_haves`].
+    #[must_use]
+    pub fn with_max_haves(mut self, max_haves: usize) -> Self {
+        self.max_haves = max_haves;
+        self
+    }
+
+    /// Sets [`Self::max_shallow_roots`].
+    #[must_use]
+    pub fn with_max_shallow_roots(mut self, max_shallow_roots: usize) -> Self {
+        self.max_shallow_roots = max_shallow_roots;
+        self
+    }
+
+    /// Sets [`Self::max_known_objects`].
+    #[must_use]
+    pub fn with_max_known_objects(mut self, max_known_objects: usize) -> Self {
+        self.max_known_objects = max_known_objects;
+        self
+    }
+
+    /// Sets [`Self::max_known_bytes`].
+    #[must_use]
+    pub fn with_max_known_bytes(mut self, max_known_bytes: usize) -> Self {
+        self.max_known_bytes = max_known_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_known_edges`].
+    #[must_use]
+    pub fn with_max_known_edges(mut self, max_known_edges: usize) -> Self {
+        self.max_known_edges = max_known_edges;
+        self
+    }
+
+    /// Sets [`Self::known_read`].
+    #[must_use]
+    pub fn with_known_read(mut self, known_read: crate::ReadLimits) -> Self {
+        self.known_read = known_read;
+        self
+    }
+
+    /// Sets [`Self::max_pack_bytes`].
+    #[must_use]
+    pub fn with_max_pack_bytes(mut self, max_pack_bytes: usize) -> Self {
+        self.max_pack_bytes = max_pack_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_objects`].
+    #[must_use]
+    pub fn with_max_objects(mut self, max_objects: usize) -> Self {
+        self.max_objects = max_objects;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_bytes`].
+    #[must_use]
+    pub fn with_max_delta_bytes(mut self, max_delta_bytes: usize) -> Self {
+        self.max_delta_bytes = max_delta_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_decode_bytes`].
+    #[must_use]
+    pub fn with_max_decode_bytes(mut self, max_decode_bytes: usize) -> Self {
+        self.max_decode_bytes = max_decode_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_depth`].
+    #[must_use]
+    pub fn with_max_delta_depth(mut self, max_delta_depth: usize) -> Self {
+        self.max_delta_depth = max_delta_depth;
+        self
+    }
+
+    /// Sets [`Self::max_resolution_steps`].
+    #[must_use]
+    pub fn with_max_resolution_steps(mut self, max_resolution_steps: usize) -> Self {
+        self.max_resolution_steps = max_resolution_steps;
+        self
+    }
+
+    /// Sets [`Self::max_connectivity_edges`].
+    #[must_use]
+    pub fn with_max_connectivity_edges(mut self, max_connectivity_edges: usize) -> Self {
+        self.max_connectivity_edges = max_connectivity_edges;
+        self
+    }
+
+    /// Sets [`Self::max_threads`].
+    #[must_use]
+    pub fn with_max_threads(mut self, max_threads: usize) -> Self {
+        self.max_threads = max_threads;
+        self
+    }
 }
 
 impl Default for FetchLimits {
@@ -359,6 +512,7 @@ impl FetchLimits {
 
 /// Transfer, validation, or installation failed. No references have been changed.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchError {
     /// A supplied identity uses a different object format from this operation.
     #[error(transparent)]

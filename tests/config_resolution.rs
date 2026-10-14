@@ -9,18 +9,11 @@ use girt::{Config, InitKind, ObjectFormat, Repository};
 use rstest::rstest;
 
 fn file(path: &Path, scope: ConfigScope) -> ConfigFile {
-    ConfigFile {
-        path: path.into(),
-        scope,
-        optional: false,
-    }
+    ConfigFile::new(path.into(), scope).with_optional(false)
 }
 
 fn inputs(path: &Path) -> ConfigInputs {
-    ConfigInputs {
-        files: vec![file(path, ConfigScope::Local)],
-        ..Default::default()
-    }
+    ConfigInputs::default().with_files(vec![file(path, ConfigScope::Local)])
 }
 
 fn git(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
@@ -380,12 +373,11 @@ fn resolution_budgets(
     std::fs::write(root.path().join("child"), b"[demo]\nvalue=one\n").unwrap();
     let mut input = inputs(&path);
     input.context.branch = Some(b"topic/one".to_vec());
-    input.limits = girt::config::ResolveLimits {
-        bytes,
-        depth,
-        entries,
-        match_cells,
-    };
+    input.limits = girt::config::ResolveLimits::default()
+        .with_bytes(bytes)
+        .with_depth(depth)
+        .with_entries(entries)
+        .with_match_cells(match_cells);
     assert!(matches!(
         Config::resolve(&input).unwrap_err().source,
         ResolveFailure::Limit(_)

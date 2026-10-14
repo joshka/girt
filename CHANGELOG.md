@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/joshka/girt/compare/v0.7.2...v0.8.0) - 2026-10-14
+
+### Changed
+
+- **Breaking:** mark evolving public enums and structs `#[non_exhaustive]`. External enum matches
+  need fallback arms; options and limits use `Default` with `with_*` methods, and inputs with required
+  data use constructors instead of struct literals. Preserve exhaustive Git object kinds and index
+  conflict stages, exact format records and existing opaque construction APIs. Future variant and
+  field additions to extensible types can ship in compatible 0.8.x releases.
+- Implement redacted `Debug` for remote configuration editors, native push context and terminal
+  event/stop handles.
+
 ## [0.7.2](https://github.com/joshka/girt/compare/v0.7.1...v0.7.2) - 2026-10-14
 
 ### Other

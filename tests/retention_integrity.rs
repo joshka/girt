@@ -76,11 +76,9 @@ impl MaintenanceIsolation for FixtureIsolation {
 }
 
 fn policy(heads: Vec<ObjectId>) -> RetentionPolicy {
-    RetentionPolicy {
-        heads,
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..RetentionPolicy::trusted()
-    }
+    RetentionPolicy::trusted()
+        .with_heads(heads)
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
 }
 
 fn hex(id: ObjectId) -> Vec<u8> {
@@ -470,10 +468,7 @@ fn published_pack_is_readable_by_a_cold_reader_with_default_depth() {
     let cancel = AtomicBool::new(false);
     // Default read limits (max_delta_depth 64) both for the repack policy, so a pre-publication
     // depth guard can act, and for the cold reader below.
-    let policy = RetentionPolicy {
-        read: ReadLimits::default(),
-        ..policy(ids.clone())
-    };
+    let policy = (policy(ids.clone())).with_read(ReadLimits::default());
     repo.repack_retained(&policy, RepackLimits::trusted(), &cancel)
         .unwrap();
     let pack = new_pack(&root, &["pack-one", "pack-two"]);
@@ -513,10 +508,8 @@ fn protected_pack_objects_are_not_duplicated_across_maintenance_runs() {
     git(&root, &["update-ref", "refs/heads/main", &commit], b"");
     git(&root, &["repack", "-a", "-d"], b"");
     let original = pack_bytes(&root);
-    let mut policy = RetentionPolicy {
-        recent_cutoff: SystemTime::now() - Duration::from_secs(3600),
-        ..RetentionPolicy::trusted()
-    };
+    let mut policy = RetentionPolicy::trusted()
+        .with_recent_cutoff(SystemTime::now() - Duration::from_secs(3600));
     let repo = Repository::open(&root).unwrap();
     let mut copies = Vec::new();
     let mut bytes = Vec::new();

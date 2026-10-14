@@ -1133,12 +1133,14 @@ fn logged_edit(
     target: Option<ObjectId>,
     expected: Expected,
 ) -> girt::refs::RefEdit {
-    girt::refs::RefEdit {
-        name: name(reference),
-        dereference: reference == "HEAD",
-        target: target.map(Target::Direct),
-        expected,
-        reflog: transaction_log(b"transaction"),
+    {
+        let input = girt::refs::RefEdit::new(
+            name(reference),
+            target.map(Target::Direct),
+            expected,
+            transaction_log(b"transaction"),
+        );
+        input.with_dereference(reference == "HEAD")
     }
 }
 
@@ -1521,13 +1523,12 @@ fn symbolic_to_direct_head_logging_matches_git_and_preserves_branch(
         &["update-ref", "refs/heads/main", &first.to_string()],
         b"",
     );
-    let operation = girt::refs::RefEdit {
-        name: name("HEAD"),
-        dereference: false,
-        target: Some(Target::Direct(second)),
-        expected: Expected::Value(Target::Symbolic(name("refs/heads/main"))),
-        reflog: transaction_log(b"detach"),
-    };
+    let operation = girt::refs::RefEdit::new(
+        name("HEAD"),
+        Some(Target::Direct(second)),
+        Expected::Value(Target::Symbolic(name("refs/heads/main"))),
+        transaction_log(b"detach"),
+    );
     let outcomes = repo
         .references()
         .unwrap()

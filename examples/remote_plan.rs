@@ -32,14 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This example uses a synthetic advertisement instead of connecting to a server.
     let tag_name = RefName::new("refs/tags/remote")?;
     let advertised_id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"advertised fixture");
-    let advertisement = Advertisement {
-        refs: vec![AdvertisedRef {
-            name: tag_name.clone(),
-            id: advertised_id,
-            peeled: false,
-        }],
-        capabilities: Vec::new(),
-    };
+    let advertisement = Advertisement::new(
+        vec![AdvertisedRef::new(tag_name.clone(), advertised_id, false)],
+        Vec::new(),
+    );
     let mut planned = None;
     let mut select = |advertisement: &Advertisement| {
         let result = remote.fetch_refspecs().map_advertisement(advertisement);
@@ -107,12 +103,10 @@ fn creation_commands(plan: &[Mapping]) -> Result<Vec<PushCommand>, Box<dyn std::
             .destination
             .as_ref()
             .ok_or("push requires a destination")?;
-        commands.push(PushCommand {
-            name: destination.clone(),
-            expected: None,
-            new: source.id,
-            force: ForcePolicy::FastForwardOnly,
-        });
+        commands.push(
+            PushCommand::new(destination.clone(), None, source.id)
+                .with_force(ForcePolicy::FastForwardOnly),
+        );
     }
     Ok(commands)
 }

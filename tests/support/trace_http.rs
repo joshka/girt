@@ -259,10 +259,8 @@ fn cancellation_after_suspension_records_cancelled_outcome() {
             |_| vec![],
             None,
             FetchLimits::default(),
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(std::time::Instant::now() + Duration::from_secs(5)),
-            },
+            TransportControl::new(&cancel)
+                .with_deadline(Some(std::time::Instant::now() + Duration::from_secs(5))),
         ));
         assert!(matches!(
             future
