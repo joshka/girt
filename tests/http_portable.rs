@@ -363,6 +363,7 @@ fn pushes_objects_and_git_publishes_the_remote_ref() {
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, tip)
                 .with_force(ForcePolicy::FastForwardOnly),
         ],
+        &[],
         PushLimits::default(),
         &cancel,
     )

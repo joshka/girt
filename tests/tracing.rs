@@ -224,6 +224,7 @@ fn push_first_write_failure_is_not_sent_without_logging_source_text() {
             )
             .with_force(ForcePolicy::FastForwardOnly),
         ],
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -371,6 +372,7 @@ fn successful_push_protocol_exposes_remote_rejections_without_text() {
             )
             .with_force(ForcePolicy::FastForwardOnly),
         ],
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )

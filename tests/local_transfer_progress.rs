@@ -131,7 +131,7 @@ fn local_push_validation_cancellation_never_publishes(#[case] format: ObjectForm
         .trim()
         .parse()
         .unwrap();
-    let prepared = PreparedPush::new_local(
+    let prepared = PreparedPush::new(
         &fixture.repo.objects(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
@@ -438,7 +438,7 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
         .unwrap();
     let command = PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
         .with_force(ForcePolicy::FastForwardOnly);
-    let prepared = PreparedPush::new_local(
+    let prepared = PreparedPush::new(
         &fixture.repo.objects(PackLimits::default()).unwrap(),
         vec![command.clone()],
         &[],

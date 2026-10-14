@@ -40,6 +40,7 @@ impl Fixture {
         let prepared = PreparedPush::new(
             &repo.objects(PackLimits::default()).unwrap(),
             commands.to_vec(),
+            &[],
             PushLimits::default(),
             &AtomicBool::new(false),
         )

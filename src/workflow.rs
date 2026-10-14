@@ -1105,8 +1105,7 @@ impl Repository {
         // the pack holds only what the receiver lacks.
         let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, PushFailure> {
             before_prepare();
-            let prepared =
-                PreparedPush::new_local(&objects, commands.clone(), roots, limits, &cancel)?;
+            let prepared = PreparedPush::new(&objects, commands.clone(), roots, limits, &cancel)?;
             let prepared = if options.push_options.is_empty() {
                 prepared
             } else {

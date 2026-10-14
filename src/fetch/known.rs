@@ -490,24 +490,6 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::new_local(store, roots, limits, cancel)
-    }
-
-    /// Validates local history in either object format for native transfer decisions.
-    ///
-    /// Uses [`Self::new`]'s graph, resource and cancellation contract. The caller must keep
-    /// verified roots available through publication.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::new`]'s missing/corrupt object, graph, resource-limit or cancellation
-    /// errors. Validation leaves storage and references unchanged.
-    pub fn new_local(
-        store: &Objects,
-        roots: &[ObjectId],
-        limits: FetchLimits,
-        cancel: &AtomicBool,
-    ) -> Result<Self, Error> {
         let shallow: Vec<_> = store.shallow_roots().iter().collect();
         Self::new_with_boundaries(store, roots, &shallow, limits, cancel)
     }

@@ -24,6 +24,10 @@ adapters wanting command-like resolution call `workflow::fetch`, `workflow::push
 `workflow::remote_head`, importing their options, callbacks and environment from that namespace.
 Callers that own transport scheduling and publication use the lower-level `fetch`/`push` artifacts.
 
+`KnownHistory::new` and the receiver-root-aware `PreparedPush::new` work for either format and
+transport; constructor aliases must not suggest different validation guarantees. jj should use empty
+receiver roots for a full push and explicit verified roots for an incremental one.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated

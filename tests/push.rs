@@ -40,7 +40,7 @@ fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand
 }
 fn prepare(repo: &Repository, commands: Vec<PushCommand>) -> PreparedPush {
     let roots: Vec<_> = commands.iter().filter_map(|c| c.expected).collect();
-    PreparedPush::new_excluding(
+    PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         commands,
         &roots,
@@ -166,7 +166,7 @@ fn prepares_commit_with_unstored_canonical_empty_tree(#[case] format: &str) {
         .trim()
         .parse()
         .unwrap();
-    let prepared = PreparedPush::new_local(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, commit)],
         &[],
@@ -609,6 +609,7 @@ fn tag_replacement_requires_explicit_force_but_creation_does_not() {
         PreparedPush::new(
             &objects,
             vec![c.clone()],
+            &[],
             PushLimits::default(),
             &AtomicBool::new(false)
         ),
@@ -697,6 +698,7 @@ fn exclusion_reduces_incremental_and_noop_packs() {
     let full = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands.clone(),
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -733,7 +735,7 @@ fn exclusion_reduces_incremental_and_noop_packs() {
 fn arbitrary_local_possession_is_not_receiver_knowledge() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, main(&f))],
         &[main(&f)],
@@ -763,7 +765,7 @@ fn receiver_root_missing_locally_preserves_full_forced_transfer() {
     let commands = vec![
         (command("refs/tags/foreign", Some(foreign), main(&f))).with_force(ForcePolicy::Allow),
     ];
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands.clone(),
         &[foreign],
@@ -774,6 +776,7 @@ fn receiver_root_missing_locally_preserves_full_forced_transfer() {
     let full = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands,
+        &[],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -1011,10 +1014,11 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         command("refs/tags/packed", None, fixture.records.last().unwrap().0),
     ];
     let ordinary_limits = PushLimits::default().with_compression(girt::PackCompression::Ordinary);
-    let ordinary = PreparedPush::new(&objects, commands.clone(), ordinary_limits, &cancel).unwrap();
+    let ordinary =
+        PreparedPush::new(&objects, commands.clone(), &[], ordinary_limits, &cancel).unwrap();
     let limits = PushLimits::default()
         .with_compression(girt::PackCompression::Delta(girt::DeltaOptions::default()));
-    let prepared = PreparedPush::new(&objects, commands, limits, &cancel).unwrap();
+    let prepared = PreparedPush::new(&objects, commands, &[], limits, &cancel).unwrap();
     // Git has already deltified every packed input; both policies preserve those streams.
     // The incremental loose-object transfer below still exercises fresh delta search.
     assert_eq!(prepared.pack_bytes(), ordinary.pack_bytes());
@@ -1038,7 +1042,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         command("refs/tags/new-b", None, second),
     ];
     let refreshed = fixture.repo.objects(PackLimits::default()).unwrap();
-    let update = PreparedPush::new_excluding(
+    let update = PreparedPush::new(
         &refreshed,
         updates.clone(),
         &[main(&fixture)],
@@ -1046,7 +1050,7 @@ fn delta_push_then_incremental_update_preserves_payloads() {
         &cancel,
     )
     .unwrap();
-    let ordinary_update = PreparedPush::new_excluding(
+    let ordinary_update = PreparedPush::new(
         &refreshed,
         updates,
         &[main(&fixture)],
@@ -1090,7 +1094,7 @@ fn non_tip_receiver_boundary_does_not_scan_old_trees() {
     let old_tree = old_tree.trim();
     std::fs::remove_file(dest.object_dir().join(&old_tree[..2]).join(&old_tree[2..])).unwrap();
     // The new commit forks from c1, which is not an advertised tip.
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[3])],
         &[ids[2]],
@@ -1248,7 +1252,7 @@ fn hook_output_limit_truncates_without_aborting_publication() {
         "pre-receive",
         "#!/bin/sh\nprintf 01234567890123456789\nprintf 01234567890123456789 >&2\ncat >/dev/null\n",
     );
-    let prepared = PreparedPush::new_local(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, main(&f))],
         &[],
@@ -1319,7 +1323,7 @@ fn accepted_quarantine_can_read_primary_alternates_with_special_path_bytes(
     );
     let dest = Repository::open(root.path()).unwrap();
     let old = main(&f);
-    let seed = PreparedPush::new_local(
+    let seed = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", None, old)],
         &[],
@@ -1336,7 +1340,7 @@ fn accepted_quarantine_can_read_primary_alternates_with_special_path_bytes(
             "#!/bin/sh\ngit cat-file -e {old} || exit 1\ngit cat-file -e {new} || exit 1\ncat >/dev/null\n"
         ),
     );
-    let prepared = PreparedPush::new_local(
+    let prepared = PreparedPush::new(
         &f.repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/main", Some(old), new)],
         &[old],
@@ -1436,7 +1440,7 @@ fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
             "#!/bin/sh\nprintf completed >post-update-result\n",
         );
         if native {
-            let prepared = PreparedPush::new_local(
+            let prepared = PreparedPush::new(
                 &f.repo.objects(PackLimits::default()).unwrap(),
                 vec![command("refs/heads/main", None, main(&f))],
                 &[],
@@ -1488,7 +1492,7 @@ fn deep_receiver_boundary_matches_git(#[case] remove_old_tree: bool) {
     unpack_receiver(&git_dest);
     remove_deep_old_tree(&source, &dest, remove_old_tree);
     remove_deep_old_tree(&source, &git_dest, remove_old_tree);
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[1002])],
         &[ids[1001]],
@@ -1582,7 +1586,7 @@ fn non_tip_receiver_boundary_in_alternate() {
         format!("{}\n", alternate_objects.display()),
     )
     .unwrap();
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[3])],
         &[ids[2]],
@@ -1631,7 +1635,7 @@ fn receiver_boundary_after_4096_roots_matches_git() {
     let tree = tree.trim();
     std::fs::remove_file(dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
     std::fs::remove_file(git_dest.object_dir().join(&tree[..2]).join(&tree[2..])).unwrap();
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, new)],
         &roots,
@@ -1725,7 +1729,7 @@ fn deep_receiver_boundary_with_quarantine() {
             ids[1002]
         ),
     );
-    let prepared = PreparedPush::new_excluding(
+    let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
         vec![command("refs/heads/new", None, ids[1002])],
         &[ids[1001]],

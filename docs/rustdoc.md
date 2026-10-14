@@ -19,6 +19,10 @@ its synchronous runtime and credential ownership for jj adapters. Core fetch/pus
 keep caller-selected plans, controls, artifact validation and publication visible; link to
 `workflow` when automatic configured resolution is useful.
 
+Show receiver roots explicitly in `PreparedPush::new`; `&[]` requests a full transfer. jj adapters
+use the same preparation contract for native and wire transports. Observer examples use
+`PreparedPush::new_with_progress`; the local constructor aliases are removed.
+
 ## Comment Spacing
 
 - Follow every Markdown heading with one empty doc-comment line before its content.
