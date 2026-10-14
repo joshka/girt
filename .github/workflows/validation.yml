@@ -35,10 +35,13 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request supersedes its running checks.
+# Serialize duplicate deliveries without cancelling checks on the same PR head.
+# Keep multiple pending duplicates; the default queue replaces its pending run.
+# Different heads run independently, and superseded heads finish their checks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   msrv:
