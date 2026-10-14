@@ -1,5 +1,5 @@
 //! Pack writing that reuses stored entries and searches bounded deltas for transfer output.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
 
@@ -10,7 +10,7 @@ use super::write::{
     Entry, Output, PackObject, PackWriteError, PackWriteLimits, PackWritten, entry_header_code,
     output_error, select_entry, validate, write_index, write_ordinary,
 };
-use crate::{ObjectId, ObjectReadError, ReadLimits};
+use crate::{IdSet, ObjectId, ObjectReadError, ReadLimits};
 
 /// One retained object already stored at `position` in `packs[pack]`.
 #[derive(Debug, Clone, Copy)]
@@ -87,7 +87,7 @@ pub(crate) fn write_transfer(
     max_depth: usize,
     check: &mut impl FnMut() -> Result<(), PackWriteError>,
     observe: &mut impl FnMut(u64, u64),
-) -> Result<(PackWritten, HashSet<ObjectId>), ReuseError> {
+) -> Result<(PackWritten, IdSet), ReuseError> {
     let max_depth = match compression {
         PackCompression::Delta(options) => max_depth.min(options.max_depth),
         PackCompression::Ordinary => max_depth,
@@ -156,7 +156,7 @@ fn write_reusing_impl(
     let (read_limits, cancelled) = read;
     let fresh = validate(format, fresh, limits, check)?;
     let mut order = Vec::with_capacity(packed.len());
-    let mut seen = HashSet::with_capacity(packed.len());
+    let mut seen = IdSet::with_capacity_and_hasher(packed.len(), Default::default());
     for item in packed {
         item.id
             .require_format(format)
@@ -464,7 +464,7 @@ struct ExternalBases<'a> {
     ids: &'a [(ObjectId, crate::ObjectKind)],
     lengths: Vec<(crate::ObjectKind, usize, ObjectId)>,
     loaded: Vec<crate::ObjectKind>,
-    used: HashSet<ObjectId>,
+    used: IdSet,
 }
 
 impl<'a> ExternalBases<'a> {
@@ -474,7 +474,7 @@ impl<'a> ExternalBases<'a> {
             ids,
             lengths: Vec::new(),
             loaded: Vec::new(),
-            used: HashSet::new(),
+            used: IdSet::default(),
         }
     }
 

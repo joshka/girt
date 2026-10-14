@@ -1,8 +1,9 @@
 //! Bounded annotated-tag resolution over verified objects.
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::{Object, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits, Tag, TagError};
+use crate::{
+    IdSet, Object, ObjectId, ObjectKind, ObjectReadError, Objects, ReadLimits, Tag, TagError,
+};
 
 /// Work limits for resolving one object through a chain of annotated tags.
 #[derive(Clone, Copy, Debug)]
@@ -147,7 +148,7 @@ fn peel(
 ) -> Result<PeeledObject, PeelError> {
     let mut id = original;
     let mut tags = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::default();
     let mut expected = None;
     let mut remaining = limits.max_bytes;
     loop {

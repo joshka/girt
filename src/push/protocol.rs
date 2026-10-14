@@ -205,7 +205,8 @@ pub(super) struct AdvertisedCapabilities {
     sideband: bool,
     delete_refs: bool,
     push_options: bool,
-    roots: HashSet<ObjectId>,
+    /// Advertised by the peer, unverified.
+    roots: crate::PeerIdSet,
 }
 
 impl AdvertisedCapabilities {
@@ -256,7 +257,7 @@ pub(super) fn advertise_for_selection(
 ) -> Result<(AdvertisedCapabilities, PushAdvertisement), Error> {
     let mut refs = HashMap::new();
     let mut haves = Vec::new();
-    let mut roots = HashSet::new();
+    let mut roots = crate::PeerIdSet::default();
     let mut count = 0usize;
     let mut report_status = false;
     let mut report_v2 = false;

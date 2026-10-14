@@ -1,5 +1,5 @@
 //! Index received packs on disk, retaining metadata and a bounded decoded delta-base cache.
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
@@ -16,7 +16,7 @@ use crate::pack::delta::{apply, byte, charge, size};
 use crate::pack::index::word;
 use crate::pack::reader::{BaseCache, Source, decode_budgeted};
 use crate::pack::write::{Entry, encode_index};
-use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error};
+use crate::{IdMap, Object, ObjectId, ObjectKind, ObjectReadError as Error};
 
 /// Verifies a self-contained pack exactly as a received one and returns its index and checksum.
 pub(crate) fn index_self_contained(
@@ -28,7 +28,7 @@ pub(crate) fn index_self_contained(
     let imported = Imported::read_owned(
         format,
         pack,
-        &HashMap::new(),
+        &IdMap::default(),
         limits,
         &mut ValidationObserver::new(cancel, &mut |_| {}),
     )?;
@@ -49,7 +49,7 @@ impl Imported {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
-        Self::read_with_known(format, data, &HashMap::new(), limits, cancel)
+        Self::read_with_known(format, data, &IdMap::default(), limits, cancel)
     }
 
     #[cfg(test)]
@@ -149,7 +149,7 @@ impl Imported {
                 file: Mutex::new(reader.get_ref().try_clone()?),
                 format,
                 entries: Vec::with_capacity(count),
-                identities: HashMap::new(),
+                identities: IdMap::default(),
                 verified: super::verified::VerifiedObjects::default(),
                 cache: BaseCache::new(),
                 count,
@@ -271,7 +271,7 @@ pub(crate) struct IndexedObjects {
     file: Mutex<File>,
     format: crate::ObjectFormat,
     entries: Vec<ReceivedEntry>,
-    identities: HashMap<ObjectId, usize>,
+    identities: IdMap<usize>,
     pub verified: super::verified::VerifiedObjects,
     cache: BaseCache,
     count: usize,
@@ -381,14 +381,15 @@ impl IndexedObjects {
         remaining: &mut usize,
         observer: &mut ValidationObserver<'_>,
     ) -> Result<bool, FetchError> {
-        let offsets: HashMap<_, _> = self
+        let offsets: std::collections::HashMap<_, _> = self
             .entries
             .iter()
             .enumerate()
             .map(|(p, e)| (e.offset, p))
             .collect();
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); self.count];
-        let mut waiting: HashMap<ObjectId, Vec<usize>> = HashMap::new();
+        // REF_DELTA base names come straight from the peer.
+        let mut waiting: crate::PeerIdMap<Vec<usize>> = crate::PeerIdMap::default();
         let mut ready = VecDeque::new();
         for (p, entry) in self.entries.iter().enumerate() {
             match entry.base {
@@ -1091,7 +1092,7 @@ mod tests {
         let result = Imported::read_observed(
             ObjectFormat::Sha1,
             &bytes,
-            &HashMap::new(),
+            &IdMap::default(),
             FetchLimits::default(),
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         );
@@ -1115,7 +1116,7 @@ mod tests {
         let imported = Imported::read_observed(
             format,
             &forward_ref_pack(format),
-            &HashMap::new(),
+            &IdMap::default(),
             FetchLimits::default(),
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         )
@@ -1157,7 +1158,7 @@ mod tests {
         let result = Imported::read_observed(
             format,
             &bytes,
-            &HashMap::new(),
+            &IdMap::default(),
             FetchLimits::default(),
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         );
@@ -1265,7 +1266,7 @@ mod tests {
         };
         let base_id = base.id();
         let thin = pack(format, &[entry(7, base_id.as_bytes(), b"\x03\x03\x03two")]);
-        let known = HashMap::from([(base_id, base)]);
+        let known = crate::IdMap::from_iter([(base_id, base)]);
         let imported = Imported::read_with_known(
             format,
             &thin,
@@ -1297,7 +1298,7 @@ mod tests {
             kind: ObjectKind::Blob,
             data: b"bad".to_vec().into(),
         };
-        let known = HashMap::from([(id, corrupt)]);
+        let known = crate::IdMap::from_iter([(id, corrupt)]);
         assert!(matches!(
             Imported::read_with_known(
                 format,
@@ -1533,7 +1534,7 @@ mod git_format_tests {
             matches!(Imported::read(format, &pack, FetchLimits::default(), &AtomicBool::new(false)),
             Err(FetchError::Pack(Error::MissingBase(actual))) if actual == old)
         );
-        let known = HashMap::from([(
+        let known = crate::IdMap::from_iter([(
             old,
             Object {
                 format,
@@ -1662,7 +1663,7 @@ mod git_format_tests {
         let imported = Imported::read_observed(
             format,
             &pack,
-            &HashMap::new(),
+            &IdMap::default(),
             FetchLimits::default(),
             &mut ValidationObserver::new(&cancel, &mut |state| snapshots.push(state)),
         )

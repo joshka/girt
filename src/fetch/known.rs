@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::{FetchError as Error, FetchLimits, check_cancelled};
-use crate::{Object, ObjectId, ObjectKind, Objects};
+use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind, Objects};
 
 /// Local object availability and complete-history evidence, including shallow boundaries.
 ///
@@ -21,11 +21,11 @@ use crate::{Object, ObjectId, ObjectKind, Objects};
 /// not physical availability: fetch must materialize it before relying on it for publication.
 #[derive(Debug, Default)]
 pub struct KnownHistory {
-    pub(super) objects: HashMap<ObjectId, Object>,
+    pub(super) objects: IdMap<Object>,
     /// Destination objects available as delta bases and dependencies, consulted after `objects`.
     pub(super) store: Option<Arc<Objects>>,
     /// Verified complete commits, plus local-receive trees established through their typed edges.
-    pub(super) complete_roots: HashSet<ObjectId>,
+    pub(super) complete_roots: IdSet,
     /// A synthetic reader value is not a physical object that can support publication.
     pub(super) missing_empty_tree: Option<ObjectId>,
     pub(super) haves: Vec<ObjectId>,
@@ -45,7 +45,7 @@ pub(crate) trait KnownObjects {
     }
 }
 
-impl KnownObjects for HashMap<ObjectId, Object> {
+impl KnownObjects for IdMap<Object> {
     fn get(&self, id: ObjectId) -> Option<Cow<'_, Object>> {
         HashMap::get(self, &id).map(Cow::Borrowed)
     }
@@ -151,7 +151,7 @@ fn discover_tree_boundaries(
     tree: ObjectId,
     limits: FetchLimits,
     bytes: &mut usize,
-    complete: &mut HashSet<ObjectId>,
+    complete: &mut IdSet,
     cancel: &AtomicBool,
 ) -> Result<(), Error> {
     check_cancelled(cancel)?;
@@ -223,7 +223,7 @@ impl KnownHistory {
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
         let missing_empty_tree = missing_empty_tree(&store, cancel)?;
-        let mut complete_roots = HashSet::new();
+        let mut complete_roots = IdSet::default();
         for &root in roots {
             check_cancelled(cancel)?;
             if let Ok(peeled) = store.peel(root, crate::PeelLimits::default(), cancel)
@@ -255,7 +255,7 @@ impl KnownHistory {
         let Some(store) = &self.store else {
             return Ok(());
         };
-        let mut targets: HashSet<_> = targets.iter().copied().collect();
+        let mut targets: IdSet = targets.iter().copied().collect();
         if targets.is_empty()
             || targets.len() > limits.max_known_objects
             || limits.max_known_objects == 0
@@ -368,10 +368,10 @@ impl KnownHistory {
     ) -> Result<Self, Error> {
         let missing_empty_tree = missing_empty_tree(&store, cancel)?;
         let shallow: Vec<_> = store.shallow_roots().iter().collect();
-        let shallow_set: HashSet<_> = shallow.iter().copied().collect();
+        let shallow_set: IdSet = shallow.iter().copied().collect();
         let mut haves = Vec::new();
-        let mut complete_roots = HashSet::new();
-        let mut seen = HashSet::new();
+        let mut complete_roots = IdSet::default();
+        let mut seen = IdSet::default();
         let mut pending = VecDeque::new();
         for &tip in tips {
             check_cancelled(cancel)?;
@@ -412,7 +412,7 @@ impl KnownHistory {
         }
         check_cancelled(cancel)?;
         Ok(Self {
-            objects: HashMap::new(),
+            objects: IdMap::default(),
             store: Some(Arc::new(store)),
             complete_roots,
             missing_empty_tree,
@@ -499,7 +499,7 @@ impl KnownHistory {
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
-        Self::new_stopping_at(store, roots, shallow, &HashSet::new(), limits, cancel)
+        Self::new_stopping_at(store, roots, shallow, &IdSet::default(), limits, cancel)
     }
 
     /// Validates history reachable from `roots`, treating `published` objects as verified.
@@ -512,7 +512,7 @@ impl KnownHistory {
         store: &Objects,
         roots: &[ObjectId],
         shallow: &[ObjectId],
-        published: &HashSet<ObjectId>,
+        published: &IdSet,
         limits: FetchLimits,
         cancel: &AtomicBool,
     ) -> Result<Self, Error> {
@@ -555,10 +555,10 @@ impl KnownHistory {
         source: &super::verified::InstalledObjects<'_>,
         roots: &[ObjectId],
         shallow: &[ObjectId],
-        published: &HashSet<ObjectId>,
+        published: &IdSet,
         limits: FetchLimits,
         cancel: &AtomicBool,
-    ) -> Result<HashSet<ObjectId>, Error> {
+    ) -> Result<IdSet, Error> {
         let kinds = walk(
             WalkSource::Installed(source),
             roots,
@@ -614,11 +614,11 @@ fn walk(
     source: WalkSource<'_>,
     roots: &[ObjectId],
     shallow: &[ObjectId],
-    published: &HashSet<ObjectId>,
+    published: &IdSet,
     limits: FetchLimits,
     cancel: &AtomicBool,
     mut visit: impl FnMut(ObjectId, Object),
-) -> Result<HashMap<ObjectId, ObjectKind>, Error> {
+) -> Result<IdMap<ObjectKind>, Error> {
     let store = source.store();
     check_cancelled(cancel)?;
     if roots.len() > limits.max_wants {
@@ -627,10 +627,10 @@ fn walk(
     if shallow.len() > limits.max_shallow_roots {
         return Err(Error::Limit("shallow roots"));
     }
-    let shallow_set: HashSet<_> = shallow.iter().copied().collect();
-    let mut kinds = HashMap::new();
+    let shallow_set: IdSet = shallow.iter().copied().collect();
+    let mut kinds = IdMap::default();
     let mut pending = VecDeque::new();
-    let mut expected = HashMap::new();
+    let mut expected = IdMap::default();
     for &id in roots.iter().filter(|id| !published.contains(id)) {
         enqueue(id, None, &mut expected, &mut pending, limits)?;
     }
@@ -702,7 +702,7 @@ fn walk(
 fn enqueue(
     id: ObjectId,
     kind: Option<ObjectKind>,
-    expected: &mut HashMap<ObjectId, Option<ObjectKind>>,
+    expected: &mut IdMap<Option<ObjectKind>>,
     pending: &mut VecDeque<ObjectId>,
     limits: FetchLimits,
 ) -> Result<(), Error> {
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn rejected_tree_kind_still_charges_proof_payload() {
         let (_root, objects, _, blob) = graph();
-        let mut complete = HashSet::new();
+        let mut complete = IdSet::default();
         let mut bytes = 100;
         discover_tree_boundaries(
             &objects,
@@ -989,7 +989,7 @@ mod tests {
             root.path().join(&id[..2]).join(&id[2..]),
         )
         .unwrap();
-        let mut complete = HashSet::new();
+        let mut complete = IdSet::default();
         let mut bytes = FetchLimits::default().max_known_bytes;
         discover_tree_boundaries(
             &objects,
@@ -1019,7 +1019,7 @@ mod tests {
                 &cancel,
             )
             .unwrap();
-        let received = HashMap::<ObjectId, Object>::new();
+        let received = IdMap::<Object>::default();
         let result = super::super::connectivity::validate_with_boundaries(
             &received,
             &known,
@@ -1165,7 +1165,7 @@ mod tests {
         )
         .unwrap();
         let result = super::super::connectivity::validate_with_boundaries(
-            &HashMap::new(),
+            &IdMap::default(),
             &known,
             &[commit],
             &[],
@@ -1186,7 +1186,7 @@ mod tests {
         )
         .unwrap();
         let dependencies = super::super::connectivity::validate_with_boundaries(
-            &HashMap::new(),
+            &IdMap::default(),
             &known,
             &[commit],
             &[],

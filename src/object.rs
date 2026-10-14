@@ -7,7 +7,11 @@
     reason = "parses untrusted repository or network input (#103)"
 )]
 use std::fmt;
+use std::hash::Hash;
 use std::str::FromStr;
+
+mod id_hash;
+pub(crate) use id_hash::{IdMap, IdSet, PeerIdMap, PeerIdSet};
 
 /// The hash format used by a Git object database.
 ///
@@ -37,12 +41,19 @@ impl fmt::Display for ObjectFormat {
 /// then compares bytes lexicographically. Parsing infers the format from exactly 40 or 64 ASCII
 /// hexadecimal digits; display is lowercase. Abbreviations are rejected. Hashing does not provide
 /// collision detection or translate identities between formats.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ObjectId {
     /// A SHA-1 digest.
     Sha1([u8; 20]),
     /// A SHA-256 digest.
     Sha256([u8; 32]),
+}
+
+/// Hashes exactly the digest bytes, which are unique per format and length.
+impl Hash for ObjectId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_bytes());
+    }
 }
 
 impl ObjectId {

@@ -72,7 +72,7 @@
 //! assert!(loose.read_blob(unreachable, 1024).is_ok());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -81,7 +81,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
 use crate::{
-    Commit, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag, Tree, index,
+    Commit, IdMap, IdSet, Object, ObjectId, ObjectKind, PackLimits, ReadLimits, Repository, Tag,
+    Tree, index,
 };
 
 mod repack;
@@ -941,9 +942,9 @@ fn walk(
 ) -> Result<BTreeSet<ObjectId>, String> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
     // Hashed lookups: the walk probes these once or more per edge, on 100k-object histories.
-    let mut seen = HashSet::new();
-    let mut expected = HashMap::new();
-    let mut kinds = HashMap::new();
+    let mut seen = IdSet::default();
+    let mut expected = IdMap::default();
+    let mut kinds = IdMap::default();
     let mut bytes = 0u64;
     let mut edges = 0usize;
     let mut blobs = Vec::new();

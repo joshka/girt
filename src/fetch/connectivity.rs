@@ -1,10 +1,10 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 
 use super::known::KnownObjects;
 use super::{FetchError, FetchLimits, check_cancelled};
-use crate::{Object, ObjectId, ObjectKind};
+use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind};
 
 pub(super) trait ReceivedObjects {
     #[cfg(feature = "tracing")]
@@ -29,7 +29,7 @@ pub(super) trait ReceivedObjects {
     }
 }
 
-impl ReceivedObjects for HashMap<ObjectId, Object> {
+impl ReceivedObjects for IdMap<Object> {
     #[cfg(feature = "tracing")]
     fn len(&self) -> usize {
         self.len()
@@ -82,18 +82,18 @@ impl ReceivedObjects for super::import::IndexedObjects {
 /// Follow typed edges from every selected tip. Gitlinks refer to independent submodule stores.
 #[cfg(test)]
 pub(super) fn validate(
-    objects: &HashMap<ObjectId, Object>,
+    objects: &IdMap<Object>,
     wants: &[ObjectId],
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<(), FetchError> {
-    validate_with_known(objects, &HashMap::new(), wants, limits, cancel).map(|_| ())
+    validate_with_known(objects, &IdMap::default(), wants, limits, cancel).map(|_| ())
 }
 
 #[cfg(test)]
 pub(super) fn validate_with_known(
-    objects: &HashMap<ObjectId, Object>,
-    known: &HashMap<ObjectId, Object>,
+    objects: &IdMap<Object>,
+    known: &IdMap<Object>,
     wants: &[ObjectId],
     limits: FetchLimits,
     cancel: &AtomicBool,
@@ -131,7 +131,7 @@ pub(super) fn validate_with_boundaries(
                 .kind(id, cancel)?
                 .or_else(|| known.get(id).map(|o| o.kind())))
         };
-        let shallow: HashSet<_> = shallow.iter().copied().collect();
+        let shallow: IdSet = shallow.iter().copied().collect();
         for &id in &shallow {
             let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
             if object.kind() != crate::ObjectKind::Commit {
@@ -140,7 +140,7 @@ pub(super) fn validate_with_boundaries(
         }
         let mut dependencies = Vec::new();
         let mut pending = VecDeque::new();
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::default();
         for &id in wants {
             if !objects.contains_key(&id) && known.get(id).is_none() {
                 return Err(FetchError::Missing(id));
@@ -392,8 +392,8 @@ mod tests {
         let root = tree(blob.id(), EntryMode::Blob);
         let id = root.id();
         let expected = blob.id();
-        let received = HashMap::from([(id, root)]);
-        let known = HashMap::from([(blob.id(), blob), (unrelated.id(), unrelated)]);
+        let received = crate::IdMap::from_iter([(id, root)]);
+        let known = crate::IdMap::from_iter([(blob.id(), blob), (unrelated.id(), unrelated)]);
         let dependencies = validate_with_known(
             &received,
             &known,
@@ -410,8 +410,8 @@ mod tests {
         let blob = object(ObjectKind::Blob, b"known".to_vec());
         let root = tree(blob.id(), EntryMode::Tree);
         let id = root.id();
-        let received = HashMap::from([(id, root)]);
-        let known = HashMap::from([(blob.id(), blob)]);
+        let received = crate::IdMap::from_iter([(id, root)]);
+        let known = crate::IdMap::from_iter([(blob.id(), blob)]);
         assert!(matches!(
             validate_with_known(
                 &received,
@@ -429,10 +429,10 @@ mod tests {
         let blob = object(ObjectKind::Blob, b"known".to_vec());
         let root = tree(blob.id(), EntryMode::Blob);
         let id = root.id();
-        let known = HashMap::from([(id, root), (blob.id(), blob)]);
+        let known = crate::IdMap::from_iter([(id, root), (blob.id(), blob)]);
         assert!(matches!(
             validate_with_known(
-                &HashMap::new(),
+                &IdMap::default(),
                 &known,
                 &[id],
                 FetchLimits {

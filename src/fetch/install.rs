@@ -8,7 +8,7 @@ use super::import::Imported;
 use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
-use crate::{ObjectId, Repository};
+use crate::{IdMap, ObjectId, Repository};
 
 /// Fetch borrows caller evidence; local receive owns evidence it may extend before connectivity.
 enum ValidationHistory<'a> {
@@ -145,7 +145,7 @@ impl ReceivedFetch {
         cancel: &AtomicBool,
     ) -> Result<Self, FetchError> {
         let dependencies = connectivity::validate_with_boundaries(
-            &std::collections::HashMap::new(),
+            &IdMap::default(),
             known,
             &wants,
             &known.shallow,
@@ -640,7 +640,7 @@ mod shallow_tests {
         };
         let id = object.id();
         let known = KnownHistory {
-            objects: [(id, object)].into(),
+            objects: crate::IdMap::from_iter([(id, object)]),
             ..Default::default()
         };
         let extra = crate::ObjectId::for_blob(format, b"wire payload");
