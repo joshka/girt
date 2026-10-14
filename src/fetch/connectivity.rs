@@ -3,8 +3,12 @@ use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 
 use super::known::KnownObjects;
+use super::verified::TreeProof;
 use super::{FetchError, FetchLimits, check_cancelled};
 use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind};
+
+/// Typed edges of one object, borrowed from receive evidence where it is retained.
+type Edges<'a> = Cow<'a, [(ObjectId, ObjectKind)]>;
 
 pub(super) trait ReceivedObjects {
     #[cfg(feature = "tracing")]
@@ -15,17 +19,21 @@ pub(super) trait ReceivedObjects {
         id: &ObjectId,
         cancel: &AtomicBool,
     ) -> Result<Option<Cow<'_, Object>>, FetchError>;
-    fn edges(
-        &self,
-        id: ObjectId,
-        cancel: &AtomicBool,
-    ) -> Result<Option<Vec<(ObjectId, ObjectKind)>>, FetchError> {
+    fn edges(&self, id: ObjectId, cancel: &AtomicBool) -> Result<Option<Edges<'_>>, FetchError> {
         self.get(&id, cancel)?
-            .map(|object| object_edges(id, &object))
+            .map(|object| object_edges(id, &object).map(Cow::Owned))
             .transpose()
     }
     fn kind(&self, id: ObjectId, cancel: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
         Ok(self.get(&id, cancel)?.map(|o| o.kind()))
+    }
+    /// Entry targets of every received tree, when import proved them all consistent.
+    fn tree_proof(&self) -> Option<TreeProof<'_>> {
+        None
+    }
+    /// Whether `id` is a received tree covered by [`Self::tree_proof`].
+    fn proven_tree(&self, _id: ObjectId) -> bool {
+        false
     }
 }
 
@@ -57,25 +65,31 @@ impl ReceivedObjects for super::import::IndexedObjects {
     ) -> Result<Option<Cow<'_, Object>>, FetchError> {
         Ok(self.get(id, cancel)?.map(Cow::Owned))
     }
-    fn edges(
-        &self,
-        id: ObjectId,
-        cancel: &AtomicBool,
-    ) -> Result<Option<Vec<(ObjectId, ObjectKind)>>, FetchError> {
+    fn edges(&self, id: ObjectId, cancel: &AtomicBool) -> Result<Option<Edges<'_>>, FetchError> {
         if let Some(edges) = self
             .verified
             .objects
             .get(&id)
-            .and_then(|o| o.edges.as_ref())
+            .and_then(super::verified::VerifiedObject::edges)
         {
-            return Ok(Some(edges.clone()));
+            return Ok(Some(Cow::Borrowed(edges)));
         }
+        // Trees are not retained; an exact walk re-reads them from the received pack.
         self.get(&id, cancel)?
-            .map(|object| object_edges(id, &object))
+            .map(|object| object_edges(id, &object).map(Cow::Owned))
             .transpose()
     }
     fn kind(&self, id: ObjectId, _: &AtomicBool) -> Result<Option<ObjectKind>, FetchError> {
         Ok(self.kind(id))
+    }
+    fn tree_proof(&self) -> Option<TreeProof<'_>> {
+        self.verified.tree_proof()
+    }
+    fn proven_tree(&self, id: ObjectId) -> bool {
+        self.verified
+            .objects
+            .get(&id)
+            .is_some_and(super::verified::VerifiedObject::is_proven_tree)
     }
 }
 
@@ -123,82 +137,28 @@ pub(super) fn validate_with_boundaries(
     );
 
     let operation = || {
-        let lookup = |id: ObjectId| -> Result<Option<Cow<'_, Object>>, FetchError> {
-            Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
-        };
-        let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
-            Ok(objects
-                .kind(id, cancel)?
-                .or_else(|| known.get(id).map(|o| o.kind())))
-        };
-        let shallow: IdSet = shallow.iter().copied().collect();
-        for &id in &shallow {
-            let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
-            if object.kind() != crate::ObjectKind::Commit {
-                return Err(FetchError::Kind(id));
+        // Proving received trees collectively avoids walking their entries. Any failure there
+        // defers to the exact walk, which alone decides rejections and their errors.
+        if let Some(proof) = objects.tree_proof() {
+            match walk(objects, known, wants, shallow, limits, cancel, Some(proof)) {
+                Err(FetchError::Cancelled) => return Err(FetchError::Cancelled),
+                Err(_) => {}
+                Ok(walked) => return Ok(walked),
             }
         }
-        let mut dependencies = Vec::new();
-        let mut pending = VecDeque::new();
-        let mut seen = IdSet::default();
-        for &id in wants {
-            if !objects.contains_key(&id) && known.get(id).is_none() {
-                return Err(FetchError::Missing(id));
-            }
-            if seen.insert(id) {
-                pending.push_back(id);
-            }
-        }
-        let mut remaining = limits.max_connectivity_edges;
-        while let Some(id) = pending.pop_front() {
-            check_cancelled(cancel)?;
-            if !objects.contains_key(&id) {
-                dependencies.push(id);
-                if known.trusted_complete(id) {
-                    // Only explicit complete boundaries stop the walk, never arbitrary stored
-                    // objects.
-                    continue;
-                }
-            }
-            // Blob identity and kind were validated while indexing; blobs have no outgoing edges.
-            if kind(id)? == Some(ObjectKind::Blob) {
-                continue;
-            }
-            let edges = match objects.edges(id, cancel)? {
-                Some(edges) => edges,
-                None => {
-                    let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
-                    object_edges(id, &object)?
-                }
-            };
-            let shallow_commit = shallow.contains(&id) && kind(id)? == Some(ObjectKind::Commit);
-            let mut edge = |id, expected| {
-                if shallow_commit && expected == crate::ObjectKind::Commit {
-                    return Ok(());
-                }
-                check_cancelled(cancel)?;
-                remaining = remaining
-                    .checked_sub(1)
-                    .ok_or(FetchError::Limit("connectivity edges"))?;
-                if !seen.contains(&id) {
-                    let actual = kind(id)?.ok_or(FetchError::Missing(id))?;
-                    if actual != expected {
-                        return Err(FetchError::Kind(id));
-                    }
-                    seen.insert(id);
-                    pending.push_back(id);
-                }
-                Ok(())
-            };
-            for (target, expected) in edges {
-                edge(target, expected)?;
-            }
-        }
-        #[cfg(feature = "tracing")]
-        span.record("visited", seen.len())
-            .record("edges", limits.max_connectivity_edges - remaining);
-        Ok(dependencies)
+        walk(objects, known, wants, shallow, limits, cancel, None)
     };
+    #[cfg(feature = "tracing")]
+    let operation = || {
+        let result = operation();
+        if let Ok(walked) = &result {
+            span.record("visited", walked.visited)
+                .record("edges", limits.max_connectivity_edges - walked.remaining);
+        }
+        result.map(|walked| walked.dependencies)
+    };
+    #[cfg(not(feature = "tracing"))]
+    let operation = || operation().map(|walked| walked.dependencies);
     #[cfg(feature = "tracing")]
     let result = span.in_scope(operation);
     #[cfg(not(feature = "tracing"))]
@@ -207,6 +167,133 @@ pub(super) fn validate_with_boundaries(
     crate::trace::finish(&span, &result, crate::trace::fetch);
 
     result
+}
+
+/// Dependencies on known objects, with walk statistics for tracing.
+struct Walked {
+    dependencies: Vec<ObjectId>,
+    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
+    visited: usize,
+    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
+    remaining: usize,
+}
+
+/// Follows typed edges from `wants`, stopping at trusted complete known objects.
+///
+/// With a tree proof, every received tree is complete as soon as each target its entries name is
+/// a received object of the required kind or a known object whose history is checked here. A
+/// received tree reached from a commit or tag therefore needs no expansion. Known targets of
+/// unreachable received trees also become dependencies, so the result can exceed the exact walk's.
+fn walk(
+    objects: &impl ReceivedObjects,
+    known: &(impl KnownObjects + ?Sized),
+    wants: &[ObjectId],
+    shallow: &[ObjectId],
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+    proof: Option<TreeProof<'_>>,
+) -> Result<Walked, FetchError> {
+    let lookup = |id: ObjectId| -> Result<Option<Cow<'_, Object>>, FetchError> {
+        Ok(objects.get(&id, cancel)?.or_else(|| known.get(id)))
+    };
+    let kind = |id: ObjectId| -> Result<Option<ObjectKind>, FetchError> {
+        Ok(objects
+            .kind(id, cancel)?
+            .or_else(|| known.get(id).map(|o| o.kind())))
+    };
+    let shallow: IdSet = shallow.iter().copied().collect();
+    for &id in &shallow {
+        let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
+        if object.kind() != crate::ObjectKind::Commit {
+            return Err(FetchError::Kind(id));
+        }
+    }
+    let mut dependencies = Vec::new();
+    let mut pending = VecDeque::new();
+    // Each visited object's actual kind, so every edge to it is checked, not just the first.
+    let mut seen = IdMap::<ObjectKind>::default();
+    for &id in wants {
+        if seen.contains_key(&id) {
+            continue;
+        }
+        let actual = kind(id)?.ok_or(FetchError::Missing(id))?;
+        seen.insert(id, actual);
+        pending.push_back(id);
+    }
+    let mut remaining = limits.max_connectivity_edges;
+    if let Some(proof) = &proof {
+        remaining = remaining
+            .checked_sub(proof.edges)
+            .ok_or(FetchError::Limit("connectivity edges"))?;
+        for (&target, &expected) in proof.targets {
+            check_cancelled(cancel)?;
+            let actual = kind(target)?.ok_or(FetchError::Missing(target))?;
+            if actual != expected {
+                return Err(FetchError::Kind(target));
+            }
+            // Received targets are blobs or proven trees. Known ones are walked like any other
+            // dependency.
+            if seen.insert(target, actual).is_none() && !objects.contains_key(&target) {
+                pending.push_back(target);
+            }
+        }
+    }
+    while let Some(id) = pending.pop_front() {
+        check_cancelled(cancel)?;
+        if !objects.contains_key(&id) {
+            dependencies.push(id);
+            if known.trusted_complete(id) {
+                // Only explicit complete boundaries stop the walk, never arbitrary stored
+                // objects.
+                continue;
+            }
+        }
+        // Blob identity and kind were validated while indexing; blobs have no outgoing edges.
+        if kind(id)? == Some(ObjectKind::Blob) {
+            continue;
+        }
+        if proof.is_some() && objects.proven_tree(id) {
+            continue;
+        }
+        let edges = match objects.edges(id, cancel)? {
+            Some(edges) => edges,
+            None => {
+                let object = lookup(id)?.ok_or(FetchError::Missing(id))?;
+                Cow::Owned(object_edges(id, &object)?)
+            }
+        };
+        let shallow_commit = shallow.contains(&id) && kind(id)? == Some(ObjectKind::Commit);
+        let mut edge = |id, expected| {
+            if shallow_commit && expected == crate::ObjectKind::Commit {
+                return Ok(());
+            }
+            check_cancelled(cancel)?;
+            remaining = remaining
+                .checked_sub(1)
+                .ok_or(FetchError::Limit("connectivity edges"))?;
+            let actual = match seen.get(&id) {
+                Some(&actual) => actual,
+                None => {
+                    let actual = kind(id)?.ok_or(FetchError::Missing(id))?;
+                    seen.insert(id, actual);
+                    pending.push_back(id);
+                    actual
+                }
+            };
+            if actual != expected {
+                return Err(FetchError::Kind(id));
+            }
+            Ok(())
+        };
+        for &(target, expected) in edges.iter() {
+            edge(target, expected)?;
+        }
+    }
+    Ok(Walked {
+        visited: seen.len(),
+        dependencies,
+        remaining,
+    })
 }
 
 fn object_edges(id: ObjectId, object: &Object) -> Result<Vec<(ObjectId, ObjectKind)>, FetchError> {

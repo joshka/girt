@@ -106,8 +106,7 @@ pub(super) fn validate(
                     return Err(crate::HistoryError::NotCommit(id));
                 }
                 let parents = object
-                    .edges
-                    .as_ref()
+                    .edges()
                     .expect("InstalledObjects::get requires parsed edges")
                     .iter()
                     .filter_map(|&(id, kind)| (kind == ObjectKind::Commit).then_some(id))

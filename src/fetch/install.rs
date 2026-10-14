@@ -226,7 +226,7 @@ impl ReceivedFetch {
                 .verified
                 .objects
                 .values()
-                .filter_map(|object| object.edges.as_ref())
+                .filter_map(super::verified::VerifiedObject::edges)
                 .flatten()
                 .filter(|(id, kind)| {
                     *kind == crate::ObjectKind::Commit
