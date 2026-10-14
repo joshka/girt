@@ -1367,6 +1367,88 @@ mod publication_tests {
         reopened.verify(&AtomicBool::new(false)).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn restored_index_mtime_cannot_reuse_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "restored", ObjectFormat::Sha1, b"content");
+        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let first = FilePack::open_cached_after_index(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &AtomicBool::new(false),
+            || {},
+            &cache,
+        )
+        .unwrap();
+        let modified = first.index.stamp.modified;
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[11] = 1;
+        fs::write(&path, bytes).unwrap();
+        File::open(&path).unwrap().set_modified(modified).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        assert!(matches!(
+            FilePack::open_cached_after_index(
+                ObjectFormat::Sha1,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false),
+                || {},
+                &cache
+            ),
+            Err(Error::Corrupt("index fanout"))
+        ));
+    }
+
+    #[test]
+    fn index_cache_does_not_outlive_last_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "lifetime", ObjectFormat::Sha1, b"content");
+        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let open = || {
+            FilePack::open_cached_after_index(
+                ObjectFormat::Sha1,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false),
+                || {},
+                &cache,
+            )
+            .unwrap()
+        };
+        let first = open();
+        let second = open();
+        drop(first);
+        let third = open();
+        assert_eq!(third.index.bytes_read.load(Ordering::Relaxed), 0);
+        drop(second);
+        drop(third);
+        let index = Artifact::open(&path).unwrap();
+        let pack = Artifact::open(&path.with_extension("pack")).unwrap();
+        assert!(cached_index(&cache, ObjectFormat::Sha1, &index, &pack).is_none());
+        let reopened = open();
+        assert_eq!(
+            reopened.index.bytes_read.load(Ordering::Relaxed),
+            reopened.index.len
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dropping_last_reader_releases_delete_pending_names() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "deleted", ObjectFormat::Sha1, b"content");
+        let first = open_pair(&path, ObjectFormat::Sha1);
+        let second = open_pair(&path, ObjectFormat::Sha1);
+        fs::remove_file(&path).unwrap();
+        fs::remove_file(path.with_extension("pack")).unwrap();
+        drop(first);
+        drop(second);
+        fs::write(&path, b"replacement index").unwrap();
+        fs::write(path.with_extension("pack"), b"replacement pack").unwrap();
+    }
+
     #[test]
     fn cached_open_still_charges_index_budget() {
         let root = tempfile::tempdir().unwrap();
