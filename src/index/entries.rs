@@ -8,7 +8,7 @@ use crate::ObjectId;
 /// trailing slash. No UTF-8, case folding,
 /// platform aliases, backslashes, drive letters or checkout-safety checks are applied.
 /// IDs are preserved even when zero; object existence and type remain caller obligations.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct Entry {
     /// Repository-relative path bytes; sparse directory paths have one trailing slash.
@@ -83,7 +83,7 @@ impl Entry {
 }
 
 /// Canonical index modes. Sparse directories name trees; gitlinks name submodule commits.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u32)]
 #[non_exhaustive]
 pub enum Mode {
@@ -104,7 +104,7 @@ pub enum Mode {
 /// A path has either one normal entry or any nonempty subset of stages 1, 2 and 3. Missing
 /// sides represent absent files. Duplicate stages and mixing normal/conflict entries are invalid.
 /// This set is exhaustive because the on-disk stage occupies exactly two bits.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u16)]
 pub enum Stage {
     /// Resolved entry, stage 0.
@@ -122,7 +122,7 @@ pub enum Stage {
 ///
 /// These are unsigned on-disk words, not host timestamps. No range validation, clock conversion,
 /// precision inference or comparison is performed, including for the nanosecond word.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Timestamp {
     /// Raw seconds word.
     pub seconds: u32,
@@ -134,7 +134,7 @@ pub struct Timestamp {
 ///
 /// Zero is useful for constructed entries that need later refresh. Callers must account for Git's
 /// racy-stat rules before trusting cached data; this API does not detect worktree modifications.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Stat {
     /// Metadata-change time.
     pub ctime: Timestamp,

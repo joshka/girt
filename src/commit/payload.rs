@@ -189,7 +189,7 @@ impl<'a> CommitPayload<'a> {
 }
 
 /// A header occurrence borrowing its exact name and folded value from a [`CommitPayload`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CommitHeaderRef<'a> {
     /// Whether the first physical line contains a framing space. Always true after strict
     /// [`CommitPayload::parse`]; legacy bare records from [`CommitPayload::from_bytes`] report

@@ -11,7 +11,7 @@ use crate::{
 /// Regular files, executable files, symlinks and gitlinks are leaves. IDs describe content
 /// identity independently of mode: an executable-bit or symlink transition can retain an ID.
 /// Gitlinks name commits in another repository, not trees to traverse locally.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TreeValue {
     /// Referenced object identity; comparison does not read or verify leaf targets.
     pub id: ObjectId,
@@ -25,7 +25,7 @@ pub struct TreeValue {
 /// `old == None` means addition; `new == None` means removal; two present sides mean change.
 /// Compare IDs to distinguish content identity changes from mode/type changes. A mode change
 /// alone still produces a record. Trees themselves are omitted, including empty directories.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct TreeChange {
     /// Relative slash-separated Git path bytes, without UTF-8 conversion or a trailing slash.

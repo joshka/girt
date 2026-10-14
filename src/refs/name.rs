@@ -6,6 +6,12 @@
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RefName(Vec<u8>);
 
+impl AsRef<[u8]> for RefName {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 impl RefName {
     /// Validates and copies a full name without consulting the filesystem.
     ///
@@ -46,6 +52,11 @@ impl RefName {
         &self.0
     }
 
+    /// Returns the exact name bytes, consuming the name without copying its buffer.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
     pub(crate) fn per_worktree(&self) -> bool {
         self.0 == b"HEAD"
             || [
@@ -68,6 +79,15 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn consuming_name_preserves_non_utf8_buffer() {
+        let name = RefName::new(b"refs/heads/\xff").unwrap();
+        let pointer = name.as_bytes().as_ptr();
+        let bytes = name.into_bytes();
+        assert_eq!(bytes, b"refs/heads/\xff");
+        assert_eq!(bytes.as_ptr(), pointer);
+    }
 
     #[rstest]
     #[case::head(b"HEAD")]
