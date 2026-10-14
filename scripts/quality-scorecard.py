@@ -107,6 +107,10 @@ FUZZ_TARGETS = {
     "delta": ["pack reading"],
     "pack_index": ["pack reading"],
     "pack": ["pack reading"],
+    "pkt_line": ["pkt-line protocol"],
+    "fetch_discovery": ["pkt-line protocol"],
+    "fetch_receive": ["pkt-line protocol", "pack reading"],
+    "push": ["pkt-line protocol"],
 }
 
 # Core modules sampled for mutation testing: object formats whose bugs corrupt or misread data.
