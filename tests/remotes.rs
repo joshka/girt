@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 use girt::refs::RefName;
 use girt::remote::{Direction, MappingError, RefSource, Refspecs, Remote, RemoteUrls};
-use girt::{ObjectId, Repository};
+use girt::{ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
 fn attempt(path: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
@@ -47,6 +47,9 @@ fn text(bytes: &[u8]) -> &str {
     std::str::from_utf8(bytes).unwrap().trim()
 }
 fn init() -> tempfile::TempDir {
+    init_in(ObjectFormat::Sha1)
+}
+fn init_in(format: ObjectFormat) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(
         dir.path(),
@@ -54,7 +57,7 @@ fn init() -> tempfile::TempDir {
             "init",
             "--bare",
             "--initial-branch=main",
-            "--object-format=sha1",
+            &format!("--object-format={format}"),
             "--template=",
             ".",
         ],
@@ -63,7 +66,10 @@ fn init() -> tempfile::TempDir {
     dir
 }
 fn populated() -> (tempfile::TempDir, Vec<RefSource>) {
-    let dir = init();
+    populated_in(ObjectFormat::Sha1)
+}
+fn populated_in(format: ObjectFormat) -> (tempfile::TempDir, Vec<RefSource>) {
+    let dir = init_in(format);
     let tree = git(dir.path(), &["mktree"], b"");
     let commit = git(
         dir.path(),
@@ -102,9 +108,13 @@ fn populated() -> (tempfile::TempDir, Vec<RefSource>) {
 #[case::selection(vec!["HEAD:"], vec![])]
 #[case::duplicate(vec!["refs/heads/main:refs/remotes/o/main", "refs/heads/main:refs/remotes/o/main"], vec!["refs/remotes/o/main"])]
 #[case::exact_exclusion(vec!["refs/heads/main:refs/remotes/o/main", "^refs/heads/main"], vec![])]
-fn git_fetch_agrees_with_mapping(#[case] values: Vec<&str>, #[case] expected: Vec<&str>) {
-    let (source, inputs) = populated();
-    let destination = init();
+fn git_fetch_agrees_with_mapping(
+    #[case] values: Vec<&str>,
+    #[case] expected: Vec<&str>,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (source, inputs) = populated_in(format);
+    let destination = init_in(format);
     let specs = Refspecs::parse(Direction::Fetch, &values).unwrap();
     let mappings = specs.map(&inputs).unwrap();
     let mut destinations: Vec<_> = mappings
@@ -155,9 +165,13 @@ fn assert_mapping_ids(path: &Path, mappings: &[girt::remote::Mapping]) {
 #[case::wildcard_same("refs/heads/pre*", vec!["refs/heads/pre-mid-post", "refs/heads/prepost"])]
 #[case::head("HEAD:refs/heads/copied", vec!["refs/heads/copied"])]
 #[case::force("+refs/heads/main:refs/heads/copied", vec!["refs/heads/copied"])]
-fn git_push_agrees_with_mapping(#[case] value: &str, #[case] expected: Vec<&str>) {
-    let (source, inputs) = populated();
-    let destination = init();
+fn git_push_agrees_with_mapping(
+    #[case] value: &str,
+    #[case] expected: Vec<&str>,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (source, inputs) = populated_in(format);
+    let destination = init_in(format);
     let mappings = Refspecs::parse(Direction::Push, [value])
         .unwrap()
         .map(&inputs)
@@ -370,11 +384,13 @@ fn git_generated_named_config_selects_the_same_fetch_refs() {
     );
 }
 
-#[test]
-fn git_annotated_tag_and_symbolic_head_keep_advertised_identities() {
+#[rstest]
+fn git_annotated_tag_and_symbolic_head_keep_advertised_identities(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
     use girt::fetch::{AdvertisedRef, Advertisement};
-    let (source, _) = populated();
-    let destination = init();
+    let (source, _) = populated_in(format);
+    let destination = init_in(format);
     git(
         source.path(),
         &[
@@ -415,7 +431,10 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities() {
                 peeled: true,
             },
         ],
-        capabilities: vec![b"symref=HEAD:refs/heads/main".to_vec()],
+        capabilities: vec![
+            b"symref=HEAD:refs/heads/main".to_vec(),
+            format!("object-format={format}").into_bytes(),
+        ],
     };
     let values = ["HEAD:refs/remotes/o/chosen", "refs/tags/*:refs/tags/*"];
     let mappings = Refspecs::parse(Direction::Fetch, values)
