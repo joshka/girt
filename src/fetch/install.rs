@@ -8,7 +8,7 @@ use super::import::Imported;
 use super::known::KnownObjects as _;
 use super::progress::ValidationObserver;
 use super::{Advertisement, FetchError, FetchLimits, KnownHistory, check_cancelled, connectivity};
-use crate::{IdMap, IdSet, ObjectId, Repository};
+use crate::{IdMap, ObjectId, ObjectKind, Repository};
 
 /// Fetch borrows caller evidence; local receive owns evidence it may extend before connectivity.
 enum ValidationHistory<'a> {
@@ -42,7 +42,7 @@ pub struct ReceivedFetch {
     objects: usize,
     dependencies: Vec<ObjectId>,
     /// Dependencies reachable from existing references, so publication need not walk them.
-    complete: IdSet,
+    complete: IdMap<ObjectKind>,
     shallow: Vec<ObjectId>,
     limits: FetchLimits,
     pub(super) verified: super::verified::VerifiedObjects,
@@ -98,7 +98,7 @@ pub(crate) struct NativeContents {
     pub checksum: Option<ObjectId>,
     pub objects: usize,
     pub dependencies: Vec<ObjectId>,
-    pub complete: IdSet,
+    pub complete: IdMap<ObjectKind>,
     pub shallow: Vec<ObjectId>,
     pub limits: FetchLimits,
 }
@@ -114,7 +114,7 @@ impl ReceivedFetch {
             checksum: None,
             objects: 0,
             dependencies: vec![],
-            complete: IdSet::default(),
+            complete: IdMap::default(),
             shallow: vec![],
             limits: FetchLimits::default(),
             verified: Default::default(),
@@ -162,8 +162,8 @@ impl ReceivedFetch {
         result.format = format;
         result.complete = dependencies
             .iter()
-            .copied()
-            .filter(|&id| known.trusted_complete(id))
+            .filter(|&&id| known.trusted_complete(id))
+            .filter_map(|&id| Some((id, known.complete_kind(id)?)))
             .collect();
         result.dependencies = dependencies;
         result.shallow = known.shallow.clone();
@@ -262,10 +262,9 @@ impl ReceivedFetch {
             limits,
             cancel,
         )?;
-        let mut complete = dependencies
+        let mut complete: IdMap<_> = dependencies
             .iter()
-            .copied()
-            .filter(|&id| bounded.trusted_complete(id))
+            .filter_map(|&id| Some((id, bounded.complete_kind(id)?)))
             .collect();
         let mut objects = imported.objects.len();
         if depth.is_some()
@@ -277,7 +276,7 @@ impl ReceivedFetch {
             materialize_dependencies(&mut imported, known.known(), &dependencies, cancel)?;
             imported.objects.record_read_costs()?;
             dependencies.clear();
-            complete = IdSet::default();
+            complete = IdMap::default();
         }
         check_cancelled(cancel)?;
         let received = Self {
@@ -322,8 +321,9 @@ impl ReceivedFetch {
         &self.dependencies
     }
 
-    /// Dependencies trusted complete because existing references reach them.
-    pub(crate) fn complete_dependencies(&self) -> &IdSet {
+    /// Dependencies trusted complete because existing references reach them, with the kind
+    /// that evidence requires of each.
+    pub(crate) fn complete_dependencies(&self) -> &IdMap<ObjectKind> {
         &self.complete
     }
 
@@ -528,17 +528,24 @@ impl ReceivedFetch {
                 let objects = repository
                     .objects(snapshot_limits)
                     .map_err(FetchError::Destination)?;
-                // Presence only: publication reads unproven dependencies with checked reads,
-                // and existing references make the rest complete.
+                // Presence and header kind only: publication reads unproven dependencies with
+                // checked reads, and existing references make the rest complete.
                 let mut bytes = self.limits.max_known_bytes as u64;
                 for &id in &self.dependencies {
                     check_cancelled(cancel)?;
                     let mut read = self.limits.known_read;
                     read.max_object_bytes = read.max_object_bytes.min(bytes as usize);
-                    let (_, size) = objects
+                    let (kind, size) = objects
                         .locate(id, read, cancel)
                         .map_err(|source| FetchError::LocalRead { id, source })?
                         .ok_or(FetchError::Missing(id))?;
+                    if self
+                        .complete
+                        .get(&id)
+                        .is_some_and(|&required| required != kind)
+                    {
+                        return Err(FetchError::Kind(id));
+                    }
                     bytes = bytes
                         .checked_sub(size)
                         .ok_or(FetchError::Limit("known bytes"))?;

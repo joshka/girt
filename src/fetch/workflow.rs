@@ -853,8 +853,7 @@ impl FetchReady {
             // precedence before any ref can name this graph. Different copies stay checked.
             // History reachable from references that existed before the fetch was verified when
             // those references were published; only new history is walked. Validation found the
-            // complete dependencies through verified edges from those same references, and
-            // installation checked that they are present.
+            // complete dependencies through verified edges from those same references.
             let mut verify_roots = self.received.wants().to_vec();
             verify_roots.extend(self.request.shallow_before.iter().copied());
             let mut published: crate::IdSet = self
@@ -866,7 +865,31 @@ impl FetchReady {
                     Target::Symbolic(_) => None,
                 })
                 .collect();
-            published.extend(self.received.complete_dependencies());
+            // Stop only where the representation lookup now selects has the kind that evidence
+            // requires; anything else fails before a reference can name this graph.
+            for (&id, &required) in self.received.complete_dependencies() {
+                super::check_cancelled(cancel).map_err(FetchFinishFailure::BeforePublication)?;
+                let located = objects
+                    .locate(id, limits.verification.known_read, cancel)
+                    .map_err(|source| {
+                        FetchFinishFailure::BeforePublication(FetchError::LocalRead { id, source })
+                    })?;
+                match located {
+                    None => {
+                        return Err(
+                            FetchFinishFailure::BeforePublication(FetchError::Missing(id)).into(),
+                        );
+                    }
+                    Some((kind, _)) if kind != required => {
+                        return Err(
+                            FetchFinishFailure::BeforePublication(FetchError::Kind(id)).into()
+                        );
+                    }
+                    Some(_) => {
+                        published.insert(id);
+                    }
+                }
+            }
             let shallow: Vec<_> = objects.shallow_roots().iter().collect();
             let verified =
                 super::verified::InstalledObjects::bind(&objects, &self.received, cancel)

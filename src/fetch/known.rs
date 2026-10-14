@@ -105,7 +105,7 @@ impl Ancestor {
     }
 }
 
-fn discovery_read(limits: FetchLimits, bytes: usize) -> crate::ReadLimits {
+pub(super) fn discovery_read(limits: FetchLimits, bytes: usize) -> crate::ReadLimits {
     let mut read = limits.known_read;
     read.max_object_bytes = read.max_object_bytes.min(bytes).min(DISCOVERY_OBJECT_BYTES);
     read.max_decode_bytes = read.max_decode_bytes.min(8 * DISCOVERY_OBJECT_BYTES);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fetch-1 timing for #117: G A B B A G slots, each slot N samples, under the shared timing lock.
+"""fetch-1 timing for #117: G S A B B A S G slots (S is stock jj), each slot N samples, under the shared timing lock.
 
 Templates (untimed, outside the lock): a copy of the bare origin plus a clone made by the tool and
 one no-op fetch, as bench-ops does. Each sample copies its template with `cp -cR`, advances the
@@ -10,12 +10,13 @@ import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
 sys.path.insert(0, "/tmp/jj117")
-JJ = {"A": "/tmp/jj117/t-a/release/jj", "B": "/tmp/jj117/t-b/release/jj"}
+JJ = {"A": "/tmp/jj117/t-a/release/jj", "B": "/tmp/jj117/t-b/release/jj",
+      "S": "/tmp/jjb/t-stock/release/jj"}
 ENV = dict(os.environ, JJ_CONFIG="/dev/null", JJ_USER="bench", JJ_EMAIL="bench@example.com",
            GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="bench",
            GIT_AUTHOR_EMAIL="bench@example.com", GIT_COMMITTER_NAME="bench",
            GIT_COMMITTER_EMAIL="bench@example.com")
-SLOTS = "GABBAG"
+SLOTS = "GSABBASG"
 
 
 def sh(cmd, cwd, extra=None):
@@ -86,10 +87,10 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     branch = sh("git symbolic-ref --short HEAD", origin)
     if mode == "prep":
-        for tool in "GAB":
+        for tool in "GSAB":
             template(work, origin, tool)
         return
-    results = {t: [] for t in "GAB"}
+    results = {t: [] for t in "GSAB"}
     n = 0
     for tool in SLOTS:
         for _ in range(per_slot):

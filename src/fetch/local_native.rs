@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 
-use super::known::KnownObjects as _;
 use super::{
     AdvertisedRef, Advertisement, FetchError, FetchLimits, KnownHistory, LocalFetchProgress,
     NativeContents, ReceivedFetch,
@@ -125,7 +124,7 @@ pub(super) fn receive_depth_observed(
                 checksum: None,
                 objects: 0,
                 dependencies: Vec::new(),
-                complete: IdSet::default(),
+                complete: IdMap::default(),
                 shallow: Vec::new(),
                 limits,
             },
@@ -297,8 +296,12 @@ pub(super) fn receive_depth_observed(
                 objects: 0,
                 complete: dependencies
                     .iter()
-                    .copied()
-                    .filter(|&id| boundaries.kind(id).is_some() || known.trusted_complete(id))
+                    .filter_map(|&id| {
+                        Some((
+                            id,
+                            super::boundaries::complete_kind(known, &boundaries, id)?,
+                        ))
+                    })
                     .collect(),
                 dependencies,
                 shallow,

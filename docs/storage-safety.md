@@ -144,14 +144,18 @@ Fetch and native local push also pair each received commit's tree with the tree 
 complete parent. A checked read of that parent tree makes each of its typed edges a complete
 boundary of the kind its entry mode names; gitlinks and the empty tree never are. A changed subtree
 whose name maps to a tree in the parent's tree pairs recursively, so reads follow the changed paths.
-These boundaries are reachable from existing references through verified edges, which is the same
-trust as the parent commit. The native local source walk records such an edge as a dependency
-without reading it from the source, unless the destination's header lookup does not find it with
-that kind, in which case the object is sent again. A failed read or parse supplies no evidence.
-Unpaired received trees, such as those of commits whose parents arrive in the same fetch, use the
-ordinary walk. Installation checks every dependency's presence and size by header lookup.
-Publication then stops at complete dependencies as it stops at reference targets, and walks the
-others with checked reads.
+Pairing proof reads share one discovery allowance of `max_known_objects`, `max_known_edges` and
+`max_known_bytes`, with the 1 MiB proof-object and decoding limits; an exhausted allowance supplies
+no evidence. These boundaries are reachable from existing references through verified edges, which
+is the same trust as the parent commit. The native local source walk records such an edge as a
+dependency without reading it from the source, unless the destination's header lookup does not find
+it with that kind, in which case the object is sent again. A failed read or parse supplies no
+evidence. Unpaired received trees, such as those of commits whose parents arrive in the same fetch,
+use the ordinary walk. Each complete dependency keeps the kind its evidence requires. Installation
+checks every dependency's presence and size by header lookup, and rejects a complete one whose
+selected header has another kind. Publication repeats that header check through the reopened store's
+lookup, then stops at complete dependencies as it stops at reference targets, and walks the others
+with checked reads.
 
 Import hashes every received object, parses its edges and proves typed connectivity before
 installation. On the eligible path below, that is the only identity check. The checked fallbacks can

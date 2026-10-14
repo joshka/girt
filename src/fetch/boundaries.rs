@@ -27,8 +27,11 @@ pub(crate) struct TreeBoundaries {
     pairs: IdMap<ObjectId>,
     /// Readers synthesize the empty tree; it is never a physical boundary.
     empty_tree: Option<ObjectId>,
-    read: crate::ReadLimits,
+    limits: FetchLimits,
+    /// Discovery allowances shared by every proof read; exhausting one supplies no evidence.
     bytes: usize,
+    objects: usize,
+    edges: usize,
 }
 
 impl TreeBoundaries {
@@ -40,8 +43,10 @@ impl TreeBoundaries {
                 .store
                 .as_ref()
                 .map(|store| store.object_format().hash_object(ObjectKind::Tree, b"")),
-            read: limits.known_read,
+            limits,
             bytes: limits.max_known_bytes,
+            objects: limits.max_known_objects,
+            edges: limits.max_known_edges,
         }
     }
 
@@ -100,6 +105,12 @@ impl TreeBoundaries {
         else {
             return Vec::new();
         };
+        // Every recorded edge is charged up front; a tree beyond the allowance proves nothing.
+        let Some(edges) = self.edges.checked_sub(old_entries.len()) else {
+            self.edges = 0;
+            return Vec::new();
+        };
+        self.edges = edges;
         let mut names = std::collections::HashMap::new();
         for &(mode, name, id) in &old_entries {
             let kind = match mode {
@@ -130,8 +141,8 @@ impl TreeBoundaries {
     }
 
     fn read(&mut self, known: &KnownHistory, id: ObjectId, kind: ObjectKind) -> Option<Object> {
-        let mut read = self.read;
-        read.max_object_bytes = read.max_object_bytes.min(self.bytes);
+        self.objects = self.objects.checked_sub(1)?;
+        let read = super::known::discovery_read(self.limits, self.bytes);
         let object = known.store.as_ref()?.read(id, read).ok().flatten()?;
         self.bytes = self.bytes.checked_sub(object.data().len())?;
         (object.kind() == kind).then_some(object)
@@ -211,5 +222,113 @@ impl KnownObjects for Bounded<'_> {
 
     fn trusted_complete(&self, id: ObjectId) -> bool {
         self.boundaries.kind(id).is_some() || self.known.trusted_complete(id)
+    }
+}
+
+impl Bounded<'_> {
+    /// The kind a complete dependency must have where publication stops at it, if it is one.
+    pub(super) fn complete_kind(&self, id: ObjectId) -> Option<ObjectKind> {
+        complete_kind(self.known, self.boundaries, id)
+    }
+}
+
+/// The kind evidence requires of a complete dependency: a paired tree edge's kind, or a trusted
+/// complete root's stored kind.
+pub(super) fn complete_kind(
+    known: &KnownHistory,
+    boundaries: &TreeBoundaries,
+    id: ObjectId,
+) -> Option<ObjectKind> {
+    boundaries.kind(id).or_else(|| {
+        known
+            .trusted_complete(id)
+            .then(|| known.complete_kind(id))
+            .flatten()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+    use crate::{InitKind, ObjectFormat, Repository};
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "A")
+            .env("GIT_AUTHOR_EMAIL", "a@example.com")
+            .env("GIT_COMMITTER_NAME", "A")
+            .env("GIT_COMMITTER_EMAIL", "a@example.com")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A Git-written commit with a nested tree, its known history and the new tree's payload.
+    fn parent() -> (tempfile::TempDir, KnownHistory, ObjectId, ObjectId) {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(ObjectFormat::Sha1, root.path(), InitKind::Worktree).unwrap();
+        std::fs::create_dir(root.path().join("dir")).unwrap();
+        std::fs::write(root.path().join("dir/file"), "a\n").unwrap();
+        std::fs::write(root.path().join("top"), "b\n").unwrap();
+        git(root.path(), &["add", "."]);
+        git(root.path(), &["commit", "-qm", "base"]);
+        let commit: ObjectId = git(root.path(), &["rev-parse", "HEAD"]).parse().unwrap();
+        let tree: ObjectId = git(root.path(), &["rev-parse", "HEAD^{tree}"])
+            .parse()
+            .unwrap();
+        let objects = repo.objects(Default::default()).unwrap();
+        let known =
+            KnownHistory::from_store_roots(objects, &[commit], &AtomicBool::new(false)).unwrap();
+        (root, known, commit, tree)
+    }
+
+    fn pair(limits: FetchLimits) -> TreeBoundaries {
+        let (_root, known, commit, old) = parent();
+        let new = ObjectId::for_blob(ObjectFormat::Sha1, b"new tree");
+        let mut boundaries = TreeBoundaries::new(&known, limits);
+        boundaries.pair_commit(&known, new, &[commit]);
+        boundaries.pairs.insert(new, old);
+        boundaries.pair_tree(&known, new, b"");
+        boundaries
+    }
+
+    /// Pairing records the parent tree's edges within the discovery allowances.
+    #[test]
+    fn pairing_records_parent_tree_edges() {
+        assert_eq!(pair(FetchLimits::trusted()).complete.len(), 3);
+    }
+
+    /// An exhausted object or edge allowance supplies no evidence, so the ordinary walk applies.
+    #[test]
+    fn exhausted_discovery_allowances_supply_no_evidence() {
+        let objects = pair(FetchLimits {
+            max_known_objects: 1,
+            ..FetchLimits::trusted()
+        });
+        assert!(
+            objects.complete.len() <= 1,
+            "only the parent's tree edge is recorded"
+        );
+        let edges = pair(FetchLimits {
+            max_known_edges: 1,
+            ..FetchLimits::trusted()
+        });
+        assert_eq!(
+            edges.complete.len(),
+            1,
+            "only the parent's tree edge is recorded"
+        );
+        let none = pair(FetchLimits {
+            max_known_objects: 0,
+            ..FetchLimits::trusted()
+        });
+        assert!(none.complete.is_empty());
     }
 }

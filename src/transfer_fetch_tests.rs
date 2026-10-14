@@ -460,3 +460,76 @@ fn git_input(directory: &Path, args: &[&str], input: &str) -> String {
     assert!(output.status.success(), "git {args:?}");
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
+
+/// Where the destination's unchanged object is selected from when a wrong-kind copy replaces it.
+#[derive(Clone, Copy, Debug)]
+enum Selected {
+    /// The destination's own loose object.
+    Primary,
+    /// The destination's loose object, ahead of a correct copy in an alternate store.
+    AheadOfAlternate,
+}
+
+/// A complete dependency whose selected representation has another kind than the parent's tree
+/// requires fails the fetch before any reference moves, even with a correct copy in an alternate.
+#[rstest::rstest]
+#[case::primary(Selected::Primary)]
+#[case::ahead_of_alternate(Selected::AheadOfAlternate)]
+fn wrong_kind_complete_dependency_is_rejected(#[case] selected: Selected) {
+    let (root, origin, repository) = wide("sha1", 3, true);
+    if let Selected::AheadOfAlternate = selected {
+        let alternate = root.path().join("alternate.git");
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                "--no-local",
+                &origin.to_string_lossy(),
+                "alternate.git",
+            ],
+        );
+        std::fs::write(
+            repository.git_dir().join("objects/info/alternates"),
+            format!("{}\n", alternate.join("objects").display()),
+        )
+        .unwrap();
+    }
+    let before = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    let unchanged = git(&origin, &["rev-parse", "HEAD:a/h1"]);
+    let tree = git(&origin, &["rev-parse", "HEAD:a"]);
+    let path = loose_path(&repository, unchanged.trim());
+    let tree_file = origin
+        .join(".git/objects")
+        .join(&tree.trim()[..2])
+        .join(&tree.trim()[2..]);
+    std::fs::write(origin.join("a/b/g0"), "edited\n").unwrap();
+    git(&origin, &["commit", "-qam", "edit"]);
+    let mut callbacks = DuringTransfer(Some(|| {
+        std::fs::remove_file(&path).unwrap();
+        std::fs::copy(&tree_file, &path).unwrap();
+    }));
+    let result = repository.fetch(
+        "origin",
+        &FetchOptions::new(SPECS).prune(true),
+        &Environment::from_process(),
+        &mut callbacks,
+    );
+    assert!(
+        callbacks.0.is_none(),
+        "the replacement must run during the transfer"
+    );
+    assert!(
+        result.is_err(),
+        "fetch accepted a wrong-kind dependency: {result:?}"
+    );
+    let after = git(
+        repository.git_dir(),
+        &["rev-parse", "refs/remotes/origin/main"],
+    );
+    assert_eq!(after, before);
+}
