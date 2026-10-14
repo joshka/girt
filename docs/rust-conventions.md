@@ -33,6 +33,11 @@ Native fetch separates `LocalFetchRequest` history/bounds, `TransportControl`, a
 runtime, retention and publication state outside these values. jj can retain its configured
 `workflow::fetch` adapter or use explicit requests when it owns scheduling and publication.
 
+`LocalPushRequest` binds a prepared artifact to inherited receiver configuration and reflog
+identity. The request exposes separate configuration and identity setters; control and validation
+observers remain separate. jj's workflow adapter supplies its existing configuration/identity
+policy. Avoid a context that also owns transport runtimes, retention or publication state.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated

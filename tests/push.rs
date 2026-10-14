@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicBool;
 
 use girt::push::{
     ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, PushReport, Status,
-    send_local,
 };
 use girt::refs::RefName;
 use girt::{
@@ -17,6 +16,20 @@ use girt::{
 };
 use pack_git::{Fixture, git};
 use rstest::rstest;
+
+// Default-policy sends share setup so cases focus on receiver behavior.
+fn send_local(
+    destination: impl AsRef<std::path::Path>,
+    prepared: &PreparedPush,
+    cancel: &AtomicBool,
+) -> Result<PushReport, PushError> {
+    girt::push::send_local(
+        destination,
+        girt::push::LocalPushRequest::new(prepared),
+        girt::transport::TransportControl::new(cancel),
+        |_| {},
+    )
+}
 
 fn destination(bare: bool) -> (tempfile::TempDir, Repository) {
     let root = tempfile::tempdir().unwrap();
@@ -650,16 +663,16 @@ fn native_push_passes_updates_to_receive_hooks(#[case] hook_name: &str) {
 fn interrupted_before_spawn_changes_no_destination_storage(#[case] cancelled: bool) {
     use std::time::Instant;
 
-    use girt::push::send_local_with_control;
     use girt::transport::TransportControl;
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
     let (_root, dest) = destination(true);
     let prepared = prepare(&f.repo, vec![command("refs/heads/main", None, main(&f))]);
     let cancel = AtomicBool::new(cancelled);
-    let result = send_local_with_control(
+    let result = girt::push::send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared),
         TransportControl::new(&cancel).with_deadline(Some(Instant::now())),
+        |_| {},
     );
     assert!(matches!(
         result,
@@ -1220,10 +1233,11 @@ fn cancellation_during_pre_receive_leaves_primary_storage_unchanged() {
             }
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         });
-        girt::push::send_local_with_control(
+        girt::push::send_local(
             dest.git_dir(),
-            &prepared,
+            girt::push::LocalPushRequest::new(&prepared),
             girt::transport::TransportControl::new(&cancel),
+            |_| {},
         )
         .unwrap_err()
     });
@@ -1448,12 +1462,13 @@ fn post_hooks_drain_excess_output_and_preserve_background_work_like_git() {
                 &AtomicBool::new(false),
             )
             .unwrap();
-            let report = girt::push::send_local_with_control(
+            let report = girt::push::send_local(
                 dest.git_dir(),
-                &prepared,
+                girt::push::LocalPushRequest::new(&prepared),
                 girt::transport::TransportControl::new(&AtomicBool::new(false)).with_deadline(
                     Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
                 ),
+                |_| {},
             )
             .unwrap();
             assert_eq!(report.progress.iter().map(Vec::len).sum::<usize>(), 30);

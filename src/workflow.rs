@@ -1128,7 +1128,7 @@ impl Repository {
                         &path,
                         format,
                         control,
-                        crate::push::LocalPushContext {
+                        crate::push::ReceiverPolicy {
                             config_inputs: &crate::config::ConfigInputs::default(),
                             identity: options.identity.as_ref(),
                         },

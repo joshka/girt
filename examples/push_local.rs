@@ -2,7 +2,7 @@
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local_with_control};
+use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local};
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::{
@@ -63,11 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_force(ForcePolicy::FastForwardOnly),
     ];
     let prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
-    let report = send_local_with_control(
+    let report = send_local(
         destination.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared),
         TransportControl::new(&cancel)
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
+        |_| {},
     )?;
     // A complete protocol exchange can still contain rejection or partial success.
     if !report.all_succeeded() {
@@ -96,11 +97,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PushLimits::default(),
         &cancel,
     )?;
-    let report = send_local_with_control(
+    let report = send_local(
         destination.git_dir(),
-        &repeated,
+        girt::push::LocalPushRequest::new(&repeated),
         TransportControl::new(&cancel)
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
+        |_| {},
     )?;
     if !report.all_succeeded() {
         return Err(format!("repeat rejected: {report:?}").into());

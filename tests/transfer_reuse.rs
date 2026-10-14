@@ -298,9 +298,14 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     )
     .unwrap();
     assert!(
-        send_local(dest.git_dir(), &full, &AtomicBool::new(false))
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&full),
+            girt::transport::TransportControl::new(&AtomicBool::new(false)),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
     assert!(delta_count(dest.git_dir()) > 0);
     assert_eq!(
@@ -328,9 +333,14 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     .unwrap();
     assert_eq!(one.object_count(), 1);
     assert!(
-        send_local(subset.git_dir(), &one, &AtomicBool::new(false))
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            subset.git_dir(),
+            girt::push::LocalPushRequest::new(&one),
+            girt::transport::TransportControl::new(&AtomicBool::new(false)),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
     assert_eq!(delta_count(subset.git_dir()), 0);
     assert_eq!(
