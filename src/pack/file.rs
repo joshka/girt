@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -34,7 +35,9 @@ struct Artifact {
     stamp: Stamp,
     cache_change: Option<(i64, i64)>,
     window_id: u64,
-    truncation_check: std::sync::OnceLock<Result<(), Arc<io::Error>>>,
+    // Only complete, immutable OS metadata results are published. OnceLock leaves the cache
+    // empty if initialization panics; cached errors never contain caller-supplied payloads.
+    truncation_check: std::sync::OnceLock<AssertUnwindSafe<Result<(), Arc<io::Error>>>>,
     #[cfg(test)]
     bytes_read: std::sync::atomic::AtomicUsize,
 }
@@ -109,13 +112,15 @@ impl Artifact {
     /// reads still report short reads, and explicit verification checks the live artifacts.
     fn check_snapshot_not_truncated(&self) -> Result<(), Error> {
         let result = self.truncation_check.get_or_init(|| {
-            let current = self.file.metadata().map_err(Arc::new)?.len();
-            if current < self.len as u64 {
-                return Err(Arc::new(io::ErrorKind::UnexpectedEof.into()));
-            }
-            Ok(())
+            AssertUnwindSafe((|| {
+                let current = self.file.metadata().map_err(Arc::new)?.len();
+                if current < self.len as u64 {
+                    return Err(Arc::new(io::ErrorKind::UnexpectedEof.into()));
+                }
+                Ok(())
+            })())
         });
-        result.as_ref().map(|_| ()).map_err(|source| {
+        result.0.as_ref().map(|_| ()).map_err(|source| {
             path_error(
                 &self.path,
                 io::Error::new(source.kind(), Arc::clone(source)),
@@ -2414,6 +2419,24 @@ mod publication_tests {
         );
         assert!(super::window::bytes(&artifact, 512 * 1024, 512 * 1024 + 1).is_err());
         assert!(super::window::bytes(&artifact, usize::MAX, 0).is_err());
+    }
+
+    #[test]
+    fn truncation_cache_retries_after_initializer_panic() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        fs::write(&path, b"pinned bytes").unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+
+        let panic = std::panic::catch_unwind(|| {
+            artifact.truncation_check.get_or_init(|| {
+                panic!("interrupted metadata check");
+            });
+        });
+        assert!(panic.is_err());
+        assert!(artifact.truncation_check.get().is_none());
+        artifact.check_snapshot_not_truncated().unwrap();
+        assert!(artifact.truncation_check.get().unwrap().0.is_ok());
     }
 
     #[cfg(windows)]
