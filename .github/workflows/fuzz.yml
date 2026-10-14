@@ -1,0 +1,44 @@
+name: Fuzz
+
+# Smoke fuzzing runs nightly and on demand; it is not a pull request gate.
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz each target
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Fuzz smoke
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install nightly --profile minimal
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+          shared-key: fuzz
+          cache-on-failure: true
+      - run: cargo install cargo-fuzz --locked --version 0.13.2
+      - name: Fuzz each target
+        run: fuzz/run.sh "$SECONDS_PER_TARGET"
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds || 60 }}
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore

@@ -100,6 +100,15 @@ CAPABILITIES = [
                                                  "fetch_retention"], "bounded cancel mutating"),
 ]
 
+# Parser capabilities each cargo-fuzz target in fuzz/fuzz_targets exercises.
+FUZZ_TARGETS = {
+    "object": ["trees", "commits", "annotated tags"],
+    "loose": ["loose objects", "trees", "commits", "annotated tags"],
+    "delta": ["pack reading"],
+    "pack_index": ["pack reading"],
+    "pack": ["pack reading"],
+}
+
 # Core modules sampled for mutation testing: object formats whose bugs corrupt or misread data.
 MUTANT_FILES = ["src/object.rs", "src/tree.rs", "src/commit.rs", "src/commit/payload.rs", "src/tag.rs", "src/packet.rs"]
 # A fixed quarter of the mutants keeps the run near 20 minutes; rotate the shard to widen coverage.
@@ -500,14 +509,16 @@ def robustness(caps, panics):
     explicit = [f for lint in PANIC_LINTS if lint != "indexing_slicing" for f in panics.get(lint, [])]
     in_parsers = [f for f in explicit if f in parser_files]
     indexing = [f for f in panics.get("indexing_slicing", []) if f in parser_files]
-    fuzz = len(list((ROOT / "fuzz" / "fuzz_targets").glob("*.rs"))) if (ROOT / "fuzz").exists() else 0
+    targets = {p.stem for p in (ROOT / "fuzz" / "fuzz_targets").glob("*.rs")}
+    fuzzed = {cap for target in targets for cap in FUZZ_TARGETS.get(target, [])}
+    unfuzzed = [c["name"] for c in parsers if c["name"] not in fuzzed]
     top = sorted({f: in_parsers.count(f) for f in in_parsers}.items(), key=lambda kv: -kv[1])[:8]
     top_index = sorted({f: indexing.count(f) for f in indexing}.items(), key=lambda kv: -kv[1])[:8]
     metrics = [
         metric("parsers with at least 5 malformed-input tests", percent(len(parsers) - len(thin), len(parsers)),
                100, unit="%", detail=thin),
-        metric("fuzz targets", fuzz, len(parsers), scored=False,
-               note="deferred until after release (docs/publication-plan.md, roadmap B10)"),
+        metric("parsers with a fuzz target", percent(len(parsers) - len(unfuzzed), len(parsers)), 100,
+               unit="%", note=f"{len(targets)} targets", detail=unfuzzed),
         metric("unwrap/expect/panic/unreachable in parser library code", len(in_parsers), 0, higher=False,
                detail=[f"{f}: {n}" for f, n in top]),
         metric("unchecked indexing or slicing in parser library code", len(indexing), 0, higher=False,

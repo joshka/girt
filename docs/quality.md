@@ -76,6 +76,5 @@ divided by its target, capped at 1. A count whose target is a maximum attains 1 
 target and `(target + 1) / (value + 1)` above it, so one panic site against a target of 0 attains
 1/2. An unmeasured metric, such as coverage before the first `--coverage` run, attains 0 and marks
 the axis incomplete, so an unmeasured checkout never outscores a measured one. Clippy pedantic and
-nursery counts, the size of the public API and fuzz targets are reported without a score. Fuzzing is
-deferred until after release by the [publication plan](publication-plan.md), so the scorecard
-reports the gap without counting it.
+nursery counts and the size of the public API are reported without a score. Fuzz coverage counts the
+parser capabilities that a [fuzz target](../CONTRIBUTING.md#fuzzing) exercises.

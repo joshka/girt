@@ -1,0 +1,55 @@
+[package]
+name = "girt-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+girt = { path = ".." }
+
+# A standalone workspace keeps the nightly-only fuzz build out of the published package.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "object"
+path = "fuzz_targets/object.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loose"
+path = "fuzz_targets/loose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delta"
+path = "fuzz_targets/delta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack_index"
+path = "fuzz_targets/pack_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack"
+path = "fuzz_targets/pack.rs"
+test = false
+doc = false
+bench = false

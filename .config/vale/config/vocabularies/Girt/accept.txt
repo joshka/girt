@@ -91,3 +91,4 @@ argv
 backpressure
 stdin
 nondeletion
+libFuzzer
