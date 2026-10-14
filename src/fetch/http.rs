@@ -138,7 +138,7 @@ pub async fn receive_http_with_depth_and_progress(
             remaining: limits.max_wire_bytes,
             cancel: control.cancel,
         };
-        let advertisement = protocol::advertise(&mut wire, limits)?;
+        let (advertisement, _) = protocol::advertise_with_version(&mut wire, limits)?;
         wire.end()?;
         let wants = select(&advertisement);
         if depth.is_none()
@@ -158,6 +158,7 @@ pub async fn receive_http_with_depth_and_progress(
         let negotiation = protocol::request(
             &mut request,
             &advertisement,
+            &protocol::Dialect::V0,
             wants,
             history,
             depth,

@@ -152,14 +152,18 @@ impl RemoteDiscovery {
     /// Reports whether the current fetch adapters can request an object pack from this inventory.
     ///
     /// Native local transfer supports both formats. V0/v1 wire transfer requires
-    /// `side-band-64k`; v2 `fetch` remains unsupported even when the peer advertises it. This is a
+    /// `side-band-64k`; v2 transfer requires the `fetch` command. This is a
     /// capability check, not authorization to reuse a stale preview or evidence that all selected
     /// objects will be available.
     pub fn supports_current_fetch(&self) -> bool {
         match self.version {
             ProtocolVersion::Native => true,
             ProtocolVersion::V0 | ProtocolVersion::V1 => self.advertises(b"side-band-64k"),
-            ProtocolVersion::V2 => false,
+            ProtocolVersion::V2 => self
+                .advertisement
+                .capabilities
+                .iter()
+                .any(|capability| capability == b"fetch" || capability.starts_with(b"fetch=")),
         }
     }
 }

@@ -106,7 +106,7 @@ fn rejects_bad_framing(#[case] bytes: &[u8]) {
 }
 
 #[rstest]
-#[case::version(b"version 2\n", true)]
+#[case::version(b"version 3\n", true)]
 #[case::shallow(b"shallow abc\n", true)]
 #[case::missing_caps(b"1111111111111111111111111111111111111111 refs/heads/main", false)]
 #[case::sha256(

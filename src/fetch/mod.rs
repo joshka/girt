@@ -1,4 +1,4 @@
-//! Native local and upload-pack object discovery, plus v0 object transfer.
+//! Native local and upload-pack object discovery, plus v0/v1/v2 object transfer.
 //!
 //! # Discovery, transfer, and publication
 //!
@@ -39,12 +39,13 @@
 //! [`receive_with_known_depth`] and the owned network depth variants report shallow boundaries;
 //! [`FetchRequest::with_depth`] coordinates their publication. Direct installation still refuses
 //! shallow results. Transfer requests `side-band-64k` and available `ofs-delta`, `thin-pack`,
-//! `multi_ack`, `shallow`, and SHA-256 object-format capabilities as needed. Filtering, automatic
-//! tags and protocol v2 transfer remain outside this boundary.
+//! `multi_ack`, `shallow`, and SHA-256 object-format capabilities as needed; caller-owned v2
+//! streams use one `ls-refs` and one `fetch` command instead. Filtering and automatic tags remain
+//! outside this boundary.
 //! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
 //! [`discover_session`] report references, object format and deterministic HEAD interpretation
 //! without transferring objects. The owned network endpoints currently request v0; caller-owned
-//! streams accept v0/v1 and v2 `ls-refs`. V0/v1 wire transfer supports both object formats. A
+//! streams accept v0, v1 and v2. Wire transfer supports both object formats. A
 //! preview can become stale and never authorizes a later mutation.
 //! The `http` and `ssh` features add owned async network downloads with separate synchronous
 //! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
