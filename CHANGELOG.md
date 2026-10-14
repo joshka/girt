@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/joshka/girt/compare/v0.7.0...v0.7.1) - 2026-10-14
+
+### Other
+
+- cache Rust builds across workflow runs ([#150](https://github.com/joshka/girt/pull/150))
+- list references once per fetch ([#149](https://github.com/joshka/girt/pull/149))
+
 ## [0.7.0](https://github.com/joshka/girt/compare/v0.6.4...v0.7.0) - 2026-10-14
 
 ### Other
