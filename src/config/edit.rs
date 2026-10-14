@@ -24,9 +24,9 @@ use crate::Repository;
 /// other platforms require callers to exclude lock/directory replacement. Arbitrary hostile
 /// directory replacement is outside this contract on every platform.
 ///
-/// Drop performs best-effort cleanup. Use [`Self::abort`] for observable cleanup; errors retain
-/// both primary and cleanup causes. Inspect a residual lock before manual recovery, then acquire
-/// a fresh lifecycle and reread sources before retrying.
+/// Drop performs blocking, best-effort filesystem cleanup. Use [`Self::abort`] for observable
+/// cleanup; errors retain both primary and cleanup causes. Inspect a residual lock before manual
+/// recovery, then acquire a fresh lifecycle and reread sources before retrying.
 #[derive(Debug)]
 pub struct ConfigEdit {
     destination: PathBuf,

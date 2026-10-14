@@ -130,11 +130,11 @@ impl Document {
     /// use girt::config::Document;
     /// let mut document =
     ///     Document::parse(b"[remote \"origin\"]\nurl=first\n[remote \"origin\"]\nurl=second\n")?;
-    /// let second = document.sections().nth(1).unwrap();
+    /// let second = document.sections().nth(1).ok_or("second section absent")?;
     /// assert_eq!(second.entry_range(), 1..2);
     /// document.remove_sections(&[second.ordinal()])?;
     /// assert_eq!(document.config().entries().len(), 1);
-    /// # Ok::<(), girt::ConfigError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[expect(
         clippy::indexing_slicing,

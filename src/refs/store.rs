@@ -288,7 +288,9 @@ impl<'a> References<'a> {
     ///     InitKind::Bare,
     /// )?;
     /// let refs = repo.references()?;
-    /// let observation = refs.read_observation(&RefName::new("HEAD")?)?.unwrap();
+    /// let observation = refs
+    ///     .read_observation(&RefName::new("HEAD")?)?
+    ///     .ok_or("HEAD absent")?;
     /// assert_eq!(observation.peeled_hint, None);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

@@ -130,6 +130,11 @@ impl PreparedPush {
     /// [`Self::new_excluding`]. Git's canonical empty tree is materialized when it is named by a
     /// commit but absent from source storage. Other missing objects still fail. The result can be
     /// passed to [`super::send_local`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the selection, object validation, resource-limit and cancellation errors of
+    /// [`Self::new_excluding`]. Preparation does not transmit commands or publish references.
     pub fn new_local(
         objects: &Objects,
         commands: Vec<PushCommand>,

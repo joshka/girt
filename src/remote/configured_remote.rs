@@ -128,7 +128,7 @@ impl ConfiguredRemote {
     /// use girt::Config;
     /// use girt::remote::ConfiguredRemote;
     /// let config = Config::parse(b"[remote \"origin\"]\nurl=https://HOST/repo\nfetch\n")?;
-    /// let remote = ConfiguredRemote::find(&config, b"origin")?.unwrap();
+    /// let remote = ConfiguredRemote::find(&config, b"origin")?.ok_or("remote absent")?;
     /// assert_eq!(remote.fetch_url(), Some(b"https://host/repo".as_slice()));
     /// assert_eq!(remote.fetch_refspecs()[0].to_bytes(), b"HEAD");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -245,7 +245,7 @@ impl ConfiguredRemoteRecord {
     /// use girt::Config;
     /// use girt::remote::ConfiguredRemoteRecord;
     /// let config = Config::parse(b"[remote \"origin\"]\n")?;
-    /// let record = ConfiguredRemoteRecord::find(&config, b"origin")?.unwrap();
+    /// let record = ConfiguredRemoteRecord::find(&config, b"origin")?.ok_or("remote absent")?;
     /// assert_eq!(record.fetch_urls().len(), 0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
