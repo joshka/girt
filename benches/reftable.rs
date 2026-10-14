@@ -17,12 +17,13 @@ fn fixture(count: usize, layers: usize) -> (tempfile::TempDir, Repository) {
     )
     .unwrap();
     let edits: Vec<_> = (0..count)
-        .map(|index| RefEdit {
-            name: RefName::new(format!("refs/tags/fixture-{index:06}")).unwrap(),
-            target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
-            expected: Expected::Any,
-            dereference: false,
-            reflog: Reflog::Preserve,
+        .map(|index| {
+            RefEdit::new(
+                RefName::new(format!("refs/tags/fixture-{index:06}")).unwrap(),
+                Some(Target::Direct(ObjectId::Sha1([1; 20]))),
+                Expected::Any,
+                Reflog::Preserve,
+            )
         })
         .collect();
     for _ in 0..layers {

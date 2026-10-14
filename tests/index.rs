@@ -790,15 +790,9 @@ fn split_aggregate_byte_limit_includes_shared_file(#[case] format: girt::ObjectF
             .join(format!("sharedindex.{}", index.shared_index_id().unwrap())),
     )
     .unwrap();
-    let short = Limits {
-        max_bytes: main.len() + shared.len() - 1,
-        ..Limits::default()
-    };
+    let short = Limits::default().with_max_bytes(main.len() + shared.len() - 1);
     assert!(repo.edit_index(short).is_err());
-    let exact = Limits {
-        max_bytes: main.len() + shared.len(),
-        ..Limits::default()
-    };
+    let exact = Limits::default().with_max_bytes(main.len() + shared.len());
     assert!(repo.read_index(exact).unwrap().is_some());
     assert!(!repo.git_dir().join("index.lock").exists());
 }
@@ -943,6 +937,7 @@ fn overlapping_bitmaps(format: girt::ObjectFormat, original: &[u8]) -> Vec<u8> {
     let digest = match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes.extend_from_slice(&digest);
     bytes
@@ -1042,6 +1037,7 @@ fn index_with_eoie(
     let checksum = |bytes: &[u8]| match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(bytes).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(bytes).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     let index = Index::parse(format, original, Limits::default()).unwrap();
     assert!(!index.extensions().iter().any(|e| e.signature() == *b"EOIE"));
@@ -1381,10 +1377,7 @@ fn orphan_creation_missing_selected_split_dependency_precedes_registration(
             root.path().join("linked"),
             &branch,
             4,
-            girt::OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            girt::OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap_err();
     assert!(matches!(
@@ -1405,6 +1398,7 @@ fn resign(format: girt::ObjectFormat, content: &[u8]) -> Vec<u8> {
     let checksum = match format {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(content).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(content).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     [content, &checksum].concat()
 }

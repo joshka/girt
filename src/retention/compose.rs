@@ -9,6 +9,7 @@ use crate::Repository;
 
 /// Known completed phases of one isolated maintenance attempt.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct MaintenanceReport {
     /// Reflog expiry completed; an empty report means no records qualified.
     pub expired: Option<ExpireReport>,
@@ -20,6 +21,7 @@ pub struct MaintenanceReport {
 
 /// Why maintenance stopped; a phase error carries that phase's partial effects.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MaintenanceCause {
     /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
@@ -53,6 +55,7 @@ pub enum MaintenanceCause {
 /// Failure with completed earlier phases and a partial current phase in its cause.
 #[derive(Debug, thiserror::Error)]
 #[error("maintenance failed")]
+#[non_exhaustive]
 pub struct MaintenanceFailure {
     /// The phase that stopped.
     #[source]

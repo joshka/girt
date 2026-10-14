@@ -53,6 +53,12 @@ pub struct TerminalEvents {
     shared: Arc<Shared>,
 }
 
+impl std::fmt::Debug for TerminalEvents {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalEvents").finish_non_exhaustive()
+    }
+}
+
 /// Single-use permission to resume a stopped SSH session after the caller regains the foreground.
 ///
 /// Dropping this value cancels its session. A permit from a completed session cannot affect a later
@@ -62,6 +68,12 @@ pub struct StoppedTerminal {
     generation: u64,
     signal: i32,
     granted: bool,
+}
+
+impl std::fmt::Debug for StoppedTerminal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoppedTerminal").finish_non_exhaustive()
+    }
 }
 
 struct Shared {
@@ -411,5 +423,29 @@ pub(super) fn with_sigttou_blocked(
             return result.and(Err(io::Error::from_raw_os_error(restored)));
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_terminal_attachment_and_stop_state() {
+        let shared = Arc::new(Shared {
+            fd: tempfile::tempfile().unwrap().into(),
+            state: Mutex::new(State::default()),
+        });
+        let events = TerminalEvents {
+            shared: shared.clone(),
+        };
+        let stopped = StoppedTerminal {
+            shared,
+            generation: u64::MAX,
+            signal: libc::SIGSTOP,
+            granted: false,
+        };
+        assert_eq!(format!("{events:?}"), "TerminalEvents { .. }");
+        assert_eq!(format!("{stopped:?}"), "StoppedTerminal { .. }");
     }
 }

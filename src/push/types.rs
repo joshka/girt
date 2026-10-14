@@ -3,6 +3,7 @@ use crate::{ObjectId, PackCompression, PackWriteLimits, ReadLimits};
 
 /// Policy for replacing an existing destination. Server restrictions still apply.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ForcePolicy {
     /// Branch updates require the old commit to be an ancestor of the new commit. Existing tags
     /// can only retain the same ID. Other namespaces use only the exact old-value condition.
@@ -16,6 +17,7 @@ pub enum ForcePolicy {
 
 /// One full destination name and an exact compare-and-swap expectation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PushCommand {
     /// Validated full destination name under `refs/`; `HEAD` is not a push destination.
     pub name: RefName,
@@ -26,6 +28,49 @@ pub struct PushCommand {
     pub new: ObjectId,
     /// Explicit replacement policy; use the default to protect existing history and tags.
     pub force: ForcePolicy,
+}
+
+impl PushCommand {
+    /// Creates a conditional update protected by [`ForcePolicy::FastForwardOnly`].
+    ///
+    /// An `expected` value of `None` requires the reference to be absent; `Some` requires
+    /// that exact nonzero object ID, even when force is subsequently enabled.
+    pub fn new(name: RefName, expected: Option<ObjectId>, new: ObjectId) -> Self {
+        Self {
+            name,
+            expected,
+            new,
+            force: ForcePolicy::default(),
+        }
+    }
+
+    /// Sets [`Self::name`].
+    #[must_use]
+    pub fn with_name(mut self, name: RefName) -> Self {
+        self.name = name;
+        self
+    }
+
+    /// Sets [`Self::expected`].
+    #[must_use]
+    pub fn with_expected(mut self, expected: Option<ObjectId>) -> Self {
+        self.expected = expected;
+        self
+    }
+
+    /// Sets [`Self::new`].
+    #[must_use]
+    pub fn with_new(mut self, new: ObjectId) -> Self {
+        self.new = new;
+        self
+    }
+
+    /// Sets [`Self::force`].
+    #[must_use]
+    pub fn with_force(mut self, force: ForcePolicy) -> Self {
+        self.force = force;
+        self
+    }
 }
 impl PushCommand {
     /// Returns whether this command deletes its destination.
@@ -44,6 +89,7 @@ impl PushCommand {
 /// Per-read decoding work is bounded separately and may recur for each selected object.
 /// These are not hard heap or wall-clock limits; allocator overhead and server memory are excluded.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PushLimits {
     /// Advertisement bytes including pkt-line framing (default 4 MiB).
     pub max_advertisement_bytes: usize,
@@ -81,6 +127,78 @@ pub struct PushLimits {
     /// Offering receiver candidates additionally caps output depth at one so internal bases
     /// always resolve before receiver-assisted external lookup.
     pub compression: PackCompression,
+}
+
+impl PushLimits {
+    /// Sets [`Self::max_advertisement_bytes`].
+    #[must_use]
+    pub fn with_max_advertisement_bytes(mut self, max_advertisement_bytes: usize) -> Self {
+        self.max_advertisement_bytes = max_advertisement_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_refs`].
+    #[must_use]
+    pub fn with_max_refs(mut self, max_refs: usize) -> Self {
+        self.max_refs = max_refs;
+        self
+    }
+
+    /// Sets [`Self::max_commands`].
+    #[must_use]
+    pub fn with_max_commands(mut self, max_commands: usize) -> Self {
+        self.max_commands = max_commands;
+        self
+    }
+
+    /// Sets [`Self::max_command_bytes`].
+    #[must_use]
+    pub fn with_max_command_bytes(mut self, max_command_bytes: usize) -> Self {
+        self.max_command_bytes = max_command_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_status_bytes`].
+    #[must_use]
+    pub fn with_max_status_bytes(mut self, max_status_bytes: usize) -> Self {
+        self.max_status_bytes = max_status_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_edges`].
+    #[must_use]
+    pub fn with_max_edges(mut self, max_edges: usize) -> Self {
+        self.max_edges = max_edges;
+        self
+    }
+
+    /// Sets [`Self::max_ancestry_steps`].
+    #[must_use]
+    pub fn with_max_ancestry_steps(mut self, max_ancestry_steps: usize) -> Self {
+        self.max_ancestry_steps = max_ancestry_steps;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
+
+    /// Sets [`Self::pack`].
+    #[must_use]
+    pub fn with_pack(mut self, pack: PackWriteLimits) -> Self {
+        self.pack = pack;
+        self
+    }
+
+    /// Sets [`Self::compression`].
+    #[must_use]
+    pub fn with_compression(mut self, compression: PackCompression) -> Self {
+        self.compression = compression;
+        self
+    }
 }
 impl Default for PushLimits {
     fn default() -> Self {
@@ -125,6 +243,7 @@ impl PushLimits {
 
 /// Server acknowledgement, preserving rejection text without assuming UTF-8.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Status {
     /// The server reported success.
     Ok,
@@ -134,6 +253,7 @@ pub enum Status {
 
 /// Provenance of a rejected reference update.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RejectionOrigin {
     /// The native destination's locked reference did not match the command's expected old value.
     ExpectedValue,
@@ -145,6 +265,7 @@ pub enum RejectionOrigin {
 
 /// Evidence for one submitted command, in caller command order.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RefStatus {
     /// The submitted destination, old/new IDs and force policy.
     pub command: PushCommand,
@@ -171,6 +292,7 @@ pub struct RefStatus {
 
 /// One server-reported replacement for a successful pseudo-reference command.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct RefRewrite {
     /// Actual destination. `None` means the submitted name was used.
     pub name: Option<RefName>,
@@ -188,6 +310,7 @@ pub struct RefRewrite {
 /// An uncertain error retains whatever valid status prefix was received. An `ok` is the server's
 /// acknowledgement, not a promise of durability or that another writer has not since moved the ref.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PushReport {
     /// Pack acceptance, or `None` when no unpack result was received (also for an empty push).
     pub unpack: Option<Status>,
@@ -248,6 +371,7 @@ impl PushReport {
 
 /// Session failure classified by whether commands might have reached the server.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PushError {
     /// No update commands were attempted; this operation did not mutate destination refs.
     #[error("push not sent")]
@@ -266,6 +390,7 @@ pub enum PushError {
 
 /// Preparation or session failure cause. Remote per-ref rejections are [`Status`] values instead.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PushFailure {
     /// Private receive storage could not be removed; inspect the retained operation failure and
     /// report before retrying. Primary publication may already have completed.

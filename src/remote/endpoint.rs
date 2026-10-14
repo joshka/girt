@@ -125,6 +125,7 @@ fn helper_scheme(raw: &[u8]) -> Option<&[u8]> {
 
 /// Recognized Git endpoint family. Helper recognition never authorizes an executable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Protocol {
     /// A local path: absolute, `./` or `../` relative, UNC, drive-letter, or any string without a
     /// recognized scheme or scp-like host.
@@ -159,6 +160,7 @@ impl Protocol {
 
 /// Sanitized configuration failure. No URL, path, or environment value appears in Display/Debug.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EndpointError {
     /// Remote has no destination for this direction.
     #[error("remote has no destination")]
@@ -176,11 +178,28 @@ pub enum EndpointError {
 
 /// Explicit environment policy for one resolution call. A present allow-list overrides config.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ProtocolEnvironment {
     /// `GIT_ALLOW_PROTOCOL`, split on `:`; an empty list allows no protocols.
     pub allow_protocol: Option<Vec<u8>>,
     /// `GIT_PROTOCOL_FROM_USER`; false refuses protocols with `user` policy.
     pub from_user: Option<bool>,
+}
+
+impl ProtocolEnvironment {
+    /// Sets [`Self::allow_protocol`].
+    #[must_use]
+    pub fn with_allow_protocol(mut self, allow_protocol: Option<Vec<u8>>) -> Self {
+        self.allow_protocol = allow_protocol;
+        self
+    }
+
+    /// Sets [`Self::from_user`].
+    #[must_use]
+    pub fn with_from_user(mut self, from_user: Option<bool>) -> Self {
+        self.from_user = from_user;
+        self
+    }
 }
 
 impl ProtocolEnvironment {

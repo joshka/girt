@@ -80,10 +80,7 @@ impl MaintenanceIsolation for FixtureIsolation {
 
 /// Every loose object counts as old, so prune may delete anything the plan finds unreachable.
 fn policy() -> RetentionPolicy {
-    RetentionPolicy {
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..RetentionPolicy::trusted()
-    }
+    RetentionPolicy::trusted().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60))
 }
 
 fn id(text: &str) -> ObjectId {

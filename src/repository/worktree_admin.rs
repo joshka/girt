@@ -45,6 +45,7 @@ pub enum WorktreeAdminError {
 /// private HEAD, index, refs or reflogs before supplying this decision. Girt cannot verify that
 /// decision from the registration's stale backlink.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum WorktreeRetirement {
     /// The caller has confirmed that the registration and its private roots may be removed.
     Confirmed,

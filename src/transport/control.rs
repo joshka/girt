@@ -28,11 +28,28 @@ use std::time::Instant;
 /// must not stall the operation. Fetch sideband progress and push status messages remain available.
 /// Generic protocol stream APIs cannot enforce interruption of caller-owned I/O.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct TransportControl<'a> {
     /// Cooperative flag, also used to interrupt owned pipe and server-exit waits.
     pub cancel: &'a AtomicBool,
     /// Absolute deadline; `None` imposes no time limit.
     pub deadline: Option<Instant>,
+}
+
+impl<'a> TransportControl<'a> {
+    /// Sets [`Self::cancel`].
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: &'a AtomicBool) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Sets [`Self::deadline`].
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+        self.deadline = deadline;
+        self
+    }
 }
 
 impl<'a> TransportControl<'a> {

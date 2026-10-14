@@ -22,6 +22,7 @@ use crate::{ObjectFormat, ObjectId};
 /// decompression and aggregate records; a bounded table decode is one cancellation interval.
 /// Payload budgets exclude allocator overhead and fixed record structs, bounded by `records`.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ReflogLimits {
     /// Maximum files bytes read, or decoded payload bytes visited for the selected binary log.
     pub bytes: usize,
@@ -31,6 +32,36 @@ pub struct ReflogLimits {
     pub retained_bytes: usize,
     /// Maximum retained records, including malformed and incomplete records.
     pub records: usize,
+}
+
+impl ReflogLimits {
+    /// Sets [`Self::bytes`].
+    #[must_use]
+    pub fn with_bytes(mut self, bytes: usize) -> Self {
+        self.bytes = bytes;
+        self
+    }
+
+    /// Sets [`Self::record_bytes`].
+    #[must_use]
+    pub fn with_record_bytes(mut self, record_bytes: usize) -> Self {
+        self.record_bytes = record_bytes;
+        self
+    }
+
+    /// Sets [`Self::retained_bytes`].
+    #[must_use]
+    pub fn with_retained_bytes(mut self, retained_bytes: usize) -> Self {
+        self.retained_bytes = retained_bytes;
+        self
+    }
+
+    /// Sets [`Self::records`].
+    #[must_use]
+    pub fn with_records(mut self, records: usize) -> Self {
+        self.records = records;
+        self
+    }
 }
 
 impl Default for ReflogLimits {
@@ -61,6 +92,7 @@ impl ReflogLimits {
 
 /// Why reading stopped. EOF alone does not establish a complete usable root set.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ReflogReadEnd {
     /// All available records were read; inspect [`ImportedReflog::is_complete`] for corruption.
     Eof,

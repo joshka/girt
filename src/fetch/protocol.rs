@@ -14,6 +14,7 @@ use crate::{IdSet, ObjectFormat, ObjectId};
 
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AdvertisedRef {
     /// Full validated reference name (or HEAD); a peeled hint shares its tag's name.
     pub name: RefName,
@@ -23,13 +24,63 @@ pub struct AdvertisedRef {
     pub peeled: bool,
 }
 
+impl AdvertisedRef {
+    /// Creates an advertised reference with its peeled-tag flag.
+    pub fn new(name: RefName, id: ObjectId, peeled: bool) -> Self {
+        Self { name, id, peeled }
+    }
+
+    /// Sets [`Self::name`].
+    #[must_use]
+    pub fn with_name(mut self, name: RefName) -> Self {
+        self.name = name;
+        self
+    }
+
+    /// Sets [`Self::id`].
+    #[must_use]
+    pub fn with_id(mut self, id: ObjectId) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Sets [`Self::peeled`].
+    #[must_use]
+    pub fn with_peeled(mut self, peeled: bool) -> Self {
+        self.peeled = peeled;
+        self
+    }
+}
+
 /// A complete v0 advertisement, independent of local references and policy.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Advertisement {
     /// Entries in server order, including optional HEAD and peeled hints.
     pub refs: Vec<AdvertisedRef>,
     /// Raw capability tokens. Unknown optional capabilities are retained but never requested.
     pub capabilities: Vec<Vec<u8>>,
+}
+
+impl Advertisement {
+    /// Creates an advertisement from references and raw capability bytes.
+    pub fn new(refs: Vec<AdvertisedRef>, capabilities: Vec<Vec<u8>>) -> Self {
+        Self { refs, capabilities }
+    }
+
+    /// Sets [`Self::refs`].
+    #[must_use]
+    pub fn with_refs(mut self, refs: Vec<AdvertisedRef>) -> Self {
+        self.refs = refs;
+        self
+    }
+
+    /// Sets [`Self::capabilities`].
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: Vec<Vec<u8>>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
 }
 
 /// Receives a complete, validated fetch without changing storage.

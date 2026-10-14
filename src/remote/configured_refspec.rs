@@ -5,6 +5,7 @@ use crate::refs::RefName;
 
 /// The operation described by a configured refspec.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ConfiguredRefspecKind {
     /// Fetch a source without naming a destination.
     Selection,
@@ -37,6 +38,7 @@ pub struct ConfiguredRefspec {
 
 /// Invalid configured refspec syntax.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfiguredRefspecError {
     /// A source or destination violates reference-name syntax.
     #[error("invalid configured refspec name")]

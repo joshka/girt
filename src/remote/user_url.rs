@@ -11,6 +11,7 @@ use super::{ConfiguredUrlParts, Protocol};
 /// Diagnostics never include the supplied URL, which may contain credentials. Parsing is completed
 /// before filesystem resolution starts, allowing callers to distinguish argument and path errors.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum UserUrlError {
     /// The supplied location is malformed.
     #[error(transparent)]
@@ -22,6 +23,7 @@ pub enum UserUrlError {
 
 /// A value-free user-input URL parsing diagnostic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum UserUrlParseError {
     /// An empty local path was supplied.
     #[error("local path does not specify a repository")]
@@ -57,6 +59,7 @@ pub enum UserUrlParseError {
 
 /// A value-free local-path expansion diagnostic.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum UserUrlPathError {
     /// Resolving a relative path requires an absolute base directory.
     #[error("base directory must be absolute")]

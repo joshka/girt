@@ -290,10 +290,7 @@ fn peeling_failures_identify_the_referring_tag(
         *objects
             .peel(
                 root,
-                PeelLimits {
-                    max_tags: 0,
-                    ..PeelLimits::default()
-                },
+                PeelLimits::default().with_max_tags(0),
                 &AtomicBool::new(false)
             )
             .unwrap_err()
@@ -435,11 +432,9 @@ fn peeling_checks_terminal_syntax_and_exact_limits(
         objects
             .peel(
                 root,
-                PeelLimits {
-                    max_tags: 1,
-                    max_bytes: length,
-                    ..PeelLimits::default()
-                },
+                PeelLimits::default()
+                    .with_max_tags(1)
+                    .with_max_bytes(length),
                 &AtomicBool::new(false)
             )
             .is_ok()
@@ -448,11 +443,9 @@ fn peeling_checks_terminal_syntax_and_exact_limits(
         objects
             .peel(
                 root,
-                PeelLimits {
-                    max_tags: 1,
-                    max_bytes: length - 1,
-                    ..PeelLimits::default()
-                },
+                PeelLimits::default()
+                    .with_max_tags(1)
+                    .with_max_bytes(length - 1),
                 &AtomicBool::new(false)
             )
             .is_err()

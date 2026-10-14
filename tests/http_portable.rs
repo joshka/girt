@@ -33,10 +33,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 fn control(cancel: &AtomicBool) -> TransportControl<'_> {
-    TransportControl {
-        cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(20)),
-    }
+    TransportControl::new(cancel).with_deadline(Some(Instant::now() + Duration::from_secs(20)))
 }
 
 fn all(advertisement: &Advertisement) -> Vec<ObjectId> {
@@ -67,12 +64,14 @@ fn configured_connection_retries_challenged_discovery_at_its_bound_origin() {
         .unwrap();
     let settings =
         HttpSettings::resolve(&config, &destination, &HttpEnvironment::default()).unwrap();
-    let context = CredentialContext {
-        protocol: b"http".to_vec(),
-        host: server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
-        path: Some(b"repo".to_vec()),
-        use_http_path: false,
-    };
+    let context = {
+        let input = CredentialContext::new(
+            b"http".to_vec(),
+            server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
+        );
+        input.with_path(Some(b"repo".to_vec()))
+    }
+    .with_use_http_path(false);
     let cancel = AtomicBool::new(false);
     let mut prompt = |field| (field == Prompt::Password).then(|| b"p".to_vec());
     let session =
@@ -115,28 +114,30 @@ fn helper_notification_follows_http_authentication_outcome(
     let server = Server::new(source.root.path(), fault, expected_authorization, None);
     let config = Config::parse(b"[credential]\nhelper = fixture\n").unwrap();
     let log = tempfile::NamedTempFile::new().unwrap();
-    let helper = CredentialHelper {
-        configured_name: b"fixture".to_vec(),
-        backend: CredentialBackend::Program(CredentialProgram {
-            executable: if cfg!(windows) { "python" } else { "python3" }.into(),
-            arguments: vec![
-                concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/tests/fixtures/http/credential.py"
-                )
-                .into(),
-                log.path().as_os_str().to_owned(),
-            ],
-            inherit_environment: true,
-            environment: Vec::new(),
-        }),
-    };
-    let context = CredentialContext {
-        protocol: b"http".to_vec(),
-        host: server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
-        path: Some(b"repo".to_vec()),
-        use_http_path: false,
-    };
+    let helper = CredentialHelper::new(
+        b"fixture".to_vec(),
+        CredentialBackend::Program(
+            CredentialProgram::new(if cfg!(windows) { "python" } else { "python3" }.into())
+                .with_arguments(vec![
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/tests/fixtures/http/credential.py"
+                    )
+                    .into(),
+                    log.path().as_os_str().to_owned(),
+                ])
+                .with_inherit_environment(true)
+                .with_environment(Vec::new()),
+        ),
+    );
+    let context = {
+        let input = CredentialContext::new(
+            b"http".to_vec(),
+            server.url.split('/').nth(2).unwrap().as_bytes().to_vec(),
+        );
+        input.with_path(Some(b"repo".to_vec()))
+    }
+    .with_use_http_path(false);
     let cancel = AtomicBool::new(false);
     let session =
         CredentialSession::fill(&config, context, &[helper], None, &cancel, None).unwrap();
@@ -226,11 +227,9 @@ fn configured_connection_uses_approved_proxy_basic_authentication() {
         .fetch_destination(&config, &ProtocolEnvironment::default())
         .unwrap();
     let proxy = server.url.trim_end_matches("/repo").to_owned();
-    let environment = HttpEnvironment {
-        proxy: Some(proxy),
-        proxy_credentials: Some(("pu".to_owned(), "pp".to_owned())),
-        ..HttpEnvironment::default()
-    };
+    let environment = HttpEnvironment::default()
+        .with_proxy(Some(proxy))
+        .with_proxy_credentials(Some(("pu".to_owned(), "pp".to_owned())));
     let settings = HttpSettings::resolve(&config, &destination, &environment).unwrap();
     let remote = HttpRemote::configured(settings).unwrap();
     let cancel = AtomicBool::new(false);
@@ -360,12 +359,10 @@ fn pushes_objects_and_git_publishes_the_remote_ref() {
     let tip: ObjectId = std::str::from_utf8(&bytes).unwrap().trim().parse().unwrap();
     let prepared = PreparedPush::new(
         &source.repo.objects(PackLimits::default()).unwrap(),
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: None,
-            new: tip,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, tip)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         PushLimits::default(),
         &cancel,
     )
@@ -426,10 +423,8 @@ fn stalled_discovery_observes_deadline() {
     let server = Server::new(&root.path().join("repo"), "stall", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(1)),
-    };
+    let control =
+        TransportControl::new(&cancel).with_deadline(Some(Instant::now() + Duration::from_secs(1)));
     let result = runtime().block_on(fetch::receive_http(
         &remote,
         all,

@@ -134,10 +134,7 @@ fn fetch_failure_classes(
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         receive(
             &bytes,
-            FetchLimits {
-                max_wire_bytes,
-                ..Default::default()
-            },
+            FetchLimits::default().with_max_wire_bytes(max_wire_bytes),
             cancelled,
         )
     });
@@ -185,10 +182,7 @@ fn history_limit_and_index_lifecycle_have_owned_spans() {
         let error = objects
             .walk(
                 &[ObjectId::for_blob(ObjectFormat::Sha1, SECRET)],
-                HistoryLimits {
-                    max_commits: 0,
-                    ..Default::default()
-                },
+                HistoryLimits::default().with_max_commits(0),
             )
             .unwrap_err();
         assert!(matches!(error, girt::HistoryError::Limit(_)));
@@ -222,12 +216,14 @@ fn push_first_write_failure_is_not_sent_without_logging_source_text() {
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
-        vec![PushCommand {
-            name: girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(
+                girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
+                None,
+                id,
+            )
+            .with_force(ForcePolicy::FastForwardOnly),
+        ],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -269,16 +265,15 @@ fn reference_transaction_has_prepare_and_publication_children() {
     use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
     let (_root, repo) = repository();
     let capture = Capture::default();
-    let edit = RefEdit {
-        name: RefName::new("refs/heads/R03_SECRET_ref").unwrap(),
-        dereference: false,
-        target: Some(Target::Direct(ObjectId::for_blob(
+    let edit = RefEdit::new(
+        RefName::new("refs/heads/R03_SECRET_ref").unwrap(),
+        Some(Target::Direct(ObjectId::for_blob(
             ObjectFormat::Sha1,
             SECRET,
         ))),
-        expected: Expected::Absent,
-        reflog: Reflog::Preserve,
-    };
+        Expected::Absent,
+        Reflog::Preserve,
+    );
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         repo.references().unwrap().transaction(&[edit])
     });
@@ -368,12 +363,14 @@ fn successful_push_protocol_exposes_remote_rejections_without_text() {
     let id = repo.loose_objects().write_blob(SECRET).unwrap();
     let prepared = PreparedPush::new(
         &repo.objects(PackLimits::default()).unwrap(),
-        vec![PushCommand {
-            name: girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(
+                girt::refs::RefName::new("refs/tags/R03_SECRET_ref").unwrap(),
+                None,
+                id,
+            )
+            .with_force(ForcePolicy::FastForwardOnly),
+        ],
         PushLimits::default(),
         &AtomicBool::new(false),
     )
@@ -541,14 +538,9 @@ fn config_resolution_span_is_categorical_and_redacted() {
         b"[remote \"R03_SECRET_name\"]\nurl=R03_SECRET_url\n[include]\npath=config\n",
     )
     .unwrap();
-    let inputs = girt::config::ConfigInputs {
-        files: vec![girt::config::ConfigFile {
-            path,
-            scope: girt::config::ConfigScope::Local,
-            optional: false,
-        }],
-        ..Default::default()
-    };
+    let inputs = girt::config::ConfigInputs::default().with_files(vec![
+        girt::config::ConfigFile::new(path, girt::config::ConfigScope::Local).with_optional(false),
+    ]);
     let capture = Capture::default();
     let result = tracing::dispatcher::with_default(&capture.dispatch(), || {
         let parent = tracing::info_span!("config.owner");

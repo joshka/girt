@@ -65,6 +65,7 @@ impl FetchRetention {
 /// Retained installation failed, possibly after acquiring a marker or publishing pack bytes.
 #[derive(Debug, thiserror::Error)]
 #[error("retained fetch installation")]
+#[non_exhaustive]
 pub struct RetainedFetchError {
     /// Original validation, publication, or filesystem failure. No references were changed.
     #[source]

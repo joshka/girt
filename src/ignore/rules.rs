@@ -2,6 +2,7 @@ use super::pattern::Pattern;
 
 /// Explicit byte comparison policy, independent of the host filesystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Case {
     /// Compare bytes exactly (the policy used by jj's ignore consumer).
     Sensitive,
@@ -14,6 +15,7 @@ pub enum Case {
 /// Higher variants override lower variants; deeper directories override shallower ones.
 /// Adding another source at the same level appends its rules after existing rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Source<'a> {
     /// Caller-resolved `core.excludesFile` content, anchored at the repository root.
     Global,
@@ -32,6 +34,7 @@ pub enum Source<'a> {
 /// never recursive backtracking. Allocation failure follows Rust's allocator policy; these limits
 /// are not a recoverable allocator or an exact RSS bound.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Aggregate source content and directory-prefix bytes; default 8 MiB.
     pub bytes: usize,
@@ -48,6 +51,50 @@ pub struct Limits {
     /// Includes source-prefix comparisons, pattern checks and dynamic-programming cells across
     /// every ancestor. Exhaustion returns an error, never a partial ignore decision.
     pub work: usize,
+}
+
+impl Limits {
+    /// Sets [`Self::bytes`].
+    #[must_use]
+    pub fn with_bytes(mut self, bytes: usize) -> Self {
+        self.bytes = bytes;
+        self
+    }
+
+    /// Sets [`Self::sources`].
+    #[must_use]
+    pub fn with_sources(mut self, sources: usize) -> Self {
+        self.sources = sources;
+        self
+    }
+
+    /// Sets [`Self::patterns`].
+    #[must_use]
+    pub fn with_patterns(mut self, patterns: usize) -> Self {
+        self.patterns = patterns;
+        self
+    }
+
+    /// Sets [`Self::line_bytes`].
+    #[must_use]
+    pub fn with_line_bytes(mut self, line_bytes: usize) -> Self {
+        self.line_bytes = line_bytes;
+        self
+    }
+
+    /// Sets [`Self::path_bytes`].
+    #[must_use]
+    pub fn with_path_bytes(mut self, path_bytes: usize) -> Self {
+        self.path_bytes = path_bytes;
+        self
+    }
+
+    /// Sets [`Self::work`].
+    #[must_use]
+    pub fn with_work(mut self, work: usize) -> Self {
+        self.work = work;
+        self
+    }
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -81,6 +128,7 @@ impl Limits {
 
 /// An invalid path or exhausted budget; errors never imply an ignore decision.
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     /// Paths must be relative and nonempty, without NUL, empty, `.` or `..` components.
     /// The root directory source alone permits an empty path; backslash is an ordinary byte.
@@ -93,6 +141,7 @@ pub enum Error {
 
 /// The decisive rule, including a possible excluded ancestor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Match {
     /// Whether this rule excludes the path; false identifies an explicit negation.
     pub ignored: bool,

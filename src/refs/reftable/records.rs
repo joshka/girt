@@ -69,6 +69,7 @@ pub struct Table {
 /// Limits apply before record allocation and decompression. The caller already owns the input
 /// bytes. These are finite safety defaults, not measured acceptance thresholds for all consumers.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Maximum encoded table length.
     pub bytes: usize,
@@ -80,6 +81,43 @@ pub struct Limits {
     pub string_bytes: usize,
     /// Maximum aggregate reconstructed key and value bytes across records.
     pub decoded_bytes: usize,
+}
+
+impl Limits {
+    /// Sets [`Self::bytes`].
+    #[must_use]
+    pub fn with_bytes(mut self, bytes: usize) -> Self {
+        self.bytes = bytes;
+        self
+    }
+
+    /// Sets [`Self::block_bytes`].
+    #[must_use]
+    pub fn with_block_bytes(mut self, block_bytes: usize) -> Self {
+        self.block_bytes = block_bytes;
+        self
+    }
+
+    /// Sets [`Self::records`].
+    #[must_use]
+    pub fn with_records(mut self, records: usize) -> Self {
+        self.records = records;
+        self
+    }
+
+    /// Sets [`Self::string_bytes`].
+    #[must_use]
+    pub fn with_string_bytes(mut self, string_bytes: usize) -> Self {
+        self.string_bytes = string_bytes;
+        self
+    }
+
+    /// Sets [`Self::decoded_bytes`].
+    #[must_use]
+    pub fn with_decoded_bytes(mut self, decoded_bytes: usize) -> Self {
+        self.decoded_bytes = decoded_bytes;
+        self
+    }
 }
 
 impl Default for Limits {
@@ -114,6 +152,7 @@ impl Limits {
 
 /// Reftable framing, version, or resource failure.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// Invalid framing, ordering, checksum or record representation.
     #[error("malformed reftable: {0}")]

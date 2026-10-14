@@ -27,6 +27,7 @@ const ROOTS: &[&str] = &[
 
 /// Resource bounds for operation metadata, including directory contents.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct OperationLimits {
     /// Total regular-file bytes retained in a snapshot.
     pub max_bytes: usize,
@@ -34,6 +35,29 @@ pub struct OperationLimits {
     pub max_entries: usize,
     /// Maximum directory nesting beneath a recognized root (root depth is zero), capped at 128.
     pub max_depth: usize,
+}
+
+impl OperationLimits {
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
 }
 
 impl Default for OperationLimits {
@@ -66,6 +90,7 @@ enum Node {
 
 /// Inspection or cleanup failure with a concrete recovery boundary.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum OperationError {
     /// Filesystem access failed; no inspection operation writes anything.
     #[error("cannot access operation metadata {path}")]
@@ -90,6 +115,7 @@ pub enum OperationError {
 /// Cleanup stopped after these exact removals; retry requires inspecting current state again.
 #[derive(Debug, thiserror::Error)]
 #[error("operation cleanup failed after {} removals", removed.len())]
+#[non_exhaustive]
 pub struct OperationCleanupError {
     /// Successfully removed paths relative to this worktree's Git directory, in deletion order.
     /// Empty directories count as removals too. Earlier removals are never rolled back.

@@ -64,10 +64,9 @@ fn policy_precedence(
     let expiry = ReflogExpiry::from_config(&Config::parse(bytes).unwrap(), 1_800_000_000).unwrap();
     assert_eq!(
         expiry.cutoffs(&RefName::new(name).unwrap()).unwrap(),
-        ReflogCutoffs {
-            general: reachable,
-            unreachable
-        }
+        ReflogCutoffs::default()
+            .with_general(reachable)
+            .with_unreachable(unreachable)
     );
 }
 

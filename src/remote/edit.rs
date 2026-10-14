@@ -16,8 +16,15 @@ pub struct RemoteConfig<'a> {
     document: &'a mut Document,
 }
 
+impl std::fmt::Debug for RemoteConfig<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteConfig").finish_non_exhaustive()
+    }
+}
+
 /// A local remote configuration operation could not be prepared; no draft changes were applied.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RemoteEditError {
     /// No local section exists; an inherited remote may still be effective.
     #[error("remote has no section in the selected file")]
@@ -41,6 +48,7 @@ pub enum RemoteEditError {
 
 /// One of the four ordered remote configuration lists.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum RemoteKey {
     /// Fetch URL list; empty values reset prior URLs.
     Url,
@@ -339,6 +347,14 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn debug_redacts_remote_configuration() {
+        let mut document =
+            Document::parse(b"[remote \"origin\"]\nurl=https://user:secret@example.com\n").unwrap();
+        let editor = RemoteConfig::new(&mut document);
+        assert_eq!(format!("{editor:?}"), "RemoteConfig { .. }");
+    }
 
     #[rstest]
     #[case::inherited_only(b"[include]\npath=other\n", b"old", b"new")]

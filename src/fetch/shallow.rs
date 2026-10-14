@@ -8,6 +8,7 @@ use crate::{ObjectFormat, ObjectId, ShallowRoots};
 
 /// Failure acquiring or publishing the shared shallow boundary file.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchShallowError {
     /// The shallow roots differ from the snapshot captured at preparation.
     #[error("shallow metadata changed since fetch preparation")]

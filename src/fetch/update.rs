@@ -12,6 +12,7 @@ use crate::{HistoryLimits, ObjectId, ObjectKind, PackLimits, PeelLimits};
 /// history's per-read limits. Reference enumeration/transactions retain their existing unbounded
 /// metadata contracts. These are work/input bounds, not wall-clock or process-heap limits.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct FetchUpdateLimits {
     /// Destination pack snapshot and installation dependency-check bounds.
     pub snapshot: PackLimits,
@@ -29,6 +30,36 @@ pub struct FetchUpdateLimits {
     pub history: HistoryLimits,
     /// Maximum tag objects followed per old/new tip (default 32).
     pub max_tag_depth: usize,
+}
+
+impl FetchUpdateLimits {
+    /// Sets [`Self::snapshot`].
+    #[must_use]
+    pub fn with_snapshot(mut self, snapshot: PackLimits) -> Self {
+        self.snapshot = snapshot;
+        self
+    }
+
+    /// Sets [`Self::verification`].
+    #[must_use]
+    pub fn with_verification(mut self, verification: FetchLimits) -> Self {
+        self.verification = verification;
+        self
+    }
+
+    /// Sets [`Self::history`].
+    #[must_use]
+    pub fn with_history(mut self, history: HistoryLimits) -> Self {
+        self.history = history;
+        self
+    }
+
+    /// Sets [`Self::max_tag_depth`].
+    #[must_use]
+    pub fn with_max_tag_depth(mut self, max_tag_depth: usize) -> Self {
+        self.max_tag_depth = max_tag_depth;
+        self
+    }
 }
 impl Default for FetchUpdateLimits {
     fn default() -> Self {
@@ -58,6 +89,7 @@ impl FetchUpdateLimits {
 
 /// An installed transfer cannot be safely published under the selected update rules.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FetchUpdateError {
     /// Failed reading, parsing, peeling, cancellation or a tag-depth limit.
     #[error(transparent)]

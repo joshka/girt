@@ -27,10 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let repository = Repository::open(args.get(1).ok_or("repository path required")?)?;
     let id: ObjectId = args.get(2).ok_or("object id required")?.parse()?;
     let baseline = handles();
-    let failed = repository.objects(PackLimits {
-        max_index_bytes: 0,
-        ..PackLimits::default()
-    });
+    let failed = repository.objects(PackLimits::default().with_max_index_bytes(0));
     assert!(matches!(
         failed,
         Err(girt::ObjectReadError::Limit("pack index bytes"))
@@ -71,10 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clone = objects.clone();
     let cloned = handles();
     let failed = objects.refresh(
-        PackLimits {
-            max_index_bytes: 0,
-            ..PackLimits::default()
-        },
+        PackLimits::default().with_max_index_bytes(0),
         AlternateLimits::default(),
     );
     assert!(matches!(

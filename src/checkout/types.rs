@@ -8,6 +8,7 @@ use crate::{ObjectId, index};
 /// blocking-worker scheduling. Directory names are enumerated again at mutation boundaries, so
 /// wide directories can require quadratic work in the number of selected paths.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Index parsing and replacement encoding bounds.
     pub index: index::Limits,
@@ -33,6 +34,78 @@ pub struct Limits {
     /// Components in a leaf path (default 64, always capped at 128).
     pub max_depth: usize,
 }
+
+impl Limits {
+    /// Sets [`Self::index`].
+    #[must_use]
+    pub fn with_index(mut self, index: index::Limits) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Sets [`Self::trees`].
+    #[must_use]
+    pub fn with_trees(mut self, trees: crate::TreeCompareLimits) -> Self {
+        self.trees = trees;
+        self
+    }
+
+    /// Sets [`Self::packs`].
+    #[must_use]
+    pub fn with_packs(mut self, packs: crate::PackLimits) -> Self {
+        self.packs = packs;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: crate::ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
+
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_file_bytes`].
+    #[must_use]
+    pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
+        self.max_file_bytes = max_file_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_worktree_bytes`].
+    #[must_use]
+    pub fn with_max_worktree_bytes(mut self, max_worktree_bytes: usize) -> Self {
+        self.max_worktree_bytes = max_worktree_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_directory_entries`].
+    #[must_use]
+    pub fn with_max_directory_entries(mut self, max_directory_entries: usize) -> Self {
+        self.max_directory_entries = max_directory_entries;
+        self
+    }
+
+    /// Sets [`Self::max_path_bytes`].
+    #[must_use]
+    pub fn with_max_path_bytes(mut self, max_path_bytes: usize) -> Self {
+        self.max_path_bytes = max_path_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_depth`].
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+}
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -52,6 +125,7 @@ impl Default for Limits {
 
 /// Last phase entered by checkout.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Stage {
     /// Locking, validation and planning; no worktree mutation has begun.
     #[default]
@@ -64,6 +138,7 @@ pub enum Stage {
 
 /// A namespace operation completed by this call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Action {
     /// Removed a verified tracked leaf.
     Remove,
@@ -77,6 +152,7 @@ pub enum Action {
 
 /// One completed operation; multiple records may refer to the same path.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Applied {
     /// Worktree-relative path bytes.
     pub path: Vec<u8>,
@@ -86,6 +162,7 @@ pub struct Applied {
 
 /// Outcome of completed namespace operations, excluding changes by independent writers.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Report {
     /// Last phase entered.
     pub stage: Stage,
@@ -100,6 +177,7 @@ pub struct Report {
 /// Checkout failure with exact completed operations and independently reported cleanup failures.
 #[derive(Debug, thiserror::Error)]
 #[error("checkout failed during {stage:?}", stage = .report.stage)]
+#[non_exhaustive]
 pub struct Failure {
     /// Cause that stopped progress.
     #[source]
@@ -113,6 +191,7 @@ pub struct Failure {
 
 /// Validation, storage, cancellation or filesystem failure.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// A supplied baseline or target uses an unsupported object format.
     #[error(transparent)]

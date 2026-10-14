@@ -56,11 +56,8 @@
 //! let tree = loose.read_commit(commit, 1024)?.tree();
 //! let unreachable = loose.write_blob(b"no reference reaches this")?;
 //!
-//! let policy = RetentionPolicy {
-//!     // Treat no loose object as recently written, so only references keep objects alive.
-//!     recent_cutoff: SystemTime::now() + Duration::from_secs(3600),
-//!     ..RetentionPolicy::default()
-//! };
+//! let policy = // Treat no loose object as recently written, so only references keep objects alive.
+//! RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(3600));
 //! let cancel = AtomicBool::new(false);
 //! let plan = repository.plan_retention(&policy, &cancel);
 //! assert!(plan.is_complete(), "{:?}", plan.outcome);
@@ -146,6 +143,7 @@ impl ReflogSource {
 /// semantics; configured expiry applies Git's independent general/unreachable rules. Selecting
 /// one mode prevents configuration and explicit cutoffs from silently overriding each other.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub enum ReflogExpiryPolicy {
     /// Retain every history record.
     #[default]
@@ -166,6 +164,7 @@ pub enum ReflogExpiryPolicy {
 
 /// Caller policy and aggregate work bounds for one observation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RetentionPolicy {
     /// Metadata heads retained by the caller regardless of Git references.
     pub heads: Vec<ObjectId>,
@@ -198,6 +197,99 @@ pub struct RetentionPolicy {
     pub packs: PackLimits,
     /// Per-object read bounds.
     pub read: ReadLimits,
+}
+
+impl RetentionPolicy {
+    /// Sets [`Self::heads`].
+    #[must_use]
+    pub fn with_heads(mut self, heads: Vec<ObjectId>) -> Self {
+        self.heads = heads;
+        self
+    }
+
+    /// Sets [`Self::recent_cutoff`].
+    #[must_use]
+    pub fn with_recent_cutoff(mut self, recent_cutoff: SystemTime) -> Self {
+        self.recent_cutoff = recent_cutoff;
+        self
+    }
+
+    /// Sets [`Self::reflog_expiry`].
+    #[must_use]
+    pub fn with_reflog_expiry(mut self, reflog_expiry: ReflogExpiryPolicy) -> Self {
+        self.reflog_expiry = reflog_expiry;
+        self
+    }
+
+    /// Sets [`Self::max_entries`].
+    #[must_use]
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Sets [`Self::max_edges`].
+    #[must_use]
+    pub fn with_max_edges(mut self, max_edges: usize) -> Self {
+        self.max_edges = max_edges;
+        self
+    }
+
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::reflog`].
+    #[must_use]
+    pub fn with_reflog(mut self, reflog: ReflogLimits) -> Self {
+        self.reflog = reflog;
+        self
+    }
+
+    /// Sets [`Self::reftable`].
+    #[must_use]
+    pub fn with_reftable(mut self, reftable: crate::refs::reftable::StackLimits) -> Self {
+        self.reftable = reftable;
+        self
+    }
+
+    /// Sets [`Self::max_reference_bytes`].
+    #[must_use]
+    pub fn with_max_reference_bytes(mut self, max_reference_bytes: usize) -> Self {
+        self.max_reference_bytes = max_reference_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_reflog_bytes`].
+    #[must_use]
+    pub fn with_max_reflog_bytes(mut self, max_reflog_bytes: u64) -> Self {
+        self.max_reflog_bytes = max_reflog_bytes;
+        self
+    }
+
+    /// Sets [`Self::index`].
+    #[must_use]
+    pub fn with_index(mut self, index: index::Limits) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Sets [`Self::packs`].
+    #[must_use]
+    pub fn with_packs(mut self, packs: PackLimits) -> Self {
+        self.packs = packs;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
 }
 
 impl Default for RetentionPolicy {
@@ -254,6 +346,7 @@ impl RetentionPolicy {
 /// Drop the plan promptly after use: its handles keep retired packs' disk space allocated. On
 /// Windows a deleted pinned file remains pending deletion and can prevent recreating its name.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RetentionPlan {
     /// Distinct explicit root candidates recovered before any failure.
     pub roots: BTreeSet<ObjectId>,
@@ -288,6 +381,7 @@ struct ObjectInfo {
 
 /// Why a plan can or cannot describe complete reachability.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RetentionOutcome {
     /// Every root and edge was located; graph-bearing objects were decoded under the bounds.
     Complete,

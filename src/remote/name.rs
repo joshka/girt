@@ -32,6 +32,7 @@ pub fn validate_name(name: &[u8]) -> Result<(), InvalidRemoteName> {
 /// A remote name cannot be used within a fetch tracking-reference namespace.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("remote names must be valid within refspecs for fetching: {}", Quoted(.name))]
+#[non_exhaustive]
 pub struct InvalidRemoteName {
     /// Original name bytes, without normalization.
     pub name: Vec<u8>,
@@ -42,6 +43,7 @@ pub struct InvalidRemoteName {
 
 /// Syntax preventing a remote name from being embedded in a tracking reference.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum RemoteNameError {
     /// A colon leaves the source side of the embedded fetch mapping ending in a slash.
     #[error("Reference name cannot end with a slash")]

@@ -52,15 +52,10 @@
 //! # let destination_path = directory.path().join("remote.git");
 //! # let destination = Repository::init(ObjectFormat::Sha1, destination_path, InitKind::Bare)?;
 //! # let objects = source.objects(PackLimits::default())?;
-//! # let command = PushCommand {
-//! #     name: main.clone(),
-//! #     expected: None,
-//! #     new: commit,
-//! #     force: ForcePolicy::FastForwardOnly,
-//! # };
+//! # let command = PushCommand::new(main.clone(), None, commit).with_force(ForcePolicy::FastForwardOnly);
 //! let cancel = AtomicBool::new(false);
 //! let prepared = PreparedPush::new(&objects, vec![command], PushLimits::default(), &cancel)?;
-//! let control = TransportControl { cancel: &cancel, deadline: Some(Instant::now()) };
+//! let control = TransportControl::new(&cancel).with_deadline(Some(Instant::now()));
 //! let result = send_local_with_control(destination.git_dir(), &prepared, control);
 //! assert!(matches!(result, Err(PushError::NotSent(PushFailure::Deadline))));
 //! assert_eq!(destination.references()?.read(&main)?, None);

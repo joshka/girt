@@ -128,12 +128,9 @@ fn metadata_configuration_is_a_snapshot_with_explicit_overrides(
         .unwrap();
     let included = repo.common_dir().join("included");
     fs::write(&included, b"[demo]\nvalue=included\nother=snapshot\n").unwrap();
-    let inputs = ConfigInputs {
-        command: Some(
-            Config::parse(b"[demo]\nvalue=override\n[extensions]\nobjectformat=unknown\n").unwrap(),
-        ),
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default().with_command(Some(
+        Config::parse(b"[demo]\nvalue=override\n[extensions]\nobjectformat=unknown\n").unwrap(),
+    ));
     let location = RepositoryLocation::at_git_dir(repo.git_dir()).unwrap();
     let metadata = location.read_metadata_with_config(&inputs).unwrap();
     fs::write(&included, b"[demo]\nother=changed\n").unwrap();
@@ -212,10 +209,7 @@ fn reftable_bootstrap_retains_head_context_and_explicit_open_limits(
         metadata.config().value("demo", None, "value"),
         Some(Some(b"reftable".as_slice()))
     );
-    let limits = girt::refs::reftable::StackLimits {
-        tables: 0,
-        ..Default::default()
-    };
+    let limits = girt::refs::reftable::StackLimits::default().with_tables(0);
     assert!(matches!(
         Repository::open_with_config_and_reference_limits(
             repo.git_dir(),
@@ -257,11 +251,9 @@ fn explicit_include_placement_preserves_metadata_and_layer_scopes(
     ] {
         let path = root.path().join(format!("{name}-config"));
         fs::write(&path, source(name)).unwrap();
-        inputs.files.push(ConfigFile {
-            path,
-            scope,
-            optional: false,
-        });
+        inputs
+            .files
+            .push(ConfigFile::new(path, scope).with_optional(false));
     }
     let common_config = repo.common_dir().join("config");
     let mut bytes = fs::read(&common_config).unwrap();
@@ -385,10 +377,8 @@ fn storage_open_preserves_captured_bootstrap(
         b"[demo]\nvalue=captured\n",
     )
     .unwrap();
-    let inputs = ConfigInputs {
-        command: Some(Config::parse(b"[demo]\ncommand=retained\n").unwrap()),
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default()
+        .with_command(Some(Config::parse(b"[demo]\ncommand=retained\n").unwrap()));
     let location = RepositoryLocation::at_git_dir(repo.git_dir()).unwrap();
     let metadata = location.read_metadata_with_config(&inputs).unwrap();
     fs::write(repo.common_dir().join("config"), b"[broken").unwrap();

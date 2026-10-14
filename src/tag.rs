@@ -292,6 +292,9 @@ impl TagFields {
 ///
 /// In a tag this declaration does not prove that the target exists or has the stated type.
 /// In a verified [`crate::Object`] it identifies the kind included in the object's identity.
+///
+/// This set is exhaustive: Git object framing and pack encodings define exactly these four
+/// fundamental kinds. A new hash algorithm does not add an object kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectKind {
     /// File content.
@@ -328,6 +331,7 @@ impl ObjectKind {
 
 /// Unsupported tag framing or a construction validation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum TagError {
     /// A header has no terminating LF and no message separator precedes it.
     #[error("unterminated tag header")]

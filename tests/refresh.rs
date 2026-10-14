@@ -201,10 +201,7 @@ fn cancellation_and_limits_preserve_view(#[case] format: ObjectFormat) {
     ));
     assert!(matches!(
         objects.refresh(
-            PackLimits {
-                max_open_files: 0,
-                ..PackLimits::default()
-            },
+            PackLimits::default().with_max_open_files(0),
             AlternateLimits::default()
         ),
         Err(ObjectReadError::Limit("pack file handles"))

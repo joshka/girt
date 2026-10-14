@@ -15,6 +15,7 @@ use crate::{IdentityRef, ObjectFormat, ObjectId};
 /// Reftable records retain decoded binary fields and their update index; compressed table bytes
 /// belong to the reftable codec. No message normalization or construction validation occurs.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ImportedRecord {
     /// One files-backend line or a final incomplete prefix.
     File {
@@ -53,6 +54,7 @@ pub struct ReflogFields<'a> {
 
 /// Interpretation failed while the original bytes and recoverable IDs remain available.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ReflogInterpretationError {
     /// File record lacks its final newline, including a bounded partial read.
     #[error("incomplete reflog record")]

@@ -127,12 +127,8 @@ fn received(dest: &Path, before: &std::collections::BTreeSet<std::path::PathBuf>
 }
 
 fn create(name: &str, new: ObjectId) -> PushCommand {
-    PushCommand {
-        name: RefName::new(name).unwrap(),
-        expected: None,
-        new,
-        force: ForcePolicy::FastForwardOnly,
-    }
+    PushCommand::new(RefName::new(name).unwrap(), None, new)
+        .with_force(ForcePolicy::FastForwardOnly)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

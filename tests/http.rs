@@ -222,18 +222,11 @@ fn tip(repo: &Repository, name: &str) -> ObjectId {
         .unwrap()
 }
 fn command(name: &str, expected: Option<ObjectId>, new: ObjectId) -> PushCommand {
-    PushCommand {
-        name: RefName::new(name).unwrap(),
-        expected,
-        new,
-        force: ForcePolicy::FastForwardOnly,
-    }
+    PushCommand::new(RefName::new(name).unwrap(), expected, new)
+        .with_force(ForcePolicy::FastForwardOnly)
 }
 fn prepared(f: &Fixture, commands: Vec<PushCommand>, roots: &[ObjectId]) -> PreparedPush {
-    let limits = PushLimits {
-        compression: PackCompression::Delta(Default::default()),
-        ..Default::default()
-    };
+    let limits = PushLimits::default().with_compression(PackCompression::Delta(Default::default()));
     PreparedPush::new_excluding(
         &f.repo.objects(PackLimits::default()).unwrap(),
         commands,
@@ -439,7 +432,7 @@ fn real_git_full_incremental_and_known_only_fetch() {
 
 #[rstest]
 #[case::cancelled(true, FetchLimits::default())]
-#[case::decode_limit(false, FetchLimits { max_decode_bytes: 0, ..FetchLimits::default() })]
+#[case::decode_limit(false, FetchLimits::default().with_max_decode_bytes(0))]
 fn failed_worker_validation_releases_negotiated_history(
     #[case] cancelled: bool,
     #[case] limits: FetchLimits,
@@ -524,15 +517,17 @@ fn real_git_delta_push_incremental_and_empty_commands() {
     let control = TransportControl::new(&cancel);
     let old = tip(&f.repo, "refs/heads/main");
     let tag = tip(&f.repo, "refs/tags/packed");
-    let initial = prepared(
-        &f,
-        vec![
-            command("refs/heads/main", None, old),
-            command("refs/tags/packed", None, tag),
-        ],
-        &[],
-    )
-    .with_progress();
+    let initial = {
+        let input = prepared(
+            &f,
+            vec![
+                command("refs/heads/main", None, old),
+                command("refs/tags/packed", None, tag),
+            ],
+            &[],
+        );
+        input.with_progress()
+    };
     let rt = runtime();
     let mut progress = Vec::new();
     let outcome = rt
@@ -1061,10 +1056,8 @@ fn stalled_discovery_is_interruptible(#[case] cancellation: bool) {
                 cancel.store(true, Ordering::Relaxed);
             });
         }
-        let control = TransportControl {
-            cancel: &cancel,
-            deadline: Some(begin + Duration::from_millis(200)),
-        };
+        let control =
+            TransportControl::new(&cancel).with_deadline(Some(begin + Duration::from_millis(200)));
         runtime().block_on(fetch::receive_http(
             &remote,
             all,
@@ -1314,10 +1307,8 @@ fn discovery_deadline_does_not_reach_post_fault(#[case] fault: &str) {
         .block_on(push::send_http(
             &remote,
             prepared,
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(Instant::now() + Duration::from_secs(1)),
-            },
+            TransportControl::new(&cancel)
+                .with_deadline(Some(Instant::now() + Duration::from_secs(1))),
         ))
         .unwrap_err();
     eprintln!("{fault}: {error:?}; requests: {:?}", server.requests());
@@ -1452,10 +1443,7 @@ fn download_and_decoding_limits_are_independent() {
     let server = Server::new(f.root.path(), "", "", None);
     let remote = HttpRemote::new(&server.url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let limits = FetchLimits {
-        max_decode_bytes: 1,
-        ..Default::default()
-    };
+    let limits = FetchLimits::default().with_max_decode_bytes(1);
     let downloaded = runtime()
         .block_on(fetch::receive_http(
             &remote,
@@ -1470,10 +1458,7 @@ fn download_and_decoding_limits_are_independent() {
             .validate(&cancel, |_| ControlFlow::Continue(()))
             .is_err()
     );
-    let limits = FetchLimits {
-        max_wire_bytes: 16,
-        ..Default::default()
-    };
+    let limits = FetchLimits::default().with_max_wire_bytes(16);
     let error = runtime()
         .block_on(fetch::receive_http(
             &remote,
@@ -1555,10 +1540,8 @@ fn cancelled_status_body_preserves_completed_acknowledgements() {
         &[],
     );
     let cancel = AtomicBool::new(false);
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(1)),
-    };
+    let control =
+        TransportControl::new(&cancel).with_deadline(Some(Instant::now() + Duration::from_secs(1)));
     let error = runtime()
         .block_on(push::send_http(&remote, prepared, control))
         .unwrap_err();
@@ -1595,10 +1578,7 @@ fn stalled_tls_handshake_observes_deadline() {
             all,
             None,
             FetchLimits::default(),
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(start + Duration::from_millis(100)),
-            },
+            TransportControl::new(&cancel).with_deadline(Some(start + Duration::from_millis(100))),
         ))
     });
     assert!(matches!(result, Err(FetchError::Deadline)));
@@ -1904,10 +1884,7 @@ fn configured_https(url: &str, ca: Option<Vec<u8>>, policy: &str) -> HttpRemote 
         .unwrap()
         .fetch_destination(&config, &ProtocolEnvironment::default())
         .unwrap();
-    let environment = HttpEnvironment {
-        ssl_ca_info: ca,
-        ..Default::default()
-    };
+    let environment = HttpEnvironment::default().with_ssl_ca_info(ca);
     let settings =
         HttpSettings::resolve_for_remote(&config, b"r", &destination, &environment).unwrap();
     HttpRemote::configured(settings).unwrap()
@@ -1943,12 +1920,9 @@ fn configured_https_selects_ca_bundle_and_verifies_peer(
         .unwrap();
     assert_eq!(selected, b"selected.pem");
     std::fs::write(certs.path().join("selected.pem"), &bundle).unwrap();
-    let environment = HttpEnvironment {
-        ssl_ca_info: Some(
-            std::fs::read(certs.path().join(std::str::from_utf8(selected).unwrap())).unwrap(),
-        ),
-        ..Default::default()
-    };
+    let environment = HttpEnvironment::default().with_ssl_ca_info(Some(
+        std::fs::read(certs.path().join(std::str::from_utf8(selected).unwrap())).unwrap(),
+    ));
     let remote =
         HttpRemote::configured(HttpSettings::resolve(&config, &destination, &environment).unwrap())
             .unwrap();
@@ -1958,10 +1932,8 @@ fn configured_https_selects_ca_bundle_and_verifies_peer(
         all,
         None,
         FetchLimits::default(),
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(15)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(15))),
     ));
     assert_eq!(
         result
@@ -1985,10 +1957,7 @@ fn configured_https_rejects_invalid_ca_before_network(#[case] ca: &[u8]) {
         .unwrap()
         .fetch_destination(&config, &ProtocolEnvironment::default())
         .unwrap();
-    let environment = HttpEnvironment {
-        ssl_ca_info: Some(ca.to_vec()),
-        ..Default::default()
-    };
+    let environment = HttpEnvironment::default().with_ssl_ca_info(Some(ca.to_vec()));
     let settings = HttpSettings::resolve(&config, &destination, &environment).unwrap();
     let error = HttpRemote::configured(settings).unwrap_err();
     assert!(matches!(error, HttpError::Configuration(_)));
@@ -2022,13 +1991,11 @@ fn configured_https_routes_connect_and_honors_exclusions(
         .unwrap()
         .fetch_destination(&config, &ProtocolEnvironment::default())
         .unwrap();
-    let environment = HttpEnvironment {
-        ssl_ca_info: Some(ca),
-        proxy: Some("http://also-unreachable.invalid:1".into()),
-        no_proxy: no_proxy.map(str::to_owned),
-        proxy_credentials: Some(("pu".into(), "pp".into())),
-        ..Default::default()
-    };
+    let environment = HttpEnvironment::default()
+        .with_ssl_ca_info(Some(ca))
+        .with_proxy(Some("http://also-unreachable.invalid:1".into()))
+        .with_no_proxy(no_proxy.map(str::to_owned))
+        .with_proxy_credentials(Some(("pu".into(), "pp".into())));
     let settings =
         HttpSettings::resolve_for_remote(&config, b"r", &destination, &environment).unwrap();
     let remote = HttpRemote::configured(settings).unwrap();
@@ -2039,10 +2006,8 @@ fn configured_https_routes_connect_and_honors_exclusions(
             all,
             None,
             FetchLimits::default(),
-            TransportControl {
-                cancel: &cancel,
-                deadline: Some(Instant::now() + Duration::from_secs(15)),
-            },
+            TransportControl::new(&cancel)
+                .with_deadline(Some(Instant::now() + Duration::from_secs(15))),
         ))
         .unwrap();
     assert!(
@@ -2395,10 +2360,7 @@ fn http_push_progress_excludes_bytes_beyond_status_budget() {
     let (url, _acknowledge, server) = push_response::serve(true, response, vec![], false);
     let remote = HttpRemote::new(&url, &[], &[]).unwrap();
     let cancel = AtomicBool::new(false);
-    let limits = PushLimits {
-        max_status_bytes: 15,
-        ..PushLimits::default()
-    };
+    let limits = PushLimits::default().with_max_status_bytes(15);
     let mut messages = Vec::new();
     let error = runtime()
         .block_on(push::send_http_checked_with_progress(
@@ -2631,10 +2593,7 @@ fn http_fetch_progress_respects_cancellation_and_wire_budget(
             &remote,
             all,
             None,
-            FetchLimits {
-                max_wire_bytes: 200,
-                ..FetchLimits::default()
-            },
+            FetchLimits::default().with_max_wire_bytes(200),
             TransportControl::new(&cancel),
             |bytes| {
                 notices.push(bytes.to_vec());

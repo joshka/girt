@@ -17,6 +17,7 @@ pub struct ColocationEdit<'a> {
 
 /// Publication failure identifying whether the index has already changed.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ColocationError {
     /// Index publication failed; HEAD was not attempted. The storage error retains cleanup causes.
     #[error("colocation index publication failed")]

@@ -2,6 +2,7 @@ use std::ops::Range;
 
 /// Classification policy for [`super::diff`], independent of paths and Git attributes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BinaryMode {
     /// Any NUL anywhere in either changed input means binary; all other bytes are text.
     #[default]
@@ -14,6 +15,7 @@ pub enum BinaryMode {
 
 /// Exact comparison outcome borrowing the caller's unchanged input buffers.
 #[derive(Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ContentDiff<'a> {
     /// Payloads are byte-identical, regardless of binary policy.
     Unchanged,
@@ -83,6 +85,7 @@ pub struct ContentEdit {
 /// Rust's allocator behavior. Raising bounds can admit quadratic search/trace growth on unrelated
 /// text. The default rejects that work rather than returning an approximate answer.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct DiffLimits {
     /// Combined input payload bytes, even for equal/binary data (default 64 MiB).
     pub max_input_bytes: usize,
@@ -97,6 +100,36 @@ pub struct DiffLimits {
     /// Length-mismatched line comparisons charge only one unit. Byte comparison charges are
     /// conservative, including bytes beyond the first mismatch in a chunk or line.
     pub max_work: usize,
+}
+
+impl DiffLimits {
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_lines`].
+    #[must_use]
+    pub fn with_max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = max_lines;
+        self
+    }
+
+    /// Sets [`Self::max_trace`].
+    #[must_use]
+    pub fn with_max_trace(mut self, max_trace: usize) -> Self {
+        self.max_trace = max_trace;
+        self
+    }
+
+    /// Sets [`Self::max_work`].
+    #[must_use]
+    pub fn with_max_work(mut self, max_work: usize) -> Self {
+        self.max_work = max_work;
+        self
+    }
 }
 
 impl Default for DiffLimits {

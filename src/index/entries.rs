@@ -9,6 +9,7 @@ use crate::ObjectId;
 /// platform aliases, backslashes, drive letters or checkout-safety checks are applied.
 /// IDs are preserved even when zero; object existence and type remain caller obligations.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Entry {
     /// Repository-relative path bytes; sparse directory paths have one trailing slash.
     pub path: Vec<u8>,
@@ -29,6 +30,41 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Sets [`Self::stage`] on this draft entry.
+    #[must_use]
+    pub fn with_stage(mut self, stage: Stage) -> Self {
+        self.stage = stage;
+        self
+    }
+
+    /// Sets [`Self::assume_valid`] on this draft entry.
+    #[must_use]
+    pub fn with_assume_valid(mut self, assume_valid: bool) -> Self {
+        self.assume_valid = assume_valid;
+        self
+    }
+
+    /// Sets [`Self::intent_to_add`] on this draft entry.
+    #[must_use]
+    pub fn with_intent_to_add(mut self, intent_to_add: bool) -> Self {
+        self.intent_to_add = intent_to_add;
+        self
+    }
+
+    /// Sets [`Self::skip_worktree`] on this draft entry.
+    #[must_use]
+    pub fn with_skip_worktree(mut self, skip_worktree: bool) -> Self {
+        self.skip_worktree = skip_worktree;
+        self
+    }
+
+    /// Sets [`Self::stat`] on this draft entry.
+    #[must_use]
+    pub fn with_stat(mut self, stat: Stat) -> Self {
+        self.stat = stat;
+        self
+    }
+
     /// Creates a stage-zero draft with zero stat words and all three entry flags cleared.
     ///
     /// Does not validate the path; validation occurs when constructing/replacing index entries.
@@ -49,6 +85,7 @@ impl Entry {
 /// Canonical index modes. Sparse directories name trees; gitlinks name submodule commits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
+#[non_exhaustive]
 pub enum Mode {
     /// Collapsed sparse directory tree, `040000`, with a trailing slash and skip-worktree.
     SparseDirectory = 0o040000,
@@ -66,6 +103,7 @@ pub enum Mode {
 ///
 /// A path has either one normal entry or any nonempty subset of stages 1, 2 and 3. Missing
 /// sides represent absent files. Duplicate stages and mixing normal/conflict entries are invalid.
+/// This set is exhaustive because the on-disk stage occupies exactly two bits.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(u16)]
 pub enum Stage {

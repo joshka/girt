@@ -20,6 +20,7 @@ use crate::{ObjectFormat, Repository};
 /// Defaults preserve ordinary umask behavior and do not synchronize. Synchronization uses macOS
 /// full file flush or `File::sync_all` elsewhere; directory entries are not synchronized.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct IndexCommitOptions {
     /// Permissions applied to the owned lock before publication.
     pub shared_permissions: crate::SharedPermissions,
@@ -27,11 +28,28 @@ pub struct IndexCommitOptions {
     pub sync: bool,
 }
 
+impl IndexCommitOptions {
+    /// Sets [`Self::shared_permissions`].
+    #[must_use]
+    pub fn with_shared_permissions(mut self, shared_permissions: crate::SharedPermissions) -> Self {
+        self.shared_permissions = shared_permissions;
+        self
+    }
+
+    /// Sets [`Self::sync`].
+    #[must_use]
+    pub fn with_sync(mut self, sync: bool) -> Self {
+        self.sync = sync;
+        self
+    }
+}
+
 /// Explicit storage admission for a caller-selected index edit.
 ///
 /// Defaults retain standalone, regular-file-only admission. These options do not select an index
 /// from environment or configuration, authorize directory replacement, or bypass snapshot checks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct EditOptions {
     /// Resolve immutable split dependencies beside the selected lexical index path.
     pub resolve_split: bool,
@@ -40,6 +58,22 @@ pub struct EditOptions {
     /// The referent is never written. The original leaf kind, symlink spelling, followed bytes
     /// and presence remain publication preconditions; Unix also checks the captured leaf inode.
     pub follow_symlink: bool,
+}
+
+impl EditOptions {
+    /// Sets [`Self::resolve_split`].
+    #[must_use]
+    pub fn with_resolve_split(mut self, resolve_split: bool) -> Self {
+        self.resolve_split = resolve_split;
+        self
+    }
+
+    /// Sets [`Self::follow_symlink`].
+    #[must_use]
+    pub fn with_follow_symlink(mut self, follow_symlink: bool) -> Self {
+        self.follow_symlink = follow_symlink;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -124,6 +158,7 @@ pub struct IndexEdit {
 
 /// Synchronous index storage failure, retaining path and underlying causes.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum StorageError {
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
@@ -326,10 +361,9 @@ impl Repository {
     /// ```no_run
     /// # use girt::{Repository, index::{EditOptions, Limits}};
     /// # let repository = Repository::open("project")?;
-    /// let options = EditOptions {
-    ///     resolve_split: true,
-    ///     follow_symlink: true,
-    /// };
+    /// let options = EditOptions::default()
+    ///     .with_resolve_split(true)
+    ///     .with_follow_symlink(true);
     /// let mut edit =
     ///     repository.edit_index_at_with_options("alternate.index", Limits::default(), options)?;
     /// edit.discard_optional_extensions(&[*b"REUC"])?;

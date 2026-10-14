@@ -16,12 +16,29 @@ use crate::{DeltaOptions, ObjectId, ObjectReadError, PackCompression, Repository
 /// Entries copied from existing packs stream from their files. Objects that are not packed yet
 /// remain decoded in memory until the pack is written.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct RepackLimits {
     /// Bounds object count, logical payload bytes (including copied objects), and output
     /// artifacts.
     pub write: PackWriteLimits,
     /// Selects delta search among objects not already packed (default: bounded deltas).
     pub compression: PackCompression,
+}
+
+impl RepackLimits {
+    /// Sets [`Self::write`].
+    #[must_use]
+    pub fn with_write(mut self, write: PackWriteLimits) -> Self {
+        self.write = write;
+        self
+    }
+
+    /// Sets [`Self::compression`].
+    #[must_use]
+    pub fn with_compression(mut self, compression: PackCompression) -> Self {
+        self.compression = compression;
+        self
+    }
 }
 
 impl Default for RepackLimits {
@@ -48,6 +65,7 @@ impl RepackLimits {
 
 /// A complete indexed pack is visible; existing storage has not been removed.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct RepackPublished {
     /// Identity, count and artifact sizes of the newly published or reused pair.
     pub written: PackWritten,
@@ -55,6 +73,7 @@ pub struct RepackPublished {
 
 /// Failure before complete pair publication. An unindexed pack may remain after interruption.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RepackError {
     /// A fresh retention scan did not establish complete reachability.
     #[error("retention scan incomplete: {0}")]

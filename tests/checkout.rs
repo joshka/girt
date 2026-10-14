@@ -158,10 +158,7 @@ fn clone_without_checkout(source: &Path, destination: &Path, use_girt: bool) {
         .receive_local(
             source.join(".git"),
             girt::fetch::FetchLimits::default(),
-            girt::transport::TransportControl {
-                cancel: &cancel,
-                deadline: None,
-            },
+            girt::transport::TransportControl::new(&cancel).with_deadline(None),
             |_| ControlFlow::Continue(()),
         )
         .unwrap();

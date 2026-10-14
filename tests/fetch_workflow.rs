@@ -389,13 +389,15 @@ fn prune_refuses_a_concurrent_destination_change() {
     refs.update_without_reflog(&stale, Target::Direct(source.first), Expected::Absent)
         .unwrap();
     let ready = receive(
-        request(
-            &repository,
-            &["refs/heads/*:refs/remotes/origin/*"],
-            &[],
-            Reflog::Preserve,
-        )
-        .with_prune(),
+        {
+            let input = request(
+                &repository,
+                &["refs/heads/*:refs/remotes/origin/*"],
+                &[],
+                Reflog::Preserve,
+            );
+            input.with_prune()
+        },
         &source,
         &KnownHistory::default(),
     );
@@ -470,13 +472,15 @@ fn caller_tag_namespace_preserves_concurrent_update() {
     let refs = repository.references().unwrap();
     refs.update_without_reflog(&destination, Target::Direct(source.first), Expected::Absent)
         .unwrap();
-    let request = request(
-        &repository,
-        &["+refs/tags/v1:refs/jj/remote-tags/origin/v1"],
-        &["refs/jj/remote-tags/origin/v1"],
-        Reflog::Preserve,
-    )
-    .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"));
+    let request = {
+        let input = request(
+            &repository,
+            &["+refs/tags/v1:refs/jj/remote-tags/origin/v1"],
+            &["refs/jj/remote-tags/origin/v1"],
+            Reflog::Preserve,
+        );
+        input.with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+    };
     let ready = receive(request, &source, &KnownHistory::default());
     refs.update_without_reflog(
         &destination,
@@ -1155,16 +1159,18 @@ fn namespace_reflog_policy_distinguishes_tracking_branches_and_remote_tags(
         message: message.to_vec(),
     };
     let prepare = || {
-        request(
-            &repository,
-            &[
-                "+refs/heads/main:refs/remotes/origin/main",
-                "+refs/tags/v1:refs/jj/remote-tags/origin/v1",
-            ],
-            &["refs/remotes/origin/main", "refs/jj/remote-tags/origin/v1"],
-            Reflog::Preserve,
-        )
-        .with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+        {
+            let input = request(
+                &repository,
+                &[
+                    "+refs/heads/main:refs/remotes/origin/main",
+                    "+refs/tags/v1:refs/jj/remote-tags/origin/v1",
+                ],
+                &["refs/remotes/origin/main", "refs/jj/remote-tags/origin/v1"],
+                Reflog::Preserve,
+            );
+            input.with_tag_destination_namespace(name("refs/jj/remote-tags/origin"))
+        }
         .with_reflog_for_namespace(
             name("refs/remotes/origin"),
             reflog(b"fetch origin: storing ref"),
@@ -1246,13 +1252,8 @@ fn ancestry_budget_failure_leaves_installed_objects_without_advancing_ref() {
         &source,
         &KnownHistory::default(),
     );
-    let limits = FetchUpdateLimits {
-        history: girt::HistoryLimits {
-            max_commits: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let limits = FetchUpdateLimits::default()
+        .with_history(girt::HistoryLimits::default().with_max_commits(0));
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(matches!(
         *error.source,
@@ -1281,10 +1282,7 @@ fn tag_peeling_budget_failure_prevents_publication() {
         &source,
         &KnownHistory::default(),
     );
-    let limits = FetchUpdateLimits {
-        max_tag_depth: 0,
-        ..Default::default()
-    };
+    let limits = FetchUpdateLimits::default().with_max_tag_depth(0);
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(matches!(
         *error.source,
@@ -1348,13 +1346,8 @@ fn installed_graph_verification_budget_is_explicit() {
         &source,
         &KnownHistory::default(),
     );
-    let limits = FetchUpdateLimits {
-        verification: FetchLimits {
-            max_known_objects: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let limits = FetchUpdateLimits::default()
+        .with_verification(FetchLimits::default().with_max_known_objects(0));
     let error = ready.finish(limits, &AtomicBool::new(false)).unwrap_err();
     assert!(error.report.installed.is_some());
     assert!(matches!(
@@ -1574,13 +1567,13 @@ fn received_history_matches_git_fetch_exactly(#[case] format: &str) {
 }
 
 #[rstest]
-#[case::objects(FetchLimits { max_known_objects: 0, ..FetchLimits::default() })]
-#[case::bytes(FetchLimits { max_known_bytes: 0, ..FetchLimits::default() })]
-#[case::edges(FetchLimits { max_known_edges: 0, ..FetchLimits::default() })]
-#[case::roots(FetchLimits { max_wants: 0, ..FetchLimits::default() })]
-#[case::object_read(FetchLimits { known_read: ReadLimits { max_object_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
-#[case::decode_read(FetchLimits { known_read: ReadLimits { max_decode_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
-#[case::input_read(FetchLimits { known_read: ReadLimits { max_input_bytes: 0, ..ReadLimits::default() }, ..FetchLimits::default() })]
+#[case::objects(FetchLimits::default().with_max_known_objects(0))]
+#[case::bytes(FetchLimits::default().with_max_known_bytes(0))]
+#[case::edges(FetchLimits::default().with_max_known_edges(0))]
+#[case::roots(FetchLimits::default().with_max_wants(0))]
+#[case::object_read(FetchLimits::default().with_known_read(ReadLimits::default().with_max_object_bytes(0)))]
+#[case::decode_read(FetchLimits::default().with_known_read(ReadLimits::default().with_max_decode_bytes(0)))]
+#[case::input_read(FetchLimits::default().with_known_read(ReadLimits::default().with_max_input_bytes(0)))]
 fn received_evidence_keeps_independent_finish_limits(#[case] verification: FetchLimits) {
     let source = Source::new();
     let (_root, repository) = destination();
@@ -1596,10 +1589,7 @@ fn received_evidence_keeps_independent_finish_limits(#[case] verification: Fetch
     );
     let error = ready
         .finish(
-            FetchUpdateLimits {
-                verification,
-                ..FetchUpdateLimits::default()
-            },
+            FetchUpdateLimits::default().with_verification(verification),
             &AtomicBool::new(false),
         )
         .unwrap_err();
@@ -1647,6 +1637,7 @@ fn install_mislabelled_commit(source: &Source, repository: &Repository) {
     let checksum = match source.first.format() {
         girt::ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
         girt::ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes[end..].copy_from_slice(&checksum);
     fs::set_permissions(&index, fs::Permissions::from_mode(0o644)).unwrap();
@@ -1744,14 +1735,11 @@ fn one_commit_fast_forward_does_not_spend_budget_on_old_history() {
     );
     let report = ready
         .finish(
-            FetchUpdateLimits {
-                history: girt::HistoryLimits {
-                    max_commits: 2,
-                    max_parents: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
+            FetchUpdateLimits::default().with_history(
+                girt::HistoryLimits::default()
+                    .with_max_commits(2)
+                    .with_max_parents(1),
+            ),
             &AtomicBool::new(false),
         )
         .unwrap();

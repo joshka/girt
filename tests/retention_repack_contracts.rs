@@ -95,11 +95,9 @@ fn repeated_repack_is_idempotent() {
     git(root, &["init", "--bare", "--template=", "."], b"");
     let heads = loose_versions(root);
     let repo = Repository::open(root).unwrap();
-    let policy = RetentionPolicy {
-        heads,
-        recent_cutoff: SystemTime::now() + Duration::from_secs(60),
-        ..RetentionPolicy::trusted()
-    };
+    let policy = RetentionPolicy::trusted()
+        .with_heads(heads)
+        .with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let first = repo
         .repack_retained(&policy, RepackLimits::trusted(), &AtomicBool::new(false))
         .unwrap();

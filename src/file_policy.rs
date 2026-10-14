@@ -10,6 +10,7 @@ use std::path::Path;
 /// Adjustments use the created inode's mode; the process umask is never changed. Non-Unix hosts
 /// currently support only [`Self::Umask`]. Callers must qualify other platform policies separately.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum SharedPermissions {
     /// Keep the operating system's creation mode and umask result.
     #[default]

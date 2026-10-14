@@ -48,6 +48,7 @@ impl std::fmt::Debug for ConfiguredRemote {
 /// resets. Errors deliberately omit URL bytes, which may contain credentials. Unsupported syntax
 /// is reported only when reached in validation order; preceding malformed values still win.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfiguredRemoteError {
     /// The selected explicit tag option is neither `--tags` nor `--no-tags`.
     #[error("remote tagOpt must be --tags or --no-tags")]

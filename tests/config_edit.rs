@@ -175,14 +175,9 @@ fn includes_globals_and_inherited_only_remotes_are_never_rewritten() {
     let mut bytes = std::fs::read(&path).unwrap();
     bytes.extend_from_slice(b"[include]\npath=included\n[remote \"mixed\"]\nurl=local\n");
     std::fs::write(&path, &bytes).unwrap();
-    let inputs = ConfigInputs {
-        files: vec![ConfigFile {
-            path: global.clone(),
-            scope: ConfigScope::Global,
-            optional: false,
-        }],
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default().with_files(vec![
+        ConfigFile::new(global.clone(), ConfigScope::Global).with_optional(false),
+    ]);
     let repo = Repository::open_with_config(dir.path(), &inputs).unwrap();
     let mut guard = repo.edit_config(4096).unwrap();
     assert!(matches!(
@@ -377,14 +372,9 @@ fn inert_nul_comments_survive_resolution_and_edit(
     std::fs::write(&path, &bytes).unwrap();
     assert_eq!(git(dir.path(), &["config", "--get", "x.k"]), b"a\n");
     let reopened = Repository::open(dir.path()).unwrap();
-    let inputs = ConfigInputs {
-        files: vec![ConfigFile {
-            path: path.clone(),
-            scope: ConfigScope::Local,
-            optional: false,
-        }],
-        ..Default::default()
-    };
+    let inputs = ConfigInputs::default().with_files(vec![
+        ConfigFile::new(path.clone(), ConfigScope::Local).with_optional(false),
+    ]);
     assert_eq!(
         Config::resolve(&inputs).unwrap().value("x", None, "next"),
         Some(Some(b"b".as_slice()))

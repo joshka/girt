@@ -413,29 +413,29 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities(
     let listing = text(&listing);
     assert!(listing.contains("ref: refs/heads/main\tHEAD"));
     assert!(listing.contains(&format!("{}\trefs/tags/v1^{{}}", text(&head))));
-    let advertisement = Advertisement {
-        refs: vec![
-            AdvertisedRef {
-                name: RefName::new("HEAD").unwrap(),
-                id: text(&head).parse().unwrap(),
-                peeled: false,
-            },
-            AdvertisedRef {
-                name: RefName::new("refs/tags/v1").unwrap(),
-                id: text(&tag).parse().unwrap(),
-                peeled: false,
-            },
-            AdvertisedRef {
-                name: RefName::new("refs/tags/v1").unwrap(),
-                id: text(&head).parse().unwrap(),
-                peeled: true,
-            },
+    let advertisement = Advertisement::new(
+        vec![
+            AdvertisedRef::new(
+                RefName::new("HEAD").unwrap(),
+                text(&head).parse().unwrap(),
+                false,
+            ),
+            AdvertisedRef::new(
+                RefName::new("refs/tags/v1").unwrap(),
+                text(&tag).parse().unwrap(),
+                false,
+            ),
+            AdvertisedRef::new(
+                RefName::new("refs/tags/v1").unwrap(),
+                text(&head).parse().unwrap(),
+                true,
+            ),
         ],
-        capabilities: vec![
+        vec![
             b"symref=HEAD:refs/heads/main".to_vec(),
             format!("object-format={format}").into_bytes(),
         ],
-    };
+    );
     let values = ["HEAD:refs/remotes/o/chosen", "refs/tags/*:refs/tags/*"];
     let mappings = Refspecs::parse(Direction::Fetch, values)
         .unwrap()

@@ -62,12 +62,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control = TransportControl::new(&cancel);
     let prepared = PreparedPush::new(
         &source_repo.objects(PackLimits::default())?,
-        vec![PushCommand {
-            name: RefName::new("refs/tags/example")?,
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/tags/example")?, None, id)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         PushLimits::default(),
         &cancel,
     )?;

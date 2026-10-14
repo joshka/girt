@@ -9,6 +9,7 @@ use crate::transport::ssh::SshRemote;
 
 /// Outcome of an SSH push whose caller inspected the live receive-pack advertisement.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SshPushOutcome {
     /// The caller declined. Only a protocol flush was sent; the session exited successfully.
     /// Authentication, trust or proxy side effects may already have occurred. Do not automatically

@@ -15,12 +15,9 @@ const USERNAME: &str = "u s@r:/%";
 const PASSWORD: &str = "p:w/d%+#?é";
 
 fn context(host: &str) -> CredentialContext {
-    CredentialContext {
-        protocol: b"https".to_vec(),
-        host: host.as_bytes().to_vec(),
-        path: Some(b"group/repo".to_vec()),
-        use_http_path: false,
-    }
+    CredentialContext::new(b"https".to_vec(), host.as_bytes().to_vec())
+        .with_path(Some(b"group/repo".to_vec()))
+        .with_use_http_path(false)
 }
 
 /// Runs `git credential-store --file <file> <action>` with a credential description.
@@ -51,10 +48,10 @@ fn git_store(directory: &Path, file: &Path, action: &str, input: &str) -> String
 
 fn session(file: &Path, context: CredentialContext) -> CredentialSession {
     let config = Config::parse(b"[credential]\nhelper = store\n").unwrap();
-    let helper = CredentialHelper {
-        configured_name: b"store".to_vec(),
-        backend: CredentialBackend::Store(CredentialStore::file(file)),
-    };
+    let helper = CredentialHelper::new(
+        b"store".to_vec(),
+        CredentialBackend::Store(CredentialStore::file(file)),
+    );
     let cancel = AtomicBool::new(false);
     CredentialSession::fill(&config, context, &[helper], None, &cancel, None).unwrap()
 }
@@ -71,15 +68,16 @@ fn prompted_with(
     password: &str,
 ) -> CredentialSession {
     let config = Config::parse(b"[credential]\nhelper = store\n").unwrap();
-    let helper = CredentialHelper {
-        configured_name: b"store".to_vec(),
-        backend: CredentialBackend::Store(CredentialStore::file(file)),
-    };
+    let helper = CredentialHelper::new(
+        b"store".to_vec(),
+        CredentialBackend::Store(CredentialStore::file(file)),
+    );
     let cancel = AtomicBool::new(false);
     let mut prompt = |field| {
         Some(match field {
             girt::remote::Prompt::Username => username.as_bytes().to_vec(),
             girt::remote::Prompt::Password => password.as_bytes().to_vec(),
+            _ => return None,
         })
     };
     CredentialSession::fill(

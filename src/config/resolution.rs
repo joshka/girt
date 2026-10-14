@@ -12,6 +12,7 @@ use super::{
 /// Contextual resolution failure. Source locations may contain private paths; tracing omits them.
 #[derive(Debug, thiserror::Error)]
 #[error("configuration resolution failed")]
+#[non_exhaustive]
 pub struct ResolveError {
     /// Location being loaded or interpreted.
     pub location: SourceLocation,
@@ -24,6 +25,7 @@ pub struct ResolveError {
 
 /// Failure category without raw configuration values.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ResolveFailure {
     /// Source could not be read.
     #[error("source I/O failure")]
@@ -117,10 +119,8 @@ impl Config {
     ///
     /// ```
     /// use girt::config::{Config, ConfigInputs, IncludeConditionVisibility, ResolveOptions};
-    /// let options = ResolveOptions {
-    ///     conditions: IncludeConditionVisibility::RootSnapshot,
-    ///     ..ResolveOptions::default()
-    /// };
+    /// let options =
+    ///     ResolveOptions::default().with_conditions(IncludeConditionVisibility::RootSnapshot);
     /// let config = Config::resolve_with_options(&ConfigInputs::default(), options)?;
     /// assert!(config.entries().is_empty());
     /// # Ok::<(), Box<dyn std::error::Error>>(())

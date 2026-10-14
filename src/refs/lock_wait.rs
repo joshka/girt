@@ -12,6 +12,7 @@ use super::store::Lock;
 /// Each acquisition starts a fresh monotonic budget. No lock is stolen. Scheduling and filesystem
 /// operations can exceed a finite budget; waits do not impose a deadline on the whole transaction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LockWait {
     /// Try once without sleeping.
     #[default]
@@ -27,11 +28,28 @@ pub enum LockWait {
 /// Reference locks include HEAD, symbolic dependencies and placeholders. Reflog locks always fail
 /// immediately on contention. These options neither load Git configuration nor apply to reftable.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct FilesTransactionOptions {
     /// Wait for each loose reference lock independently.
     pub reference_lock_wait: LockWait,
     /// Wait for the common `packed-refs.lock`.
     pub packed_refs_lock_wait: LockWait,
+}
+
+impl FilesTransactionOptions {
+    /// Sets [`Self::reference_lock_wait`].
+    #[must_use]
+    pub fn with_reference_lock_wait(mut self, reference_lock_wait: LockWait) -> Self {
+        self.reference_lock_wait = reference_lock_wait;
+        self
+    }
+
+    /// Sets [`Self::packed_refs_lock_wait`].
+    #[must_use]
+    pub fn with_packed_refs_lock_wait(mut self, packed_refs_lock_wait: LockWait) -> Self {
+        self.packed_refs_lock_wait = packed_refs_lock_wait;
+        self
+    }
 }
 
 impl FilesTransactionOptions {

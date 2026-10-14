@@ -8,6 +8,7 @@ use crate::transport::http::{HttpRemote, RequestBody};
 
 /// Outcome of an HTTP push whose caller inspected the receive-pack advertisement.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HttpPushOutcome {
     /// The caller declined before the receive-pack POST. No update command was sent.
     Declined,

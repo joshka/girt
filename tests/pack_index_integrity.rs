@@ -43,6 +43,7 @@ fn rehash_index(format: ObjectFormat, bytes: &mut [u8]) {
     let checksum = match format {
         ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
         ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes[end..].copy_from_slice(&checksum);
 }

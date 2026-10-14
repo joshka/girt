@@ -13,6 +13,7 @@ use crate::{
 /// O(commits + parents), plus one decoded commit and the reader's pack snapshot. These are input
 /// bounds, not a total heap or wall-clock limit.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct HistoryLimits {
     /// Maximum distinct commits; zero permits only an empty walk (default 100,000).
     pub max_commits: usize,
@@ -20,6 +21,29 @@ pub struct HistoryLimits {
     pub max_parents: usize,
     /// Bounds applied separately to every object read.
     pub read: ReadLimits,
+}
+
+impl HistoryLimits {
+    /// Sets [`Self::max_commits`].
+    #[must_use]
+    pub fn with_max_commits(mut self, max_commits: usize) -> Self {
+        self.max_commits = max_commits;
+        self
+    }
+
+    /// Sets [`Self::max_parents`].
+    #[must_use]
+    pub fn with_max_parents(mut self, max_parents: usize) -> Self {
+        self.max_parents = max_parents;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
 }
 
 impl Default for HistoryLimits {
@@ -443,6 +467,7 @@ fn check_cancelled(cancel: &AtomicBool, id: ObjectId) -> Result<(), HistoryError
 
 /// A complete ancestry operation failed; no partial answer is returned.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HistoryError {
     /// A root or reachable parent does not exist.
     #[error("missing commit {0}")]

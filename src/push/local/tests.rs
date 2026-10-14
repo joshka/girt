@@ -259,3 +259,19 @@ fn write_large_rejection(f: &Fixture, reason: &[u8]) {
     status.extend(b"0000");
     fs::write(f.root.path().join("status"), status).unwrap();
 }
+
+#[test]
+fn debug_redacts_inherited_configuration_and_identity() {
+    let inputs = crate::config::ConfigInputs::default().with_command(Some(
+        crate::Config::parse(b"[remote \"origin\"]\nurl=https://user:secret@example.com\n")
+            .unwrap(),
+    ));
+    let identity = crate::Signature {
+        name: b"private name".to_vec(),
+        email: b"private@example.com".to_vec(),
+        seconds: 0,
+        offset_minutes: 0,
+    };
+    let context = super::LocalPushContext::new(&inputs).with_identity(Some(&identity));
+    assert_eq!(format!("{context:?}"), "LocalPushContext { .. }");
+}

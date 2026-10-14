@@ -420,13 +420,7 @@ fn traversal_checks_format_limits_and_cancellation(
     );
     assert!(
         objects
-            .walk(
-                &[id],
-                HistoryLimits {
-                    max_commits: 0,
-                    ..Default::default()
-                }
-            )
+            .walk(&[id], HistoryLimits::default().with_max_commits(0))
             .is_err()
     );
     assert!(matches!(

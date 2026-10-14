@@ -39,13 +39,12 @@ fn append() -> Reflog {
     }
 }
 fn edit(tip: ObjectId, reference: &str) -> RefEdit {
-    RefEdit {
-        name: name(reference),
-        dereference: false,
-        target: Some(Target::Direct(tip)),
-        expected: Expected::AbsentOr(Target::Direct(tip)),
-        reflog: append(),
-    }
+    RefEdit::new(
+        name(reference),
+        Some(Target::Direct(tip)),
+        Expected::AbsentOr(Target::Direct(tip)),
+        append(),
+    )
 }
 
 #[rstest]

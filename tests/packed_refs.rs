@@ -58,6 +58,7 @@ fn fixture(format: ObjectFormat) -> (tempfile::TempDir, PathBuf) {
     let format_name = match format {
         ObjectFormat::Sha1 => "sha1",
         ObjectFormat::Sha256 => "sha256",
+        _ => panic!("unsupported hash format in test fixture"),
     };
     git(
         root.path(),
@@ -88,6 +89,7 @@ fn fixture(format: ObjectFormat) -> (tempfile::TempDir, PathBuf) {
     let missing = match format {
         ObjectFormat::Sha1 => MISSING_SHA1,
         ObjectFormat::Sha256 => MISSING_SHA256,
+        _ => panic!("unsupported hash format in test fixture"),
     };
     fs::write(repo.join(".git/refs/heads/missing"), format!("{missing}\n")).unwrap();
     fs::write(repo.join(".git/refs/heads/malformed"), "garbage\n").unwrap();
@@ -188,13 +190,7 @@ fn pack_tags_matches_git_default_pack_refs() {
     let expected = copy(root.path(), &original, "git");
     git(&expected, &["pack-refs"]);
 
-    pack(
-        &original,
-        PackRefsOptions {
-            scope: PackScope::Tags,
-            ..PackRefsOptions::ALL
-        },
-    );
+    pack(&original, PackRefsOptions::ALL.with_scope(PackScope::Tags));
 
     assert_eq!(
         fs::read(original.join(".git/packed-refs")).unwrap(),
@@ -287,10 +283,7 @@ fn auto_packs_only_past_threshold() {
     for index in 1..15 {
         git(&repo, &["tag", &format!("t{index}")]);
     }
-    let auto = PackRefsOptions {
-        trigger: PackTrigger::Auto,
-        ..PackRefsOptions::ALL
-    };
+    let auto = PackRefsOptions::ALL.with_trigger(PackTrigger::Auto);
     assert!(!pack(&repo, auto).rewritten);
     assert!(!repo.join(".git/packed-refs").exists());
     git(&repo, &["tag", "t15"]);
@@ -367,13 +360,7 @@ fn dot_ending_directories_are_traversed_like_git(
     let expected = copy(root.path(), &repo, "git");
     git(&expected, git_args);
 
-    let report = pack(
-        &repo,
-        PackRefsOptions {
-            scope,
-            ..PackRefsOptions::ALL
-        },
-    );
+    let report = pack(&repo, PackRefsOptions::ALL.with_scope(scope));
 
     assert!(report.skipped.is_empty());
     assert_eq!(

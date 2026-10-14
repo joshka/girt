@@ -37,12 +37,8 @@ fn push(c: &mut Criterion) {
                 .is_some()
         );
         let tag = fixture.records.last().unwrap().0;
-        let command = PushCommand {
-            name: RefName::new("refs/tags/packed").unwrap(),
-            expected: None,
-            new: tag,
-            force: ForcePolicy::FastForwardOnly,
-        };
+        let command = PushCommand::new(RefName::new("refs/tags/packed").unwrap(), None, tag)
+            .with_force(ForcePolicy::FastForwardOnly);
         let prepared = PreparedPush::new(
             &objects,
             vec![command.clone()],
@@ -86,12 +82,8 @@ fn push(c: &mut Criterion) {
             .loose_objects()
             .write_commit(&girt::Commit::new(fields).unwrap())
             .unwrap();
-        let update = PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: Some(old),
-            new: next,
-            force: ForcePolicy::FastForwardOnly,
-        };
+        let update = PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(old), next)
+            .with_force(ForcePolicy::FastForwardOnly);
         let full = PreparedPush::new(
             &objects,
             vec![update.clone()],
@@ -152,12 +144,10 @@ fn push(c: &mut Criterion) {
             }
             let fork = PreparedPush::new_excluding(
                 &objects,
-                vec![PushCommand {
-                    name: RefName::new("refs/heads/fork").unwrap(),
-                    expected: None,
-                    new: next,
-                    force: ForcePolicy::FastForwardOnly,
-                }],
+                vec![
+                    PushCommand::new(RefName::new("refs/heads/fork").unwrap(), None, next)
+                        .with_force(ForcePolicy::FastForwardOnly),
+                ],
                 &[receiver_tip],
                 PushLimits::default(),
                 &cancel,
@@ -270,12 +260,8 @@ fn blob_edits(c: &mut Criterion) {
     data[262144..262152].copy_from_slice(b"EDITED!!");
     let tip = repo.loose_objects().write_blob(&data).unwrap();
     let objects = repo.objects(PackLimits::trusted()).unwrap();
-    let command = PushCommand {
-        name: RefName::new("refs/tags/edit").unwrap(),
-        expected: None,
-        new: tip,
-        force: ForcePolicy::Allow,
-    };
+    let command = PushCommand::new(RefName::new("refs/tags/edit").unwrap(), None, tip)
+        .with_force(ForcePolicy::Allow);
     let cancel = AtomicBool::new(false);
     let mut group = c.benchmark_group("push-blob-edit");
     group.throughput(Throughput::Bytes(data.len() as u64));
@@ -286,10 +272,7 @@ fn blob_edits(c: &mut Criterion) {
             girt::PackCompression::Delta(girt::DeltaOptions::default()),
         ),
     ] {
-        let limits = PushLimits {
-            compression,
-            ..PushLimits::default()
-        };
+        let limits = PushLimits::default().with_compression(compression);
         group.bench_function(name, |b| {
             b.iter(|| {
                 PreparedPush::new_excluding(

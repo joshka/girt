@@ -5,6 +5,7 @@ use crate::remote::{Direction, Mapping, MappingError, Refspecs};
 
 /// Explicit choice of initial local HEAD; all branches and tags are fetched in either case.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum BranchSelection {
     /// Honor advertised symbolic HEAD; keep a nonsymbolic HEAD detached. Empty v0 advertisements
     /// without an unborn-name hint use `refs/heads/main`. Missing HEAD in a nonempty advertisement
@@ -17,6 +18,7 @@ pub enum BranchSelection {
 
 /// HEAD chosen from the advertisement used for the transfer.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum CloneHead {
     /// A local branch with the advertised commit ID.
     Branch {
@@ -33,6 +35,7 @@ pub enum CloneHead {
 
 /// In-memory preview; only a plan made inside the actual receive operation can be finished.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ClonePlan {
     /// Selected initial HEAD.
     pub head: CloneHead,
@@ -42,6 +45,7 @@ pub struct ClonePlan {
 
 /// Advertisement or branch policy rejected before destination creation.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ClonePlanError {
     /// Invalid duplicate/colliding references or unsupported refspec mapping.
     #[error(transparent)]

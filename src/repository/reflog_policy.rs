@@ -7,6 +7,7 @@ use crate::refs::{RefName, ReferenceError};
 
 /// A reflog policy could not be decided.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ReflogPolicyError {
     /// `core.logAllRefUpdates` is not a boolean or `always`.
     #[error("invalid reflog configuration")]

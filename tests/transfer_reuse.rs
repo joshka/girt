@@ -289,12 +289,14 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     let dest = Repository::init(format, root.path().join("full.git"), InitKind::Bare).unwrap();
     let full = PreparedPush::new_local(
         &objects,
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: None,
-            new: tip(source.path()),
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(
+                RefName::new("refs/heads/main").unwrap(),
+                None,
+                tip(source.path()),
+            )
+            .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &[],
         PushLimits::trusted(),
         &AtomicBool::new(false),
@@ -320,12 +322,10 @@ fn push_reuses_deltas_and_reconstructs_a_delta_without_its_base(#[case] format: 
     let subset = Repository::init(format, root.path().join("subset.git"), InitKind::Bare).unwrap();
     let one = PreparedPush::new_local(
         &objects,
-        vec![PushCommand {
-            name: RefName::new("refs/tags/blob").unwrap(),
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/tags/blob").unwrap(), None, id)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &[],
         PushLimits::trusted(),
         &AtomicBool::new(false),
@@ -359,10 +359,7 @@ fn local_transfer_reencodes_chains_for_the_receiver_depth_limit() {
         source.path(),
         |_| vec![tip(source.path())],
         &KnownHistory::default(),
-        FetchLimits {
-            max_delta_depth: 0,
-            ..FetchLimits::trusted()
-        },
+        FetchLimits::trusted().with_max_delta_depth(0),
         TransportControl::new(&AtomicBool::new(false)),
         |_| ControlFlow::Continue(()),
         |_| {},
@@ -601,6 +598,7 @@ fn mislabel_index_entry(index: &Path, old: girt::ObjectId, replacement: girt::Ob
     let digest = match old.format() {
         ObjectFormat::Sha1 => sha1::Sha1::digest(&bytes[..end]).to_vec(),
         ObjectFormat::Sha256 => sha2::Sha256::digest(&bytes[..end]).to_vec(),
+        _ => panic!("unsupported hash format in test fixture"),
     };
     bytes[end..].copy_from_slice(&digest);
     make_fixture_file_writable(index);
@@ -651,10 +649,7 @@ fn mislabelled_delta_base_cannot_misdirect_a_fetched_delta(#[case] format: Objec
         source.path(),
         |_| vec![false_base, target],
         &known,
-        FetchLimits {
-            max_haves: 0,
-            ..FetchLimits::trusted()
-        },
+        FetchLimits::trusted().with_max_haves(0),
         TransportControl::new(&AtomicBool::new(false)),
         |_| ControlFlow::Continue(()),
         |event| {
@@ -795,12 +790,9 @@ fn damaged_source_entry_cannot_change_destination(
     drop(file);
     if push {
         let repo = Repository::open(source.path()).unwrap();
-        let command = girt::push::PushCommand {
-            name: RefName::new("refs/for/blob").unwrap(),
-            expected: None,
-            new: id,
-            force: girt::push::ForcePolicy::Allow,
-        };
+        let command =
+            girt::push::PushCommand::new(RefName::new("refs/for/blob").unwrap(), None, id)
+                .with_force(girt::push::ForcePolicy::Allow);
         let error = repo
             .push(
                 "origin",

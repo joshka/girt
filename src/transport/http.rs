@@ -103,6 +103,7 @@ impl std::fmt::Debug for HttpRemote {
 /// Sanitized HTTP failures. Response bodies, URLs, header values and underlying client diagnostic
 /// strings are deliberately excluded because they may contain credentials.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HttpError {
     /// Invalid endpoint, header or trust configuration; no request was sent.
     #[error("invalid HTTP configuration: {0}")]

@@ -4,6 +4,7 @@ use crate::{
 
 /// Source selection for inferred copies, in addition to deleted rename sources.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Copies {
     /// Each deleted source can supply at most one destination.
     #[default]
@@ -18,6 +19,7 @@ pub enum Copies {
 
 /// Caller choices for inference, independent of repository configuration.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Options {
     /// Minimum retained-byte percentage, inclusive, from 1 through 100 (default 50).
     /// 100 admits only identical object IDs, bypassing approximate scoring.
@@ -34,6 +36,43 @@ pub struct Options {
     /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
     /// Exact object-ID matches are still considered (default true).
     pub approximate_binary: bool,
+}
+
+impl Options {
+    /// Sets [`Self::similarity`].
+    #[must_use]
+    pub fn with_similarity(mut self, similarity: u8) -> Self {
+        self.similarity = similarity;
+        self
+    }
+
+    /// Sets [`Self::copies`].
+    #[must_use]
+    pub fn with_copies(mut self, copies: Copies) -> Self {
+        self.copies = copies;
+        self
+    }
+
+    /// Sets [`Self::track_empty`].
+    #[must_use]
+    pub fn with_track_empty(mut self, track_empty: bool) -> Self {
+        self.track_empty = track_empty;
+        self
+    }
+
+    /// Sets [`Self::candidate_limit`].
+    #[must_use]
+    pub fn with_candidate_limit(mut self, candidate_limit: usize) -> Self {
+        self.candidate_limit = candidate_limit;
+        self
+    }
+
+    /// Sets [`Self::approximate_binary`].
+    #[must_use]
+    pub fn with_approximate_binary(mut self, approximate_binary: bool) -> Self {
+        self.approximate_binary = approximate_binary;
+        self
+    }
 }
 
 impl Default for Options {
@@ -55,6 +94,7 @@ impl Default for Options {
 /// overhead; these bounds are not exact heap/RSS limits. Allocation failure follows Rust's
 /// allocator behavior. No files are written and no handles remain owned by the result.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Limits {
     /// Structural comparison bounds, including path and change counts.
     pub trees: TreeCompareLimits,
@@ -68,6 +108,50 @@ pub struct Limits {
     pub max_pairs: usize,
     /// Conservative byte/lookup/comparison work budget (default 100,000,000).
     pub max_work: usize,
+}
+
+impl Limits {
+    /// Sets [`Self::trees`].
+    #[must_use]
+    pub fn with_trees(mut self, trees: TreeCompareLimits) -> Self {
+        self.trees = trees;
+        self
+    }
+
+    /// Sets [`Self::read`].
+    #[must_use]
+    pub fn with_read(mut self, read: ReadLimits) -> Self {
+        self.read = read;
+        self
+    }
+
+    /// Sets [`Self::max_blob_bytes`].
+    #[must_use]
+    pub fn with_max_blob_bytes(mut self, max_blob_bytes: usize) -> Self {
+        self.max_blob_bytes = max_blob_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_spans`].
+    #[must_use]
+    pub fn with_max_spans(mut self, max_spans: usize) -> Self {
+        self.max_spans = max_spans;
+        self
+    }
+
+    /// Sets [`Self::max_pairs`].
+    #[must_use]
+    pub fn with_max_pairs(mut self, max_pairs: usize) -> Self {
+        self.max_pairs = max_pairs;
+        self
+    }
+
+    /// Sets [`Self::max_work`].
+    #[must_use]
+    pub fn with_max_work(mut self, max_work: usize) -> Self {
+        self.max_work = max_work;
+        self
+    }
 }
 
 impl Default for Limits {
@@ -85,6 +169,7 @@ impl Default for Limits {
 
 /// How an inferred source is used in this result.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Kind {
     /// The deleted source's first selected destination.
     Rename,
@@ -106,6 +191,7 @@ pub enum Kind {
 /// content can mean reordered spans, not identical bytes. `Options::similarity == 100` requires
 /// identity instead. No finite compatibility corpus establishes universal heuristic parity.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Rewrite {
     /// Original relative Git path bytes.
     pub source: Vec<u8>,

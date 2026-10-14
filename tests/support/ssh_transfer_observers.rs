@@ -53,15 +53,15 @@ if mode in ('exit', 'exit-direct'): sys.exit(42)
             .unwrap()
             .fetch_destination(&config, &ProtocolEnvironment::default())
             .unwrap();
-        let options = OpenSshOptions {
-            default_executable: executable,
-            environment: [
-                ("PATH".into(), std::env::var_os("PATH").unwrap()),
-                ("FIXTURE_ROOT".into(), root.path().as_os_str().to_owned()),
-            ]
-            .into(),
-            ..Default::default()
-        };
+        let options = OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_environment(
+                [
+                    ("PATH".into(), std::env::var_os("PATH").unwrap()),
+                    ("FIXTURE_ROOT".into(), root.path().as_os_str().to_owned()),
+                ]
+                .into(),
+            );
         let remote = SshRemote::openssh(&config, &destination, options).unwrap();
         Self { root, remote }
     }
@@ -141,10 +141,7 @@ fn success() -> Vec<u8> {
 }
 
 fn control(cancel: &AtomicBool) -> TransportControl<'_> {
-    TransportControl {
-        cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(10)),
-    }
+    TransportControl::new(cancel).with_deadline(Some(Instant::now() + Duration::from_secs(10)))
 }
 
 fn prepared(format: ObjectFormat, limits: PushLimits) -> push::PreparedPush {
@@ -360,10 +357,9 @@ fn fetch_live_notice_cancellation_never_returns_download() {
             &peer.remote,
             super::all,
             None,
-            FetchOptions {
-                limits: FetchLimits::default(),
-                depth: None,
-            },
+            FetchOptions::default()
+                .with_limits(FetchLimits::default())
+                .with_depth(None),
             control(&cancel),
             |_| {},
             |_| {
@@ -392,10 +388,7 @@ fn push_notice_observer_cannot_see_bytes_outside_status_budget() {
     );
     let prepared = prepared(
         ObjectFormat::Sha1,
-        PushLimits {
-            max_status_bytes: 15,
-            ..PushLimits::default()
-        },
+        PushLimits::default().with_max_status_bytes(15),
     );
     let cancel = AtomicBool::new(false);
     let mut notices = Vec::new();
@@ -431,13 +424,9 @@ fn fetch_notice_observer_cannot_see_bytes_outside_wire_budget() {
             &peer.remote,
             super::all,
             None,
-            FetchOptions {
-                limits: FetchLimits {
-                    max_wire_bytes: limit,
-                    ..FetchLimits::default()
-                },
-                depth: None,
-            },
+            FetchOptions::default()
+                .with_limits(FetchLimits::default().with_max_wire_bytes(limit))
+                .with_depth(None),
             control(&cancel),
             |_| {},
             |bytes| {
@@ -467,10 +456,9 @@ fn fetch_unoffered_ack_suppresses_notices_and_fails_validation() {
             &peer.remote,
             super::all,
             None,
-            FetchOptions {
-                limits: FetchLimits::default(),
-                depth: None,
-            },
+            FetchOptions::default()
+                .with_limits(FetchLimits::default())
+                .with_depth(None),
             control(&cancel),
             |_| {},
             |_| panic!("notice after invalid acknowledgement"),
@@ -646,10 +634,9 @@ fn depth_fetch_observers_preserve_real_git_shallow_response(#[case] format: Obje
             &server.remote("config"),
             super::all,
             None,
-            FetchOptions {
-                limits: FetchLimits::default(),
-                depth: std::num::NonZeroU32::new(1),
-            },
+            FetchOptions::default()
+                .with_limits(FetchLimits::default())
+                .with_depth(std::num::NonZeroU32::new(1)),
             control(&cancel),
             |_| {},
             |bytes| notices.push(bytes.to_vec()),

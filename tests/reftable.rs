@@ -77,13 +77,12 @@ fn reads_nonempty_repository_and_publishes_conditional_refs(
     let id = tip(root.path(), format);
     assert_eq!(refs.resolve(&name(b"HEAD"), 32).unwrap().id, Some(id));
     assert_eq!(refs.list().unwrap().len(), 1);
-    refs.transaction(&[RefEdit {
-        name: name(b"refs/tags/published"),
-        target: Some(Target::Direct(id)),
-        expected: Expected::Absent,
-        dereference: false,
-        reflog: log(),
-    }])
+    refs.transaction(&[RefEdit::new(
+        name(b"refs/tags/published"),
+        Some(Target::Direct(id)),
+        Expected::Absent,
+        log(),
+    )])
     .unwrap();
     assert_eq!(
         git(root.path(), &["rev-parse", "refs/tags/published"]),
@@ -138,12 +137,14 @@ fn resolved_head_logging_and_log_deletion(#[case] spelling: &str, #[case] format
     let repo = Repository::open(root.path()).unwrap();
     let refs = repo.references().unwrap();
     let id = tip(root.path(), format);
-    refs.transaction(&[RefEdit {
-        name: name(b"HEAD"),
-        target: Some(Target::Direct(id)),
-        expected: Expected::Value(Target::Direct(id)),
-        dereference: true,
-        reflog: log(),
+    refs.transaction(&[{
+        let input = RefEdit::new(
+            name(b"HEAD"),
+            Some(Target::Direct(id)),
+            Expected::Value(Target::Direct(id)),
+            log(),
+        );
+        input.with_dereference(true)
     }])
     .unwrap();
     assert_eq!(
@@ -164,13 +165,12 @@ fn resolved_head_logging_and_log_deletion(#[case] spelling: &str, #[case] format
             .message,
         b"original publication"
     );
-    refs.transaction(&[RefEdit {
-        name: name(b"refs/heads/main"),
-        target: None,
-        expected: Expected::Exists,
-        dereference: false,
-        reflog: Reflog::Delete,
-    }])
+    refs.transaction(&[RefEdit::new(
+        name(b"refs/heads/main"),
+        None,
+        Expected::Exists,
+        Reflog::Delete,
+    )])
     .unwrap();
     assert!(refs.read(&name(b"refs/heads/main")).unwrap().is_none());
     assert!(refs.reflog(&name(b"refs/heads/main")).unwrap().is_none());
@@ -231,12 +231,14 @@ fn linked_worktree_routes_head_and_branch_logs(
     let original_head = git(&linked, &["rev-parse", "ORIG_HEAD"]);
     let refs = repo.references().unwrap();
     let before = git(root.path(), &["reflog", "show", "--format=%gs", "HEAD"]);
-    refs.transaction(&[RefEdit {
-        name: name(b"HEAD"),
-        target: Some(Target::Direct(id)),
-        expected: Expected::Exists,
-        dereference: true,
-        reflog: log(),
+    refs.transaction(&[{
+        let input = RefEdit::new(
+            name(b"HEAD"),
+            Some(Target::Direct(id)),
+            Expected::Exists,
+            log(),
+        );
+        input.with_dereference(true)
     }])
     .unwrap();
     assert_eq!(
@@ -316,13 +318,7 @@ fn cancellation_preserves_stack_before_transaction() {
     let root = fixture("sha1");
     let repo = Repository::open(root.path()).unwrap();
     let before = std::fs::read(repo.git_dir().join("reftable/tables.list")).unwrap();
-    let edit = RefEdit {
-        name: name(b"HEAD"),
-        target: None,
-        expected: Expected::Any,
-        dereference: false,
-        reflog: Reflog::Preserve,
-    };
+    let edit = RefEdit::new(name(b"HEAD"), None, Expected::Any, Reflog::Preserve);
     assert!(matches!(
         repo.references()
             .unwrap()
@@ -408,10 +404,7 @@ fn rejected_result_budget_leaves_the_stack_unchanged() {
     let refs = repo
         .references()
         .unwrap()
-        .with_reftable_limits(girt::refs::reftable::StackLimits {
-            tables: 1,
-            ..Default::default()
-        });
+        .with_reftable_limits(girt::refs::reftable::StackLimits::default().with_tables(1));
     assert!(matches!(
         refs.update_without_reflog(
             &name(b"refs/tags/new"),
@@ -464,12 +457,11 @@ fn reflog_timezones_interoperate_in_both_directions(
     let observed = refs.reflog(&name(b"refs/heads/from-git")).unwrap().unwrap();
     assert_eq!(observed[0].committer.offset_minutes, minutes);
     assert_eq!(observed[0].committer.seconds, 1700000123);
-    refs.transaction(&[RefEdit {
-        name: name(b"refs/heads/from-girt"),
-        target: Some(Target::Direct(id)),
-        expected: Expected::Absent,
-        dereference: false,
-        reflog: Reflog::Append {
+    refs.transaction(&[RefEdit::new(
+        name(b"refs/heads/from-girt"),
+        Some(Target::Direct(id)),
+        Expected::Absent,
+        Reflog::Append {
             committer: Signature {
                 name: b"Girt".to_vec(),
                 email: b"girt@example.invalid".to_vec(),
@@ -478,7 +470,7 @@ fn reflog_timezones_interoperate_in_both_directions(
             },
             message: b"timezone-oracle".to_vec(),
         },
-    }])
+    )])
     .unwrap();
     assert_eq!(
         git(

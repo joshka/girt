@@ -73,6 +73,7 @@ impl ReflogRecord {
 
 /// Explicit policy for every name affected by an operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Reflog {
     /// Leave existing logs unchanged and create none, including on deletion.
     Preserve,

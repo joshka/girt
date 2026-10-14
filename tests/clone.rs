@@ -598,10 +598,7 @@ fn transfer_object_limit_leaves_destination_absent() {
         Reflog::Preserve,
     )
     .unwrap();
-    let limits = FetchLimits {
-        max_objects: 0,
-        ..FetchLimits::default()
-    };
+    let limits = FetchLimits::default().with_max_objects(0);
     let result = request.receive_local(
         source.root.path(),
         limits,

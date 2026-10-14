@@ -23,6 +23,7 @@ pub trait MaintenanceIsolation {
 
 /// Loose object identities removed from the primary object store.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct PruneReport {
     /// Successfully removed identities, in path order.
     pub deleted: Vec<ObjectId>,
@@ -30,6 +31,7 @@ pub struct PruneReport {
 
 /// Why a loose-object sweep stopped.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PruneCause {
     /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
@@ -54,6 +56,7 @@ pub enum PruneCause {
 /// A failed sweep retains the known successful deletion prefix and any uncertain unlink.
 #[derive(Debug, thiserror::Error)]
 #[error("loose object pruning failed")]
+#[non_exhaustive]
 pub struct PruneFailure {
     /// The reason the sweep stopped.
     #[source]

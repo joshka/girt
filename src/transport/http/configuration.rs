@@ -12,6 +12,7 @@ use crate::remote::{Destination, Protocol};
 /// Default trust uses the TLS backend's platform verifier, which may consult OS trust settings
 /// and native certificate environment variables. This is not a Git/libcurl backend selector.
 #[derive(Default, Clone)]
+#[non_exhaustive]
 pub struct HttpEnvironment {
     /// Selected CA bundle content, read and bounded by the application (at most 1 MiB).
     ///
@@ -30,6 +31,50 @@ pub struct HttpEnvironment {
     pub proxy_credentials: Option<(String, String)>,
     /// Explicit application authorization for disabling certificate and hostname checks.
     pub allow_insecure_tls: bool,
+}
+
+impl HttpEnvironment {
+    /// Sets [`Self::ssl_ca_info`].
+    #[must_use]
+    pub fn with_ssl_ca_info(mut self, ssl_ca_info: Option<Vec<u8>>) -> Self {
+        self.ssl_ca_info = ssl_ca_info;
+        self
+    }
+
+    /// Sets [`Self::ssl_no_verify`].
+    #[must_use]
+    pub fn with_ssl_no_verify(mut self, ssl_no_verify: Option<bool>) -> Self {
+        self.ssl_no_verify = ssl_no_verify;
+        self
+    }
+
+    /// Sets [`Self::proxy`].
+    #[must_use]
+    pub fn with_proxy(mut self, proxy: Option<String>) -> Self {
+        self.proxy = proxy;
+        self
+    }
+
+    /// Sets [`Self::no_proxy`].
+    #[must_use]
+    pub fn with_no_proxy(mut self, no_proxy: Option<String>) -> Self {
+        self.no_proxy = no_proxy;
+        self
+    }
+
+    /// Sets [`Self::proxy_credentials`].
+    #[must_use]
+    pub fn with_proxy_credentials(mut self, proxy_credentials: Option<(String, String)>) -> Self {
+        self.proxy_credentials = proxy_credentials;
+        self
+    }
+
+    /// Sets [`Self::allow_insecure_tls`].
+    #[must_use]
+    pub fn with_allow_insecure_tls(mut self, allow_insecure_tls: bool) -> Self {
+        self.allow_insecure_tls = allow_insecure_tls;
+        self
+    }
 }
 
 impl std::fmt::Debug for HttpEnvironment {

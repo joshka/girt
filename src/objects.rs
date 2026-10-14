@@ -93,6 +93,7 @@ impl UnverifiedObject {
 /// derived tables have a separate bound. These are per-reader bounds, not a process RSS quota. Zero
 /// values permit no indexed packs. Unindexed files are ignored.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PackLimits {
     /// Maximum sum of pinned `.idx` and `.pack` artifact sizes (default 64 GiB on 64-bit).
     pub max_bytes: usize,
@@ -107,6 +108,43 @@ pub struct PackLimits {
     pub max_directory_entries: usize,
     /// Maximum number of index/pack pairs (default 256).
     pub max_packs: usize,
+}
+
+impl PackLimits {
+    /// Sets [`Self::max_bytes`].
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_index_bytes`].
+    #[must_use]
+    pub fn with_max_index_bytes(mut self, max_index_bytes: usize) -> Self {
+        self.max_index_bytes = max_index_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_open_files`].
+    #[must_use]
+    pub fn with_max_open_files(mut self, max_open_files: usize) -> Self {
+        self.max_open_files = max_open_files;
+        self
+    }
+
+    /// Sets [`Self::max_directory_entries`].
+    #[must_use]
+    pub fn with_max_directory_entries(mut self, max_directory_entries: usize) -> Self {
+        self.max_directory_entries = max_directory_entries;
+        self
+    }
+
+    /// Sets [`Self::max_packs`].
+    #[must_use]
+    pub fn with_max_packs(mut self, max_packs: usize) -> Self {
+        self.max_packs = max_packs;
+        self
+    }
 }
 
 impl Default for PackLimits {
@@ -145,7 +183,31 @@ impl PackLimits {
 /// retained decoding bytes, but excludes index tables, allocator overhead, traversal bookkeeping,
 /// and fixed zlib scratch space. Loose reads use the smaller of object and decode limits, plus a
 /// small framing allowance. A delta base served from a pack's base cache is not charged again.
+///
+/// Customize selected bounds while retaining defaults for future fields:
+///
+/// ```
+/// use girt::ReadLimits;
+///
+/// let limits = ReadLimits::default()
+///     .with_max_object_bytes(1024 * 1024)
+///     .with_max_delta_depth(16);
+/// assert_eq!(limits.max_object_bytes, 1024 * 1024);
+/// assert_eq!(limits.max_delta_depth, 16);
+/// ```
+///
+/// External struct literals, including update syntax, are rejected:
+///
+/// ```compile_fail,E0639
+/// use girt::ReadLimits;
+///
+/// let limits = ReadLimits {
+///     max_object_bytes: 1024 * 1024,
+///     ..ReadLimits::default()
+/// };
+/// ```
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ReadLimits {
     /// Maximum bytes in each object payload (default 64 MiB).
     pub max_object_bytes: usize,
@@ -160,6 +222,43 @@ pub struct ReadLimits {
     pub max_input_bytes: usize,
     /// Maximum number of delta edges (default 64); zero permits ordinary objects only.
     pub max_delta_depth: usize,
+}
+
+impl ReadLimits {
+    /// Sets [`Self::max_object_bytes`].
+    #[must_use]
+    pub fn with_max_object_bytes(mut self, max_object_bytes: usize) -> Self {
+        self.max_object_bytes = max_object_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_bytes`].
+    #[must_use]
+    pub fn with_max_delta_bytes(mut self, max_delta_bytes: usize) -> Self {
+        self.max_delta_bytes = max_delta_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_decode_bytes`].
+    #[must_use]
+    pub fn with_max_decode_bytes(mut self, max_decode_bytes: usize) -> Self {
+        self.max_decode_bytes = max_decode_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_input_bytes`].
+    #[must_use]
+    pub fn with_max_input_bytes(mut self, max_input_bytes: usize) -> Self {
+        self.max_input_bytes = max_input_bytes;
+        self
+    }
+
+    /// Sets [`Self::max_delta_depth`].
+    #[must_use]
+    pub fn with_max_delta_depth(mut self, max_delta_depth: usize) -> Self {
+        self.max_delta_depth = max_delta_depth;
+        self
+    }
 }
 
 impl Default for ReadLimits {
@@ -1141,6 +1240,7 @@ impl Store {
 
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ObjectReadError {
     /// A pinned artifact changed in place before a mutation boundary.
     #[error("pinned pack artifact changed: {path}")]

@@ -57,27 +57,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cancel = AtomicBool::new(false);
     let objects = source.objects(PackLimits::default())?;
     let commands = vec![
-        PushCommand {
-            name: RefName::new("refs/heads/main")?,
-            expected: None,
-            new: commit,
-            force: ForcePolicy::FastForwardOnly,
-        },
-        PushCommand {
-            name: RefName::new("refs/tags/v1")?,
-            expected: None,
-            new: tag,
-            force: ForcePolicy::FastForwardOnly,
-        },
+        PushCommand::new(RefName::new("refs/heads/main")?, None, commit)
+            .with_force(ForcePolicy::FastForwardOnly),
+        PushCommand::new(RefName::new("refs/tags/v1")?, None, tag)
+            .with_force(ForcePolicy::FastForwardOnly),
     ];
     let prepared = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel)?;
     let report = send_local_with_control(
         destination.git_dir(),
         &prepared,
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(30)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
     )?;
     // A complete protocol exchange can still contain rejection or partial success.
     if !report.all_succeeded() {
@@ -98,12 +88,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let repeated = PreparedPush::new_excluding(
         &objects,
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main")?,
-            expected: Some(commit),
-            new: commit,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main")?, Some(commit), commit)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &[commit],
         PushLimits::default(),
         &cancel,
@@ -111,10 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = send_local_with_control(
         destination.git_dir(),
         &repeated,
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(30)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
     )?;
     if !report.all_succeeded() {
         return Err(format!("repeat rejected: {report:?}").into());

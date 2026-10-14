@@ -111,24 +111,15 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
         read(&a, fixture.delta).unwrap()
     );
     assert!(matches!(
-        a.objects(PackLimits {
-            max_packs: 0,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_packs(0)),
         Err(ObjectReadError::Limit("pack count"))
     ));
     assert!(matches!(
-        a.objects(PackLimits {
-            max_bytes: 1,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_bytes(1)),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
     ));
     assert!(matches!(
-        a.objects(PackLimits {
-            max_open_files: 1,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_open_files(1)),
         Err(ObjectReadError::Limit("pack file handles"))
     ));
     assert_eq!(snapshot(fixture.root.path()), before);
@@ -144,10 +135,7 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
     )
     .unwrap();
     assert!(matches!(
-        a.objects(PackLimits {
-            max_packs: 1,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_packs(1)),
         Err(ObjectReadError::Limit("pack count"))
     ));
     let pair_bytes = fs::metadata(&primary_index).unwrap().len()
@@ -155,24 +143,18 @@ fn reads_borrowed_packs_with_aggregate_limits(#[case] format: ObjectFormat) {
             .unwrap()
             .len();
     assert!(matches!(
-        a.objects(PackLimits {
-            max_bytes: pair_bytes as usize,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_bytes(pair_bytes as usize)),
         Err(ObjectReadError::Limit("pack snapshot bytes"))
     ));
     assert!(matches!(
-        a.objects(PackLimits {
-            max_open_files: 3,
-            ..PackLimits::default()
-        }),
+        a.objects(PackLimits::default().with_max_open_files(3)),
         Err(ObjectReadError::Limit("pack file handles"))
     ));
     assert!(matches!(
-        a.objects(PackLimits {
-            max_index_bytes: fs::metadata(&primary_index).unwrap().len() as usize,
-            ..PackLimits::default()
-        }),
+        a.objects(
+            PackLimits::default()
+                .with_max_index_bytes(fs::metadata(&primary_index).unwrap().len() as usize)
+        ),
         Err(ObjectReadError::Limit("pack index bytes"))
     ));
 }
@@ -220,10 +202,10 @@ fn corrupt_primary_duplicate_does_not_fall_through(#[case] format: ObjectFormat)
 }
 
 #[rstest]
-#[case::stores(AlternateLimits { max_stores: 1, ..AlternateLimits::default() }, "alternate store count")]
-#[case::entries(AlternateLimits { max_entries: 0, ..AlternateLimits::default() }, "alternate path count")]
-#[case::bytes(AlternateLimits { max_bytes: 1, ..AlternateLimits::default() }, "alternate metadata bytes")]
-#[case::paths(AlternateLimits { max_path_bytes: 0, ..AlternateLimits::default() }, "alternate resolved path bytes")]
+#[case::stores(AlternateLimits::default().with_max_stores(1), "alternate store count")]
+#[case::entries(AlternateLimits::default().with_max_entries(0), "alternate path count")]
+#[case::bytes(AlternateLimits::default().with_max_bytes(1), "alternate metadata bytes")]
+#[case::paths(AlternateLimits::default().with_max_path_bytes(0), "alternate resolved path bytes")]
 fn bounds_the_complete_graph(#[case] limits: AlternateLimits, #[case] reason: &str) {
     let root = tempfile::tempdir().unwrap();
     let a = init(&root.path().join("a"), ObjectFormat::Sha1);
@@ -242,10 +224,7 @@ fn aliases_are_visited_once_and_primary_survives_missing_alternate(#[case] forma
     let a = init(root.path(), format);
     alternate(&a, b".\n../objects\n../../absent/objects\n");
     let id = a.loose_objects().write_blob(b"primary").unwrap();
-    let limits = AlternateLimits {
-        max_stores: 1,
-        ..AlternateLimits::default()
-    };
+    let limits = AlternateLimits::default().with_max_stores(1);
     let objects = a
         .objects_with_alternates(PackLimits::default(), limits)
         .unwrap();
@@ -353,10 +332,7 @@ fn follows_symlink_aliases_and_non_utf8_paths(#[case] format: ObjectFormat) {
     std::os::unix::fs::symlink(b.object_dir(), root.path().join("alias")).unwrap();
     alternate(&a, b"\"../../borrowed-\\377/objects\"\n../../alias\n");
     let id = b.loose_objects().write_blob(b"byte path").unwrap();
-    let limits = AlternateLimits {
-        max_stores: 2,
-        ..AlternateLimits::default()
-    };
+    let limits = AlternateLimits::default().with_max_stores(2);
     let objects = a
         .objects_with_alternates(PackLimits::default(), limits)
         .unwrap();
@@ -385,10 +361,7 @@ fn follows_symlink_alias_once(#[case] format: ObjectFormat) {
     std::os::unix::fs::symlink(b.object_dir(), root.path().join("alias")).unwrap();
     alternate(&a, b"\"../../borrowed space/objects\"\n../../alias\n");
     let id = b.loose_objects().write_blob(b"symlink").unwrap();
-    let limits = AlternateLimits {
-        max_stores: 2,
-        ..AlternateLimits::default()
-    };
+    let limits = AlternateLimits::default().with_max_stores(2);
     let objects = a
         .objects_with_alternates(PackLimits::default(), limits)
         .unwrap();
@@ -494,10 +467,7 @@ fn bounded_shared_graph_workload() {
         "513 canonical stores, 1024 edges, {} metadata bytes; open {elapsed:?}",
         records.len() + 512 * b"../objects\n".len()
     );
-    let limits = AlternateLimits {
-        max_stores: 512,
-        ..AlternateLimits::default()
-    };
+    let limits = AlternateLimits::default().with_max_stores(512);
     assert!(matches!(
         a.objects_with_alternates(PackLimits::default(), limits),
         Err(ObjectReadError::Limit("alternate store count"))

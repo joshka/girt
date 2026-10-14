@@ -5,6 +5,7 @@ use super::IncludePlacement;
 /// Defaults preserve [`super::Config::resolve`]. These choices never discover paths or read the
 /// process environment; interpolation uses the caller's [`super::IncludeContext`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ResolveOptions {
     /// Where successfully included blocks appear in the resulting snapshot.
     pub placement: IncludePlacement,
@@ -16,8 +17,39 @@ pub struct ResolveOptions {
     pub unresolved_paths: UnresolvedIncludePath,
 }
 
+impl ResolveOptions {
+    /// Sets [`Self::placement`].
+    #[must_use]
+    pub fn with_placement(mut self, placement: IncludePlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// Sets [`Self::conditions`].
+    #[must_use]
+    pub fn with_conditions(mut self, conditions: IncludeConditionVisibility) -> Self {
+        self.conditions = conditions;
+        self
+    }
+
+    /// Sets [`Self::directive_case`].
+    #[must_use]
+    pub fn with_directive_case(mut self, directive_case: IncludeDirectiveCase) -> Self {
+        self.directive_case = directive_case;
+        self
+    }
+
+    /// Sets [`Self::unresolved_paths`].
+    #[must_use]
+    pub fn with_unresolved_paths(mut self, unresolved_paths: UnresolvedIncludePath) -> Self {
+        self.unresolved_paths = unresolved_paths;
+        self
+    }
+}
+
 /// Remote URL visibility while evaluating `hasconfig:remote.*.url:` conditions.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum IncludeConditionVisibility {
     /// Prescan all roots and include descendants. A hasconfig descendant may not declare URLs.
     #[default]
@@ -33,6 +65,7 @@ pub enum IncludeConditionVisibility {
 
 /// Case matching for include directive section names; `path` keys always ignore ASCII case.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum IncludeDirectiveCase {
     /// Recognize include section names ignoring ASCII case.
     #[default]
@@ -43,6 +76,7 @@ pub enum IncludeDirectiveCase {
 
 /// Treatment of include paths whose requested interpolation context was not supplied.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum UnresolvedIncludePath {
     /// Report a missing home, named home or installation prefix as an input error.
     #[default]

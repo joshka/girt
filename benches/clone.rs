@@ -26,21 +26,20 @@ fn clone_plan(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(3));
     for count in [10, 10_000] {
         let mut refs: Vec<_> = (0..count)
-            .map(|i| AdvertisedRef {
-                name: RefName::new(format!("refs/heads/b{i}")).unwrap(),
-                id: ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
-                peeled: false,
+            .map(|i| {
+                AdvertisedRef::new(
+                    RefName::new(format!("refs/heads/b{i}")).unwrap(),
+                    ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
+                    false,
+                )
             })
             .collect();
-        refs.push(AdvertisedRef {
-            name: RefName::new("HEAD").unwrap(),
-            id: refs[0].id,
-            peeled: false,
-        });
-        let ad = Advertisement {
-            refs,
-            capabilities: vec![b"symref=HEAD:refs/heads/b0".to_vec()],
-        };
+        refs.push(AdvertisedRef::new(
+            RefName::new("HEAD").unwrap(),
+            refs[0].id,
+            false,
+        ));
+        let ad = Advertisement::new(refs, vec![b"symref=HEAD:refs/heads/b0".to_vec()]);
         group.bench_with_input(BenchmarkId::new("plan", count), &ad, |b, ad| {
             b.iter(|| black_box(request.plan(black_box(ad)).unwrap()))
         });

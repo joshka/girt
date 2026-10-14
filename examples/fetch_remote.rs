@@ -61,10 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
     let cancel = AtomicBool::new(false);
-    let control = TransportControl {
-        cancel: &cancel,
-        deadline: Some(Instant::now() + Duration::from_secs(30)),
-    };
+    let control = TransportControl::new(&cancel)
+        .with_deadline(Some(Instant::now() + Duration::from_secs(30)));
     let ready = request.receive_local(
         source.git_dir(),
         &KnownHistory::default(),

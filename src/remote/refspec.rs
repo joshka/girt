@@ -6,6 +6,7 @@ use crate::refs::RefName;
 
 /// Which side supplies source names and which refspec grammar applies.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Direction {
     /// Remote sources map to local destinations; negative exclusions are permitted.
     Fetch,
@@ -37,6 +38,7 @@ pub struct Refspec {
 /// A rejected occurrence in an ordered refspec list.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[error("refspec at index {index}")]
+#[non_exhaustive]
 pub struct RefspecsError {
     /// Zero-based occurrence index.
     pub index: usize,
@@ -47,6 +49,7 @@ pub struct RefspecsError {
 
 /// Invalid syntax or a recognized form outside the supported full-name subset.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum RefspecError {
     /// Invalid separators, markers, negative form or wildcard count/pairing.
     #[error("invalid refspec syntax: {0}")]
@@ -222,6 +225,7 @@ pub struct RefSource {
 
 /// One pure selection, mapping, or push deletion; not an authorized reference update.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub struct Mapping {
     /// Selected source and ID; `None` means push deletion.
     pub source: Option<RefSource>,
@@ -230,6 +234,38 @@ pub struct Mapping {
     /// Syntactic `+` intent. Callers separately authorize force and validate expected old values,
     /// ancestry, object kinds, namespace restrictions and storage conflicts.
     pub force: bool,
+}
+
+impl Mapping {
+    /// Creates a mapping with explicit source, destination and force policy.
+    pub fn new(source: Option<RefSource>, destination: Option<RefName>, force: bool) -> Self {
+        Self {
+            source,
+            destination,
+            force,
+        }
+    }
+
+    /// Sets [`Self::source`].
+    #[must_use]
+    pub fn with_source(mut self, source: Option<RefSource>) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// Sets [`Self::destination`].
+    #[must_use]
+    pub fn with_destination(mut self, destination: Option<RefName>) -> Self {
+        self.destination = destination;
+        self
+    }
+
+    /// Sets [`Self::force`].
+    #[must_use]
+    pub fn with_force(mut self, force: bool) -> Self {
+        self.force = force;
+        self
+    }
 }
 
 /// An ordered set of specifications sharing one direction, including duplicate occurrences.
@@ -241,6 +277,7 @@ pub struct Refspecs {
 
 /// Mapping failed; no partial plan or side effects are produced.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum MappingError {
     /// An explicit positive source was absent, even if an exclusion names it too.
     #[error("explicit refspec source not found: {0:?}")]

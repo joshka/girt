@@ -19,14 +19,12 @@ use rstest::rstest;
 
 fn check(events: &[ValidationProgress], objects: u64, deltas: u64) {
     assert!(deltas > 0);
-    assert_eq!(
-        events.last(),
-        Some(&ValidationProgress {
-            objects: (objects, objects),
-            deltas: Some((deltas, deltas)),
-            complete: true,
-        })
-    );
+    let last = events
+        .last()
+        .expect("validation publishes a final snapshot");
+    assert_eq!(last.objects, (objects, objects));
+    assert_eq!(last.deltas, Some((deltas, deltas)));
+    assert!(last.complete);
     assert_eq!(events.iter().filter(|event| event.complete).count(), 1);
     for pair in events.windows(2) {
         assert!(pair[0].objects.0 <= pair[1].objects.0);
@@ -135,12 +133,10 @@ fn local_push_validation_cancellation_never_publishes(#[case] format: ObjectForm
         .unwrap();
     let prepared = PreparedPush::new_local(
         &fixture.repo.objects(PackLimits::default()).unwrap(),
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &[],
         PushLimits::default(),
         &AtomicBool::new(false),
@@ -157,10 +153,7 @@ fn local_push_validation_cancellation_never_publishes(#[case] format: ObjectForm
             destination.git_dir(),
             &prepared,
             TransportControl::new(&cancel),
-            LocalPushContext {
-                config_inputs: &inputs,
-                identity: None,
-            },
+            LocalPushContext::new(&inputs).with_identity(None),
             |event| {
                 events.push(event);
                 if if delta {
@@ -317,12 +310,10 @@ fn git_local_transfer_progress_and_repository_callbacks() {
     let repo = Repository::open(repo.git_dir()).unwrap();
     repo.push(
         "push",
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: None,
-            new: id,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &girt::transfer::PushOptions::default(),
         &girt::transfer::Environment::default(),
         &mut callbacks,
@@ -442,12 +433,8 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
         .trim()
         .parse()
         .unwrap();
-    let command = PushCommand {
-        name: RefName::new("refs/heads/main").unwrap(),
-        expected: None,
-        new: id,
-        force: ForcePolicy::FastForwardOnly,
-    };
+    let command = PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
+        .with_force(ForcePolicy::FastForwardOnly);
     let prepared = PreparedPush::new_local(
         &fixture.repo.objects(PackLimits::default()).unwrap(),
         vec![command.clone()],
@@ -502,10 +489,7 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
                     destination.git_dir(),
                     &prepared,
                     TransportControl::new(&AtomicBool::new(false)),
-                    LocalPushContext {
-                        config_inputs: &inputs,
-                        identity: None,
-                    },
+                    LocalPushContext::new(&inputs).with_identity(None),
                     |event| {
                         if event.objects.0 > 0 {
                             panic!("observer panic");

@@ -65,12 +65,13 @@ fn references(c: &mut Criterion) {
         });
     }
     let keep: Vec<_> = (0..100)
-        .map(|index| RefEdit {
-            name: RefName::new(format!("refs/jj/keep-{index:03}")).unwrap(),
-            dereference: false,
-            target: Some(Target::Direct(id)),
-            expected: Expected::AbsentOr(Target::Direct(id)),
-            reflog: Reflog::Preserve,
+        .map(|index| {
+            RefEdit::new(
+                RefName::new(format!("refs/jj/keep-{index:03}")).unwrap(),
+                Some(Target::Direct(id)),
+                Expected::AbsentOr(Target::Direct(id)),
+                Reflog::Preserve,
+            )
         })
         .collect();
     refs.transaction(&keep).unwrap();
@@ -107,20 +108,21 @@ fn transactions(c: &mut Criterion) {
         )
         .unwrap();
         let edits: Vec<_> = (0..count)
-            .map(|index| RefEdit {
-                name: RefName::new(format!("refs/tags/batch-{index:03}")).unwrap(),
-                dereference: false,
-                target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
-                expected: Expected::Any,
-                reflog: Reflog::Append {
-                    committer: girt::Signature {
-                        name: b"Benchmark".to_vec(),
-                        email: b"bench@example.com".to_vec(),
-                        seconds: 1700000000,
-                        offset_minutes: 0,
+            .map(|index| {
+                RefEdit::new(
+                    RefName::new(format!("refs/tags/batch-{index:03}")).unwrap(),
+                    Some(Target::Direct(ObjectId::Sha1([1; 20]))),
+                    Expected::Any,
+                    Reflog::Append {
+                        committer: girt::Signature {
+                            name: b"Benchmark".to_vec(),
+                            email: b"bench@example.com".to_vec(),
+                            seconds: 1700000000,
+                            offset_minutes: 0,
+                        },
+                        message: b"benchmark publication".to_vec(),
                     },
-                    message: b"benchmark publication".to_vec(),
-                },
+                )
             })
             .collect();
         let refs = repo.references().unwrap();
@@ -149,12 +151,11 @@ fn transactions(c: &mut Criterion) {
     let refs = repo.references().unwrap();
     let head = RefName::new("HEAD").unwrap();
     let unborn = Target::Symbolic(RefName::new("refs/heads/main").unwrap());
-    let detach = RefEdit {
-        name: head.clone(),
-        dereference: false,
-        target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
-        expected: Expected::Value(unborn.clone()),
-        reflog: Reflog::Append {
+    let detach = RefEdit::new(
+        head.clone(),
+        Some(Target::Direct(ObjectId::Sha1([1; 20]))),
+        Expected::Value(unborn.clone()),
+        Reflog::Append {
             committer: girt::Signature {
                 name: b"Benchmark".to_vec(),
                 email: b"bench@example.com".to_vec(),
@@ -163,7 +164,7 @@ fn transactions(c: &mut Criterion) {
             },
             message: b"detach unborn HEAD".to_vec(),
         },
-    };
+    );
     std::fs::create_dir(repo.git_dir().join("logs")).unwrap();
     c.bench_function("transactions/detach-unborn-with-log", |b| {
         b.iter_batched(

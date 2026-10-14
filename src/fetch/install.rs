@@ -578,6 +578,7 @@ fn materialize_dependencies(
 
 /// Object publication completed; it says nothing about reference changes or reflogs.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct FetchInstalled {
     /// Installed/reused pack checksum, or `None` when no pack was needed.
     pub checksum: Option<ObjectId>,

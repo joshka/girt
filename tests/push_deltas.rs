@@ -151,12 +151,10 @@ fn prepare_with_limits(f: &Fixture, roots: &[ObjectId], limits: PushLimits) -> P
     let repo = Repository::open(&f.source).unwrap();
     PreparedPush::new_local(
         &repo.objects(PackLimits::trusted()).unwrap(),
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: Some(f.old),
-            new: f.new,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         roots,
         limits,
         &AtomicBool::new(false),
@@ -330,21 +328,14 @@ fn packed_whole_search_fallback_preserves_compressed_entries(#[case] format: Obj
     let ordinary = prepare_with_limits(
         &f,
         &[f.old],
-        PushLimits {
-            compression: girt::PackCompression::Ordinary,
-            ..PushLimits::default()
-        },
+        PushLimits::default().with_compression(girt::PackCompression::Ordinary),
     );
     let bounded = prepare_with_limits(
         &f,
         &[f.old],
-        PushLimits {
-            compression: girt::PackCompression::Delta(girt::DeltaOptions {
-                max_work: 1,
-                ..girt::DeltaOptions::default()
-            }),
-            ..PushLimits::default()
-        },
+        PushLimits::default().with_compression(girt::PackCompression::Delta(
+            girt::DeltaOptions::default().with_max_work(1),
+        )),
     );
     assert_eq!(
         wire_pack(&f, &bounded, false),
@@ -354,9 +345,9 @@ fn packed_whole_search_fallback_preserves_compressed_entries(#[case] format: Obj
 }
 
 #[rstest]
-#[case::input_budget(PushLimits { pack: girt::PackWriteLimits { max_input_bytes: 526000, ..girt::PackWriteLimits::default() }, ..PushLimits::default() })]
-#[case::work_budget(PushLimits { compression: girt::PackCompression::Delta(girt::DeltaOptions { max_work: 1, ..girt::DeltaOptions::default() }), ..PushLimits::default() })]
-#[case::ordinary(PushLimits { compression: girt::PackCompression::Ordinary, ..PushLimits::default() })]
+#[case::input_budget(PushLimits::default().with_pack(girt::PackWriteLimits::default().with_max_input_bytes(526000)))]
+#[case::work_budget(PushLimits::default().with_compression(girt::PackCompression::Delta(girt::DeltaOptions::default().with_max_work(1))))]
+#[case::ordinary(PushLimits::default().with_compression(girt::PackCompression::Ordinary))]
 fn insufficient_search_budget_falls_back_without_missing_bases(#[case] limits: PushLimits) {
     let f = fixture(ObjectFormat::Sha1);
     let prepared = prepare_with_limits(&f, &[f.old], limits);
@@ -407,12 +398,10 @@ fn corrupt_external_base_refuses_preparation_and_preserves_receiver(#[case] form
     let repo = Repository::open(&f.source).unwrap();
     let result = PreparedPush::new_local(
         &repo.objects(PackLimits::trusted()).unwrap(),
-        vec![PushCommand {
-            name: RefName::new("refs/heads/main").unwrap(),
-            expected: Some(f.old),
-            new: f.new,
-            force: ForcePolicy::FastForwardOnly,
-        }],
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
         &[f.old],
         PushLimits::default(),
         &AtomicBool::new(false),
@@ -462,12 +451,10 @@ fn configured_push(f: &Fixture, url: &str, environment: &girt::transfer::Environ
         .unwrap()
         .push(
             "origin",
-            vec![PushCommand {
-                name: RefName::new("refs/heads/main").unwrap(),
-                expected: Some(f.old),
-                new: f.new,
-                force: ForcePolicy::FastForwardOnly,
-            }],
+            vec![
+                PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
+                    .with_force(ForcePolicy::FastForwardOnly),
+            ],
             &girt::transfer::PushOptions::default(),
             environment,
             &mut girt::transfer::NoCallbacks,
@@ -523,13 +510,8 @@ fn receiver_decode_budget_refuses_before_installing_or_publishing() {
     let prepared = prepare_with_limits(
         &f,
         &[f.old],
-        PushLimits {
-            pack: girt::PackWriteLimits {
-                max_input_bytes: 526000,
-                ..girt::PackWriteLimits::default()
-            },
-            ..PushLimits::default()
-        },
+        PushLimits::default()
+            .with_pack(girt::PackWriteLimits::default().with_max_input_bytes(526000)),
     );
     let before = git(
         &f.dest,
@@ -597,12 +579,10 @@ fn configured_default_push_does_not_use_hidden_receiver_history_as_external_base
         .unwrap()
         .push(
             "origin",
-            vec![PushCommand {
-                name: RefName::new("refs/heads/topic").unwrap(),
-                expected: None,
-                new: f.new,
-                force: ForcePolicy::FastForwardOnly,
-            }],
+            vec![
+                PushCommand::new(RefName::new("refs/heads/topic").unwrap(), None, f.new)
+                    .with_force(ForcePolicy::FastForwardOnly),
+            ],
             &girt::transfer::PushOptions::default(),
             &girt::transfer::Environment::default(),
             &mut girt::transfer::NoCallbacks,

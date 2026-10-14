@@ -423,6 +423,7 @@ pub struct CommitHeader {
 
 /// A commit lies outside the supported grammar or fails construction validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum CommitError {
     /// A parent identity differs from the commit tree's format.
     #[error(transparent)]

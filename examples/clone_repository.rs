@@ -56,10 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ready = request.receive_local(
         &source_path,
         FetchLimits::default(),
-        TransportControl {
-            cancel: &cancel,
-            deadline: Some(Instant::now() + Duration::from_secs(30)),
-        },
+        TransportControl::new(&cancel)
+            .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
         |_| ControlFlow::Continue(()),
     )?;
     assert!(!destination_path.exists());

@@ -104,11 +104,13 @@ fn selected_durability_creates_both_formats_and_backends(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                durability: WorktreeDurability { index, references },
-                link_style: WorktreeLinkStyle::Absolute,
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default()
+                .with_durability(
+                    WorktreeDurability::default()
+                        .with_index(index)
+                        .with_references(references),
+                )
+                .with_link_style(WorktreeLinkStyle::Absolute),
         )
         .unwrap();
     assert_eq!(linked.object_format(), format);
@@ -156,11 +158,9 @@ fn redirected_index_and_captured_private_config(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                private_config: Some(captured.to_vec()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default()
+                .with_index_path(Some(selected.clone()))
+                .with_private_config(Some(captured.to_vec())),
         )
         .unwrap();
     assert!(!linked.git_dir().join("index").exists());
@@ -191,10 +191,7 @@ fn missing_redirected_index_is_created_without_a_private_index(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap();
     assert!(!linked.git_dir().join("index").exists());
@@ -239,10 +236,7 @@ fn regular_redirected_index_is_rewritten_to_canonical_empty(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap();
     assert!(!linked.git_dir().join("index").exists());
@@ -272,10 +266,7 @@ fn regular_empty_index_version_matches_git(
         root.path().join("linked"),
         &branch(),
         4,
-        OrphanWorktreeOptions {
-            index_path: Some(selected.clone()),
-            ..Default::default()
-        },
+        OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
     )
     .unwrap();
     assert_eq!(
@@ -296,10 +287,7 @@ fn regular_git_empty_index_retains_canonical_bytes(
         root.path().join("linked"),
         &branch(),
         4,
-        OrphanWorktreeOptions {
-            index_path: Some(selected.clone()),
-            ..Default::default()
-        },
+        OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
     )
     .unwrap();
     assert_eq!(fs::read(&selected).unwrap(), original);
@@ -349,10 +337,7 @@ fn selected_symlink_writes_referent_without_replacing_link(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap();
     assert!(!linked.git_dir().join("index").exists());
@@ -403,10 +388,7 @@ fn selected_symlink_rejects_invalid_referent_before_registration(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap_err();
     assert!(matches!(
@@ -453,10 +435,7 @@ fn selected_symlink_uses_referent_lock(
         root.path().join("linked"),
         &branch(),
         4,
-        OrphanWorktreeOptions {
-            index_path: Some(selected.clone()),
-            ..Default::default()
-        },
+        OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
     );
     if referent_locked {
         assert!(matches!(
@@ -494,11 +473,9 @@ fn exact_permissions_touch_only_selected_metadata(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                shared_permissions: SharedPermissions::Exact(0o660),
-                private_config: Some(b"[fixture]\nvalue=retained\n".to_vec()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default()
+                .with_shared_permissions(SharedPermissions::Exact(0o660))
+                .with_private_config(Some(b"[fixture]\nvalue=retained\n".to_vec())),
         )
         .unwrap();
     let mode = |path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
@@ -530,10 +507,8 @@ fn invalid_exact_mode_refuses_before_creation(#[case] mode: u16) {
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                shared_permissions: SharedPermissions::Exact(mode),
-                ..Default::default()
-            }
+            OrphanWorktreeOptions::default()
+                .with_shared_permissions(SharedPermissions::Exact(mode))
         )
         .is_err()
     );
@@ -553,10 +528,7 @@ fn invalid_redirected_index_refuses_before_registration(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap_err();
     let girt::CreateWorktreeError::IndexStorage {
@@ -665,10 +637,7 @@ fn metadata_selected_index_refuses_before_publication(
             root.path().join("linked"),
             &branch(),
             4,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap_err();
     assert!(matches!(
@@ -743,10 +712,7 @@ fn selected_index_lock_is_released_when_registration_fails(
             root.path().join("linked"),
             &branch(),
             1,
-            OrphanWorktreeOptions {
-                index_path: Some(selected.clone()),
-                ..Default::default()
-            },
+            OrphanWorktreeOptions::default().with_index_path(Some(selected.clone())),
         )
         .unwrap_err();
     assert!(matches!(error, girt::CreateWorktreeError::Limit));

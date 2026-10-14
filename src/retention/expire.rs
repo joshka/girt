@@ -25,6 +25,7 @@ use crate::refs::{Backend, ReferenceError};
 
 /// Histories whose expiry rewrite was durably published.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ExpireReport {
     /// Known published histories, in source order.
     pub changed: Vec<ReflogSource>,
@@ -34,6 +35,7 @@ pub struct ExpireReport {
 
 /// Why expiry stopped.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ExpireCause {
     /// A pinned pack/index changed or a content read found damage before this mutation boundary.
     #[error(transparent)]
@@ -67,6 +69,7 @@ pub enum ExpireCause {
 /// Expiry failure with known publications and a possible uncertain replacement.
 #[derive(Debug, thiserror::Error)]
 #[error("reflog expiry failed")]
+#[non_exhaustive]
 pub struct ExpireFailure {
     /// Failure class.
     #[source]
