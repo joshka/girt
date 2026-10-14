@@ -1,5 +1,7 @@
 //! Original Git-generated storage fixtures; cleanup never edits their published bytes.
 #![cfg(unix)]
+#[path = "support/stand_in.rs"]
+mod stand_in;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 static CLEANUP_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -74,7 +76,6 @@ fn cleanup_invalidates_owned_edits_and_preserves_git_targets_and_replacements() 
 #[cfg(unix)]
 #[test]
 fn git_interrupt_releases_index_lock_without_changing_published_index() {
-    use std::os::unix::fs::PermissionsExt as _;
     use std::os::unix::process::CommandExt as _;
 
     use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
@@ -86,12 +87,7 @@ fn git_interrupt_releases_index_lock_without_changing_published_index() {
     let index = root.path().join(".git/index");
     let before = std::fs::read(&index).unwrap();
     let filter = root.path().join(".git/cleanup-filter");
-    std::fs::write(
-        &filter,
-        b"#!/bin/sh\nprintf ready >.git/filter-ready\nsleep 2\ncat\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&filter, std::fs::Permissions::from_mode(0o700)).unwrap();
+    stand_in::shell(&filter, "printf ready >.git/filter-ready\nsleep 2\ncat\n");
     std::fs::write(root.path().join(".gitattributes"), b"file filter=cleanup\n").unwrap();
     std::fs::write(root.path().join("file"), b"changed fixture").unwrap();
     struct Child {

@@ -214,7 +214,7 @@ fn peel(
         }
         if object.kind() != ObjectKind::Tag {
             if object.kind() == ObjectKind::Commit {
-                crate::Commit::parse(id.format(), object.data())
+                crate::Commit::parse_graph(id.format(), object.data())
                     .map_err(|e| context(PeelFailure::Commit(e)))?;
             }
             return Ok(PeeledObject {
@@ -227,11 +227,11 @@ fn peel(
         if tags.len() == limits.max_tags {
             return Err(context(PeelFailure::Depth));
         }
-        let tag =
-            Tag::parse(id.format(), object.data()).map_err(|e| context(PeelFailure::Tag(e)))?;
-        expected = Some(tag.target_kind());
+        let (target, kind) = Tag::parse_target(id.format(), object.data())
+            .map_err(|e| context(PeelFailure::Tag(e)))?;
+        expected = Some(kind);
         tags.push(id);
-        id = tag.target();
+        id = target;
     }
 }
 

@@ -93,6 +93,19 @@ impl Tag {
     /// Returns [`TagError`] for missing, reordered or unterminated mandatory records, invalid or
     /// foreign-format IDs, or unknown target types. No object lookup occurs.
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TagError> {
+        let (target, target_kind) = Self::parse_target(format, payload)?;
+        Ok(Self {
+            target,
+            target_kind,
+            payload: payload.to_vec(),
+        })
+    }
+
+    /// Checks the same mandatory records as `parse`, without retaining a second payload copy.
+    pub(crate) fn parse_target(
+        format: crate::ObjectFormat,
+        payload: &[u8],
+    ) -> Result<(ObjectId, ObjectKind), TagError> {
         let mut physical = payload.split_inclusive(|&byte| byte == b'\n');
         let mut required = || {
             physical
@@ -110,11 +123,7 @@ impl Tag {
             .ok_or(TagError::InvalidObjectId)?;
         let target_kind = ObjectKind::parse(required_line(Some(required()?), b"type ")?)?;
         required_line(Some(required()?), b"tag ")?;
-        Ok(Self {
-            target,
-            target_kind,
-            payload: payload.to_vec(),
-        })
+        Ok((target, target_kind))
     }
 
     /// The format of the target reference.

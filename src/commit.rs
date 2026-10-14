@@ -118,6 +118,19 @@ impl Commit {
     /// Returns [`CommitError`] for a missing or unterminated leading tree/parent record, invalid
     /// or foreign-format IDs, or a payload ending immediately after those graph records.
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, CommitError> {
+        let (tree, parents) = Self::parse_graph(format, payload)?;
+        Ok(Self {
+            tree,
+            parents,
+            payload: payload.to_vec(),
+        })
+    }
+
+    /// Checks and decodes graph records without copying the payload retained by a storage reader.
+    pub(crate) fn parse_graph(
+        format: crate::ObjectFormat,
+        payload: &[u8],
+    ) -> Result<(ObjectId, Vec<ObjectId>), CommitError> {
         // Git graph traversal consumes the leading tree and contiguous parent records only.
         let mut lines = payload.split_inclusive(|&byte| byte == b'\n').peekable();
         let first = lines.next().ok_or(CommitError::RequiredHeader)?;
@@ -137,11 +150,7 @@ impl Commit {
         if lines.peek().is_none() {
             return Err(CommitError::RequiredHeader);
         }
-        Ok(Self {
-            tree,
-            parents,
-            payload: payload.to_vec(),
-        })
+        Ok((tree, parents))
     }
 
     /// The format of the tree and parent references.

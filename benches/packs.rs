@@ -48,6 +48,29 @@ fn packs(c: &mut Criterion) {
                     .unwrap()
             })
         });
+        // Fresh snapshots keep the tag out of the decoded-object cache while decoder state
+        // remains reusable on this thread, as when separate repository handles peel tags.
+        let tag = fixture
+            .records
+            .iter()
+            .find(|(_, kind, _)| *kind == girt::ObjectKind::Tag)
+            .unwrap()
+            .0;
+        c.bench_function(&format!("packs/peel-tag-cold-reader-{count}"), |b| {
+            b.iter_batched(
+                || fixture.repo.objects(PackLimits::default()).unwrap(),
+                |reader| {
+                    reader
+                        .peel(
+                            black_box(tag),
+                            girt::PeelLimits::trusted(),
+                            &std::sync::atomic::AtomicBool::new(false),
+                        )
+                        .unwrap()
+                },
+                criterion::BatchSize::SmallInput,
+            )
+        });
         let mut refreshed = objects.clone();
         c.bench_function(&format!("packs/refresh-warm-{count}"), |b| {
             b.iter(|| {

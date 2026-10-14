@@ -290,7 +290,7 @@ pub(crate) fn decode_checked(
         |position: usize, kind: ObjectKind| position != requested || kind != ObjectKind::Blob;
     // Payloads are shared with the cache, never copied out of it.
     let (kind, mut data) = loop {
-        if !seen.insert(position) {
+        if seen.contains(&position) {
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
@@ -327,8 +327,13 @@ pub(crate) fn decode_checked(
                 "object bytes"
             }));
         }
-        if base.is_some() && pending.len() >= limits.max_delta_depth {
-            return Err(Error::Limit("delta depth"));
+        if base.is_some() {
+            if pending.len() >= limits.max_delta_depth {
+                return Err(Error::Limit("delta depth"));
+            }
+            // Only delta nodes can be revisited: whole objects and cache hits terminate the
+            // descent. Ordinary small-object reads need no cycle-set allocation.
+            seen.insert(position);
         }
         charge(remaining, length)?;
         let data = source.inflate(&entry, &header, cancelled)?;
@@ -383,10 +388,19 @@ pub(crate) struct EntryHeader {
     pub base: Option<usize>,
     /// Offset of the first zlib byte.
     pub data_start: usize,
-    /// Original encoded header and base reference, used to seed the entry CRC without rereading.
-    pub encoded: Vec<u8>,
-    /// Entry bytes from `data_start` that the source returned with the header, if any.
-    pub ahead: Vec<u8>,
+    /// Header and read-ahead payload share the source's allocation, without splitting/copying it.
+    prefix: Vec<u8>,
+    header_len: usize,
+}
+
+impl EntryHeader {
+    pub(crate) fn encoded(&self) -> &[u8] {
+        self.prefix.get(..self.header_len).unwrap_or_default()
+    }
+
+    pub(crate) fn ahead(&self) -> &[u8] {
+        self.prefix.get(self.header_len..).unwrap_or_default()
+    }
 }
 
 /// Parses an entry header and resolves a delta base to a position in the same pack.
@@ -395,7 +409,7 @@ pub(crate) fn entry_header(
     entry: &super::index::Entry,
 ) -> Result<EntryHeader, Error> {
     let width = source.format().digest_len();
-    let mut prefix = source.prefix(entry)?;
+    let prefix = source.prefix(entry)?;
     let mut input = prefix.as_slice();
     let header = byte(&mut input)?;
     let kind = (header >> 4) & 7;
@@ -434,14 +448,13 @@ pub(crate) fn entry_header(
         other => return Err(Error::ObjectType(other)),
     };
     let header_len = prefix.len() - input.len();
-    let ahead = prefix.split_off(header_len);
     Ok(EntryHeader {
         kind,
         length,
         base,
         data_start: entry.offset + header_len,
-        encoded: prefix,
-        ahead,
+        prefix,
+        header_len,
     })
 }
 
