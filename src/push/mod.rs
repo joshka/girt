@@ -15,7 +15,7 @@
 //! refs. With receiver roots, it reads only the history they do not cover plus a boundary; see
 //! [`PreparedPush::new_excluding`]. Preparation leaves local refs and reflogs untouched. These
 //! functions take an already prepared push, so its roots come from the caller's knowledge.
-//! [`crate::Repository::push`] instead prepares after reading the advertisement and excludes
+//! [`crate::workflow::push`] instead prepares after reading the advertisement and excludes
 //! [`PushAdvertisement::receiver_roots`], as `git send-pack` does.
 //!
 //! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;

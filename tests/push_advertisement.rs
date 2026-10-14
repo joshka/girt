@@ -1,4 +1,4 @@
-//! `Repository::push` excludes history the receiver advertises, checked against Git receivers.
+//! `girt::workflow::push` excludes history the receiver advertises, checked against Git receivers.
 //!
 //! Destinations keep received packs (`receive.unpackLimit=1`) and don't repack after receiving
 //! (`receive.autoGc=false`), so the objects a push sent are the entries of the pack index files it
@@ -15,7 +15,7 @@ use std::process::Command;
 
 use girt::push::{ForcePolicy, PushCommand, PushError, PushReport};
 use girt::refs::RefName;
-use girt::transfer::{Environment, NoCallbacks, PushOptions, TransferError};
+use girt::workflow::{Environment, NoCallbacks, PushOptions, TransferError};
 use girt::{ObjectId, Repository};
 use rstest::rstest;
 
@@ -193,7 +193,8 @@ fn try_push(
     // Installed thin packs include receiver bases appended during repair. Keep this selection
     // corpus ordinary so its exact index counts continue to measure objects transmitted.
     let options = PushOptions::default().compression(girt::PackCompression::Ordinary);
-    Repository::open(&pair.work).unwrap().push(
+    girt::workflow::push(
+        &Repository::open(&pair.work).unwrap(),
         "origin",
         commands,
         &options,
@@ -202,7 +203,8 @@ fn try_push(
     )
 }
 
-/// Pushes through `Repository::push` and returns the number of objects the destination received.
+/// Pushes through `girt::workflow::push` and returns the number of objects the destination
+/// received.
 fn push(pair: &Pair, remote: &Remote, commands: Vec<PushCommand>) -> usize {
     let before = indexes(&pair.dest);
     let report = try_push(pair, remote, commands).unwrap();

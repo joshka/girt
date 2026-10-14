@@ -1,9 +1,14 @@
 //! Fetching from and pushing to configured remotes.
 //!
-//! This module is the ordinary entry point for talking to another repository. It resolves a
-//! named remote's URL through the repository configuration (`insteadOf`, `pushurl`, protocol
-//! policy), selects the transport (local path, HTTP(S) or SSH), handles credentials the way Git
-//! does, and drives the lower-level [`crate::fetch`] and [`crate::push`] workflows to completion.
+//! This optional convenience API resolves command-like policy for talking to another repository. It
+//! resolves a named remote's URL through the repository configuration (`insteadOf`, `pushurl`,
+//! protocol policy), selects the transport (local path, HTTP(S) or SSH), handles credentials the
+//! way Git does, and drives the lower-level [`crate::fetch`] and [`crate::push`] workflows to
+//! completion.
+//!
+//! Core [`crate::fetch`] and [`crate::push`] APIs keep plans, artifacts and caller controls
+//! explicit. jj can use these convenience functions when it wants configured-remote resolution.
+//! They own synchronous network runtimes, credential handling and post-fetch maintenance.
 //!
 //! Process state that Git consults (environment variables such as `GIT_SSH_COMMAND`, proxies,
 //! `HOME`) is passed explicitly as an [`Environment`]; use [`Environment::from_process`] for the
@@ -11,11 +16,12 @@
 //!
 //! ```no_run
 //! use girt::Repository;
-//! use girt::transfer::{Environment, FetchOptions, NoCallbacks};
+//! use girt::workflow::{Environment, FetchOptions, NoCallbacks};
 //!
 //! let repo = Repository::open("project")?;
 //! let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
-//! let outcome = repo.fetch(
+//! let outcome = girt::workflow::fetch(
+//!     &repo,
 //!     "origin",
 //!     &options,
 //!     &Environment::from_process(),
@@ -52,6 +58,72 @@ use crate::refs::{RefName, Reflog};
 use crate::remote::{Destination, Direction, Protocol, ProtocolEnvironment, Refspecs, Remote};
 use crate::transport::TransportControl;
 use crate::{ObjectId, Repository};
+
+/// Asks the remote which branch its HEAD points to.
+///
+/// # Errors
+///
+/// Returns [`TransferError`] for configuration, transport and authentication failures.
+pub fn remote_head(
+    repository: &Repository,
+    remote_name: &str,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<RemoteHead, TransferError> {
+    repository.remote_head(remote_name, environment, callbacks)
+}
+
+/// Fetches from a configured remote and updates local references.
+///
+/// Destinations must be remote-tracking references (`refs/remotes/`), tags, or a namespace
+/// allowed with [`FetchOptions::tag_namespace`]. Exact sources the remote doesn't have are
+/// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
+/// is written and tags are not followed implicitly. HTTP and SSH remotes request the
+/// `protocol.version` upload-pack protocol (v2 when unset, as Git does) and accept a v0/v1
+/// answer; an invalid value is a configuration error.
+///
+/// Afterwards, like `git fetch`, runs Git's automatic pack-refs task; see
+/// [`Repository::auto_pack_references`]. A pack failure does not fail the fetch.
+///
+/// # Errors
+///
+/// Returns [`TransferError`]. After [`TransferError::FetchFinish`], new objects are installed
+/// but some references may not have been updated.
+pub fn fetch(
+    repository: &Repository,
+    remote_name: &str,
+    options: &FetchOptions,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<FetchOutcome, TransferError> {
+    repository.fetch(remote_name, options, environment, callbacks)
+}
+
+/// Updates references on a configured remote's push URL.
+///
+/// Each command is a compare-and-swap on the remote: it only applies if the remote reference
+/// currently has the command's expected value. Commands succeed or fail independently; check
+/// each [`crate::push::RefStatus`] in the report.
+///
+/// Like `git push`, the pack omits history reachable from anything the remote advertises, so
+/// creating a branch sends only the commits the remote lacks. The pack is prepared after the
+/// advertisement is read, while the connection is open. If a local remote's references change
+/// during preparation, the push is prepared again once against the new references.
+///
+/// # Errors
+///
+/// Returns [`TransferError::Push`] when the push couldn't complete. Its
+/// [`crate::push::PushError::Uncertain`] variant means some updates may have been applied.
+pub fn push(
+    repository: &Repository,
+    remote_name: &str,
+    commands: Vec<PushCommand>,
+    options: &PushOptions,
+    environment: &Environment,
+    callbacks: &mut dyn TransferCallbacks,
+) -> Result<PushReport, TransferError> {
+    repository.push(remote_name, commands, options, environment, callbacks)
+}
 
 /// A snapshot of the environment variables Git consults while transferring.
 ///
@@ -252,7 +324,7 @@ pub struct FetchOutcome {
     pub missing_sources: Vec<Vec<u8>>,
 }
 
-/// Options for [`Repository::push`].
+/// Options for [`push`].
 #[derive(Clone, Debug, Default)]
 pub struct PushOptions {
     push_options: Vec<Vec<u8>>,
@@ -269,7 +341,7 @@ impl PushOptions {
     ///
     /// ```
     /// let _options =
-    ///     girt::transfer::PushOptions::default().compression(girt::PackCompression::Ordinary);
+    ///     girt::workflow::PushOptions::default().compression(girt::PackCompression::Ordinary);
     /// ```
     pub fn compression(mut self, compression: crate::PackCompression) -> Self {
         self.compression = Some(compression);
@@ -756,12 +828,7 @@ impl Repository {
         Ok((endpoint, destination))
     }
 
-    /// Asks the remote which branch its HEAD points to.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransferError`] for configuration, transport and authentication failures.
-    pub fn remote_head(
+    fn remote_head(
         &self,
         remote_name: &str,
         environment: &Environment,
@@ -803,23 +870,7 @@ impl Repository {
             .map_err(|error| TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error))))
     }
 
-    /// Fetches from a configured remote and updates local references.
-    ///
-    /// Destinations must be remote-tracking references (`refs/remotes/`), tags, or a namespace
-    /// allowed with [`FetchOptions::tag_namespace`]. Exact sources the remote doesn't have are
-    /// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
-    /// is written and tags are not followed implicitly. HTTP and SSH remotes request the
-    /// `protocol.version` upload-pack protocol (v2 when unset, as Git does) and accept a v0/v1
-    /// answer; an invalid value is a configuration error.
-    ///
-    /// Afterwards, like `git fetch`, runs Git's automatic pack-refs task; see
-    /// [`Self::auto_pack_references`]. A pack failure does not fail the fetch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransferError`]. After [`TransferError::FetchFinish`], new objects are installed
-    /// but some references may not have been updated.
-    pub fn fetch(
+    fn fetch(
         &self,
         remote_name: &str,
         options: &FetchOptions,
@@ -1010,22 +1061,7 @@ impl Repository {
         Ok(request)
     }
 
-    /// Updates references on a configured remote's push URL.
-    ///
-    /// Each command is a compare-and-swap on the remote: it only applies if the remote reference
-    /// currently has the command's expected value. Commands succeed or fail independently; check
-    /// each [`crate::push::RefStatus`] in the report.
-    ///
-    /// Like `git push`, the pack omits history reachable from anything the remote advertises, so
-    /// creating a branch sends only the commits the remote lacks. The pack is prepared after the
-    /// advertisement is read, while the connection is open. If a local remote's references change
-    /// during preparation, the push is prepared again once against the new references.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransferError::Push`] when the push couldn't complete. Its
-    /// [`crate::push::PushError::Uncertain`] variant means some updates may have been applied.
-    pub fn push(
+    fn push(
         &self,
         remote_name: &str,
         commands: Vec<PushCommand>,
