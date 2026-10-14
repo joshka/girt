@@ -9,8 +9,8 @@ use std::sync::atomic::AtomicBool;
 
 use girt::fetch::{
     FetchError, FetchLimits, FetchOptions, FetchRequest, FetchUpdateLimits, KnownHistory,
-    ProtocolVersion, RemoteHead, discover, discover_local, discover_session, receive,
-    receive_with_known_depth,
+    ProtocolVersion, RemoteHead, discover, discover_local, discover_session,
+    discover_session_with_prefixes, receive, receive_with_known_depth,
 };
 use girt::refs::{RefName, Reflog, Target};
 use girt::remote::{Direction, Refspecs};
@@ -491,6 +491,104 @@ fn ls_refs_request(format: ObjectFormat) -> Vec<u8> {
     packet(&mut request, b"unborn\n");
     request.extend_from_slice(b"0000");
     request
+}
+
+fn ls_refs_request_with_prefixes(format: ObjectFormat, prefixes: &[&[u8]]) -> Vec<u8> {
+    let mut request = ls_refs_request(format);
+    request.truncate(request.len() - 4);
+    for prefix in prefixes {
+        packet(&mut request, &[b"ref-prefix ", *prefix, b"\n"].concat());
+    }
+    request.extend_from_slice(b"0000");
+    request
+}
+
+fn branch(directory: &tempfile::TempDir, name: &str, id: ObjectId) {
+    git(
+        directory.path(),
+        &["update-ref", name, &id.to_string()],
+        b"",
+        None,
+    );
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn git_v2_ref_prefix_limits_listing(#[case] format: ObjectFormat) {
+    let repo = repository(format);
+    let id = commit(&repo);
+    branch(&repo, "refs/heads/other", id);
+    branch(&repo, "refs/notes/x", id);
+    let prefixes: &[&[u8]] = &[b"HEAD", b"refs/heads/main"];
+    let expected = ls_refs_request_with_prefixes(format, prefixes);
+    let caps = git(
+        repo.path(),
+        &["upload-pack", "--stateless-rpc", "--advertise-refs", "."],
+        b"",
+        Some("2"),
+    );
+    let refs = git(
+        repo.path(),
+        &["upload-pack", "--stateless-rpc", "."],
+        &expected,
+        Some("2"),
+    );
+    // The same exchange through `git http-backend` returns identical bytes.
+    let mut over_http = http_backend_v2(repo.path(), "GET", "info/refs", b"");
+    over_http.extend(http_backend_v2(
+        repo.path(),
+        "POST",
+        "git-upload-pack",
+        &expected,
+    ));
+    for input in [[caps, refs].concat(), over_http] {
+        let cancel = AtomicBool::new(false);
+        let mut actual = Vec::new();
+        let discovered = discover_session_with_prefixes(
+            &mut input.as_slice(),
+            &mut actual,
+            prefixes,
+            FetchLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        let names: Vec<_> = discovered
+            .advertisement
+            .refs
+            .iter()
+            .map(|r| r.name.as_bytes().to_vec())
+            .collect();
+        assert_eq!(names, [b"HEAD".to_vec(), b"refs/heads/main".to_vec()]);
+        assert!(matches!(discovered.head, RemoteHead::Symbolic { id: actual, .. } if actual == id));
+    }
+}
+
+#[test]
+fn v0_server_ignores_prefixes() {
+    let repo = repository(ObjectFormat::Sha1);
+    let id = commit(&repo);
+    branch(&repo, "refs/heads/other", id);
+    let input = git(
+        repo.path(),
+        &["upload-pack", "--stateless-rpc", "--advertise-refs", "."],
+        b"",
+        Some("0"),
+    );
+    let cancel = AtomicBool::new(false);
+    let mut request = Vec::new();
+    let discovered = discover_session_with_prefixes(
+        &mut input.as_slice(),
+        &mut request,
+        &[b"refs/heads/main"],
+        FetchLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert!(request.is_empty());
+    assert_eq!(discovered.version, ProtocolVersion::V0);
+    assert_eq!(discovered.advertisement.refs.len(), 3);
 }
 
 #[rstest]
@@ -1073,4 +1171,67 @@ fn git_http_backend_v2_capabilities_and_ls_refs(#[case] format: ObjectFormat) {
     assert_eq!(discovered.object_format, format);
     assert!(discovered.advertises(b"fetch=shallow wait-for-done"));
     assert!(matches!(discovered.head, RemoteHead::Symbolic { id: actual, .. } if actual == id));
+}
+
+#[derive(Debug)]
+enum ExpectedHead {
+    Symbolic,
+    Missing,
+}
+
+#[rstest]
+#[case::head_only(&[b"HEAD".as_slice()], &["HEAD"], ExpectedHead::Symbolic)]
+#[case::excludes_head(&[b"refs/heads/".as_slice()], &["refs/heads/main", "refs/heads/other"], ExpectedHead::Missing)]
+#[case::head_and_target(
+    &[b"HEAD".as_slice(), b"refs/heads/main"],
+    &["HEAD", "refs/heads/main"],
+    ExpectedHead::Symbolic
+)]
+fn git_v2_prefix_selection_interprets_partial_head(
+    #[case] prefixes: &[&[u8]],
+    #[case] names: &[&str],
+    #[case] head: ExpectedHead,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let repo = repository(format);
+    let id = commit(&repo);
+    branch(&repo, "refs/heads/other", id);
+    branch(&repo, "refs/notes/x", id);
+    let mut input = git(
+        repo.path(),
+        &["upload-pack", "--stateless-rpc", "--advertise-refs", "."],
+        b"",
+        Some("2"),
+    );
+    let request = ls_refs_request_with_prefixes(format, prefixes);
+    input.extend(git(
+        repo.path(),
+        &["upload-pack", "--stateless-rpc", "."],
+        &request,
+        Some("2"),
+    ));
+    let cancel = AtomicBool::new(false);
+    let discovered = discover_session_with_prefixes(
+        &mut input.as_slice(),
+        &mut Vec::new(),
+        prefixes,
+        FetchLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    let listed: Vec<_> = discovered
+        .advertisement
+        .refs
+        .iter()
+        .map(|r| String::from_utf8(r.name.as_bytes().to_vec()).unwrap())
+        .collect();
+    assert_eq!(listed, names);
+    match head {
+        ExpectedHead::Symbolic => assert!(matches!(
+            discovered.head,
+            RemoteHead::Symbolic { branch, id: actual }
+                if branch.as_bytes() == b"refs/heads/main" && actual == id
+        )),
+        ExpectedHead::Missing => assert_eq!(discovered.head, RemoteHead::Missing),
+    }
 }

@@ -14,12 +14,14 @@
     reason = "parses untrusted network input (#103)"
 )]
 
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::sync::atomic::AtomicBool;
 
-use super::{FetchError, FetchLimits};
-use crate::ObjectFormat;
+use super::{AdvertisedRef, Advertisement, FetchError, FetchLimits};
 use crate::packet::{Frame, Wire, packet, put};
+use crate::refs::RefName;
+use crate::{ObjectFormat, ObjectId};
 
 /// A validated v2 capability advertisement, retained in server order.
 #[derive(Debug, Clone)]
@@ -87,11 +89,6 @@ impl Capabilities {
         Ok(Self { lines, format })
     }
 
-    /// Object format named by `object-format`, or SHA-1 when the capability is absent.
-    pub(super) fn object_format(&self) -> ObjectFormat {
-        self.format
-    }
-
     /// Reports whether `key` is advertised, with or without a value.
     pub(super) fn has(&self, key: &[u8]) -> bool {
         self.lines.iter().any(|line| split(line).0 == key)
@@ -148,6 +145,149 @@ impl Capabilities {
         put(writer, b"0001", cancel)?;
         Ok(())
     }
+    /// Runs one `ls-refs` command and returns its references as an advertisement.
+    ///
+    /// Requests `peel`, `symrefs`, `unborn` when advertised, and one `ref-prefix` per prefix. The
+    /// returned capabilities are this advertisement's lines plus a `symref=HEAD:<branch>` hint
+    /// when HEAD names a branch, matching the v0 HEAD interpretation.
+    pub(super) fn ls_refs(
+        &self,
+        wire: &mut Wire<'_, impl Read>,
+        writer: &mut impl Write,
+        prefixes: &[&[u8]],
+        limits: FetchLimits,
+    ) -> Result<Advertisement, FetchError> {
+        if !self.has(b"ls-refs") {
+            return Err(FetchError::Unsupported("v2 ls-refs"));
+        }
+        validate_prefixes(prefixes, limits)?;
+        let cancel = wire.cancel;
+        self.write_command(writer, b"ls-refs", cancel)?;
+        packet(writer, b"peel\n", cancel)?;
+        packet(writer, b"symrefs\n", cancel)?;
+        if self.has_feature(b"ls-refs", b"unborn") {
+            packet(writer, b"unborn\n", cancel)?;
+        }
+        for prefix in prefixes {
+            let mut line = b"ref-prefix ".to_vec();
+            line.extend_from_slice(prefix);
+            line.push(b'\n');
+            packet(writer, &line, cancel)?;
+        }
+        put(writer, b"0000", cancel)?;
+        writer.flush()?;
+        let (refs, head) = read_refs(wire, limits, self.format)?;
+        let mut capabilities = self.advertised_lines();
+        if let Some(branch) = head {
+            let mut hint = b"symref=HEAD:".to_vec();
+            hint.extend_from_slice(branch.as_bytes());
+            capabilities.push(hint);
+        }
+        Ok(Advertisement { refs, capabilities })
+    }
+}
+
+/// Rejects `ref-prefix` arguments that cannot be sent as one well-formed request line.
+pub(super) fn validate_prefixes(prefixes: &[&[u8]], limits: FetchLimits) -> Result<(), FetchError> {
+    if prefixes.len() > limits.max_refs {
+        return Err(FetchError::Limit("ref prefixes"));
+    }
+    for prefix in prefixes {
+        if prefix.is_empty() || prefix.len() > 4096 || prefix.iter().any(|b| matches!(b, 0 | b'\n'))
+        {
+            return Err(FetchError::Protocol("ref prefix"));
+        }
+    }
+    Ok(())
+}
+
+fn read_refs(
+    wire: &mut Wire<'_, impl Read>,
+    limits: FetchLimits,
+    format: ObjectFormat,
+) -> Result<(Vec<AdvertisedRef>, Option<RefName>), FetchError> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+    let mut head_hint = None;
+    while let Some(line) = wire.packet()? {
+        let line = line
+            .strip_suffix(b"\n")
+            .ok_or(FetchError::Protocol("v2 reference line"))?;
+        let mut parts = line.split(|byte| *byte == b' ');
+        let raw_id = parts.next().ok_or(FetchError::Protocol("v2 reference"))?;
+        let raw_name = parts.next().ok_or(FetchError::Protocol("v2 reference"))?;
+        let name = RefName::new(raw_name).map_err(|_| FetchError::Protocol("v2 ref name"))?;
+        if !seen.insert(name.clone()) {
+            return Err(FetchError::Protocol("duplicate v2 ref"));
+        }
+        let unborn = raw_id == b"unborn";
+        let id = if unborn {
+            None
+        } else {
+            let value = std::str::from_utf8(raw_id)
+                .ok()
+                .and_then(|raw| ObjectId::from_hex(format, raw).ok())
+                .filter(|id| !id.is_null())
+                .ok_or(FetchError::Protocol("v2 object ID"))?;
+            Some(value)
+        };
+        let mut peeled = None;
+        let mut target = None;
+        for attribute in parts {
+            if let Some(raw) = attribute.strip_prefix(b"symref-target:") {
+                let value =
+                    RefName::new(raw).map_err(|_| FetchError::Protocol("v2 symref target"))?;
+                if target.replace(value).is_some() {
+                    return Err(FetchError::Protocol("duplicate v2 symref target"));
+                }
+            } else if let Some(raw) = attribute.strip_prefix(b"peeled:") {
+                let value = std::str::from_utf8(raw)
+                    .ok()
+                    .and_then(|raw| ObjectId::from_hex(format, raw).ok())
+                    .filter(|id| !id.is_null())
+                    .ok_or(FetchError::Protocol("v2 peeled ID"))?;
+                if peeled.replace(value).is_some() {
+                    return Err(FetchError::Protocol("duplicate v2 peeled ID"));
+                }
+            } else {
+                return Err(FetchError::Protocol("v2 ref attribute"));
+            }
+        }
+        if name.as_bytes() == b"HEAD" {
+            head_hint = target;
+        } else if unborn {
+            return Err(FetchError::Unsupported("v2 non-HEAD unborn ref"));
+        }
+        if unborn && head_hint.is_none() {
+            return Err(FetchError::Protocol("unborn HEAD without target"));
+        }
+        if let Some(id) = id {
+            if refs.len() == limits.max_refs {
+                return Err(FetchError::Limit("advertised refs"));
+            }
+            refs.push(AdvertisedRef {
+                name: name.clone(),
+                id,
+                peeled: false,
+            });
+            if let Some(id) = peeled {
+                if !name.as_bytes().starts_with(b"refs/tags/") {
+                    return Err(FetchError::Protocol("v2 non-tag peel"));
+                }
+                if refs.len() == limits.max_refs {
+                    return Err(FetchError::Limit("advertised refs"));
+                }
+                refs.push(AdvertisedRef {
+                    name,
+                    id,
+                    peeled: true,
+                });
+            }
+        } else if peeled.is_some() {
+            return Err(FetchError::Protocol("unborn peeled ref"));
+        }
+    }
+    Ok((refs, head_hint))
 }
 
 const AGENT: &str = concat!("agent=girt/", env!("CARGO_PKG_VERSION"), "\n");
@@ -207,7 +347,7 @@ mod tests {
             "object-format=sha1\n",
         ])
         .unwrap();
-        assert_eq!(capabilities.object_format(), ObjectFormat::Sha1);
+        assert_eq!(capabilities.format, ObjectFormat::Sha1);
         assert!(capabilities.has(b"fetch"));
         assert!(capabilities.has(b"server-option"));
         assert!(capabilities.has_feature(b"fetch", b"shallow"));
@@ -235,12 +375,9 @@ mod tests {
 
     #[test]
     fn absent_format_is_sha1_and_sha256_is_named() {
+        assert_eq!(read(&["fetch\n"]).unwrap().format, ObjectFormat::Sha1);
         assert_eq!(
-            read(&["fetch\n"]).unwrap().object_format(),
-            ObjectFormat::Sha1
-        );
-        assert_eq!(
-            read(&["object-format=sha256\n"]).unwrap().object_format(),
+            read(&["object-format=sha256\n"]).unwrap().format,
             ObjectFormat::Sha256
         );
     }
@@ -303,5 +440,114 @@ mod tests {
             .write_command(&mut bare, b"ls-refs", &cancel)
             .unwrap();
         assert_eq!(bare, b"0014command=ls-refs\n0001");
+    }
+
+    #[rstest]
+    #[case::empty(&[b"".as_slice()])]
+    #[case::newline(&[b"refs/a\n".as_slice()])]
+    #[case::nul(&[b"refs/\0".as_slice()])]
+    fn rejects_unsendable_prefixes(#[case] prefixes: &[&[u8]]) {
+        assert!(matches!(
+            validate_prefixes(prefixes, FetchLimits::default()),
+            Err(FetchError::Protocol("ref prefix"))
+        ));
+    }
+
+    #[test]
+    fn bounds_prefix_count() {
+        let limits = FetchLimits {
+            max_refs: 1,
+            ..FetchLimits::default()
+        };
+        assert!(validate_prefixes(&[b"a"], limits).is_ok());
+        assert!(matches!(
+            validate_prefixes(&[b"a", b"b"], limits),
+            Err(FetchError::Limit("ref prefixes"))
+        ));
+    }
+
+    #[test]
+    fn prefix_length_boundary() {
+        let longest = vec![b'r'; 4096];
+        let limits = FetchLimits::default();
+        assert!(validate_prefixes(&[&longest], limits).is_ok());
+        let longer = vec![b'r'; 4097];
+        assert!(matches!(
+            validate_prefixes(&[&longer], limits),
+            Err(FetchError::Protocol("ref prefix"))
+        ));
+    }
+
+    const A: &str = "1111111111111111111111111111111111111111";
+    const B: &str = "2222222222222222222222222222222222222222";
+
+    fn ls_refs(lines: &[String]) -> Result<(Vec<AdvertisedRef>, Option<RefName>), FetchError> {
+        let cancel = AtomicBool::new(false);
+        let mut input = Vec::new();
+        for line in lines {
+            match line.as_str() {
+                "0001" | "0002" => input.extend_from_slice(line.as_bytes()),
+                line => packet(&mut input, line.as_bytes(), &cancel).unwrap(),
+            }
+        }
+        input.extend_from_slice(b"0000");
+        let mut reader = input.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 4096,
+            cancel: &cancel,
+        };
+        read_refs(&mut wire, FetchLimits::default(), ObjectFormat::Sha1)
+    }
+
+    #[rstest]
+    #[case::duplicate_target(
+        format!("{A} HEAD symref-target:refs/heads/a symref-target:refs/heads/b\n"),
+        "duplicate v2 symref target"
+    )]
+    #[case::duplicate_peel(format!("{A} refs/tags/t peeled:{B} peeled:{B}\n"), "duplicate v2 peeled ID")]
+    #[case::null_id(format!("{} refs/heads/a\n", "0".repeat(40)), "v2 object ID")]
+    #[case::wrong_format(format!("{A}{A} refs/heads/a\n"), "v2 object ID")]
+    #[case::bad_peel(format!("{A} refs/tags/t peeled:{}\n", "0".repeat(40)), "v2 peeled ID")]
+    #[case::invalid_name(format!("{A} refs/heads/a..b\n"), "v2 ref name")]
+    #[case::unknown_attribute(format!("{A} refs/heads/a future:x\n"), "v2 ref attribute")]
+    #[case::missing_lf(format!("{A} refs/heads/a"), "v2 reference line")]
+    #[case::non_tag_peel(format!("{A} refs/heads/a peeled:{B}\n"), "v2 non-tag peel")]
+    #[case::unborn_without_target("unborn HEAD\n".to_owned(), "unborn HEAD without target")]
+    #[case::unborn_peeled(
+        format!("unborn HEAD symref-target:refs/heads/main peeled:{B}\n"),
+        "unborn peeled ref"
+    )]
+    #[case::delimiter("0001".to_owned(), "pkt-line length")]
+    #[case::response_end("0002".to_owned(), "pkt-line length")]
+    fn ls_refs_rejects_malformed_responses(#[case] line: String, #[case] reason: &str) {
+        assert!(matches!(
+            ls_refs(&[line]),
+            Err(FetchError::Protocol(actual)) if actual == reason
+        ));
+    }
+
+    #[test]
+    fn ls_refs_rejects_duplicates_and_non_head_unborn() {
+        let line = format!("{A} refs/heads/a\n");
+        assert!(matches!(
+            ls_refs(&[line.clone(), line]),
+            Err(FetchError::Protocol("duplicate v2 ref"))
+        ));
+        assert!(matches!(
+            ls_refs(&["unborn refs/heads/a\n".to_owned()]),
+            Err(FetchError::Unsupported("v2 non-HEAD unborn ref"))
+        ));
+    }
+
+    #[test]
+    fn ls_refs_accepts_refs_outside_requested_prefixes() {
+        // Servers may ignore `ref-prefix`; the inventory is kept as returned.
+        let (refs, _) = ls_refs(&[
+            format!("{A} refs/heads/main\n"),
+            format!("{B} refs/notes/unrequested\n"),
+        ])
+        .unwrap();
+        assert_eq!(refs.len(), 2);
     }
 }

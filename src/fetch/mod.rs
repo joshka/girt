@@ -179,6 +179,7 @@ pub use discovery::discover_http;
 pub(crate) use discovery::interpret_head;
 pub use discovery::{
     ProtocolVersion, RemoteDiscovery, RemoteHead, discover, discover_local, discover_session,
+    discover_session_with_prefixes,
 };
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 pub use discovery::{discover_ssh, discover_ssh_with_diagnostics};

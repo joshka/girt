@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::v2::Capabilities;
 use super::{Advertisement, FetchError, FetchLimits, local_native, protocol};
-use crate::packet::{Wire, packet, put};
+use crate::packet::{Wire, packet};
 use crate::refs::RefName;
 use crate::transport::TransportControl;
 use crate::{ObjectFormat, ObjectId, Repository};
@@ -28,11 +28,12 @@ pub enum ProtocolVersion {
 /// The remote's advertised HEAD, with no branch guessed when the wire is ambiguous.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RemoteHead {
-    /// HEAD explicitly names a branch and resolves to its advertised ID.
+    /// HEAD explicitly names a branch. Its ID is HEAD's; when the branch is also listed, both IDs
+    /// agree. Only a prefix-selected v2 inventory may omit the branch itself.
     Symbolic {
         /// Branch named by the symbolic hint.
         branch: RefName,
-        /// Advertised ID of HEAD and the branch.
+        /// Advertised ID of HEAD, and of the branch when it is listed.
         id: ObjectId,
     },
     /// HEAD explicitly names a branch that has no tip yet.
@@ -89,6 +90,13 @@ impl RemoteDiscovery {
     /// advertised ID disagrees with its target branch. An unhinted ambiguous HEAD is reported in
     /// [`RemoteHead`] so the caller can require an explicit branch choice.
     pub fn from_advertisement(advertisement: Advertisement) -> Result<Self, FetchError> {
+        Self::from_inventory(advertisement, Inventory::Complete)
+    }
+
+    fn from_inventory(
+        advertisement: Advertisement,
+        inventory: Inventory,
+    ) -> Result<Self, FetchError> {
         let object_format = advertisement.object_format()?;
         let mut names = HashSet::new();
         for reference in &advertisement.refs {
@@ -104,7 +112,7 @@ impl RemoteDiscovery {
                 return Err(FetchError::Protocol("unmatched peeled hint"));
             }
         }
-        let head = interpret_head(&advertisement)?;
+        let head = interpret_head_in(&advertisement, inventory)?;
         Ok(Self {
             advertisement,
             object_format,
@@ -200,7 +208,31 @@ pub fn discover_session(
     limits: FetchLimits,
     cancel: &AtomicBool,
 ) -> Result<RemoteDiscovery, FetchError> {
+    discover_session_with_prefixes(reader, writer, &[], limits, cancel)
+}
+
+/// Negotiates discovery like [`discover_session`], asking a v2 server for selected references.
+///
+/// Each prefix becomes one v2 `ref-prefix` argument, asking the server to list only references
+/// whose full name starts with one of them; an empty list asks for every reference. Prefixes are an
+/// optimisation, not a filter: v0/v1 servers always advertise every reference and a v2 server may
+/// return extra references, so callers must still select from what is returned. A HEAD whose
+/// symbolic target falls outside the selection is reported as [`RemoteHead::Symbolic`].
+///
+/// # Errors
+///
+/// Returns [`discover_session`]'s errors. Empty prefixes, prefixes longer than 4096 bytes or
+/// containing NUL or LF, and more than [`FetchLimits::max_refs`] prefixes are rejected before any
+/// request is written.
+pub fn discover_session_with_prefixes(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    prefixes: &[&[u8]],
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<RemoteDiscovery, FetchError> {
     traced("session", || {
+        super::v2::validate_prefixes(prefixes, limits)?;
         let budget = limits.max_wire_bytes.min(limits.max_advertisement_bytes);
         let mut wire = Wire {
             reader,
@@ -211,7 +243,7 @@ pub fn discover_session(
             .packet()?
             .ok_or(FetchError::Protocol("empty protocol advertisement"))?;
         if first == b"version 2\n" {
-            return discover_v2(wire, writer, limits);
+            return discover_v2(wire, writer, prefixes, limits);
         }
         let mut prefix = Vec::new();
         packet(&mut prefix, &first, cancel)?;
@@ -231,130 +263,26 @@ pub fn discover_session(
 fn discover_v2(
     mut wire: Wire<'_, impl Read>,
     writer: &mut impl Write,
+    prefixes: &[&[u8]],
     limits: FetchLimits,
 ) -> Result<RemoteDiscovery, FetchError> {
     let capabilities = Capabilities::read(&mut wire, limits)?;
-    let format = capabilities.object_format();
-    if !capabilities.has(b"ls-refs") {
-        return Err(FetchError::Unsupported("v2 ls-refs"));
-    }
-    write_ls_refs(writer, &capabilities, wire.cancel)?;
-    let (refs, head_hint) = read_v2_refs(&mut wire, limits, format)?;
-    let mut capabilities = capabilities.advertised_lines();
-    if let Some(branch) = head_hint {
-        let mut hint = b"symref=HEAD:".to_vec();
-        hint.extend_from_slice(branch.as_bytes());
-        capabilities.push(hint);
-    }
-    let mut discovered = RemoteDiscovery::from_advertisement(Advertisement { refs, capabilities })?;
+    let advertisement = capabilities.ls_refs(&mut wire, writer, prefixes, limits)?;
+    let inventory = if prefixes.is_empty() {
+        Inventory::Complete
+    } else {
+        Inventory::Selected
+    };
+    let mut discovered = RemoteDiscovery::from_inventory(advertisement, inventory)?;
     discovered.version = ProtocolVersion::V2;
     Ok(discovered)
 }
 
-fn write_ls_refs(
-    writer: &mut impl Write,
-    capabilities: &Capabilities,
-    cancel: &AtomicBool,
-) -> Result<(), FetchError> {
-    capabilities.write_command(writer, b"ls-refs", cancel)?;
-    packet(writer, b"peel\n", cancel)?;
-    packet(writer, b"symrefs\n", cancel)?;
-    if capabilities.has_feature(b"ls-refs", b"unborn") {
-        packet(writer, b"unborn\n", cancel)?;
-    }
-    put(writer, b"0000", cancel)?;
-    writer.flush()?;
-
-    Ok(())
-}
-
-fn read_v2_refs(
-    wire: &mut Wire<'_, impl Read>,
-    limits: FetchLimits,
-    format: ObjectFormat,
-) -> Result<(Vec<super::AdvertisedRef>, Option<RefName>), FetchError> {
-    let mut refs = Vec::new();
-    let mut seen = HashSet::new();
-    let mut head_hint = None;
-    while let Some(line) = wire.packet()? {
-        let line = line
-            .strip_suffix(b"\n")
-            .ok_or(FetchError::Protocol("v2 reference line"))?;
-        let mut parts = line.split(|byte| *byte == b' ');
-        let raw_id = parts.next().ok_or(FetchError::Protocol("v2 reference"))?;
-        let raw_name = parts.next().ok_or(FetchError::Protocol("v2 reference"))?;
-        let name = RefName::new(raw_name).map_err(|_| FetchError::Protocol("v2 ref name"))?;
-        if !seen.insert(name.clone()) {
-            return Err(FetchError::Protocol("duplicate v2 ref"));
-        }
-        let unborn = raw_id == b"unborn";
-        let id = if unborn {
-            None
-        } else {
-            let value = std::str::from_utf8(raw_id)
-                .ok()
-                .and_then(|raw| ObjectId::from_hex(format, raw).ok())
-                .filter(|id| !id.is_null())
-                .ok_or(FetchError::Protocol("v2 object ID"))?;
-            Some(value)
-        };
-        let mut peeled = None;
-        let mut target = None;
-        for attribute in parts {
-            if let Some(raw) = attribute.strip_prefix(b"symref-target:") {
-                let value =
-                    RefName::new(raw).map_err(|_| FetchError::Protocol("v2 symref target"))?;
-                if target.replace(value).is_some() {
-                    return Err(FetchError::Protocol("duplicate v2 symref target"));
-                }
-            } else if let Some(raw) = attribute.strip_prefix(b"peeled:") {
-                let value = std::str::from_utf8(raw)
-                    .ok()
-                    .and_then(|raw| ObjectId::from_hex(format, raw).ok())
-                    .filter(|id| !id.is_null())
-                    .ok_or(FetchError::Protocol("v2 peeled ID"))?;
-                if peeled.replace(value).is_some() {
-                    return Err(FetchError::Protocol("duplicate v2 peeled ID"));
-                }
-            } else {
-                return Err(FetchError::Unsupported("v2 ref attribute"));
-            }
-        }
-        if name.as_bytes() == b"HEAD" {
-            head_hint = target;
-        } else if unborn {
-            return Err(FetchError::Unsupported("v2 non-HEAD unborn ref"));
-        }
-        if unborn && head_hint.is_none() {
-            return Err(FetchError::Protocol("unborn HEAD without target"));
-        }
-        if let Some(id) = id {
-            if refs.len() == limits.max_refs {
-                return Err(FetchError::Limit("advertised refs"));
-            }
-            refs.push(super::AdvertisedRef {
-                name: name.clone(),
-                id,
-                peeled: false,
-            });
-            if let Some(id) = peeled {
-                if !name.as_bytes().starts_with(b"refs/tags/") {
-                    return Err(FetchError::Protocol("v2 non-tag peel"));
-                }
-                if refs.len() == limits.max_refs {
-                    return Err(FetchError::Limit("advertised refs"));
-                }
-                refs.push(super::AdvertisedRef {
-                    name,
-                    id,
-                    peeled: true,
-                });
-            }
-        } else if peeled.is_some() {
-            return Err(FetchError::Protocol("unborn peeled ref"));
-        }
-    }
-    Ok((refs, head_hint))
+/// Whether an advertisement lists every reference or only a prefix selection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inventory {
+    Complete,
+    Selected,
 }
 
 /// Lists a trusted local repository through girt without starting Git or changing storage.
@@ -575,6 +503,13 @@ async fn traced_async(
 }
 
 pub(crate) fn interpret_head(advertisement: &Advertisement) -> Result<RemoteHead, FetchError> {
+    interpret_head_in(advertisement, Inventory::Complete)
+}
+
+fn interpret_head_in(
+    advertisement: &Advertisement,
+    inventory: Inventory,
+) -> Result<RemoteHead, FetchError> {
     let mut hint = None;
     for capability in &advertisement.capabilities {
         if let Some(target) = capability.strip_prefix(b"symref=HEAD:") {
@@ -599,6 +534,10 @@ pub(crate) fn interpret_head(advertisement: &Advertisement) -> Result<RemoteHead
             .map(|reference| reference.id);
         return match (head, target) {
             (Some(id), Some(target)) if id == target => Ok(RemoteHead::Symbolic { branch, id }),
+            // A complete inventory must list the target; a prefix selection may exclude it.
+            (Some(id), None) if inventory == Inventory::Selected => {
+                Ok(RemoteHead::Symbolic { branch, id })
+            }
             (None, None) => Ok(RemoteHead::Unborn { branch }),
             _ => Err(FetchError::Protocol("inconsistent symbolic HEAD")),
         };
@@ -656,6 +595,22 @@ mod tests {
         let discovered =
             RemoteDiscovery::from_advertisement(Advertisement { refs, capabilities }).unwrap();
         assert_eq!(discovered.head, expected);
+    }
+
+    #[test]
+    fn omitted_target_is_symbolic_only_in_a_selected_inventory() {
+        let advertisement = Advertisement {
+            refs: vec![reference(b"HEAD", ObjectId::Sha1([1; 20]))],
+            capabilities: vec![b"symref=HEAD:refs/heads/main".to_vec()],
+        };
+        assert!(matches!(
+            interpret_head_in(&advertisement, Inventory::Selected),
+            Ok(RemoteHead::Symbolic { .. })
+        ));
+        assert!(matches!(
+            interpret_head(&advertisement),
+            Err(FetchError::Protocol("inconsistent symbolic HEAD"))
+        ));
     }
 
     #[test]
