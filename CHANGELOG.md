@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/joshka/girt/compare/v0.7.1...v0.7.2) - 2026-10-14
+
+### Other
+
+- Retry damaged pack entries from verified copies ([#155](https://github.com/joshka/girt/pull/155))
+- Test history, content diff and status on SHA-256 ([#153](https://github.com/joshka/girt/pull/153))
+- Create SHA-256 clones for SHA-256 sources ([#152](https://github.com/joshka/girt/pull/152))
+- Test remote mapping on SHA-256 ([#154](https://github.com/joshka/girt/pull/154))
+
 ## [0.7.1](https://github.com/joshka/girt/compare/v0.7.0...v0.7.1) - 2026-10-14
 
 ### Other
