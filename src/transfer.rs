@@ -788,6 +788,9 @@ impl Repository {
     /// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
     /// is written and tags are not followed implicitly.
     ///
+    /// Afterwards, like `git fetch`, runs Git's automatic pack-refs task; see
+    /// [`Self::auto_pack_references`]. A pack failure does not fail the fetch.
+    ///
     /// # Errors
     ///
     /// Returns [`TransferError`]. After [`TransferError::FetchFinish`], new objects are installed
@@ -908,6 +911,14 @@ impl Repository {
         let report = ready
             .finish(FetchUpdateLimits::trusted(), &cancel)
             .map_err(|error| TransferError::FetchFinish(Box::new(error)))?;
+        // Like the automatic maintenance `git fetch` runs afterwards, packing never fails the
+        // fetch: its references are already updated, and a held lock means another process is
+        // maintaining them. A fresh snapshot includes the received pack, needed to peel new tags.
+        #[cfg(test)]
+        pack_tests::BEFORE_AUTO_PACK.with(|hook| hook.take().map(|hook| hook()));
+        if let Ok(objects) = self.objects(crate::PackLimits::trusted()) {
+            let _ = self.auto_pack_references(&objects);
+        }
         Ok(FetchOutcome {
             updated: report
                 .updates
@@ -1520,3 +1531,7 @@ mod tests {
 #[cfg(test)]
 #[path = "transfer_fetch_tests.rs"]
 mod fetch_tests;
+
+#[cfg(test)]
+#[path = "transfer_pack_tests.rs"]
+mod pack_tests;

@@ -754,11 +754,22 @@ is unsupported.
 `PackTrigger::Auto` approximates `git pack-refs --auto` as observed with Git 2.56. It packs once at
 least 16 loose candidates exist, and the threshold grows by 5 for each doubling of `packed-refs`
 past 12 KiB. Git's exact heuristic is not reproduced. Clone packs every fetched ref before
-publishing the local branch and HEAD, leaving the same loose files as `git clone`. Fetch does not
-pack: Git does that through auto-maintenance after the fetch, so consumers call
-`pack(PackRefsOptions::AUTO)` where Git would run auto-maintenance. `tests/packed_refs.rs` and
-`tests/clone.rs` compare the bytes and the remaining loose files with Git's, and check round trips
-where Git reads, updates, deletes and repacks girt's output.
+publishing the local branch and HEAD, leaving the same loose files as `git clone`.
+
+`Repository::fetch` then runs the pack-refs task of Git's automatic maintenance, which `git fetch`
+runs afterwards as `git pack-refs --all --prune --auto`. `Repository::auto_pack_references` exposes
+the same task for consumers to run after their own batches of reference writes, as Git porcelain
+such as `git commit` does. As observed with Git 2.56, the task runs when `maintenance.auto` is true
+or, if unset, `gc.auto` is positive, and when `maintenance.pack-refs.enabled` is true or, if unset,
+`maintenance.strategy` is unset or `geometric`. Invalid or unknown values, including the strategy
+`none` that Git 2.56 rejects, disable it, as they make Git's maintenance fail. A pack failure, such
+as a held `packed-refs.lock`, does not fail the fetch, matching `git fetch`'s exit status. An
+invalid `maintenance.auto` or `gc.auto` makes `git fetch` exit 128 after updating its references;
+girt's fetch still succeeds. Unlike Git, the task runs in the foreground, not detached.
+`tests/packed_refs.rs` and `tests/clone.rs` compare the bytes and the remaining loose files with
+Git's, and check round trips where Git reads, updates, deletes and repacks girt's output.
+`src/transfer_pack_tests.rs` compares each fetch's layout with `git fetch` under the same
+configuration.
 
 ### Evidence and Provenance
 
