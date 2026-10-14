@@ -15,7 +15,7 @@ use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 use super::RetentionPlan;
-use super::{MaintenanceIsolation, ReflogSource, RetentionPolicy};
+use super::{MaintenanceIsolation, ReflogSource, RetentionError, RetentionPolicy};
 use crate::Repository;
 #[cfg(unix)]
 use crate::refs::ImportedRecord;
@@ -44,8 +44,9 @@ pub enum ExpireCause {
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// A bounded root or log observation was incomplete.
-    #[error("retention scan incomplete: {0}")]
-    Incomplete(String),
+    /// The boxed detail keeps expiry failures compact on every supported platform.
+    #[error("retention scan incomplete")]
+    Incomplete(#[source] Box<RetentionError>),
     /// Stored history or the retention observation changed before publication.
     #[error("reflog generation changed")]
     Changed,
@@ -173,8 +174,12 @@ impl Repository {
     ) -> Result<ExpireReport, ExpireFailure> {
         let mut report = ExpireReport::default();
         check(cancel, &report)?;
-        let current = Repository::open(self.git_dir())
-            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        let current = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
+                report.clone(),
+            )
+        })?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
             || current.reference_backend() != Backend::Reftable
@@ -191,7 +196,7 @@ impl Repository {
                         if cancel.load(Ordering::Relaxed) {
                             ExpireCause::Cancelled
                         } else {
-                            ExpireCause::Incomplete(reason)
+                            ExpireCause::Incomplete(Box::new(reason))
                         },
                         report.clone(),
                     )
@@ -204,8 +209,12 @@ impl Repository {
         let first = &session.plan;
         let prepared = prepare_reftable(first, policy, cancel)
             .map_err(|cause| failed(cause, report.clone()))?;
-        let refreshed = Repository::open(self.git_dir())
-            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        let refreshed = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
+                report.clone(),
+            )
+        })?;
         if refreshed.object_dir() != current.object_dir()
             || refreshed.object_format() != current.object_format()
             || refreshed.reference_backend() != Backend::Reftable
@@ -289,7 +298,7 @@ impl Repository {
                 if cancel.load(Ordering::Relaxed) {
                     ExpireCause::Cancelled
                 } else {
-                    ExpireCause::Incomplete(reason)
+                    ExpireCause::Incomplete(Box::new(reason))
                 },
                 report.clone(),
             )
@@ -315,8 +324,12 @@ impl Repository {
     ) -> Result<ExpireReport, ExpireFailure> {
         let report = ExpireReport::default();
         check(cancel, &report)?;
-        let current = Repository::open(self.git_dir())
-            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        let current = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
+                report.clone(),
+            )
+        })?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
         {
@@ -382,8 +395,12 @@ impl Repository {
         let (after_prepare, mut after_publish) = checkpoints;
         let mut report = ExpireReport::default();
         check(cancel, &report)?;
-        let current = Repository::open(self.git_dir())
-            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        let current = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
+                report.clone(),
+            )
+        })?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
         {
@@ -402,7 +419,7 @@ impl Repository {
                         if cancel.load(Ordering::Relaxed) {
                             ExpireCause::Cancelled
                         } else {
-                            ExpireCause::Incomplete(reason)
+                            ExpireCause::Incomplete(Box::new(reason))
                         },
                         report.clone(),
                     )
@@ -417,8 +434,12 @@ impl Repository {
             prepare(first, policy, cancel).map_err(|cause| failed(cause, report.clone()))?;
         after_prepare();
         check(cancel, &report)?;
-        let refreshed = Repository::open(self.git_dir())
-            .map_err(|error| failed(ExpireCause::Incomplete(error.to_string()), report.clone()))?;
+        let refreshed = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
+                report.clone(),
+            )
+        })?;
         if refreshed.object_dir() != current.object_dir()
             || refreshed.object_format() != current.object_format()
             || refreshed.reference_backend() != Backend::Files
@@ -505,7 +526,7 @@ impl Repository {
                 if cancel.load(Ordering::Relaxed) {
                     ExpireCause::Cancelled
                 } else {
-                    ExpireCause::Incomplete(reason)
+                    ExpireCause::Incomplete(Box::new(reason))
                 },
                 report.clone(),
             )
@@ -536,7 +557,7 @@ fn no_expiry_possible(
     check(cancel, &ExpireReport::default())?;
     if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
         return Err(failed(
-            ExpireCause::Incomplete(reason),
+            ExpireCause::Incomplete(Box::new(reason)),
             ExpireReport::default(),
         ));
     }
@@ -550,7 +571,7 @@ fn no_expiry_possible(
             super::ReflogExpiryPolicy::Configured(expiry) => {
                 let cutoffs = expiry.cutoffs(record.source.name()).map_err(|error| {
                     failed(
-                        ExpireCause::Incomplete(error.to_string()),
+                        ExpireCause::Incomplete(Box::new(RetentionError::read(error))),
                         ExpireReport::default(),
                     )
                 })?;
@@ -581,25 +602,24 @@ fn prepare(
             return Err(ExpireCause::Cancelled);
         }
         let repository = Repository::open(source.root())
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?;
         if repository.reference_backend() != Backend::Files {
             return Err(ExpireCause::UnsupportedBackend);
         }
         let refs = repository
             .references()
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?;
         let path = refs
             .reflog_path(source.name())
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?;
         let log = refs
             .imported_reflog(source.name(), policy.reflog, cancel)
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?
             .ok_or(ExpireCause::Changed)?;
         if !log.is_complete() {
-            return Err(ExpireCause::Incomplete(format!(
-                "incomplete reflog: {:?}",
-                log.end()
-            )));
+            return Err(ExpireCause::Incomplete(Box::new(RetentionError::reflog(
+                log,
+            ))));
         }
         let mut original = Vec::new();
         let mut retained = Vec::new();
@@ -614,9 +634,9 @@ fn prepare(
         }
         total = total.saturating_add(original.len() as u64);
         if total > policy.max_reflog_bytes {
-            return Err(ExpireCause::Incomplete(
-                "aggregate reflog byte limit".into(),
-            ));
+            return Err(ExpireCause::Incomplete(Box::new(
+                RetentionError::AggregateReflogByteLimit,
+            )));
         }
         if read_bounded(&path, policy.reflog.bytes)? != original {
             return Err(ExpireCause::Changed);
@@ -643,22 +663,21 @@ fn prepare_reftable(
             return Err(ExpireCause::Cancelled);
         }
         let repository = Repository::open(source.root())
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?;
         if repository.reference_backend() != Backend::Reftable {
             return Err(ExpireCause::Changed);
         }
         let log = repository
             .references()
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?
             .with_reftable_limits(policy.reftable)
             .imported_reflog(source.name(), policy.reflog, cancel)
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?
             .ok_or(ExpireCause::Changed)?;
         if !log.is_complete() {
-            return Err(ExpireCause::Incomplete(format!(
-                "incomplete reflog: {:?}",
-                log.end()
-            )));
+            return Err(ExpireCause::Incomplete(Box::new(RetentionError::reflog(
+                log,
+            ))));
         }
         let directory = source.root().join("reftable");
         if !stacks.contains_key(&directory) {
@@ -668,7 +687,7 @@ fn prepare_reftable(
                 policy.reftable,
                 cancel,
             )
-            .map_err(|error| ExpireCause::Incomplete(error.to_string()))?;
+            .map_err(|error| ExpireCause::Incomplete(Box::new(RetentionError::read(error))))?;
             stacks.insert(
                 directory.clone(),
                 PreparedStack {
@@ -708,7 +727,9 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ExpireCause> {
         .read_to_end(&mut bytes)
         .map_err(ExpireCause::Io)?;
     if bytes.len() > limit {
-        Err(ExpireCause::Incomplete("reflog byte limit".into()))
+        Err(ExpireCause::Incomplete(Box::new(
+            RetentionError::ReflogByteLimit,
+        )))
     } else {
         Ok(bytes)
     }
@@ -885,5 +906,36 @@ mod tests {
         );
         assert_eq!(fs::read(&paths[0]).unwrap(), b"");
         assert!(!fs::read(&paths[1]).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod error_layout_tests {
+    use std::error::Error;
+
+    use super::{ExpireCause, ExpireFailure, RetentionError};
+
+    #[test]
+    fn expiry_failure_stays_below_large_result_threshold() {
+        assert!(std::mem::size_of::<ExpireFailure>() < 128);
+    }
+
+    #[test]
+    fn incomplete_keeps_typed_detail_and_source() {
+        let cause = ExpireCause::Incomplete(Box::new(RetentionError::read(std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied,
+        ))));
+        let detail = cause
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<RetentionError>>()
+            .unwrap();
+        assert_eq!(detail.kind(), super::super::RetentionErrorKind::Read);
+        let source = detail
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
     }
 }

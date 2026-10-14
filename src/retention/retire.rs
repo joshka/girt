@@ -12,7 +12,10 @@ use std::time::SystemTime;
 
 #[cfg(unix)]
 use super::RetentionPlan;
-use super::{MaintenanceIsolation, RepackError, RepackLimits, RepackPublished, RetentionPolicy};
+use super::{
+    MaintenanceIsolation, RepackError, RepackLimits, RepackPublished, RetentionError,
+    RetentionPolicy,
+};
 #[cfg(unix)]
 use crate::pack::FilePack;
 use crate::{ObjectId, ObjectReadError, Repository};
@@ -43,8 +46,8 @@ pub enum RetireCause {
     #[error("pack retirement is unsupported on this platform")]
     UnsupportedPlatform,
     /// A bounded root or artifact observation was incomplete.
-    #[error("retention scan incomplete: {0}")]
-    Incomplete(String),
+    #[error("retention scan incomplete")]
+    Incomplete(#[source] RetentionError),
     /// Roots, shallow state or an old pack generation changed before deletion.
     #[error("maintenance generation changed")]
     Changed,
@@ -217,8 +220,12 @@ impl Repository {
         check(cancel, &report)?;
         let mut keep_all_logs = policy.clone();
         keep_all_logs.reflog_expiry = super::ReflogExpiryPolicy::KeepAll;
-        let current = Repository::open(self.git_dir())
-            .map_err(|error| failed(RetireCause::Incomplete(error.to_string()), report.clone()))?;
+        let current = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                RetireCause::Incomplete(RetentionError::read(error)),
+                report.clone(),
+            )
+        })?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
         {
@@ -303,8 +310,12 @@ impl Repository {
         report.durable = true;
         after_publication();
         check(cancel, &report)?;
-        let refreshed = Repository::open(self.git_dir())
-            .map_err(|error| failed(RetireCause::Incomplete(error.to_string()), report.clone()))?;
+        let refreshed = Repository::open(self.git_dir()).map_err(|error| {
+            failed(
+                RetireCause::Incomplete(RetentionError::read(error)),
+                report.clone(),
+            )
+        })?;
         if refreshed.object_dir() != current.object_dir()
             || refreshed.object_format() != current.object_format()
             || !refreshed
@@ -522,12 +533,16 @@ fn snapshot(
             return Err(RetireCause::Cancelled);
         }
         if files.len() >= limit {
-            return Err(RetireCause::Incomplete("pack directory entry limit".into()));
+            return Err(RetireCause::Incomplete(
+                RetentionError::PackDirectoryEntryLimit,
+            ));
         }
         let path = entry.map_err(RetireCause::Io)?.path();
         let metadata = fs::symlink_metadata(&path).map_err(RetireCause::Io)?;
         if !metadata.is_file() {
-            return Err(RetireCause::Incomplete("non-file pack entry".into()));
+            return Err(RetireCause::Incomplete(RetentionError::NonFilePackEntry(
+                path.clone(),
+            )));
         }
         files.insert(
             path,

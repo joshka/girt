@@ -13,6 +13,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reclamation and is the default, retaining even epoch-zero loose objects. Existing
   `with_recent_cutoff(time)` calls keep their behavior; direct field assignments use `Some(time)`.
   Explicit loose expiry now includes equality with the cutoff, matching Git's prune boundary.
+- Maintenance `Incomplete` payloads now carry `retention::RetentionError`, including retention
+  planning, repacking, pruning, reflog expiry and pack retirement. jj adapters should use
+  `RetentionError::kind()` for recovery categories and match detailed conditions when needed, rather
+  than parse messages. Read failures retain the original error through `Error::source`; render the
+  chain once. `ExpireCause::Incomplete` boxes its detail to keep expiry failures compact on Windows;
+  use `detail.as_ref()` to borrow it or `*detail` to take ownership. Its `Error::source()` downcasts to
+  `Box<RetentionError>`. Plans no longer promise `Clone`
+  or equality for errors containing I/O causes; use `is_complete()` or
+  match `RetentionOutcome::Complete`. Retained source errors also remove the `UnwindSafe` and
+  `RefUnwindSafe` guarantees from plans; `Send + Sync` remain supported. Callers catching panics
+  must select their own recovery boundary. Partial reports and deletion preconditions are unchanged.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 

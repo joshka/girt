@@ -41,6 +41,14 @@ Hypothetical parser wording, only if verified: replace "Parses names safely" wit
 borrowing the input bytes; does not validate UTF-8." The latter preserves the ownership and
 validation boundaries callers need.
 
+Maintenance examples should use `RetentionPlan::is_complete()` or match the typed
+`RetentionOutcome`; failure examples should demonstrate matching `RetentionError` and preserve its
+source chain for jj diagnostics. For boxed expiry details, use `as_ref()` to borrow the
+`RetentionError` before matching. Plans retain `Send + Sync`, but source errors do not promise
+`UnwindSafe` or `RefUnwindSafe`; document that restriction when discussing panic recovery. An
+incomplete plan never authorizes deletion, and partial mutation reports still require fresh
+observations under isolation before retrying.
+
 ## Examples and Validation
 
 - Demonstrate useful behavior with expected results or error handling. Prefer grouped or linked

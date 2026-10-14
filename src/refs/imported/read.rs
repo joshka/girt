@@ -140,6 +140,10 @@ pub struct ImportedReflog {
 }
 
 impl ImportedReflog {
+    pub(crate) fn into_end(self) -> ReflogReadEnd {
+        self.end
+    }
+
     /// Reads newline-delimited files data from a caller-owned reader without unbounded buffering.
     ///
     /// The reader may already buffer data; these limits bound requests made here. No extra byte is
