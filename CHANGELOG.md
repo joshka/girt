@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/joshka/girt/compare/v0.6.4...v0.7.0) - 2026-10-14
+
+### Other
+
+- hash and parse received objects on worker threads ([#133](https://github.com/joshka/girt/pull/133))
+- cut redundant source reads in local fetch ([#132](https://github.com/joshka/girt/pull/132))
+- verify received objects once ([#131](https://github.com/joshka/girt/pull/131))
+- hash object ids with a seeded multiply of their digest ([#130](https://github.com/joshka/girt/pull/130))
+
 ## [0.6.4](https://github.com/joshka/girt/compare/v0.6.3...v0.6.4) - 2026-10-13
 
 ### Other
