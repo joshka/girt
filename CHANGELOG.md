@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.3](https://github.com/joshka/girt/compare/v0.7.2...v0.7.3) - 2026-10-14
+
+### Other
+
+- Parse protocol v2 capabilities and delim/response-end pkt-lines ([#160](https://github.com/joshka/girt/pull/160))
+
 ## [0.7.2](https://github.com/joshka/girt/compare/v0.7.1...v0.7.2) - 2026-10-14
 
 ### Other
