@@ -47,7 +47,7 @@ jobs:
   msrv:
     name: MSRV (1.97.1)
     needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -69,7 +69,7 @@ jobs:
   unix:
     name: Test (${{ matrix.os }})
     needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -145,7 +145,7 @@ jobs:
   windows:
     name: Test (windows-2022, ${{ matrix.suite }})
     needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -235,7 +235,7 @@ jobs:
 
   windows-http:
     name: HTTPS (windows-2022)
-    if: ${{ inputs.http_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -265,7 +265,7 @@ jobs:
 
   alternates:
     name: Alternates (${{ matrix.os }})
-    if: ${{ inputs.alternates_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -301,7 +301,7 @@ jobs:
 
   storage:
     name: Storage (${{ matrix.os }})
-    if: ${{ inputs.storage_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -349,7 +349,7 @@ jobs:
 
   ignore:
     name: Ignore (${{ matrix.os }})
-    if: ${{ inputs.ignore_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -401,7 +401,7 @@ jobs:
 
   retention:
     name: Retention (${{ matrix.os }})
-    if: ${{ inputs.retention_only }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     strategy:
       fail-fast: false
       matrix:
@@ -494,7 +494,7 @@ jobs:
   docs:
     name: Docs
     needs: changes
-    if: ${{ needs.changes.outputs.docs == 'true' }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
@@ -521,19 +521,19 @@ jobs:
   index:
     name: Index
     needs: changes
-    if: ${{ needs.changes.outputs.index == 'true' }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     uses: $/.github/workflows/index.yml
 
   references:
     name: References
     needs: changes
-    if: ${{ needs.changes.outputs.references == 'true' }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     uses: $/.github/workflows/references.yml
 
   security:
     name: Security
     needs: changes
-    if: ${{ needs.changes.outputs.security == 'true' }}
+    if: ${{ false }} # Throwaway probe: only exercise the semver gate.
     uses: $/.github/workflows/security.yml
 
   semver:
