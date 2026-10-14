@@ -33,6 +33,7 @@ struct Artifact {
     len: usize,
     stamp: Stamp,
     window_id: u64,
+    truncation_check: std::sync::OnceLock<Result<(), Arc<io::Error>>>,
     #[cfg(test)]
     bytes_read: std::sync::atomic::AtomicUsize,
 }
@@ -61,6 +62,7 @@ impl Artifact {
             len,
             stamp,
             window_id: NEXT_WINDOW_ID.fetch_add(1, Ordering::Relaxed),
+            truncation_check: std::sync::OnceLock::new(),
             #[cfg(test)]
             bytes_read: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -96,6 +98,25 @@ impl Artifact {
             });
         }
         Ok(())
+    }
+
+    /// Retained index bytes belong to this immutable artifact snapshot. Check its live length
+    /// once before lookup; later in-place mutation violates the snapshot contract. Fresh byte
+    /// reads still report short reads, and explicit verification checks the live artifacts.
+    fn check_snapshot_not_truncated(&self) -> Result<(), Error> {
+        let result = self.truncation_check.get_or_init(|| {
+            let current = self.file.metadata().map_err(Arc::new)?.len();
+            if current < self.len as u64 {
+                return Err(Arc::new(io::ErrorKind::UnexpectedEof.into()));
+            }
+            Ok(())
+        });
+        result.as_ref().map(|_| ()).map_err(|source| {
+            path_error(
+                &self.path,
+                io::Error::new(source.kind(), Arc::clone(source)),
+            )
+        })
     }
 
     fn check_not_truncated(&self) -> Result<(), Error> {
@@ -597,8 +618,7 @@ impl FilePack {
         if id.format() != self.format {
             return Ok(None);
         }
-        // Retained identities cannot turn a truncated pinned index into a successful lookup.
-        self.index.check_not_truncated()?;
+        self.index.check_snapshot_not_truncated()?;
         Ok(self.table.find(&self.index_bytes, id))
     }
 
@@ -1181,6 +1201,27 @@ mod publication_tests {
 
     use super::*;
     use crate::{ObjectKind, PackLimits, PackObject, PackWriteLimits};
+
+    #[cfg(not(windows))]
+    #[test]
+    fn truncation_check_is_once_per_artifact_but_short_reads_still_fail() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("artifact");
+        fs::write(&path, b"snapshot").unwrap();
+        let artifact = Artifact::open(&path).unwrap();
+        artifact.check_snapshot_not_truncated().unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(0)
+            .unwrap();
+        artifact.check_snapshot_not_truncated().unwrap();
+        assert!(
+            matches!(artifact.read_at(0, &mut [0; 1]), Err(Error::Path { source, .. }) if source.kind() == io::ErrorKind::UnexpectedEof)
+        );
+        assert!(artifact.check_unchanged().is_err());
+    }
 
     fn pair(root: &Path, name: &str, format: ObjectFormat, data: &[u8]) -> PathBuf {
         let object = PackObject {
