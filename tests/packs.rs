@@ -1588,3 +1588,69 @@ fn corrupt_loose_fallback_does_not_hide_a_verified_alternate() {
         copies.expected
     );
 }
+
+/// Cold readers on the same thread peel correctly across mixed object reads and limit failures.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn packed_tag_peeling_survives_interleaved_read_limits(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let tag = fixture
+        .records
+        .iter()
+        .find(|(_, kind, _)| *kind == ObjectKind::Tag)
+        .unwrap()
+        .0;
+    let target_bytes = git(
+        fixture.root.path(),
+        &["rev-parse", "refs/tags/packed^{}"],
+        b"",
+    );
+    let target: ObjectId = std::str::from_utf8(&target_bytes)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let first = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        first
+            .peel(tag, girt::PeelLimits::trusted(), &cancel)
+            .unwrap()
+            .target,
+        target
+    );
+    let second = fixture.repo.objects(PackLimits::default()).unwrap();
+    assert!(
+        second
+            .read(tag, ReadLimits::default().with_max_object_bytes(1))
+            .is_err()
+    );
+    let third = fixture.repo.objects(PackLimits::default()).unwrap();
+    let blob = third
+        .read(fixture.delta, ReadLimits::trusted())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        blob.data(),
+        git(
+            fixture.root.path(),
+            &["cat-file", "blob", &fixture.delta.to_string()],
+            b""
+        )
+    );
+    assert_eq!(
+        second
+            .peel(tag, girt::PeelLimits::trusted(), &cancel)
+            .unwrap()
+            .target,
+        target
+    );
+    assert_eq!(
+        first
+            .peel(tag, girt::PeelLimits::trusted(), &cancel)
+            .unwrap()
+            .target,
+        target
+    );
+}

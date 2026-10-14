@@ -724,12 +724,12 @@ impl FilePack {
             let mut inflater = inflater.borrow_mut();
             inflater.reset(true);
             let status = inflater
-                .decompress(&header.ahead, &mut prefix, flate2::FlushDecompress::None)
+                .decompress(header.ahead(), &mut prefix, flate2::FlushDecompress::None)
                 .map_err(|_| Error::Corrupt("delta size prefix"))?;
             let produced = inflater.total_out() as usize;
             let complete = produced == prefix.len() || status == flate2::Status::StreamEnd;
             Ok::<_, Error>(
-                (complete || header.ahead.len() == entry.end - header.data_start)
+                (complete || header.ahead().len() == entry.end - header.data_start)
                     .then_some(produced),
             )
         })?;
@@ -929,15 +929,15 @@ impl FilePack {
         let crc = entry.crc.map(|_| {
             let mut crc = crc32fast::Hasher::new();
             if delta {
-                crc.update(&header.encoded);
+                crc.update(header.encoded());
             }
             crc
         });
         let mut ahead = Vec::new();
         if !delta {
-            ahead.extend_from_slice(&header.encoded);
+            ahead.extend_from_slice(header.encoded());
         }
-        ahead.extend_from_slice(&header.ahead);
+        ahead.extend_from_slice(header.ahead());
         let input = Range {
             artifact: &self.pack,
             ahead: &ahead,
@@ -1002,86 +1002,95 @@ impl Source for FilePack {
         header: &EntryHeader,
         cancelled: &AtomicBool,
     ) -> Result<Vec<u8>, Error> {
-        #[cfg(test)]
-        counters::inflated(entry.offset);
-        let start = header.data_start;
-        let end = entry.end;
-        let expected = header.length;
-        let mut crc = entry.crc.map(|_| {
-            let mut crc = crc32fast::Hasher::new();
-            crc.update(&header.encoded);
-            crc.update(&header.ahead);
-            crc
-        });
-        // Input comes from the bytes read with the header, then from exact-sized positioned
-        // reads of the rest of the entry; neither is zero-filled beyond what is read.
-        const CHUNK: usize = 256 * 1024;
-        let mut chunk = Vec::new();
-        let mut from_ahead = true;
-        let mut consumed_in_chunk = 0;
-        let mut position = start + header.ahead.len();
-        let mut decoder = flate2::Decompress::new(true);
-        // The declared size is unproven until the stream produces it: reserve a bounded start
-        // and grow with the output, so a tiny malformed entry cannot request a huge buffer.
-        let mut data = Vec::with_capacity(expected.min(super::delta::INITIAL_RESERVATION));
-        let mut overflow = [0; 1];
-        loop {
-            check_cancelled(cancelled)?;
-            let source = if from_ahead {
-                &header.ahead[..]
-            } else {
-                &chunk[..]
-            };
-            if consumed_in_chunk == source.len() && position < end {
-                let count = CHUNK.min(end - position);
-                chunk.clear();
-                chunk.resize(count, 0);
-                self.pack.read_at(position, &mut chunk)?;
-                if let Some(crc) = &mut crc {
-                    crc.update(&chunk);
-                }
-                position += count;
-                from_ahead = false;
-                consumed_in_chunk = 0;
-            }
-            let input = if from_ahead {
-                &header.ahead[consumed_in_chunk..]
-            } else {
-                &chunk[consumed_in_chunk..]
-            };
-            let before_in = decoder.total_in();
-            let before_out = decoder.total_out();
-            if data.len() == data.capacity() && data.len() < expected {
-                data.reserve_exact((expected - data.len()).min(data.len().max(4096)));
-            }
-            let status = if data.len() < expected {
-                decoder.decompress_vec(input, &mut data, flate2::FlushDecompress::None)
-            } else {
-                decoder.decompress(input, &mut overflow, flate2::FlushDecompress::None)
-            }
-            .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
-            let consumed = (decoder.total_in() - before_in) as usize;
-            let count = (decoder.total_out() - before_out) as usize;
-            consumed_in_chunk += consumed;
-            if decoder.total_out() > expected as u64 {
-                return Err(Error::Corrupt("inflated entry exceeds declared size"));
-            }
-            if status == flate2::Status::StreamEnd {
-                if data.len() != expected || decoder.total_in() != (end - start) as u64 {
-                    return Err(Error::Corrupt("packed entry length or trailing data"));
-                }
-                break;
-            }
-            if consumed == 0 && count == 0 {
-                return Err(Error::Corrupt("truncated packed zlib stream"));
-            }
+        // One decoder per thread reuses zlib's window without serializing independent readers.
+        // Reset before every entry, including after a failed or cancelled stream.
+        thread_local! {
+            static INFLATER: std::cell::RefCell<flate2::Decompress> =
+                std::cell::RefCell::new(flate2::Decompress::new(true));
         }
-        if let (Some(expected), Some(crc)) = (entry.crc, crc)
-            && crc.finalize() != expected
-        {
-            return Err(Error::Corrupt("entry CRC"));
-        }
-        Ok(data)
+        INFLATER.with(|inflater| {
+            let mut decoder = inflater.borrow_mut();
+            #[cfg(test)]
+            counters::inflated(entry.offset);
+            let start = header.data_start;
+            let end = entry.end;
+            let expected = header.length;
+            let mut crc = entry.crc.map(|_| {
+                let mut crc = crc32fast::Hasher::new();
+                crc.update(header.encoded());
+                crc.update(header.ahead());
+                crc
+            });
+            // Input comes from the bytes read with the header, then from exact-sized positioned
+            // reads of the rest of the entry; neither is zero-filled beyond what is read.
+            const CHUNK: usize = 256 * 1024;
+            let mut chunk = Vec::new();
+            let mut from_ahead = true;
+            let mut consumed_in_chunk = 0;
+            let mut position = start + header.ahead().len();
+            decoder.reset(true);
+            // The declared size is unproven until the stream produces it: reserve a bounded start
+            // and grow with the output, so a tiny malformed entry cannot request a huge buffer.
+            let mut data = Vec::with_capacity(expected.min(super::delta::INITIAL_RESERVATION));
+            let mut overflow = [0; 1];
+            loop {
+                check_cancelled(cancelled)?;
+                let source = if from_ahead {
+                    header.ahead()
+                } else {
+                    &chunk[..]
+                };
+                if consumed_in_chunk == source.len() && position < end {
+                    let count = CHUNK.min(end - position);
+                    chunk.clear();
+                    chunk.resize(count, 0);
+                    self.pack.read_at(position, &mut chunk)?;
+                    if let Some(crc) = &mut crc {
+                        crc.update(&chunk);
+                    }
+                    position += count;
+                    from_ahead = false;
+                    consumed_in_chunk = 0;
+                }
+                let input = if from_ahead {
+                    &header.ahead()[consumed_in_chunk..]
+                } else {
+                    &chunk[consumed_in_chunk..]
+                };
+                let before_in = decoder.total_in();
+                let before_out = decoder.total_out();
+                if data.len() == data.capacity() && data.len() < expected {
+                    data.reserve_exact((expected - data.len()).min(data.len().max(4096)));
+                }
+                let status = if data.len() < expected {
+                    decoder.decompress_vec(input, &mut data, flate2::FlushDecompress::None)
+                } else {
+                    decoder.decompress(input, &mut overflow, flate2::FlushDecompress::None)
+                }
+                .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
+                let consumed = (decoder.total_in() - before_in) as usize;
+                let count = (decoder.total_out() - before_out) as usize;
+                consumed_in_chunk += consumed;
+                if decoder.total_out() > expected as u64 {
+                    return Err(Error::Corrupt("inflated entry exceeds declared size"));
+                }
+                if status == flate2::Status::StreamEnd {
+                    if data.len() != expected || decoder.total_in() != (end - start) as u64 {
+                        return Err(Error::Corrupt("packed entry length or trailing data"));
+                    }
+                    break;
+                }
+                if consumed == 0 && count == 0 {
+                    return Err(Error::Corrupt("truncated packed zlib stream"));
+                }
+            }
+            if let (Some(expected), Some(crc)) = (entry.crc, crc)
+                && crc.finalize() != expected
+            {
+                return Err(Error::Corrupt("entry CRC"));
+            }
+            Ok(data)
+        })
     }
 }
 
@@ -1113,8 +1122,8 @@ impl<'a> Range<'a> {
     ) -> Self {
         Self {
             artifact,
-            ahead: &header.ahead,
-            position: header.data_start + header.ahead.len(),
+            ahead: header.ahead(),
+            position: header.data_start + header.ahead().len(),
             end: entry.end,
             crc,
         }
@@ -1544,6 +1553,34 @@ mod publication_tests {
                 .bytes_read
                 .load(std::sync::atomic::Ordering::Relaxed),
             opened_bytes + reader.pack.len
+        );
+    }
+
+    /// A failed zlib stream must not contaminate a different pack read on the same thread.
+    #[test]
+    fn reusable_inflater_recovers_after_corrupt_stream() {
+        let root = tempfile::tempdir().unwrap();
+        let bad_path = malformed_pair(root.path(), &[0x37, 0x78, 0x9c, 0xff]);
+        let good_path = pair(root.path(), "good", ObjectFormat::Sha1, b"healthy");
+        let cancel = AtomicBool::new(false);
+        let bad = FilePack::open(
+            ObjectFormat::Sha1,
+            &bad_path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let good = FilePack::open(
+            ObjectFormat::Sha1,
+            &good_path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        assert!(bad.read(0, ReadLimits::default(), &cancel).is_err());
+        assert_eq!(
+            good.read(0, ReadLimits::default(), &cancel).unwrap().data(),
+            b"healthy"
         );
     }
 
