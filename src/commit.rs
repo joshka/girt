@@ -833,6 +833,18 @@ mod dual_format_tests {
         );
     }
 
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn retains_short_parent_fragment_after_complete_parents(#[case] format: ObjectFormat) {
+        let parent = ObjectId::null(format);
+        let fragment = "0".repeat(format.digest_len() * 2 - 1);
+        let bytes = format!("tree {parent}\nparent {parent}\nparent {fragment}\n");
+        let parsed = Commit::parse(format, bytes.as_bytes()).unwrap();
+        assert_eq!(parsed.parents(), &[parent]);
+        assert_eq!(parsed.as_bytes(), bytes.as_bytes());
+    }
+
     #[test]
     fn sha256_nonhex_tree_is_not_an_identity() {
         let bytes = format!(
