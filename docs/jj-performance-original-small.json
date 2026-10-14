@@ -1,0 +1,1168 @@
+[
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "abandon",
+    "variant": "default",
+    "girt_ms": 79.36702109873295,
+    "girt_rss_mb": 25.4375,
+    "stock_ms": 68.47314559854567,
+    "stock_rss_mb": 24.5,
+    "git_ms": 62.48787557706237,
+    "git_rss_mb": 26.90625,
+    "ratio_vs_stock": 1.1590970504562106,
+    "notes": "girt n=6 range=63.288..98.771ms; stock n=6 range=65.590..71.601ms; git n=6 range=60.555..64.511ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "file annotate",
+    "variant": "large-old-file",
+    "girt_ms": 153.43591663986444,
+    "girt_rss_mb": 40.71875,
+    "stock_ms": 158.98135444149375,
+    "stock_rss_mb": 42.5,
+    "git_ms": 45.07218743674457,
+    "git_rss_mb": 20.984375,
+    "ratio_vs_stock": 0.9651189422740133,
+    "notes": "girt n=6 range=147.575..160.989ms; stock n=6 range=156.208..163.234ms; git n=6 range=43.522..49.055ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "bookmark",
+    "variant": "create",
+    "girt_ms": 53.784145740792155,
+    "girt_rss_mb": 25.109375,
+    "stock_ms": 48.091229517012835,
+    "stock_rss_mb": 24.546875,
+    "git_ms": 15.00841649249196,
+    "git_rss_mb": 8.59375,
+    "ratio_vs_stock": 1.1183774314142954,
+    "notes": "girt n=6 range=47.050..79.306ms; stock n=6 range=45.639..62.669ms; git n=6 range=13.825..19.881ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "bookmark",
+    "variant": "delete",
+    "girt_ms": 48.47977100871503,
+    "girt_rss_mb": 24.90625,
+    "stock_ms": 44.57110399380326,
+    "stock_rss_mb": 24.265625,
+    "git_ms": 14.388833194971085,
+    "git_rss_mb": 8.484375,
+    "ratio_vs_stock": 1.087695090869977,
+    "notes": "girt n=6 range=42.193..58.549ms; stock n=6 range=41.407..59.534ms; git n=6 range=12.436..22.378ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "bookmark",
+    "variant": "list",
+    "girt_ms": 21.676958072930574,
+    "girt_rss_mb": 25.015625,
+    "stock_ms": 20.23352077230811,
+    "stock_rss_mb": 23.703125,
+    "git_ms": 12.321916408836842,
+    "git_rss_mb": 7.375,
+    "ratio_vs_stock": 1.0713389091728402,
+    "notes": "girt n=6 range=20.768..23.948ms; stock n=6 range=19.281..23.453ms; git n=6 range=11.896..13.910ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "bookmark",
+    "variant": "move",
+    "girt_ms": 44.896707870066166,
+    "girt_rss_mb": 25.03125,
+    "stock_ms": 42.14687505736947,
+    "stock_rss_mb": 24.546875,
+    "git_ms": 14.768833061680198,
+    "git_rss_mb": 8.65625,
+    "ratio_vs_stock": 1.0652440497416162,
+    "notes": "girt n=6 range=42.576..51.518ms; stock n=6 range=40.925..47.619ms; git n=6 range=12.472..17.315ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git clone",
+    "variant": "local-full-checkout",
+    "girt_ms": 582.5380831956863,
+    "girt_rss_mb": 233.53125,
+    "stock_ms": 609.1425835620612,
+    "stock_rss_mb": 32.15625,
+    "git_ms": 356.2995414249599,
+    "git_rss_mb": 28.046875,
+    "ratio_vs_stock": 0.9563246749048463,
+    "notes": "local-path pack transfer; full checkout; girt n=6 range=554.226..666.408ms; stock n=6 range=594.663..625.550ms; git n=6 range=335.619..397.715ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "commit",
+    "variant": "default",
+    "girt_ms": 166.16799985058606,
+    "girt_rss_mb": 33.390625,
+    "stock_ms": 147.81858352944255,
+    "stock_rss_mb": 35.21875,
+    "git_ms": 147.0999368466437,
+    "git_rss_mb": 10.609375,
+    "ratio_vs_stock": 1.1241347054140094,
+    "notes": "Git includes staging; jj includes snapshot and creates next working-copy commit; girt n=6 range=148.010..191.286ms; stock n=6 range=145.895..160.033ms; git n=6 range=142.488..155.969ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "describe",
+    "variant": "default",
+    "girt_ms": 70.78087516129017,
+    "girt_rss_mb": 25.25,
+    "stock_ms": 60.58389600366354,
+    "stock_rss_mb": 24.515625,
+    "git_ms": 64.23999997787178,
+    "git_rss_mb": 9.203125,
+    "ratio_vs_stock": 1.1683117103761371,
+    "notes": "girt n=6 range=59.370..84.552ms; stock n=6 range=57.763..61.351ms; git n=6 range=62.137..65.714ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "diff",
+    "variant": "git",
+    "girt_ms": 156.28795814700425,
+    "girt_rss_mb": 42.171875,
+    "stock_ms": 137.57054135203362,
+    "stock_rss_mb": 40.859375,
+    "git_ms": 77.33064610511065,
+    "git_rss_mb": 27.515625,
+    "ratio_vs_stock": 1.1360568666156081,
+    "notes": "100 tracked files edited; girt n=6 range=149.386..169.287ms; stock n=6 range=136.501..152.764ms; git n=6 range=73.949..79.440ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "diff",
+    "variant": "large",
+    "girt_ms": 66.40652124769986,
+    "girt_rss_mb": 43.90625,
+    "stock_ms": 63.92714544199407,
+    "stock_rss_mb": 37.234375,
+    "git_ms": 30.128270387649536,
+    "git_rss_mb": 25.84375,
+    "ratio_vs_stock": 1.0387843972785475,
+    "notes": "historical commit d8feed9be451053de8942c3cd6be21bbc8a1bd33, 121 files changed; girt n=6 range=65.729..68.329ms; stock n=6 range=63.391..64.328ms; git n=6 range=29.178..31.142ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "diff",
+    "variant": "stat",
+    "girt_ms": 154.59918742999434,
+    "girt_rss_mb": 41.375,
+    "stock_ms": 133.84947972372174,
+    "stock_rss_mb": 42.6875,
+    "git_ms": 76.89027115702629,
+    "git_rss_mb": 27.59375,
+    "ratio_vs_stock": 1.155022699745281,
+    "notes": "100 tracked files edited; girt n=6 range=143.844..165.018ms; stock n=6 range=129.013..135.371ms; git n=6 range=75.982..78.342ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "diff",
+    "variant": "wc",
+    "girt_ms": 161.35612479411066,
+    "girt_rss_mb": 42.796875,
+    "stock_ms": 135.85954159498215,
+    "stock_rss_mb": 41.8125,
+    "git_ms": 78.72591656632721,
+    "git_rss_mb": 27.609375,
+    "ratio_vs_stock": 1.1876686973899682,
+    "notes": "100 tracked files edited; girt n=6 range=148.653..202.210ms; stock n=6 range=132.527..174.541ms; git n=6 range=75.982..83.696ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "duplicate",
+    "variant": "default",
+    "girt_ms": 71.18243700824678,
+    "girt_rss_mb": 25.171875,
+    "stock_ms": 62.7078334800899,
+    "stock_rss_mb": 24.828125,
+    "git_ms": 23.791207931935787,
+    "git_rss_mb": 8.078125,
+    "ratio_vs_stock": 1.1351442564324536,
+    "notes": "Git commit-tree plus update-ref preserves a sibling copy; Git description and identity differ; girt n=6 range=63.310..86.773ms; stock n=6 range=59.488..65.980ms; git n=6 range=20.949..25.574ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "edit",
+    "variant": "default",
+    "girt_ms": 62.71956255659461,
+    "girt_rss_mb": 25.34375,
+    "stock_ms": 55.525396252050996,
+    "stock_rss_mb": 24.25,
+    "git_ms": 55.80608337186277,
+    "git_rss_mb": 9.359375,
+    "ratio_vs_stock": 1.1295653302839397,
+    "notes": "girt n=6 range=55.194..77.862ms; stock n=6 range=53.764..60.601ms; git n=6 range=55.484..56.831ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "evolog",
+    "variant": "default",
+    "girt_ms": 26.810353389009833,
+    "girt_rss_mb": 24.640625,
+    "stock_ms": 26.301166508346796,
+    "stock_rss_mb": 23.53125,
+    "git_ms": 12.846417026594281,
+    "git_rss_mb": 8.546875,
+    "ratio_vs_stock": 1.0193598592101016,
+    "notes": "30 description rewrites; Git HEAD reflog approximates this lineage with different metadata; girt n=6 range=24.914..45.021ms; stock n=6 range=23.404..35.946ms; git n=6 range=12.185..14.877ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git export",
+    "variant": "100-pending-bookmarks",
+    "girt_ms": 88.556292001158,
+    "girt_rss_mb": 20.75,
+    "stock_ms": 60.65116706304252,
+    "stock_rss_mb": 20.0,
+    "git_ms": 32.97804156318307,
+    "git_rss_mb": 8.6875,
+    "ratio_vs_stock": 1.460092134898412,
+    "notes": "non-colocated export of 100 jj-only bookmarks; Git writes 100 pending refs in one transaction; girt n=6 range=86.780..93.723ms; stock n=6 range=59.121..65.014ms; git n=6 range=32.206..34.141ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git fetch",
+    "variant": "1",
+    "girt_ms": 106.80568753741682,
+    "girt_rss_mb": 27.59375,
+    "stock_ms": 120.16125000081956,
+    "stock_rss_mb": 24.640625,
+    "git_ms": 55.62929203733802,
+    "git_rss_mb": 9.578125,
+    "ratio_vs_stock": 0.8888529999204264,
+    "notes": "girt n=6 range=94.255..116.055ms; stock n=6 range=115.009..130.835ms; git n=6 range=50.359..57.003ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git fetch",
+    "variant": "100",
+    "girt_ms": 162.02708357013762,
+    "girt_rss_mb": 30.953125,
+    "stock_ms": 190.69231278263032,
+    "stock_rss_mb": 24.796875,
+    "git_ms": 103.83297898806632,
+    "git_rss_mb": 9.78125,
+    "ratio_vs_stock": 0.849678108182745,
+    "notes": "girt n=6 range=125.267..253.145ms; stock n=6 range=167.277..245.383ms; git n=6 range=88.149..137.146ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git fetch",
+    "variant": "noop",
+    "girt_ms": 80.4718118160963,
+    "girt_rss_mb": 26.640625,
+    "stock_ms": 92.5594789441675,
+    "stock_rss_mb": 24.328125,
+    "git_ms": 39.12079147994518,
+    "git_rss_mb": 8.875,
+    "ratio_vs_stock": 0.8694064911994314,
+    "notes": "girt n=6 range=72.754..96.057ms; stock n=6 range=89.806..93.989ms; git n=6 range=36.482..47.674ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git fetch",
+    "variant": "tags",
+    "girt_ms": 281.5283960662782,
+    "girt_rss_mb": 28.4375,
+    "stock_ms": 242.01195850037038,
+    "stock_rss_mb": 24.875,
+    "git_ms": 136.07977097854018,
+    "git_rss_mb": 10.0625,
+    "ratio_vs_stock": 1.1632829956452229,
+    "notes": "local-path remote; 100 lightweight plus 20 annotated tags; girt n=6 range=237.635..293.703ms; stock n=6 range=216.521..246.153ms; git n=6 range=119.325..177.238ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "file show",
+    "variant": "large-old-file",
+    "girt_ms": 21.893874974921346,
+    "girt_rss_mb": 25.609375,
+    "stock_ms": 20.934000378474593,
+    "stock_rss_mb": 24.125,
+    "git_ms": 14.133416581898928,
+    "git_rss_mb": 9.546875,
+    "ratio_vs_stock": 1.0458524208986708,
+    "notes": "girt n=6 range=20.678..23.326ms; stock n=6 range=17.883..23.885ms; git n=6 range=13.535..14.929ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "util gc",
+    "variant": "clean",
+    "girt_ms": 38.70258294045925,
+    "girt_rss_mb": 24.3125,
+    "stock_ms": 196.0388128645718,
+    "stock_rss_mb": 25.9375,
+    "git_ms": 169.08458364196122,
+    "git_rss_mb": 25.328125,
+    "ratio_vs_stock": 0.1974230631930826,
+    "notes": "no intentionally unreachable garbage; backend packing policies differ; girt n=6 range=36.011..42.959ms; stock n=6 range=178.646..219.387ms; git n=6 range=165.347..171.675ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "util gc",
+    "variant": "garbage",
+    "girt_ms": 366.26770813018084,
+    "girt_rss_mb": 58.828125,
+    "stock_ms": 591.7540835216641,
+    "stock_rss_mb": 26.53125,
+    "git_ms": 533.5139581002295,
+    "git_rss_mb": 25.59375,
+    "ratio_vs_stock": 0.6189525654819952,
+    "notes": "2000 unreachable loose blobs (8 MiB), aged 30 days; verify collection; girt n=6 range=329.715..406.227ms; stock n=6 range=548.962..623.183ms; git n=6 range=507.368..538.742ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git import",
+    "variant": "100-external-refs",
+    "girt_ms": 43.1490836199373,
+    "girt_rss_mb": 21.359375,
+    "stock_ms": 40.99877108819783,
+    "stock_rss_mb": 20.46875,
+    "git_ms": null,
+    "git_rss_mb": null,
+    "ratio_vs_stock": 1.0524482191701223,
+    "notes": "import 100 external Git refs; girt n=6 range=37.956..53.953ms; stock n=6 range=37.474..42.081ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git init",
+    "variant": "colocate",
+    "girt_ms": 267.5581672228873,
+    "girt_rss_mb": 43.546875,
+    "stock_ms": 201.0542917996645,
+    "stock_rss_mb": 34.890625,
+    "git_ms": null,
+    "git_rss_mb": null,
+    "ratio_vs_stock": 1.3307757065414396,
+    "notes": "Git has no equivalent: existing Git worktree already initialized; girt n=6 range=255.031..322.037ms; stock n=6 range=197.527..238.478ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "log",
+    "variant": "ancestry",
+    "girt_ms": 65.20652049221098,
+    "girt_rss_mb": 26.265625,
+    "stock_ms": 59.05031249858439,
+    "stock_rss_mb": 24.65625,
+    "git_ms": 30.20537504926324,
+    "git_rss_mb": 10.375,
+    "ratio_vs_stock": 1.1042536056650705,
+    "notes": "full output consumed to /dev/null; girt n=6 range=63.540..65.931ms; stock n=6 range=57.301..60.398ms; git n=6 range=28.785..33.273ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "log",
+    "variant": "default",
+    "girt_ms": 25.66222893074155,
+    "girt_rss_mb": 24.40625,
+    "stock_ms": 24.88514524884522,
+    "stock_rss_mb": 23.484375,
+    "git_ms": 13.636791380122304,
+    "git_rss_mb": 9.03125,
+    "ratio_vs_stock": 1.0312268091717243,
+    "notes": "default revsets differ; girt n=6 range=22.656..28.270ms; stock n=6 range=20.717..28.452ms; git n=6 range=12.365..14.994ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "log",
+    "variant": "large",
+    "girt_ms": 44.3184997420758,
+    "girt_rss_mb": 25.765625,
+    "stock_ms": 39.799354039132595,
+    "stock_rss_mb": 24.203125,
+    "git_ms": 14.459791826084256,
+    "git_rss_mb": 8.6875,
+    "ratio_vs_stock": 1.1135482173529694,
+    "notes": "full output consumed to /dev/null; girt n=6 range=43.416..45.903ms; stock n=6 range=38.356..41.156ms; git n=6 range=13.480..14.944ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "log",
+    "variant": "limited",
+    "girt_ms": 26.31066646426916,
+    "girt_rss_mb": 24.640625,
+    "stock_ms": 25.55814594961703,
+    "stock_rss_mb": 23.703125,
+    "git_ms": 13.694874243810773,
+    "git_rss_mb": 9.046875,
+    "ratio_vs_stock": 1.029443470435437,
+    "notes": "full output consumed to /dev/null; girt n=6 range=24.510..27.382ms; stock n=6 range=24.696..27.495ms; git n=6 range=12.891..14.880ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "log",
+    "variant": "no-graph",
+    "girt_ms": 23.30997958779335,
+    "girt_rss_mb": 24.5625,
+    "stock_ms": 21.744563011452556,
+    "stock_rss_mb": 23.21875,
+    "git_ms": 12.430562637746334,
+    "git_rss_mb": 8.796875,
+    "ratio_vs_stock": 1.071991172023844,
+    "notes": "default revsets differ; girt n=6 range=22.533..24.395ms; stock n=6 range=20.691..22.104ms; git n=6 range=11.382..12.744ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "new",
+    "variant": "default",
+    "girt_ms": 79.05341684818268,
+    "girt_rss_mb": 25.25,
+    "stock_ms": 61.65493815205991,
+    "stock_rss_mb": 24.765625,
+    "git_ms": 65.31099928542972,
+    "git_rss_mb": 9.859375,
+    "ratio_vs_stock": 1.2821911629075484,
+    "notes": "Git creates an empty commit; jj creates a working-copy commit; girt n=6 range=61.829..86.649ms; stock n=6 range=59.397..64.340ms; git n=6 range=60.690..68.744ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "op log",
+    "variant": "default",
+    "girt_ms": 24.915083777159452,
+    "girt_rss_mb": 24.4375,
+    "stock_ms": 23.93704140558839,
+    "stock_rss_mb": 23.484375,
+    "git_ms": 13.359312433749437,
+    "git_rss_mb": 8.5625,
+    "ratio_vs_stock": 1.040858949733977,
+    "notes": "operation history versus Git reflog: different records; girt n=6 range=23.895..27.780ms; stock n=6 range=21.531..24.554ms; git n=6 range=12.145..17.604ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "op restore",
+    "variant": "default",
+    "girt_ms": 53.360291523858905,
+    "girt_rss_mb": 25.03125,
+    "stock_ms": 48.036104533821344,
+    "stock_rss_mb": 24.171875,
+    "git_ms": null,
+    "git_rss_mb": null,
+    "ratio_vs_stock": 1.1108371930177832,
+    "notes": "Git has no repository-operation restore equivalent; girt n=6 range=45.803..65.222ms; stock n=6 range=45.837..49.661ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git push",
+    "variant": "delete",
+    "girt_ms": 52.94133280403912,
+    "girt_rss_mb": 25.6875,
+    "stock_ms": 69.17164637707174,
+    "stock_rss_mb": 24.359375,
+    "git_ms": 32.01152104884386,
+    "git_rss_mb": 8.53125,
+    "ratio_vs_stock": 0.7653617569754352,
+    "notes": "girt n=6 range=47.945..60.525ms; stock n=6 range=65.487..71.997ms; git n=6 range=30.349..34.244ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git push",
+    "variant": "new",
+    "girt_ms": 74.31572931818664,
+    "girt_rss_mb": 26.625,
+    "stock_ms": 142.16239587403834,
+    "stock_rss_mb": 24.421875,
+    "git_ms": 98.33258367143571,
+    "git_rss_mb": 9.53125,
+    "ratio_vs_stock": 0.522752369649379,
+    "notes": "girt n=6 range=71.129..82.840ms; stock n=6 range=132.993..145.230ms; git n=6 range=90.326..107.141ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git push",
+    "variant": "stale",
+    "girt_ms": 72.83068750984967,
+    "girt_rss_mb": 26.875,
+    "stock_ms": 129.77612507529557,
+    "stock_rss_mb": 24.46875,
+    "git_ms": 93.31285418011248,
+    "git_rss_mb": 9.5,
+    "ratio_vs_stock": 0.5612025129244197,
+    "notes": "stale remote branch starts 1000 first-parent commits behind local base; girt n=6 range=69.128..82.515ms; stock n=6 range=122.662..136.563ms; git n=6 range=85.163..95.905ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "git push",
+    "variant": "update",
+    "girt_ms": 73.7716460134834,
+    "girt_rss_mb": 26.828125,
+    "stock_ms": 129.44637518376112,
+    "stock_rss_mb": 24.75,
+    "git_ms": 89.36187555082142,
+    "git_rss_mb": 9.546875,
+    "ratio_vs_stock": 0.5699012112834965,
+    "notes": "girt n=6 range=66.528..87.953ms; stock n=6 range=125.373..133.726ms; git n=6 range=87.790..100.766ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "rebase",
+    "variant": "1",
+    "girt_ms": 96.13054199144244,
+    "girt_rss_mb": 36.3125,
+    "stock_ms": 85.38856194354594,
+    "stock_rss_mb": 27.921875,
+    "git_ms": 85.48652054741979,
+    "git_rss_mb": 23.671875,
+    "ratio_vs_stock": 1.125801158883534,
+    "notes": "1 nonempty commits moved backwards 20 main commits; girt n=6 range=85.747..109.002ms; stock n=6 range=78.688..89.007ms; git n=6 range=83.418..100.754ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "rebase",
+    "variant": "10",
+    "girt_ms": 172.02931293286383,
+    "girt_rss_mb": 36.421875,
+    "stock_ms": 142.54229213111103,
+    "stock_rss_mb": 28.03125,
+    "git_ms": 146.76516642794013,
+    "git_rss_mb": 23.90625,
+    "ratio_vs_stock": 1.2068650669278596,
+    "notes": "10 nonempty commits moved backwards 20 main commits; girt n=6 range=154.569..180.849ms; stock n=6 range=139.956..154.298ms; git n=6 range=144.755..155.280ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "rebase",
+    "variant": "100",
+    "girt_ms": 875.6881670560688,
+    "girt_rss_mb": 39.203125,
+    "stock_ms": 806.2619999982417,
+    "stock_rss_mb": 31.234375,
+    "git_ms": 615.3019166085869,
+    "git_rss_mb": 25.046875,
+    "ratio_vs_stock": 1.0861086930277981,
+    "notes": "100 nonempty commits moved backwards 20 main commits; girt n=6 range=836.895..957.089ms; stock n=6 range=761.661..832.070ms; git n=6 range=568.452..803.662ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "rebase",
+    "variant": "bookmark",
+    "girt_ms": 121.38443696312606,
+    "girt_rss_mb": 25.625,
+    "stock_ms": 115.84022967144847,
+    "stock_rss_mb": 25.046875,
+    "git_ms": 102.14035399258137,
+    "git_rss_mb": 11.359375,
+    "ratio_vs_stock": 1.0478608105957865,
+    "notes": "whole 10-commit topic bookmark onto main advanced by one empty commit; girt n=6 range=118.019..124.983ms; stock n=6 range=112.971..117.885ms; git n=6 range=96.127..105.641ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "restore",
+    "variant": "default",
+    "girt_ms": 182.10960342548788,
+    "girt_rss_mb": 37.328125,
+    "stock_ms": 166.11175006255507,
+    "stock_rss_mb": 37.015625,
+    "git_ms": 55.219624657183886,
+    "git_rss_mb": 26.640625,
+    "ratio_vs_stock": 1.0963077768845868,
+    "notes": "100 tracked files restored; girt n=6 range=168.859..200.031ms; stock n=6 range=163.693..191.575ms; git n=6 range=51.266..57.651ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "show",
+    "variant": "default",
+    "girt_ms": 59.01587475091219,
+    "girt_rss_mb": 43.15625,
+    "stock_ms": 56.83889542706311,
+    "stock_rss_mb": 35.734375,
+    "git_ms": 25.85183340124786,
+    "git_rss_mb": 26.21875,
+    "ratio_vs_stock": 1.0383008731519532,
+    "notes": "girt n=6 range=54.274..62.580ms; stock n=6 range=52.132..64.331ms; git n=6 range=24.628..27.876ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "split",
+    "variant": "default",
+    "girt_ms": 75.78149996697903,
+    "girt_rss_mb": 25.453125,
+    "stock_ms": 67.44622904807329,
+    "stock_rss_mb": 24.921875,
+    "git_ms": 98.60497922636569,
+    "git_rss_mb": 9.65625,
+    "ratio_vs_stock": 1.1235839428912275,
+    "notes": "noninteractive fileset split; Git stages and commits the same partition in two commits; girt n=6 range=68.819..86.869ms; stock n=6 range=65.812..69.631ms; git n=6 range=93.833..101.961ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "squash",
+    "variant": "default",
+    "girt_ms": 77.2396249230951,
+    "girt_rss_mb": 25.390625,
+    "stock_ms": 68.07056278921664,
+    "stock_rss_mb": 24.609375,
+    "git_ms": 69.88200009800494,
+    "git_rss_mb": 9.203125,
+    "ratio_vs_stock": 1.1346993730942236,
+    "notes": "girt n=6 range=67.041..90.832ms; stock n=6 range=64.996..69.386ms; git n=6 range=68.645..71.486ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "status",
+    "variant": "clean",
+    "girt_ms": 19.76681244559586,
+    "girt_rss_mb": 24.078125,
+    "stock_ms": 18.637937726452947,
+    "stock_rss_mb": 23.171875,
+    "git_ms": 13.919937424361706,
+    "git_rss_mb": 9.46875,
+    "ratio_vs_stock": 1.0605686495851252,
+    "notes": "girt n=6 range=18.887..26.087ms; stock n=6 range=17.525..22.369ms; git n=6 range=13.068..59.597ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "status",
+    "variant": "many-edits",
+    "girt_ms": 168.4616666752845,
+    "girt_rss_mb": 39.59375,
+    "stock_ms": 138.0253538955003,
+    "stock_rss_mb": 37.859375,
+    "git_ms": 18.464874243363738,
+    "git_rss_mb": 9.25,
+    "ratio_vs_stock": 1.2205124777497596,
+    "notes": "208 tracked files edited; girt n=6 range=150.169..185.752ms; stock n=6 range=134.312..150.079ms; git n=6 range=15.780..21.247ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "status",
+    "variant": "small-edit",
+    "girt_ms": 77.28720852173865,
+    "girt_rss_mb": 25.78125,
+    "stock_ms": 70.39487501606345,
+    "stock_rss_mb": 25.109375,
+    "git_ms": 53.33220772445202,
+    "git_rss_mb": 9.484375,
+    "ratio_vs_stock": 1.0979095921983302,
+    "notes": "girt n=6 range=66.962..88.367ms; stock n=6 range=68.120..75.092ms; git n=6 range=52.647..55.340ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "status",
+    "variant": "untracked",
+    "girt_ms": 2579.322687117383,
+    "girt_rss_mb": 43.078125,
+    "stock_ms": 1846.5009788051248,
+    "stock_rss_mb": 38.8125,
+    "git_ms": 54.794187657535076,
+    "git_rss_mb": 9.5,
+    "ratio_vs_stock": 1.3968704683744435,
+    "notes": "10000 identical-content untracked files across 100 directories; duplicate-blob workload; girt n=6 range=2548.992..2653.552ms; stock n=6 range=1791.979..1970.438ms; git n=6 range=52.620..60.608ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "status",
+    "variant": "untracked-unique",
+    "girt_ms": 2904.828666243702,
+    "girt_rss_mb": 43.34375,
+    "stock_ms": 2497.6452083792537,
+    "stock_rss_mb": 44.65625,
+    "git_ms": 52.631666883826256,
+    "git_rss_mb": 9.46875,
+    "ratio_vs_stock": 1.1630269409355678,
+    "notes": "10000 unique-content untracked files across 100 directories; new-blob workload; girt n=6 range=2887.001..4551.718ms; stock n=6 range=2427.360..2585.337ms; git n=6 range=51.320..356.188ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "undo",
+    "variant": "default",
+    "girt_ms": 57.07777105271816,
+    "girt_rss_mb": 24.890625,
+    "stock_ms": 48.851936822757125,
+    "stock_rss_mb": 24.0,
+    "git_ms": null,
+    "git_rss_mb": null,
+    "ratio_vs_stock": 1.1683829703580786,
+    "notes": "Git has no operation undo equivalent; girt n=6 range=48.421..66.812ms; stock n=6 range=46.350..50.805ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  },
+  {
+    "repo": "jj-historic",
+    "size": "small",
+    "op": "workspace add",
+    "variant": "full-checkout",
+    "girt_ms": 200.43985452502966,
+    "girt_rss_mb": 39.734375,
+    "stock_ms": 190.78785413876176,
+    "stock_rss_mb": 30.8125,
+    "git_ms": 69.20470856130123,
+    "git_rss_mb": 27.40625,
+    "ratio_vs_stock": 1.0505902245708363,
+    "notes": "full additional worktree checkout; girt n=6 range=166.223..214.233ms; stock n=6 range=180.568..233.370ms; git n=6 range=59.002..90.166ms",
+    "binary_fingerprints": {
+      "girt": [
+        "21fc3f87f9a4555fc4bea41d915496c6e5073c6053021eb10c2b35dbaea175d5"
+      ],
+      "stock": [
+        "a4df47acb05946ca006f169a722466fae4e9c372ef777dc2d645356842281da2"
+      ]
+    }
+  }
+]

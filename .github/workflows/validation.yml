@@ -47,6 +47,16 @@ concurrency:
   queue: max
 
 jobs:
+  jj-performance-page:
+    name: jj performance page freshness
+    runs-on: ubuntu-26.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/jj-e2e/render-performance.py --check
+
   msrv:
     name: MSRV (1.97.1)
     needs: changes
@@ -694,6 +704,7 @@ jobs:
     name: required
     if: ${{ always() }}
     needs:
+      - jj-performance-page
       - msrv
       - unix
       - windows

@@ -10,7 +10,10 @@
 set -euo pipefail
 
 JJ=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
-WORK=${2:-$(mktemp -d)}
+BENCH_HOME=${GIRT_BENCH_HOME:-$HOME/tmp/girt-bench}
+mkdir -p "$BENCH_HOME/tmp"
+export TMPDIR="$BENCH_HOME/tmp"
+WORK=${2:-$(mktemp -d "$BENCH_HOME/e2e.XXXXXX")}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd -P)
