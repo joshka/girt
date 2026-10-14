@@ -254,6 +254,9 @@ pub mod config;
 pub mod content_diff;
 mod edges;
 pub mod fetch;
+#[cfg(any(fuzzing, test))]
+#[doc(hidden)]
+pub mod fuzzing;
 mod history;
 pub mod ignore;
 pub mod index;

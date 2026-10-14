@@ -783,14 +783,17 @@ complete A19 with an unsafe destructive call or a hidden Git GC fallback.
 
 ### B10 — Long-Horizon Fuzzing
 
-**Size:** L. **Status:** Deferred; not an initial-publication gate. **Owner:** Post-release
-correctness work. Start with format parsers and protocol decoding, then fault-driven stateful
-operation sequences where they add coverage beyond deterministic tests. Prioritize malformed bytes,
-resource limits and partial-operation recovery; preserve original fixture provenance.
+**Size:** L. **Status:** Format-parser and protocol-decoding fuzzing is active
+([#157](https://github.com/joshka/girt/issues/157); see [Fuzzing](../CONTRIBUTING.md#fuzzing)).
+Fault-driven stateful operation sequences remain deferred; not an initial-publication gate.
+**Owner:** Post-release correctness work. Add operation-sequence fuzzing where it adds coverage
+beyond deterministic tests. Prioritize malformed bytes, resource limits and partial-operation
+recovery; preserve original fixture provenance.
 
-Restart after the initial jj-backed release or when a concrete defect identifies an underserved
-input boundary. Retain reproducible crash inputs and regression tests, bounded fuzz budgets and a
-clear triage path. Fuzzing supplements independent Git observations and does not replace them.
+Restart stateful fuzzing after the initial jj-backed release or when a concrete defect identifies an
+underserved input boundary. Retain reproducible crash inputs and regression tests, bounded fuzz
+budgets and a clear triage path. Fuzzing supplements independent Git observations and does not
+replace them.
 
 ### B11 — Partial-Clone Promisor Object Reads
 

@@ -73,6 +73,37 @@ the MSRV and platform test jobs report as skipped. Any other path runs them. Its
 the single merge gate: it fails when any other CI job fails or is cancelled, and treats skipped jobs
 as passing. Add new CI jobs to its `needs` list.
 
+## Fuzzing
+
+The [`fuzz/`](fuzz) crate holds cargo-fuzz (libFuzzer) targets for parsers of untrusted input. Each
+target calls a bounded entry point in `girt::fuzzing`, a module compiled only under `cfg(fuzzing)`.
+A panic, unbounded allocation or hang is a finding. The crate is excluded from the published package
+and needs a nightly toolchain:
+
+```sh
+cargo install cargo-fuzz --locked
+fuzz/seed.py              # seed fuzz/corpus from repositories built by the installed Git
+fuzz/run.sh 60            # fuzz every target for 60 seconds
+fuzz/run.sh 600 pack      # fuzz one target for longer
+```
+
+`fuzz/seed.py` builds SHA-1 and SHA-256 repositories with the installed Git and frames their bytes
+for each target; its header comment records seed provenance. `fuzz/run.sh` applies libFuzzer timeout
+and RSS limits and writes failing inputs to `fuzz/artifacts/<target>/`. On a shared machine, run
+campaigns longer than a minute under the timing lock that the [quality scorecard](docs/quality.md)
+uses:
+
+```sh
+until shlock -f /tmp/girt-timing.lock -p $$; do sleep 15; done
+trap 'rm -f /tmp/girt-timing.lock' EXIT
+fuzz/run.sh 3600
+```
+
+Reproduce a failure with `cargo +nightly fuzz run <target> <artifact>`. Fix it with a regression
+test in the ordinary test suite that does not depend on the fuzz crate. The
+[fuzz workflow](.github/workflows/fuzz.yml) runs `fuzz/run.sh 60` nightly and on manual dispatch,
+uploading any failing inputs. It is not a pull request gate.
+
 ## Implementation and Tests
 
 Each issue states its acceptance criteria. [Testing and Completion Criteria](docs/testing.md)

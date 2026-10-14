@@ -220,23 +220,7 @@ impl LooseObjects {
             id.require_format(self.format)?;
             let file = File::open(self.object_path(id))?;
             let mut encoded = decompress(file, max_size.saturating_add(32))?;
-            let (header, content) = crate::bytes::split_once(&encoded, 0)
-                .ok_or(Error::Corrupt("missing header terminator"))?;
-            let (kind, length) =
-                crate::bytes::split_once(header, b' ').ok_or(Error::Corrupt("invalid header"))?;
-            let kind = match kind {
-                b"blob" => ObjectKind::Blob,
-                b"tree" => ObjectKind::Tree,
-                b"commit" => ObjectKind::Commit,
-                b"tag" => ObjectKind::Tag,
-                _ => return Err(Error::UnknownObjectType),
-            };
-            if expected_kind.is_some_and(|expected| kind.as_str() != expected) {
-                return Err(Error::UnsupportedObjectType);
-            }
-            if length != content.len().to_string().as_bytes() {
-                return Err(Error::Corrupt("noncanonical or mismatched length"));
-            }
+            let (kind, content) = split_header(&encoded, expected_kind)?;
             if content.len() > max_size {
                 return Err(Error::TooLarge);
             }
@@ -427,7 +411,34 @@ pub enum Error {
 
 // Use the low-level inflater to require StreamEnd explicitly. A Read wrapper alone can accept EOF
 // before the zlib trailer; validating content length would not detect that truncation.
-fn decompress(file: File, limit: usize) -> Result<Vec<u8>, Error> {
+/// Splits an inflated loose object into its kind and exactly sized, canonically declared payload.
+///
+/// A kind other than `expected_kind` is reported before any length error.
+pub(crate) fn split_header<'a>(
+    encoded: &'a [u8],
+    expected_kind: Option<&str>,
+) -> Result<(ObjectKind, &'a [u8]), Error> {
+    let (header, content) =
+        crate::bytes::split_once(encoded, 0).ok_or(Error::Corrupt("missing header terminator"))?;
+    let (kind, length) =
+        crate::bytes::split_once(header, b' ').ok_or(Error::Corrupt("invalid header"))?;
+    let kind = match kind {
+        b"blob" => ObjectKind::Blob,
+        b"tree" => ObjectKind::Tree,
+        b"commit" => ObjectKind::Commit,
+        b"tag" => ObjectKind::Tag,
+        _ => return Err(Error::UnknownObjectType),
+    };
+    if expected_kind.is_some_and(|expected| kind.as_str() != expected) {
+        return Err(Error::UnsupportedObjectType);
+    }
+    if length != content.len().to_string().as_bytes() {
+        return Err(Error::Corrupt("noncanonical or mismatched length"));
+    }
+    Ok((kind, content))
+}
+
+pub(crate) fn decompress(file: impl Read, limit: usize) -> Result<Vec<u8>, Error> {
     let mut reader = BufReader::new(file);
     let mut inflater = Decompress::new(true);
     let mut encoded = Vec::new();
@@ -586,6 +597,19 @@ mod tests {
             objects.read_tree(id, 0),
             Err(Error::UnsupportedObjectType)
         ));
+    }
+
+    #[test]
+    fn reports_unexpected_kind_before_malformed_length() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = LooseObjects::new(root.path(), ObjectFormat::Sha1);
+        let id = ObjectId::for_object("blob", b"x");
+        install(&objects, id, b"blob 9\0x");
+        assert!(matches!(
+            objects.read_tree(id, 10),
+            Err(Error::UnsupportedObjectType)
+        ));
+        assert!(matches!(objects.read_blob(id, 10), Err(Error::Corrupt(_))));
     }
 
     #[rstest::rstest]

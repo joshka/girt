@@ -32,8 +32,14 @@ manually if needed. Partial-publication and release-recovery procedures are not 
 
 General performance parity with Git remains the goal under
 [A20](jj-acceptance.md#a20--representative-git-parity-performance). Report workload-specific gaps
-and retain their roadmap owners; a deferred optimization does not lower the goal. Long-horizon
-fuzzing is tracked as [B10](jj-roadmap.md#b10--long-horizon-fuzzing).
+and retain their roadmap owners; a deferred optimization does not lower the goal.
+
+Fuzz parsers of untrusted input before publication, reversing the earlier deferral. The goal is to
+keep panic and overflow bugs out of new parser code, not to audit a finished product. Nightly and
+manually dispatched CI runs about a minute per target, without gating pull requests; see
+[Fuzzing](../CONTRIBUTING.md#fuzzing). Each finding gets a fix and a regression test in the ordinary
+suite. Stateful operation-sequence fuzzing remains
+[B10](jj-roadmap.md#b10--long-horizon-fuzzing).
 
 ## R42 — Documentation Quality
 
