@@ -801,11 +801,15 @@ impl Repository {
         let objects = self
             .objects(crate::PackLimits::trusted())
             .map_err(TransferError::local)?;
-        let refs = self.references().map_err(TransferError::local)?;
-        let tips: Vec<ObjectId> = refs
-            .list()
+        // One listing supplies the have tips, force authorization and the snapshot every
+        // reference edit is conditional on.
+        let listed = self
+            .references()
             .map_err(TransferError::local)?
-            .into_iter()
+            .list()
+            .map_err(TransferError::local)?;
+        let tips: Vec<ObjectId> = listed
+            .iter()
             .filter_map(|reference| match reference.target {
                 crate::refs::Target::Direct(id) => Some(id),
                 crate::refs::Target::Symbolic(_) => None,
@@ -825,7 +829,7 @@ impl Repository {
                 TransferError::Fetch(Box::new(FetchWorkflowError::Transfer(error)))
             })?
         };
-        let request = || self.fetch_request(options);
+        let request = || self.fetch_request(options, listed.clone());
         let control = TransportControl::new(&cancel);
         #[cfg(feature = "http")]
         let mut on_message = |message: &[u8]| {
@@ -924,17 +928,17 @@ impl Repository {
         })
     }
 
-    fn fetch_request(&self, options: &FetchOptions) -> Result<FetchRequest, TransferError> {
+    fn fetch_request(
+        &self,
+        options: &FetchOptions,
+        listed: Vec<crate::refs::Reference>,
+    ) -> Result<FetchRequest, TransferError> {
         let specs = Refspecs::parse(Direction::Fetch, options.refspecs.iter())
             .map_err(|error| TransferError::Configuration(error.to_string()))?;
         // Forced refspecs may replace any existing destination, as with `git fetch`.
-        let authorized: BTreeSet<RefName> = self
-            .references()
-            .map_err(TransferError::local)?
-            .list()
-            .map_err(TransferError::local)?
-            .into_iter()
-            .map(|reference| reference.name)
+        let authorized: BTreeSet<RefName> = listed
+            .iter()
+            .map(|reference| reference.name.clone())
             .collect();
         let reflog = match &options.reflog {
             None => Reflog::Preserve,
@@ -943,8 +947,9 @@ impl Repository {
                 message: message.clone(),
             },
         };
-        let mut request = FetchRequest::prepare(self.clone(), specs, authorized, reflog)
-            .map_err(|error| TransferError::Fetch(Box::new(error.into())))?;
+        let mut request =
+            FetchRequest::prepare_listed(self.clone(), specs, authorized, reflog, listed)
+                .map_err(|error| TransferError::Fetch(Box::new(error.into())))?;
         if options.prune {
             // Pruned references lose their reflogs, as in Git.
             request = request.with_prune();

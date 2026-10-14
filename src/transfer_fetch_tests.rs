@@ -152,3 +152,74 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     }
     files
 }
+
+/// Runs `change` once, while the transfer validates the received pack: after the destination's
+/// references were listed and before any of them is updated.
+struct DuringTransfer<F: FnMut()>(Option<F>);
+
+impl<F: FnMut()> TransferCallbacks for DuringTransfer<F> {
+    fn validation_progress(&mut self, _progress: crate::fetch::ValidationProgress) {
+        if let Some(mut change) = self.0.take() {
+            change();
+        }
+    }
+}
+
+/// How a destination reference is changed by another writer during the transfer.
+#[derive(Clone, Copy, Debug)]
+enum Race {
+    /// A loose reference moves.
+    Update,
+    /// A reference absent at listing time appears.
+    Create,
+    /// A packed value is shadowed by a new loose value.
+    ShadowPacked,
+}
+
+/// A writer that changes a destination after the single listing makes the conditional update
+/// fail, and its value survives, whatever the reference's storage.
+#[rstest::rstest]
+#[case::update(Race::Update)]
+#[case::create(Race::Create)]
+#[case::shadow_packed(Race::ShadowPacked)]
+fn reference_changed_during_transfer_is_not_clobbered(#[case] race: Race) {
+    let (_root, origin, repository) = fetched("sha1");
+    let dest = repository.git_dir().to_owned();
+    let other = git(&origin, &["rev-parse", "v3^{commit}"])
+        .trim()
+        .to_owned();
+    let name = match race {
+        Race::Update | Race::ShadowPacked => "refs/remotes/origin/b5",
+        Race::Create => "refs/remotes/origin/fresh",
+    };
+    if let Race::Create = race {
+        git(&origin, &["branch", "fresh", "b7"]);
+    }
+    if let Race::ShadowPacked = race {
+        git(&dest, &["pack-refs", "--all"]);
+        assert!(!dest.join(name).exists());
+    }
+    std::fs::write(origin.join("file"), "moved\n").unwrap();
+    git(&origin, &["commit", "-qam", "moved"]);
+    git(&origin, &["branch", "-f", "b5", "HEAD"]);
+
+    let mut callbacks = DuringTransfer(Some(|| {
+        git(&dest, &["update-ref", name, &other]);
+    }));
+    let result = repository.fetch(
+        "origin",
+        &FetchOptions::new(SPECS).prune(true),
+        &Environment::from_process(),
+        &mut callbacks,
+    );
+    assert!(
+        callbacks.0.is_none(),
+        "the change must run during the transfer"
+    );
+    assert!(
+        matches!(result, Err(TransferError::FetchFinish(_))),
+        "{result:?}"
+    );
+    assert_eq!(git(&dest, &["rev-parse", name]).trim(), other);
+    git(&dest, &["fsck", "--strict", "--no-dangling"]);
+}

@@ -12,7 +12,7 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::store::{check_path, io_error, malformed, parse_loose, read_optional};
+use super::store::{check_path, io_error, malformed, parse_loose};
 use super::{RefName, ReferenceError, ReferenceObservation, References, Target};
 
 /// A full reference name and its stored target, without symbolic resolution or tag peeling.
@@ -422,10 +422,16 @@ fn collect_loose(
         } else if selected(&bytes, namespace) {
             let name = RefName::new(bytes)
                 .map_err(|_| malformed(&path, "invalid loose reference name"))?;
+            // The walk has checked every directory below the canonical root and this entry's own
+            // metadata, so the leaf is read without walking its ancestors again.
+            if !metadata.is_file() {
+                return Err(ReferenceError::Unsupported("non-regular reference file"));
+            }
             let value = if let Some(budget) = budget.as_deref_mut() {
-                read_limited(&path, budget)?
+                budget.check()?;
+                read_limited_walked(&path, budget)?
             } else {
-                read_optional(&path)?
+                read_walked(&path)?
             };
             if let Some(bytes) = value {
                 let target = parse_loose(format, &bytes, &path)?;
@@ -441,6 +447,57 @@ fn collect_loose(
         }
     }
     Ok(())
+}
+
+/// Reads a loose reference file whose path the enumeration walk has already checked.
+fn read_walked(path: &Path) -> Result<Option<Vec<u8>>, ReferenceError> {
+    let Some(file) = open_walked(path)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    (&file)
+        .read_to_end(&mut bytes)
+        .map_err(|source| io_error(path, source))?;
+    Ok(Some(bytes))
+}
+
+/// Opens a reference file the enumeration walk found below directories it already checked.
+///
+/// The walk's metadata may be stale by the time the leaf is opened, so the open itself refuses a
+/// leaf replaced by a symlink and never blocks on a special file, and the opened handle must be a
+/// regular file. Hosts without such an open fall back to checking every ancestor first. This keeps
+/// the trusted-directory contract of [`check_path`]; it is not a sandbox against ancestor swaps.
+fn open_walked(path: &Path) -> Result<Option<fs::File>, ReferenceError> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let opened = {
+        use std::os::unix::fs::OpenOptionsExt;
+        let flags = rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(flags.bits() as i32)
+            .open(path)
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let opened = {
+        check_path(path)?;
+        fs::File::open(path)
+    };
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        Err(error) if error.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) => {
+            return Err(ReferenceError::Unsupported(
+                "filesystem symlink in reference path",
+            ));
+        }
+        Err(source) => return Err(io_error(path, source)),
+    };
+    let metadata = file.metadata().map_err(|source| io_error(path, source))?;
+    if !metadata.is_file() {
+        return Err(ReferenceError::Unsupported("non-regular reference file"));
+    }
+    Ok(Some(file))
 }
 
 struct ScanBudget<'a> {
@@ -478,6 +535,25 @@ fn read_limited(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(io_error(path, source)),
     };
+    read_bounded(file, path, budget)
+}
+
+/// Reads like [`read_limited`] a loose reference whose path the enumeration walk already checked.
+fn read_limited_walked(
+    path: &Path,
+    budget: &mut ScanBudget<'_>,
+) -> Result<Option<Vec<u8>>, ReferenceError> {
+    let Some(file) = open_walked(path)? else {
+        return Ok(None);
+    };
+    read_bounded(file, path, budget)
+}
+
+fn read_bounded(
+    file: impl Read,
+    path: &Path,
+    budget: &mut ScanBudget<'_>,
+) -> Result<Option<Vec<u8>>, ReferenceError> {
     let mut bytes = Vec::new();
     file.take(budget.bytes.saturating_add(1) as u64)
         .read_to_end(&mut bytes)
@@ -619,7 +695,9 @@ mod tests {
     }
 
     /// Listing walks `refs/` once, checking each directory and file as it goes. It must not walk
-    /// every ancestor again for each loose reference.
+    /// every ancestor again for each loose reference. Hosts without a no-follow open keep the
+    /// per-reference check by design.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn listing_does_not_recheck_ancestors_per_reference() {
         let (_root, repo) = fixture();
@@ -638,6 +716,66 @@ mod tests {
             crate::refs::store::PATH_CHECKS.with(std::cell::Cell::get),
             1
         );
+    }
+
+    /// The walk saw a regular file, but by the time the leaf opens it has been replaced. A symlink
+    /// is refused without reading its target, and a FIFO is refused without blocking.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn walked_open_refuses_replaced_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, b"1111111111111111111111111111111111111111\n").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(matches!(
+            read_walked(&link),
+            Err(ReferenceError::Unsupported(_))
+        ));
+        let fifo = dir.path().join("fifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        assert!(matches!(
+            read_walked(&fifo),
+            Err(ReferenceError::Unsupported(_))
+        ));
+        let mut budget = ScanBudget {
+            entries: 1,
+            bytes: 1000,
+            cancel: &std::sync::atomic::AtomicBool::new(false),
+        };
+        assert!(matches!(
+            read_limited_walked(&link, &mut budget),
+            Err(ReferenceError::Unsupported(_))
+        ));
+        assert_eq!(read_walked(&dir.path().join("gone")).unwrap(), None);
+    }
+
+    /// Reads continue to end of file however few bytes each read returns.
+    #[test]
+    fn bounded_read_collects_short_reads() {
+        struct Trickle<'a>(&'a [u8]);
+        impl Read for Trickle<'_> {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                let Some((&first, rest)) = self.0.split_first() else {
+                    return Ok(0);
+                };
+                output[0] = first;
+                self.0 = rest;
+                Ok(1)
+            }
+        }
+        let content = b"ref: refs/heads/main\n";
+        let mut budget = ScanBudget {
+            entries: 1,
+            bytes: 1000,
+            cancel: &std::sync::atomic::AtomicBool::new(false),
+        };
+        let read = read_bounded(Trickle(content), Path::new("ref"), &mut budget).unwrap();
+        assert_eq!(read.unwrap(), content);
     }
 
     #[cfg(unix)]

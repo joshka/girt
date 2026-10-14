@@ -91,13 +91,40 @@ impl FetchRequest {
         authorized_force: BTreeSet<RefName>,
         reflog: Reflog,
     ) -> Result<Self, FetchPlanError> {
+        Self::prepare_from(repository, specs, authorized_force, reflog, |repository| {
+            Ok(repository.references()?.list()?)
+        })
+    }
+
+    /// Prepares like [`Self::prepare`] from a reference listing the caller already took.
+    ///
+    /// The listing becomes the snapshot every edit is conditional on, so it must come from this
+    /// repository, and the caller must take it no earlier than anything else it derived from it.
+    pub(crate) fn prepare_listed(
+        repository: Repository,
+        specs: Refspecs,
+        authorized_force: BTreeSet<RefName>,
+        reflog: Reflog,
+        references: Vec<crate::refs::Reference>,
+    ) -> Result<Self, FetchPlanError> {
+        Self::prepare_from(repository, specs, authorized_force, reflog, |_| {
+            Ok(references)
+        })
+    }
+
+    fn prepare_from(
+        repository: Repository,
+        specs: Refspecs,
+        authorized_force: BTreeSet<RefName>,
+        reflog: Reflog,
+        list: impl FnOnce(&Repository) -> Result<Vec<crate::refs::Reference>, FetchPlanError>,
+    ) -> Result<Self, FetchPlanError> {
         if specs.direction() != Direction::Fetch {
             return Err(FetchPlanError::Mapping(MappingError::Direction));
         }
         super::worktree::check(&repository)?;
-        let snapshot = repository
-            .references()?
-            .list()?
+        let references = list(&repository)?;
+        let snapshot = references
             .into_iter()
             .map(|reference| (reference.name, reference.target))
             .collect();
