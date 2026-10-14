@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use girt::{ObjectId, Repository};
+use girt::{ObjectFormat, ObjectId, Repository};
 fn run(directory: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
@@ -47,10 +47,14 @@ pub struct History {
 }
 impl History {
     pub fn new(parents: &[Vec<usize>], packed: bool) -> Self {
+        Self::with_format(parents, packed, ObjectFormat::Sha1)
+    }
+    pub fn with_format(parents: &[Vec<usize>], packed: bool, format: ObjectFormat) -> Self {
+        let format = format!("--object-format={format}");
         let root = tempfile::tempdir().unwrap();
         git(
             root.path(),
-            &["init", "--bare", "--object-format=sha1", "--template=", "."],
+            &["init", "--bare", &format, "--template=", "."],
             b"",
         );
         let tree = git(root.path(), &["mktree"], b"");
