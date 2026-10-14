@@ -1022,6 +1022,17 @@ transfer, verified external thin-pack bases, and explicit shallow/depth negotiat
 [R27 evidence](evidence/r27.md) for the current supported boundary. The original test and resource
 claims below describe that earlier revision.
 
+Protocol v2 ([#158](https://github.com/joshka/girt/issues/158)) is supported on caller-owned
+streams, smart HTTP and Unix SSH. `Repository` workflows request the `protocol.version` value (v2
+when unset, as Git does) and accept a v0/v1 answer. A v2 session reads the capability advertisement,
+lists references with one `ls-refs` (`peel`, `symrefs`, advertised `unborn`, optional `ref-prefix`),
+then sends one `fetch` command with wants, `shallow`/`deepen`, up to 32 verified haves and `done`.
+The response may contain `shallow-info` and must then contain `packfile`; `acknowledgments` after
+`done`, `wanted-refs`, `packfile-uris` and unknown sections fail. Received packs take the same
+validation and installation path as v0. `filter`, `include-tag`, `want-ref`, `packfile-uris`,
+`sideband-all`, `server-option` and additional negotiation rounds are not requested. Receive-pack
+(push) always speaks v0/v1.
+
 `fetch::receive` implements a single protocol v0 upload-pack session over blocking `Read`/`Write`
 streams. `fetch::receive_local` is the local transport adapter: it starts a trusted local
 `git upload-pack` server. It does not use `git fetch`, `fetch-pack`, `index-pack`, or Git parsers on

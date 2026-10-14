@@ -15,6 +15,7 @@ mod ssh_transfer_observers;
 #[path = "support/stand_in.rs"]
 mod stand_in;
 
+use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -1568,7 +1569,11 @@ fn unsolicited_v2_answer_is_rejected_before_any_command(#[case] requested: Reque
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let rt = runtime();
-    let discovered = rt.block_on(fetch::discover_ssh(&remote, FetchLimits::default(), control));
+    let discovered = rt.block_on(fetch::discover_ssh(
+        &remote,
+        FetchLimits::default(),
+        control,
+    ));
     assert!(matches!(
         discovered,
         Err(FetchError::Unsupported("protocol version"))
@@ -1587,4 +1592,66 @@ fn unsolicited_v2_answer_is_rejected_before_any_command(#[case] requested: Reque
     let trace = std::fs::read_to_string(server.root.join("trace")).unwrap();
     assert!(trace.contains("version 2"));
     assert!(!trace.contains("command="), "no v2 command was sent");
+}
+
+#[rstest]
+#[case::default_is_v2(None, "version=2")]
+#[case::v0(Some("0"), "")]
+fn repository_workflow_fetches_with_protocol_version(
+    #[case] version: Option<&str>,
+    #[case] sent: &str,
+) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "none");
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            "--initial-branch=main",
+            ".",
+        ],
+        b"",
+    );
+    let url = format!(
+        "ssh://{}@127.0.0.1:{}{}",
+        server.user, server.port, server.repository
+    );
+    git(root.path(), &["remote", "add", "origin", &url], b"");
+    if let Some(version) = version {
+        git(root.path(), &["config", "protocol.version", version], b"");
+    }
+    let repo = Repository::open(root.path()).unwrap();
+    let config = server.root.join("config");
+    let environment: girt::transfer::Environment = [
+        (OsString::from("PATH"), std::env::var_os("PATH").unwrap()),
+        (
+            OsString::from("GIT_SSH_COMMAND"),
+            OsString::from(format!("ssh -F {}", config.display())),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut callbacks = girt::transfer::NoCallbacks;
+    let head = repo
+        .remote_head("origin", &environment, &mut callbacks)
+        .unwrap();
+    assert!(matches!(head, fetch::RemoteHead::Symbolic { .. }));
+    repo.fetch(
+        "origin",
+        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    assert_eq!(
+        tip(&repo, "refs/remotes/origin/main"),
+        tip(&f.repo, "refs/heads/main")
+    );
+    // Discovery and fetch each start one upload-pack session.
+    let protocols = std::fs::read_to_string(server.root.join("protocols")).unwrap();
+    assert_eq!(protocols, format!("{sent}\n{sent}\n"));
+    git(repo.git_dir(), &["fsck", "--full"], b"");
 }

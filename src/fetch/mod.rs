@@ -44,9 +44,10 @@
 //! outside this boundary.
 //! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
 //! [`discover_session`] report references, object format and deterministic HEAD interpretation
-//! without transferring objects. The owned network endpoints currently request v0; caller-owned
-//! streams accept v0, v1 and v2. Wire transfer supports both object formats. A
-//! preview can become stale and never authorizes a later mutation.
+//! without transferring objects. The owned network endpoints request v0 unless given another
+//! [`crate::transport::RequestedProtocol`]; `Repository` workflows follow `protocol.version`, v2 by
+//! default. Every adapter accepts v0, v1 and v2 answers. Wire transfer supports both object
+//! formats. A preview can become stale and never authorizes a later mutation.
 //! The `http` and `ssh` features add owned async network downloads with separate synchronous
 //! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
 //! a caller-managed blocking worker without borrowing its initiating scope.

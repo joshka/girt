@@ -33,7 +33,6 @@ Tests may use gix and the Git executable only as oracles and fixture builders.
 Explicitly excluded; recorded as limitations, not counted as parity:
 
 - Windows (girt's own CI passes on Windows; jj on girt is untested there).
-- Servers that support only protocol v2 for fetch.
 - Partial clone and filters.
 - Submodule recursion.
 - `git-remote-*` helpers.

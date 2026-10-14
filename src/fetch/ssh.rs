@@ -182,8 +182,14 @@ pub async fn receive_ssh_with_progress(
         let history = known.as_deref().unwrap_or(&empty);
         protocol::validate_known(history, limits, control.cancel)?;
         let mut session = remote.connect("git-upload-pack", control)?;
-        let (advertisement, dialect, _, used) =
-            open(&mut session, remote.protocol(), limits, control, &mut diagnostics).await?;
+        let (advertisement, dialect, _, used) = open(
+            &mut session,
+            remote.protocol(),
+            limits,
+            control,
+            &mut diagnostics,
+        )
+        .await?;
         let wants = select(&advertisement);
         if depth.is_none()
             && known
