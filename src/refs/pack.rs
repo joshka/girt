@@ -421,6 +421,76 @@ fn prune(format: crate::ObjectFormat, candidate: &Candidate) -> Result<bool, Ref
     }
 }
 
+impl crate::Repository {
+    /// Runs Git's automatic pack-refs maintenance task: packs every shared direct reference with
+    /// [`PackRefsOptions::AUTO`] when configuration enables the task.
+    ///
+    /// Git runs this task after porcelain commands that write references, such as `git fetch`
+    /// and `git commit`. [`Self::fetch`] runs it itself; call this after other batches of
+    /// reference writes so readers enumerate one `packed-refs` file instead of many loose files.
+    ///
+    /// As observed with Git 2.56, the task is enabled when `maintenance.auto` is true or, if
+    /// unset, when `gc.auto` is positive (the default), and when `maintenance.pack-refs.enabled`
+    /// is true or, if unset, `maintenance.strategy` is unset or `geometric`. An invalid or
+    /// unrecognized value disables the task, as it makes Git's maintenance fail.
+    ///
+    /// Returns `None` when configuration disables the task. A report with `rewritten` false means
+    /// too few references were loose.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`References::pack`], including [`ReferenceError::Locked`] when
+    /// another process holds `packed-refs.lock`; Git's task skips packing then.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, PackLimits, Repository};
+    /// # let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let report = repo.auto_pack_references(&objects)?;
+    /// // Enabled by default, but nothing is loose yet.
+    /// assert!(!report.is_some_and(|report| report.rewritten));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn auto_pack_references(
+        &self,
+        objects: &Objects,
+    ) -> Result<Option<PackRefsReport>, PackRefsError> {
+        if !auto_pack_enabled(self.config()) {
+            return Ok(None);
+        }
+        self.references()?
+            .pack(objects, PackRefsOptions::AUTO)
+            .map(Some)
+    }
+}
+
+/// Whether Git's automatic maintenance would run its pack-refs task with this configuration.
+fn auto_pack_enabled(config: &crate::Config) -> bool {
+    let automatic = match config.boolean("maintenance", None, "auto") {
+        Ok(Some(enabled)) => enabled,
+        Ok(None) => matches!(config.integer("gc", None, "auto"), Ok(None | Some(1..))),
+        Err(_) => return false,
+    };
+    // Git 2.56 rejects an unknown strategy, including `none`, even when the task is configured
+    // explicitly.
+    let strategy = match config.string("maintenance", None, "strategy") {
+        None | Some(b"geometric") => true,
+        Some(b"gc" | b"incremental") => false,
+        Some(_) => return false,
+    };
+    let task = match config.boolean("maintenance", Some(b"pack-refs"), "enabled") {
+        Ok(Some(enabled)) => enabled,
+        Ok(None) => strategy,
+        Err(_) => return false,
+    };
+    automatic && task
+}
+
 /// Minimum loose candidate count for [`PackTrigger::Auto`], from the `packed-refs` size.
 fn auto_threshold(packed_bytes: usize) -> usize {
     const BASE: f64 = 12_288.0;

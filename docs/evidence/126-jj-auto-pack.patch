@@ -1,0 +1,46 @@
+diff --git a/cli/src/cli_util.rs b/cli/src/cli_util.rs
+index 749f23d57c..af573256f5 100644
+--- a/cli/src/cli_util.rs
++++ b/cli/src/cli_util.rs
+@@ -2409,6 +2409,8 @@ async fn finish_transaction(
+                 .maybe_commit_transaction(tx, description)
+                 .await?,
+         );
++        #[cfg(feature = "git")]
++        jj_lib::git::auto_pack_refs(self.user_repo.repo.store());
+ 
+         // Update working copy before reporting repo changes, so that
+         // potential errors while reporting changes (broken pipe, etc)
+diff --git a/lib/src/git.rs b/lib/src/git.rs
+index d61d5b5c68..410edffb58 100644
+--- a/lib/src/git.rs
++++ b/lib/src/git.rs
+@@ -624,6 +624,28 @@ struct RefsToImport {
+     failed_ref_names: Vec<BString>,
+ }
+ 
++/// Runs Git's automatic pack-refs maintenance task, as Git porcelain does after
++/// writing references.
++///
++/// Packing keeps ref enumeration cheap after jj writes many refs, such as
++/// `refs/jj/keep/*`. Like Git, failures (for example, another process holding
++/// `packed-refs.lock`) are logged and otherwise ignored.
++pub fn auto_pack_refs(store: &Store) {
++    let Ok(git_backend) = get_git_backend(store) else {
++        return;
++    };
++    let repo = git_backend.git_repo();
++    let result = match repo.objects(girt::PackLimits::trusted()) {
++        Ok(objects) => repo
++            .auto_pack_references(&objects)
++            .map_err(|err| err.to_string()),
++        Err(err) => Err(err.to_string()),
++    };
++    if let Err(err) = result {
++        tracing::debug!(%err, "skipped packing Git refs");
++    }
++}
++
+ /// Reflect changes made in the underlying Git repo in the Jujutsu repo.
+ ///
+ /// This function detects conflicts (if both Git and JJ modified a bookmark) and
