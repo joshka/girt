@@ -275,7 +275,7 @@ pub enum CredentialError {
 /// use girt::Config;
 /// use girt::remote::{CredentialContext, CredentialSession, Prompt};
 ///
-/// let config = Config::parse(b"").unwrap();
+/// let config = Config::parse(b"")?;
 /// let context = CredentialContext::new(b"https".to_vec(), b"example.invalid".to_vec())
 ///     .with_path(Some(b"repo".to_vec()))
 ///     .with_use_http_path(false);
@@ -287,9 +287,9 @@ pub enum CredentialError {
 ///         _ => return None,
 ///     })
 /// };
-/// let session =
-///     CredentialSession::fill(&config, context, &[], Some(&mut prompt), &cancel, None).unwrap();
+/// let session = CredentialSession::fill(&config, context, &[], Some(&mut prompt), &cancel, None)?;
 /// assert!(session.credential().complete());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct CredentialSession {
     context: CredentialContext,
@@ -311,6 +311,14 @@ impl CredentialSession {
     /// for every remaining helper; shell snippets and helpers that internally invoke Git require
     /// explicit application handling. Prompt is called with `Username` or `Password`, and can
     /// return `None` to cancel. No process is started when `cancel` is already set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialError`] for malformed context/configuration/helper responses, unapproved
+    /// helpers, process or store I/O, cancellation or deadline expiry. A prompt returning `None`
+    /// reports cancellation. Nonzero helper exits are retained in [`Self::helper_failures`] while
+    /// later helpers are tried; success does not guarantee complete credentials when no prompt is
+    /// supplied.
     pub fn fill(
         config: &Config,
         mut context: CredentialContext,
@@ -429,6 +437,12 @@ impl CredentialSession {
     }
 
     /// Notify all selected helpers after successful authentication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialError`] for invalid protocol bytes, helper/store I/O, unsuccessful
+    /// helper exit, cancellation or deadline expiry. Earlier helpers may already have stored
+    /// credentials; notifications are sequential and are not rolled back.
     pub fn approve(
         &self,
         cancel: &AtomicBool,
@@ -438,6 +452,12 @@ impl CredentialSession {
     }
 
     /// Notify all selected helpers after rejected authentication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialError`] for invalid protocol bytes, helper/store I/O, unsuccessful
+    /// helper exit, cancellation or deadline expiry. Earlier helpers may already have erased
+    /// credentials; notifications are sequential and are not rolled back.
     pub fn reject(
         &self,
         cancel: &AtomicBool,
@@ -483,6 +503,12 @@ pub enum Prompt {
 }
 
 /// Run an explicitly approved askpass executable for one prompt; `None` means user cancellation.
+///
+/// # Errors
+///
+/// Returns [`CredentialError::Protocol`] for NUL, CR or LF in the question, or process/protocol,
+/// exit, cancellation or deadline errors while running the approved executable. An empty answer
+/// is successful user cancellation (`Ok(None)`); the executable may already have run on failure.
 pub fn askpass(
     program: &CredentialProgram,
     question: &str,

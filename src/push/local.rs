@@ -149,6 +149,12 @@ impl<'a> LocalPushContext<'a> {
 /// Uses [`send_local_with_control`]'s partial-outcome contract. The supplied configuration is
 /// resolved before any object installation or reference publication. Unsupported receive policy
 /// refuses before any hook or object installation.
+///
+/// # Errors
+///
+/// Returns [`send_local_with_control`]'s storage, validation, policy, hook, cancellation and
+/// publication errors, plus errors resolving the supplied configuration. Inspect the retained
+/// partial outcomes before retrying: objects or references may already have been published.
 pub fn send_local_with_context(
     destination: impl AsRef<Path>,
     prepared: &PreparedPush,

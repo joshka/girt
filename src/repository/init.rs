@@ -168,7 +168,7 @@ impl Repository {
     ///     root.path().join("project"),
     ///     InitKind::Worktree,
     /// )?;
-    /// let nested = repo.worktree().unwrap().join("src");
+    /// let nested = repo.worktree().ok_or("worktree absent")?.join("src");
     /// std::fs::create_dir(&nested)?;
     /// assert_eq!(Repository::discover(&nested)?.git_dir(), repo.git_dir());
     /// # Ok::<(), Box<dyn std::error::Error>>(())

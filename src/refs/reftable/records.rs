@@ -169,7 +169,19 @@ pub enum Error {
 ///
 /// Reference operations use [`RefName`]; the wider binary codec also preserves names such as
 /// `ORIG_HEAD` while compacting a private worktree stack.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+///
+/// ```
+/// use girt::refs::RefName;
+/// use girt::refs::reftable::RecordName;
+///
+/// let record = RecordName::from(RefName::new(b"refs/heads/topic")?);
+/// assert_eq!(record.as_ref(), b"refs/heads/topic");
+/// let pseudoref = RecordName::new(b"ORIG_HEAD")?;
+/// assert!(pseudoref.reference_name().is_none());
+/// assert_eq!(pseudoref.into_bytes(), b"ORIG_HEAD");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct RecordName(Vec<u8>);
 
 impl RecordName {
@@ -193,20 +205,46 @@ impl RecordName {
         &self.0
     }
 
+    /// Returns the exact name bytes, consuming the name without copying its buffer.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
     /// Interprets a name within the public `HEAD`/`refs/` operation namespace.
     pub fn reference_name(&self) -> Option<RefName> {
         RefName::new(&self.0).ok()
     }
 }
 
+impl AsRef<[u8]> for RecordName {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 impl From<RefName> for RecordName {
     fn from(name: RefName) -> Self {
-        Self(name.as_bytes().to_vec())
+        Self(name.into_bytes())
     }
 }
 
 impl PartialEq<RefName> for RecordName {
     fn eq(&self, other: &RefName) -> bool {
         self.as_bytes() == other.as_bytes()
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn reference_conversion_transfers_non_utf8_buffer() {
+        let reference = RefName::new(b"refs/heads/\xff").unwrap();
+        let pointer = reference.as_bytes().as_ptr();
+        let record = RecordName::from(reference);
+        assert_eq!(record.as_ref(), b"refs/heads/\xff");
+        let bytes = record.into_bytes();
+        assert_eq!(bytes.as_ptr(), pointer);
     }
 }

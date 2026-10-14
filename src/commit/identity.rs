@@ -5,7 +5,22 @@ use super::{CommitError, Signature};
 /// The first `<` and following `>` delimit the email. Trailing ASCII whitespace before `<`
 /// is excluded from the name; all other bytes remain intact, including non-UTF-8 bytes.
 /// Date failures never prevent inspection of the name or email.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// ```
+/// use girt::IdentityRef;
+///
+/// let identity = IdentityRef::parse(b"A <a@example.invalid> 60 +0130")?;
+/// assert_eq!(identity.email, b"a@example.invalid");
+/// let date = identity.date()?;
+/// assert_eq!(date.seconds, 60);
+/// assert_eq!(date.offset_minutes, 90);
+///
+/// let malformed = IdentityRef::parse(b"A <a@example.invalid> unknown")?;
+/// assert!(malformed.date().is_err());
+/// assert_eq!(malformed.date_bytes, b" unknown");
+/// # Ok::<(), girt::CommitError>(())
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IdentityRef<'a> {
     /// Name bytes, without trailing delimiter whitespace.
     pub name: &'a [u8],
@@ -16,7 +31,7 @@ pub struct IdentityRef<'a> {
 }
 
 /// A numerically interpreted Git identity date, independent of canonical construction policy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IdentityDate {
     /// Signed seconds since the Unix epoch; no display fallback is applied.
     pub seconds: i64,

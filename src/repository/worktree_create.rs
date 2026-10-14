@@ -329,6 +329,13 @@ impl Repository {
     /// The same creation, exclusion and partial-failure contract as
     /// [`Self::create_orphan_worktree`] applies. The direct repository configuration is still
     /// validated; selecting a style does not persist a configuration change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::create_orphan_worktree`]'s branch, destination, registration and I/O errors,
+    /// plus guarded-index and configuration errors from
+    /// [`Self::create_orphan_worktree_with_options`]. Failures after creation can retain a
+    /// registration or destination directory; inspect them before retrying.
     pub fn create_orphan_worktree_with_link_style(
         &self,
         destination: impl AsRef<Path>,

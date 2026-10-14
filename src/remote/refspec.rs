@@ -458,6 +458,12 @@ impl Refspecs {
     }
 
     /// Advertisement mapping with missing exact selectors retained as reportable outcomes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MappingError::Direction`] for push specs, or duplicate-source, zero-ID, invalid
+    /// destination and collision errors from [`Self::map_with_missing`]. Missing exact selectors
+    /// are returned in the second tuple element instead of failing the mapping.
     pub fn map_advertisement_with_missing(
         &self,
         advertisement: &Advertisement,

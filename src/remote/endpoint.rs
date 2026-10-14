@@ -37,6 +37,12 @@ impl Destination {
     ///
     /// File URLs require an absolute path and an empty or `localhost` authority. Percent escapes
     /// are decoded once; NUL and malformed escapes are rejected. Other schemes are refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::Syntax`] for a nonlocal protocol or malformed file URL, including
+    /// invalid percent escapes or NUL in decoded file-URL bytes. On non-Unix platforms, paths must
+    /// also be UTF-8. No filesystem access is performed.
     pub fn local_path(&self) -> Result<PathBuf, EndpointError> {
         let bytes = match self.protocol {
             Protocol::Local => self.bytes.clone(),
@@ -208,6 +214,11 @@ impl ProtocolEnvironment {
     /// A present empty `GIT_ALLOW_PROTOCOL` allows no protocol. Invalid boolean bytes fail with
     /// a value-free diagnostic. Credential and transport-specific inputs are supplied to their
     /// respective adapters after protocol selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::Configuration`] if the allow-list contains NUL or
+    /// `GIT_PROTOCOL_FROM_USER` is not a recognized boolean. No transport is started.
     pub fn from_environment(
         mut get: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> Result<Self, EndpointError> {
@@ -235,6 +246,12 @@ impl Remote {
     ///
     /// A push-only rewrite is never applied to fetch. No filesystem or process environment is read.
     /// This method does not perform transport I/O or validate transport-specific components.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EndpointError::Missing`] when no fetch URL is configured, configuration or syntax
+    /// errors for invalid rewrites/endpoints, or [`EndpointError::Refused`] when policy denies the
+    /// recognized protocol. No transfer is attempted.
     pub fn fetch_destination(
         &self,
         config: &Config,
@@ -248,6 +265,12 @@ impl Remote {
     ///
     /// Configured `pushurl` entries override `url` and receive only `insteadOf` rewrites. When
     /// falling back to `url`, the longest `pushInsteadOf` match wins over `insteadOf`.
+    ///
+    /// # Errors
+    ///
+    /// Returns configuration or syntax errors for invalid rewrites/endpoints, or
+    /// [`EndpointError::Refused`] when policy denies a destination's protocol. No transfer is
+    /// attempted, including when an earlier destination resolved successfully.
     pub fn push_destinations(
         &self,
         config: &Config,

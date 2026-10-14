@@ -24,14 +24,16 @@ use super::CommitError;
 ///     .headers()
 ///     .enumerate()
 ///     .find(|(_, header)| header.name == b"gpgsig")
-///     .unwrap();
+///     .ok_or("signature header absent")?;
 /// assert_eq!(signature.unfolded_value(), b"first\nsecond");
 /// assert_eq!(
-///     payload.without_headers(&[index]).unwrap(),
+///     payload
+///         .without_headers(&[index])
+///         .ok_or("header index absent")?,
 ///     b"author A <a> unusual date\nx keep\n\nbody\xff"
 /// );
 /// assert_eq!(payload.as_bytes(), bytes);
-/// # Ok::<(), girt::CommitError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitPayload<'a> {
@@ -189,7 +191,7 @@ impl<'a> CommitPayload<'a> {
 }
 
 /// A header occurrence borrowing its exact name and folded value from a [`CommitPayload`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CommitHeaderRef<'a> {
     /// Whether the first physical line contains a framing space. Always true after strict
     /// [`CommitPayload::parse`]; legacy bare records from [`CommitPayload::from_bytes`] report

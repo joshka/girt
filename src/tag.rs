@@ -295,7 +295,7 @@ impl TagFields {
 ///
 /// This set is exhaustive: Git object framing and pack encodings define exactly these four
 /// fundamental kinds. A new hash algorithm does not add an object kind.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ObjectKind {
     /// File content.
     Blob,

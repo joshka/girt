@@ -250,7 +250,7 @@ impl<'a> Iterator for RawEntries<'a> {
 /// One tree entry, with an uninterpreted byte name and a format-bearing reference.
 ///
 /// Fields are freely editable before construction. [`Tree::new`] checks names and duplicates.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TreeEntry {
     /// The entry's Git type and executable status.
     pub mode: EntryMode,
@@ -285,7 +285,7 @@ impl TreeEntry {
 }
 
 /// Supported modes with their exact octal spelling in an encoded tree payload.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum EntryMode {
     /// Regular, non-executable blob (`100644`).
