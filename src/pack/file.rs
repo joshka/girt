@@ -8,7 +8,7 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -212,10 +212,10 @@ fn path_error(path: &Path, source: io::Error) -> Error {
 #[derive(Debug)]
 pub(crate) struct FilePack {
     index: Artifact,
-    index_bytes: Vec<u8>,
+    index_bytes: Arc<Vec<u8>>,
     pack: Artifact,
     format: ObjectFormat,
-    table: Index,
+    table: Arc<Index>,
     /// Set once the index's own checksum has been verified, before its identities label reused
     /// bytes.
     index_verified: std::sync::OnceLock<()>,
@@ -223,6 +223,115 @@ pub(crate) struct FilePack {
     /// Resolved base kind and depth of each delta entry, by index position; see [`ChainKinds`].
     chain_kinds: ChainKinds,
     damage: Arc<Damage>,
+}
+
+/// A small LRU retains validated generations across sequential store lifetimes. The handles
+/// prevent native file identities from being recycled while their validation is cached. Each
+/// reader still owns freshly pinned artifacts and its own checksum/damage/decoder state.
+#[derive(Debug)]
+struct CachedIndex {
+    format: ObjectFormat,
+    index_stamp: Stamp,
+    pack_stamp: Stamp,
+    _index_file: File,
+    _pack_file: File,
+    bytes: Arc<Vec<u8>>,
+    table: Arc<Index>,
+}
+
+impl CachedIndex {
+    fn matches(&self, format: ObjectFormat, index: &Artifact, pack: &Artifact) -> bool {
+        self.format == format && self.index_stamp == index.stamp && self.pack_stamp == pack.stamp
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.bytes.capacity()
+            + self.table.ranges.capacity() * std::mem::size_of::<(usize, usize)>()
+            + self.table.offsets.capacity() * std::mem::size_of::<usize>()
+    }
+}
+
+const INDEX_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const INDEX_CACHE_PAIRS: usize = 8;
+static INDEX_CACHE: Mutex<IndexCache> = Mutex::new(IndexCache(VecDeque::new()));
+
+#[derive(Debug)]
+struct IndexCache(VecDeque<Arc<CachedIndex>>);
+
+impl IndexCache {
+    fn insert(&mut self, entry: Arc<CachedIndex>) {
+        let size = entry.retained_bytes();
+        if size > INDEX_CACHE_BYTES {
+            return;
+        }
+        while self.0.len() >= INDEX_CACHE_PAIRS
+            || self
+                .0
+                .iter()
+                .map(|entry| entry.retained_bytes())
+                .sum::<usize>()
+                + size
+                > INDEX_CACHE_BYTES
+        {
+            self.0.pop_front();
+        }
+        self.0.push_back(entry);
+    }
+}
+
+fn cached_index(
+    cache: &Mutex<IndexCache>,
+    format: ObjectFormat,
+    index: &Artifact,
+    pack: &Artifact,
+) -> Option<Arc<CachedIndex>> {
+    // Without native identity, metadata from unrelated files cannot establish a generation.
+    if index.stamp.identity == (0, 0) || pack.stamp.identity == (0, 0) {
+        return None;
+    }
+    let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
+    let position = cache
+        .0
+        .iter()
+        .position(|entry| entry.matches(format, index, pack))?;
+    let entry = cache.0.remove(position)?;
+    cache.0.push_back(entry.clone());
+    Some(entry)
+}
+
+fn retain_index(
+    cache: &Mutex<IndexCache>,
+    format: ObjectFormat,
+    index: &Artifact,
+    pack: &Artifact,
+    bytes: &Arc<Vec<u8>>,
+    table: &Arc<Index>,
+) {
+    if index.stamp.identity == (0, 0) || pack.stamp.identity == (0, 0) {
+        return;
+    }
+    // Independent handles must not extend the lifetime of reader-local damage evidence.
+    let (Ok(index_file), Ok(pack_file)) = (index.file.try_clone(), pack.file.try_clone()) else {
+        return;
+    };
+    let entry = Arc::new(CachedIndex {
+        format,
+        index_stamp: index.stamp.clone(),
+        pack_stamp: pack.stamp.clone(),
+        _index_file: index_file,
+        _pack_file: pack_file,
+        bytes: bytes.clone(),
+        table: table.clone(),
+    });
+    let mut cache = cache.lock().unwrap_or_else(|error| error.into_inner());
+    if cache
+        .0
+        .iter()
+        .any(|entry| entry.matches(format, index, pack))
+    {
+        return;
+    }
+    cache.insert(entry);
 }
 
 /// Damage belongs to the pinned artifact generation, not its filename. The empty atomic avoids
@@ -437,6 +546,17 @@ impl FilePack {
         cancelled: &AtomicBool,
         after_index: impl FnOnce(),
     ) -> Result<Self, Error> {
+        Self::open_cached_after_index(format, path, budget, cancelled, after_index, &INDEX_CACHE)
+    }
+
+    fn open_cached_after_index(
+        format: ObjectFormat,
+        path: &Path,
+        budget: &mut crate::PackLimits,
+        cancelled: &AtomicBool,
+        after_index: impl FnOnce(),
+        cache: &Mutex<IndexCache>,
+    ) -> Result<Self, Error> {
         check_cancelled(cancelled)?;
         let index_file = Artifact::open(path)?;
         after_index();
@@ -467,9 +587,16 @@ impl FilePack {
             return Err(Error::PackVersion(version));
         }
         let end = pack.len - format.digest_len();
-        let index_bytes = index_file.bytes(0, index_file.len)?;
-        check_cancelled(cancelled)?;
-        let index = Index::parse(format, &index_bytes, end)?;
+        let cached = cached_index(cache, format, &index_file, &pack);
+        let cache_miss = cached.is_none();
+        let (index_bytes, index) = if let Some(cached) = cached {
+            (cached.bytes.clone(), cached.table.clone())
+        } else {
+            let bytes = index_file.bytes(0, index_file.len)?;
+            check_cancelled(cancelled)?;
+            let table = Index::parse(format, &bytes, end)?;
+            (Arc::new(bytes), Arc::new(table))
+        };
         check_cancelled(cancelled)?;
         if word(&header, 8)? as usize != index.len() {
             return Err(Error::Corrupt("pack object count"));
@@ -477,6 +604,11 @@ impl FilePack {
         let trailer = pack.bytes(end, pack.len)?;
         if index.pack_hash.as_bytes() != trailer {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
+        }
+        index_file.check_unchanged()?;
+        pack.check_unchanged()?;
+        if cache_miss {
+            retain_index(cache, format, &index_file, &pack, &index_bytes, &index);
         }
         check_cancelled(cancelled)?;
         Ok(Self {
@@ -505,7 +637,7 @@ impl FilePack {
         len: usize,
         cancel: &AtomicBool,
     ) -> Result<bool, Error> {
-        if self.index_bytes != index || self.pack.len != len {
+        if self.index_bytes.as_slice() != index || self.pack.len != len {
             return Ok(false);
         }
         self.index.check_not_truncated()?;
@@ -1210,13 +1342,27 @@ mod publication_tests {
     fn repeated_open_shares_index_without_reading_it(#[case] format: ObjectFormat) {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "shared", format, b"content");
-        let first = open_pair(&path, format);
-        let second = open_pair(&path, format);
+        // Isolate the LRU from unrelated tests opening other pack generations concurrently.
+        let cache = Mutex::new(IndexCache(VecDeque::new()));
+        let open = || {
+            FilePack::open_cached_after_index(
+                format,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false),
+                || {},
+                &cache,
+            )
+            .unwrap()
+        };
+        let first = open();
+        let second = open();
         assert_eq!(first.index_bytes.as_ptr(), second.index_bytes.as_ptr());
+        assert!(Arc::ptr_eq(&first.table, &second.table));
         assert_eq!(second.index.bytes_read.load(Ordering::Relaxed), 0);
         drop(first);
         drop(second);
-        let reopened = open_pair(&path, format);
+        let reopened = open();
         assert_eq!(reopened.index.bytes_read.load(Ordering::Relaxed), 0);
         reopened.verify(&AtomicBool::new(false)).unwrap();
     }
@@ -1226,8 +1372,10 @@ mod publication_tests {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "budget", ObjectFormat::Sha1, b"content");
         let first = open_pair(&path, ObjectFormat::Sha1);
-        let mut budget = PackLimits::default();
-        budget.max_index_bytes = first.index.len - 1;
+        let mut budget = PackLimits {
+            max_index_bytes: first.index.len - 1,
+            ..PackLimits::default()
+        };
         assert!(matches!(
             FilePack::open(
                 ObjectFormat::Sha1,
@@ -1310,6 +1458,72 @@ mod publication_tests {
             b"other"
         );
         assert!(new.find(old_id).unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_index_generation_cannot_reuse_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "changed", ObjectFormat::Sha1, b"content");
+        let _first = open_pair(&path, ObjectFormat::Sha1);
+        let mut bytes = fs::read(&path).unwrap();
+        // Break the first fanout bucket without changing the file's size.
+        bytes[11] = 1;
+        fs::write(&path, bytes).unwrap();
+        File::open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH)
+            .unwrap();
+        assert!(matches!(
+            FilePack::open(
+                ObjectFormat::Sha1,
+                &path,
+                &mut PackLimits::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(Error::Corrupt("index fanout"))
+        ));
+    }
+
+    #[test]
+    fn index_cache_bounds_retained_bytes_and_handles() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "bounds", ObjectFormat::Sha1, b"content");
+        let reader = open_pair(&path, ObjectFormat::Sha1);
+        let entry = Arc::new(CachedIndex {
+            format: reader.format,
+            index_stamp: reader.index.stamp.clone(),
+            pack_stamp: reader.pack.stamp.clone(),
+            _index_file: reader.index.file.try_clone().unwrap(),
+            _pack_file: reader.pack.file.try_clone().unwrap(),
+            bytes: reader.index_bytes.clone(),
+            table: reader.table.clone(),
+        });
+        let mut cache = IndexCache(VecDeque::new());
+        for _ in 0..INDEX_CACHE_PAIRS + 1 {
+            cache.insert(entry.clone());
+        }
+        assert_eq!(cache.0.len(), INDEX_CACHE_PAIRS);
+        let large = Arc::new(CachedIndex {
+            bytes: Arc::new(Vec::with_capacity(INDEX_CACHE_BYTES / 2)),
+            _index_file: reader.index.file.try_clone().unwrap(),
+            _pack_file: reader.pack.file.try_clone().unwrap(),
+            format: reader.format,
+            index_stamp: reader.index.stamp.clone(),
+            pack_stamp: reader.pack.stamp.clone(),
+            table: reader.table.clone(),
+        });
+        cache.insert(large.clone());
+        cache.insert(large);
+        assert_eq!(cache.0.len(), 1);
+        assert!(
+            cache
+                .0
+                .iter()
+                .map(|entry| entry.retained_bytes())
+                .sum::<usize>()
+                <= INDEX_CACHE_BYTES
+        );
     }
 
     // Original malformed framing, with independent artifact checksums and CRCs rebuilt so the

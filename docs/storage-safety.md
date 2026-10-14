@@ -181,6 +181,23 @@ strictly increasing identities, a fanout that matches them, each large offset us
 that tile the pack from byte 12, and the index's pack checksum against the pack trailer. Damage to
 any of those fails the open.
 
+Repeated opens in one process share fully structurally validated index bytes and entry tables for an
+unchanged pair of pinned index/pack generations. The process-local LRU retains at most eight pairs
+and 64 MiB of index buffers and tables; larger representations bypass it. Each key includes object
+format and both handles' native file identity, size and modification time. Independent retained
+handles prevent file-ID reuse without extending reader-local damage evidence. Platforms without
+native file identity bypass the cache. Concurrent misses can validate independently.
+
+Every open still charges the full input budgets, pins its own artifacts, checks the pack header,
+object count and trailer agreement, and rechecks both handles' metadata before returning. A cache
+hit allocates no per-entry tables or index-byte copy. Cold opens and evicted generations retain the
+complete eager structural validation. Lookup and verification retain live truncation checks;
+mutation boundaries retain freshness checks and explicit checksum gates. Atomic replacement leaves
+an existing reader on its original handles and gives new readers a different cache key. The cache
+adds no mapping and cannot fault on a truncated mapped page. Cached handles remain open until
+eviction or process exit, including Windows' denial of data writers; immutable publication and
+caller-owned exclusion remain required.
+
 Damage the structure cannot see stays harmless because content reads are identity-checked (see
 [Identity checks in walks](#identity-checks-in-walks)). Swapped offsets fail the entry CRC, or the
 identity hash for v1. A changed name makes its object read as absent, and the changed name fails its
