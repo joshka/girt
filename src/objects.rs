@@ -345,6 +345,15 @@ impl ReadLimits {
 /// never refresh implicitly. The object directory and its ancestors must be trusted, as with
 /// [`LooseObjects`]. This is not a snapshot of loose files or repository references.
 ///
+/// Overlapping readers may share validated index buffers and tables through a process-local weak
+/// cache. Keys include native identity, size, mtime and Unix ctime or Windows ChangeTime. Shared
+/// validation owns independent artifact pins while readers or in-flight opens use that generation.
+/// Dropping its last reader releases those pins and buffers once any in-flight open finishes. Dead
+/// weak cache records retain neither buffers nor handles, so they do not keep deleted packs alive
+/// or Windows names delete-pending. Other snapshots or external processes can still pin the files.
+/// Opens after all readers drop validate again. Metadata keys do not replace immutable publication
+/// or caller-owned exclusion of in-place writers.
+///
 /// REF_DELTA bases must be indexed in the same pack. Thin packs and cross-pack/loose bases return
 /// [`ObjectReadError::MissingBase`], even if the base exists elsewhere. Traversal is iterative,
 /// detects cycles, and enforces [`ReadLimits`]. Multi-pack indexes and bitmap/reverse indexes are
