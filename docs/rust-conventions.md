@@ -78,6 +78,19 @@ and report unknown progress or outcomes conservatively. Do not silently treat a 
 success. Non-exhaustiveness permits compatible additions; it does not make removals, field type
 changes or changes to existing semantics compatible.
 
+## Public Auto Traits
+
+Preserve the auto traits a public type implements in a published release: `Send`, `Sync`, `Unpin`,
+`UnwindSafe`, and `RefUnwindSafe`. Losing one changes which downstream code compiles and requires a
+deliberate breaking release. `Objects`, `RetentionPlan`, and `KnownHistory` promise both unwind
+traits as well as `Send` and `Sync`; keep compile-time regression checks for these cache owners.
+
+Review private field changes for their effect on these traits. Keep unwind-safety assertions at the
+smallest cache boundary and explain why a panic cannot publish a partial or misleading result.
+`AssertUnwindSafe` is appropriate for immutable results published atomically after successful
+initialization. For multi-step mutation, reset or poison-guard the cache before readers reuse it. Do
+not assert traits on the whole public type to hide a new field's unresolved invariants.
+
 ## Errors
 
 - Use `thiserror` to derive library error implementations. Keep concrete error types and variants
