@@ -184,6 +184,46 @@ mod tests {
         assert!(matches!(packet_length(header), Err(Error::Protocol(actual)) if actual == reason));
     }
 
+    struct CountingReader<'a> {
+        cursor: std::io::Cursor<&'a [u8]>,
+        reads: usize,
+    }
+
+    impl Read for CountingReader<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            self.cursor.read(bytes)
+        }
+    }
+
+    #[rstest]
+    #[case::non_hex(b"zzzznext", "pkt-line header", 4, 1)]
+    #[case::too_short(b"0003next", "pkt-line length", 4, 1)]
+    #[case::too_long(b"fff1next", "pkt-line length", 4, 1)]
+    #[case::delimiter(b"0001next", "pkt-line length", 4, 1)]
+    #[case::response_end(b"0002next", "pkt-line length", 4, 1)]
+    #[case::truncated_payload(b"0008ab", "truncated pkt-line", 6, 3)]
+    fn rejects_malformed_packet_without_reading_further(
+        #[case] input: &[u8],
+        #[case] reason: &str,
+        #[case] consumed: u64,
+        #[case] reads: usize,
+    ) {
+        let cancel = AtomicBool::new(false);
+        let mut reader = CountingReader {
+            cursor: std::io::Cursor::new(input),
+            reads: 0,
+        };
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 65520,
+            cancel: &cancel,
+        };
+        assert!(matches!(wire.packet(), Err(Error::Protocol(actual)) if actual == reason));
+        assert_eq!(reader.cursor.position(), consumed);
+        assert_eq!(reader.reads, reads);
+    }
+
     #[rstest]
     #[case::flush(b"0000", 0)]
     #[case::empty(b"0004", 4)]
