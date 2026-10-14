@@ -117,7 +117,11 @@ pub enum InitError {
 impl Repository {
     // Clone has exclusively reserved an absent destination root. Keep population shared with
     // init, but never relax init's public bare-destination refusal to accommodate clone.
-    pub(crate) fn init_reserved_clone(path: &Path, kind: InitKind) -> Result<Self, InitError> {
+    pub(crate) fn init_reserved_clone(
+        path: &Path,
+        kind: InitKind,
+        format: crate::ObjectFormat,
+    ) -> Result<Self, InitError> {
         let git_dir = match kind {
             InitKind::Bare => path.to_path_buf(),
             InitKind::Worktree => {
@@ -126,7 +130,7 @@ impl Repository {
                 git_dir
             }
         };
-        populate_minimal(&git_dir, kind)?;
+        populate_minimal(&git_dir, kind, format)?;
         Ok(Self::open(path)?)
     }
 
@@ -252,7 +256,11 @@ impl Repository {
 }
 
 /// Creates the layout used internally by clone, whose exact config bytes it later checks.
-fn populate_minimal(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
+fn populate_minimal(
+    git_dir: &Path,
+    kind: InitKind,
+    format: crate::ObjectFormat,
+) -> Result<(), InitError> {
     for name in [
         "objects",
         "objects/info",
@@ -263,10 +271,7 @@ fn populate_minimal(git_dir: &Path, kind: InitKind) -> Result<(), InitError> {
     ] {
         create_directory(&git_dir.join(name))?;
     }
-    create_file(
-        &git_dir.join("config"),
-        &format_config(kind, crate::ObjectFormat::Sha1),
-    )?;
+    create_file(&git_dir.join("config"), &initial_config(kind, format))?;
     let mut head = b"ref: ".to_vec();
     head.extend_from_slice(initial_branch().as_bytes());
     head.push(b'\n');
@@ -427,8 +432,8 @@ fn populate_reftable(
 }
 
 // Initialization owns these defaults, including exact bytes used by clone's config precondition.
-pub(crate) fn initial_config(kind: InitKind) -> Vec<u8> {
-    format_config(kind, crate::ObjectFormat::Sha1)
+pub(crate) fn initial_config(kind: InitKind, format: crate::ObjectFormat) -> Vec<u8> {
+    format_config(kind, format)
 }
 
 fn format_config(kind: InitKind, format: crate::ObjectFormat) -> Vec<u8> {

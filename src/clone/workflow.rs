@@ -241,7 +241,11 @@ impl CloneReady {
         absent(&self.request.destination)?;
         fs::create_dir(&self.request.destination)?;
         report.reserved = true;
-        let repo = Repository::init_reserved_clone(&self.request.destination, self.request.kind)?;
+        let repo = Repository::init_reserved_clone(
+            &self.request.destination,
+            self.request.kind,
+            self.received.object_format(),
+        )?;
         report.initialized = true;
         self.finish_in(repo, limits, cancel, report)
     }
@@ -276,7 +280,12 @@ impl CloneReady {
             cancel,
         )?;
         cancelled(cancel)?;
-        let bytes = config::contents(self.request.kind, &self.request.url, &self.head);
+        let bytes = config::contents(
+            self.request.kind,
+            repo.object_format(),
+            &self.request.url,
+            &self.head,
+        );
         config::publish(&repo, self.request.kind, &bytes).map_err(CloneFailure::Configuration)?;
         report.configured = true;
         cancelled(cancel)?;

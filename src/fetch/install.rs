@@ -289,6 +289,11 @@ impl ReceivedFetch {
         &self.wants
     }
 
+    /// Object format negotiated with the server; received objects use it.
+    pub(crate) fn object_format(&self) -> crate::ObjectFormat {
+        self.format
+    }
+
     /// Known-local objects the received objects depend on; installation rechecks them.
     pub(crate) fn dependencies(&self) -> &[ObjectId] {
         &self.dependencies

@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use girt::checkout::Limits;
-use girt::{InitKind, ObjectId, Repository};
+use girt::{InitKind, ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
@@ -65,12 +65,14 @@ fn tree(root: &Path) -> ObjectId {
         .unwrap()
 }
 fn source(parent: &Path) -> Repository {
-    let repo = Repository::init(
-        girt::ObjectFormat::Sha1,
-        parent.join("source"),
-        InitKind::Worktree,
-    )
-    .unwrap();
+    source_in(parent, ObjectFormat::Sha1)
+}
+fn source_in(parent: &Path, format: ObjectFormat) -> Repository {
+    git(
+        parent,
+        &["init", "-q", &format!("--object-format={format}"), "source"],
+    );
+    let repo = Repository::open(parent.join("source")).unwrap();
     let root = repo.worktree().unwrap();
     fs::create_dir(root.join("dir")).unwrap();
     fs::write(root.join("dir/raw"), b"one\r\ntwo\0\xff").unwrap();
@@ -96,12 +98,16 @@ fn checkout(repo: &Repository, baseline: Option<ObjectId>, target: ObjectId) {
 #[rstest]
 #[case::git(false)]
 #[case::girt(true)]
-fn no_checkout_clone_then_git_status_and_commit(#[case] use_girt: bool) {
+fn no_checkout_clone_then_git_status_and_commit(
+    #[case] use_girt: bool,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
     let temp = tempfile::tempdir().unwrap();
-    let source = source(temp.path());
+    let source = source_in(temp.path(), format);
     let destination = temp.path().join("clone");
     clone_without_checkout(source.worktree().unwrap(), &destination, use_girt);
     let repo = Repository::open(&destination).unwrap();
+    assert_eq!(repo.object_format(), format);
     let head = git(&destination, &["rev-parse", "HEAD"]);
     assert!(!repo.git_dir().join("index").exists());
     checkout(&repo, None, tree(source.worktree().unwrap()));
@@ -162,10 +168,12 @@ fn clone_without_checkout(source: &Path, destination: &Path, use_girt: bool) {
     prepared.finish(Default::default(), &cancel).unwrap();
 }
 
-#[test]
-fn tracked_update_leaves_head_and_matches_git_tree_index() {
+#[rstest]
+fn tracked_update_leaves_head_and_matches_git_tree_index(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
     let temp = tempfile::tempdir().unwrap();
-    let repo = source(temp.path());
+    let repo = source_in(temp.path(), format);
     let root = repo.worktree().unwrap();
     let old = tree(root);
     git(root, &["mv", "dir/raw", "renamed"]);

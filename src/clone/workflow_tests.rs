@@ -90,8 +90,12 @@ fn packet(bytes: &[u8]) -> Vec<u8> {
 
 fn initialized(ready: &CloneReady) -> (Repository, CloneReport) {
     fs::create_dir_all(&ready.request.destination).unwrap();
-    let repo =
-        Repository::init_reserved_clone(&ready.request.destination, ready.request.kind).unwrap();
+    let repo = Repository::init_reserved_clone(
+        &ready.request.destination,
+        ready.request.kind,
+        ObjectFormat::Sha1,
+    )
+    .unwrap();
     let report = CloneReport {
         destination: ready.request.destination.clone(),
         reserved: true,
