@@ -392,9 +392,9 @@ fn native_fetch_of_mislabelled_tree_fails_at_import() {
     let result = girt::fetch::receive_local(
         &root,
         |_| vec![commit],
-        girt::fetch::FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| std::ops::ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(girt::fetch::FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     let error = result.expect_err("import must reject the mislabelled tree");
     assert!(error.to_string().contains(&tree.to_string()), "{error}");

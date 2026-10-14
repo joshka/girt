@@ -81,9 +81,9 @@ fn fetch(c: &mut Criterion) {
         let received = girt::fetch::receive_local(
             fixture.root.path(),
             |_| vec![tag],
-            FetchLimits::default(),
-            &cancel,
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+            girt::transport::TransportControl::new(&cancel),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
         assert_eq!(received.object_count(), fixture.records.len());
@@ -92,9 +92,9 @@ fn fetch(c: &mut Criterion) {
                 girt::fetch::receive_local(
                     fixture.root.path(),
                     |_| vec![tag],
-                    FetchLimits::default(),
-                    &cancel,
-                    |_| ControlFlow::Continue(()),
+                    girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+                    girt::transport::TransportControl::new(&cancel),
+                    girt::fetch::LocalFetchObserver::default(),
                 )
                 .unwrap()
             })
@@ -139,18 +139,17 @@ fn fetch(c: &mut Criterion) {
         let full = girt::fetch::receive_local(
             fixture.root.path(),
             |_| vec![next],
-            FetchLimits::default(),
-            &cancel,
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+            girt::transport::TransportControl::new(&cancel),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
-        let reduced = girt::fetch::receive_local_with_known(
+        let reduced = girt::fetch::receive_local(
             fixture.root.path(),
             |_| vec![next],
-            &known,
-            FetchLimits::default(),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(&known),
             TransportControl::new(&cancel),
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
         eprintln!(
@@ -162,40 +161,39 @@ fn fetch(c: &mut Criterion) {
         );
         group.bench_function(format!("transfer-full-{count}"), |b| {
             b.iter(|| {
-                girt::fetch::receive_local_with_control(
+                girt::fetch::receive_local(
                     fixture.root.path(),
                     |_| vec![next],
-                    FetchLimits::default(),
+                    girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
                     TransportControl::new(&cancel)
                         .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
-                    |_| ControlFlow::Continue(()),
+                    girt::fetch::LocalFetchObserver::default(),
                 )
                 .unwrap()
             })
         });
         group.bench_function(format!("transfer-known-{count}"), |b| {
             b.iter(|| {
-                girt::fetch::receive_local_with_known(
+                girt::fetch::receive_local(
                     fixture.root.path(),
                     |_| vec![next],
-                    &known,
-                    FetchLimits::default(),
+                    girt::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(&known),
                     TransportControl::new(&cancel)
                         .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
-                    |_| ControlFlow::Continue(()),
+                    girt::fetch::LocalFetchObserver::default(),
                 )
                 .unwrap()
             })
         });
         group.bench_function(format!("native-local-read-pack-{count}"), |b| {
             b.iter(|| {
-                girt::fetch::receive_local_with_control(
+                girt::fetch::receive_local(
                     fixture.root.path(),
                     |_| vec![tag],
-                    FetchLimits::default(),
+                    girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
                     TransportControl::new(&cancel)
                         .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
-                    |_| ControlFlow::Continue(()),
+                    girt::fetch::LocalFetchObserver::default(),
                 )
                 .unwrap()
             })

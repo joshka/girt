@@ -919,16 +919,19 @@ impl Repository {
         let ready = match endpoint {
             Endpoint::Local(path) => {
                 let callbacks = std::cell::RefCell::new(callbacks);
-                request()?.receive_local_with_validation_progress(
+                request()?.receive_local(
                     path,
                     &known,
                     limits,
                     control,
-                    |message| {
-                        callbacks.borrow_mut().remote_message(message);
-                        ControlFlow::Continue(())
-                    },
-                    |event| callbacks.borrow_mut().validation_progress(event),
+                    crate::fetch::LocalFetchObserver::default()
+                        .with_messages(&mut |message| {
+                            callbacks.borrow_mut().remote_message(message);
+                            ControlFlow::Continue(())
+                        })
+                        .with_validation(&mut |event| {
+                            callbacks.borrow_mut().validation_progress(event)
+                        }),
                 )
             }
             #[cfg(feature = "http")]

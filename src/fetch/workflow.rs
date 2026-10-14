@@ -365,59 +365,37 @@ impl FetchRequest {
     ///
     /// # Errors
     ///
-    /// Returns mapping/policy failures or [`super::receive_local_with_known`]'s transfer failures.
+    /// Returns mapping/policy failures or [`super::receive_local`]'s transfer failures.
     pub fn receive_local(
         self,
         source: impl AsRef<Path>,
         known: &KnownHistory,
         limits: FetchLimits,
         control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        mut observer: super::LocalFetchObserver<'_>,
     ) -> Result<FetchReady, FetchWorkflowError> {
-        self.receive_local_with_progress(source, known, limits, control, progress, |_| {})
-    }
-
-    /// Constructs a local fetch while reporting completed source reads and pack entries.
-    ///
-    /// Uses [`Self::receive_local`]'s planning and storage contract and
-    /// [`super::receive_local_with_known_and_progress`]'s callback contract. Completion describes
-    /// construction, not installation or reference publication. Observers must return promptly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::receive_local`]'s failures without a completion notification.
-    pub fn receive_local_with_progress(
-        self,
-        source: impl AsRef<Path>,
-        known: &KnownHistory,
-        limits: FetchLimits,
-        control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-        observe: impl FnMut(super::LocalFetchProgress),
-    ) -> Result<FetchReady, FetchWorkflowError> {
-        self.receive_local_observed(source, known, limits, control, progress, observe, |_| {})
-    }
-
-    /// Constructs a local fetch with actual object and delta validation progress.
-    ///
-    /// Uses [`Self::receive_local`]'s planning contract and
-    /// [`super::receive_local_with_validation_progress`]'s observer contract. Completion marks
-    /// validation, independently of later installation or publication. Later planning or transport
-    /// cancellation can still fail this operation.
-    ///
-    /// # Errors
-    ///
-    /// Returns planning or validation failures without destination changes.
-    pub fn receive_local_with_validation_progress(
-        self,
-        source: impl AsRef<Path>,
-        known: &KnownHistory,
-        limits: FetchLimits,
-        control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-        validation: impl FnMut(super::ValidationProgress),
-    ) -> Result<FetchReady, FetchWorkflowError> {
-        self.receive_local_observed(source, known, limits, control, progress, |_| {}, validation)
+        self.receive_local_observed(
+            source,
+            known,
+            limits,
+            control,
+            |message| {
+                observer
+                    .messages
+                    .as_mut()
+                    .map_or(ControlFlow::Continue(()), |notify| notify(message))
+            },
+            |event| {
+                if let Some(notify) = observer.construction.as_mut() {
+                    notify(event);
+                }
+            },
+            |event| {
+                if let Some(notify) = observer.validation.as_mut() {
+                    notify(event);
+                }
+            },
+        )
     }
 
     #[expect(

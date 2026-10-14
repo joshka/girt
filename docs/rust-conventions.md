@@ -28,6 +28,11 @@ Callers that own transport scheduling and publication use the lower-level `fetch
 transport; constructor aliases must not suggest different validation guarantees. jj should use empty
 receiver roots for a full push and explicit verified roots for an incremental one.
 
+Native fetch separates `LocalFetchRequest` history/bounds, `TransportControl`, and synchronous
+`LocalFetchObserver` callbacks. Keep messages, source construction and validation distinct, and keep
+runtime, retention and publication state outside these values. jj can retain its configured
+`workflow::fetch` adapter or use explicit requests when it owns scheduling and publication.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated
