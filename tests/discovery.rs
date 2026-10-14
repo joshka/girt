@@ -478,10 +478,13 @@ fn packet(output: &mut Vec<u8>, line: &[u8]) {
 
 fn ls_refs_request(format: ObjectFormat) -> Vec<u8> {
     let mut request = Vec::new();
+    // Git advertises both `agent` and `object-format`, so girt echoes both.
     packet(&mut request, b"command=ls-refs\n");
-    if format == ObjectFormat::Sha256 {
-        packet(&mut request, b"object-format=sha256\n");
-    }
+    packet(
+        &mut request,
+        concat!("agent=girt/", env!("CARGO_PKG_VERSION"), "\n").as_bytes(),
+    );
+    packet(&mut request, format!("object-format={format}\n").as_bytes());
     request.extend_from_slice(b"0001");
     packet(&mut request, b"peel\n");
     packet(&mut request, b"symrefs\n");
@@ -998,4 +1001,76 @@ fn dropping_retained_phase_preserves_marker_without_publishing() {
     assert!(!destination.path().join("shallow.lock").exists());
     assert!(!destination.path().join("shallow").exists());
     assert!(!destination.path().join("refs/remotes/origin/main").exists());
+}
+
+/// Runs one `git http-backend` CGI exchange with `Git-Protocol: version=2` and returns its body.
+fn http_backend_v2(repository: &Path, method: &str, path: &str, input: &[u8]) -> Vec<u8> {
+    let mut child = Command::new("git")
+        .arg("http-backend")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_HTTP_EXPORT_ALL", "1")
+        // Like the HTTP fixture, keep the CGI path relative: Git for Windows rejects verbatim
+        // paths.
+        .current_dir(repository)
+        .env("PATH_TRANSLATED", format!("./{path}"))
+        .env("REQUEST_METHOD", method)
+        .env(
+            "QUERY_STRING",
+            if method == "GET" {
+                "service=git-upload-pack"
+            } else {
+                ""
+            },
+        )
+        .env("CONTENT_TYPE", "application/x-git-upload-pack-request")
+        .env("CONTENT_LENGTH", input.len().to_string())
+        .env("HTTP_GIT_PROTOCOL", "version=2")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let split = output
+        .stdout
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
+    output.stdout[split + 4..].to_vec()
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn git_http_backend_v2_capabilities_and_ls_refs(#[case] format: ObjectFormat) {
+    let repo = repository(format);
+    let id = commit(&repo);
+    // Observed: a v2 `info/refs` body starts at `version 2`, with no `# service=` prelude.
+    let mut input = http_backend_v2(repo.path(), "GET", "info/refs", b"");
+    assert!(input.starts_with(b"000eversion 2\n"));
+    let expected = ls_refs_request(format);
+    input.extend(http_backend_v2(
+        repo.path(),
+        "POST",
+        "git-upload-pack",
+        &expected,
+    ));
+    let cancel = AtomicBool::new(false);
+    let mut actual = Vec::new();
+    let discovered = discover_session(
+        &mut input.as_slice(),
+        &mut actual,
+        FetchLimits::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(discovered.version, ProtocolVersion::V2);
+    assert_eq!(discovered.object_format, format);
+    assert!(discovered.advertises(b"fetch=shallow wait-for-done"));
+    assert!(matches!(discovered.head, RemoteHead::Symbolic { id: actual, .. } if actual == id));
 }
