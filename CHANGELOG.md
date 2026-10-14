@@ -24,6 +24,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   match `RetentionOutcome::Complete`. Retained source errors also remove the `UnwindSafe` and
   `RefUnwindSafe` guarantees from plans; `Send + Sync` remain supported. Callers catching panics
   must select their own recovery boundary. Partial reports and deletion preconditions are unchanged.
+- Ignore queries take `ignore::InputKind::{File, Directory}`. Advertisement constructors and
+  records use `fetch::AdvertisementKind::{Tip, PeeledHint}` through `kind`/`with_kind`; only tips
+  remain selectable wants. Reference edits use `refs::Dereference::{Stored, Follow}`. jj should
+  select `Stored` for its conditional stored-name edits and derive `InputKind` from traversal.
+- `remote::Mapping::force` uses `ForceIntent::{Normal, Requested}`; a request still needs separate
+  publication authorization. `ProtocolEnvironment::from_user`/`with_from_user` become
+  `origin`/`with_origin` with `ProtocolOrigin::{User, Automatic}`; `None` retains the user default.
+  Existing named bit setters and `push::ForcePolicy` are unchanged.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 

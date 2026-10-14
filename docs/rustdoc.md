@@ -49,6 +49,11 @@ source chain for jj diagnostics. For boxed expiry details, use `as_ref()` to bor
 incomplete plan never authorizes deletion, and partial mutation reports still require fresh
 observations under isolation before retrying.
 
+Policy examples should spell out `InputKind`, `AdvertisementKind`, `Dereference`, `ForceIntent` and
+`ProtocolOrigin` choices. Explain defaults and distinguish a syntactic force request from permission
+to publish. Show jj adapters deriving filesystem kind at traversal boundaries and selecting
+stored-name edits without following symbolic references.
+
 ## Examples and Validation
 
 - Demonstrate useful behavior with expected results or error handling. Prefer grouped or linked

@@ -25,12 +25,12 @@
 //! ignore.add(Source::Directory(b""), b"!keep.log\nbuild/\n!build/keep\n")?;
 //! assert!(
 //!     ignore
-//!         .check(b"keep.log", false)?
+//!         .check(b"keep.log", girt::ignore::InputKind::File)?
 //!         .is_some_and(|matched| !matched.ignored)
 //! );
 //! assert!(
 //!     ignore
-//!         .check(b"build/keep", false)?
+//!         .check(b"build/keep", girt::ignore::InputKind::File)?
 //!         .is_some_and(|matched| matched.ignored)
 //! );
 //! # Ok::<(), girt::ignore::Error>(())
@@ -48,7 +48,7 @@
 mod pattern;
 mod rules;
 
-pub use rules::{Case, Error, Ignore, Limits, Match, Source};
+pub use rules::{Case, Error, Ignore, InputKind, Limits, Match, Source};
 
 #[cfg(test)]
 mod tests;

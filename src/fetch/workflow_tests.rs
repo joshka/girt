@@ -29,12 +29,12 @@ fn advertisement() -> Advertisement {
             AdvertisedRef {
                 name: name("refs/heads/main"),
                 id: id(1),
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             },
             AdvertisedRef {
                 name: name("refs/heads/private"),
                 id: id(2),
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             },
         ],
         capabilities: vec![],
@@ -221,7 +221,7 @@ fn retained_missing_exact_source_keeps_only_its_cached_destination() {
     advertised.refs.push(AdvertisedRef {
         name: name("refs/tags/v1"),
         id: id(3),
-        peeled: false,
+        kind: crate::fetch::AdvertisementKind::Tip,
     });
     let plan = request.plan(&advertised).unwrap();
     assert!(plan.iter().any(|update| {

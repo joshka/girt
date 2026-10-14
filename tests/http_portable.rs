@@ -40,7 +40,7 @@ fn all(advertisement: &Advertisement) -> Vec<ObjectId> {
     advertisement
         .refs
         .iter()
-        .filter(|r| !r.peeled)
+        .filter(|r| r.kind == girt::fetch::AdvertisementKind::Tip)
         .map(|r| r.id)
         .collect()
 }

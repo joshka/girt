@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     message: b"initial publication".to_vec(),
                 },
             );
-            input.with_dereference(true)
+            input.with_dereference(girt::refs::Dereference::Follow)
         },
         RefEdit::new(
             tag.clone(),

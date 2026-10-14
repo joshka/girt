@@ -35,6 +35,13 @@ Use these conventions alongside the [Rustdoc Standard](rustdoc.md) and
 - Do not introduce an extensible format registry or speculative configuration framework to represent
   a small closed choice.
 
+Use `ignore::InputKind` for filesystem kind, `fetch::AdvertisementKind` for tip versus peeled hint,
+and `refs::Dereference` for the target of an edit. jj traversals choose input kind explicitly; jj
+conditional stored-name edits select `Dereference::Stored`. `remote::ForceIntent` describes a
+refspec's request, while `push::ForcePolicy` authorizes an update. Do not conflate these policies.
+Protocol initiation uses `remote::ProtocolOrigin`; process environment decoding preserves the
+existing user/automatic semantics. Keep named setters for independent one-bit state.
+
 ## Representation and Compatibility
 
 Design APIs around cohesive Git concepts and operations. Consumer methods establish requirements;

@@ -48,7 +48,7 @@ fn select(advertisement: &Advertisement) -> Vec<ObjectId> {
     advertisement
         .refs
         .iter()
-        .filter(|r| !r.peeled)
+        .filter(|r| r.kind == crate::fetch::AdvertisementKind::Tip)
         .map(|r| r.id)
         .collect()
 }

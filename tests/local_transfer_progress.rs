@@ -46,7 +46,7 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
             advertisement
                 .refs
                 .iter()
-                .filter(|reference| !reference.peeled)
+                .filter(|reference| reference.kind == girt::fetch::AdvertisementKind::Tip)
                 .map(|reference| reference.id)
                 .collect()
         },
@@ -84,7 +84,7 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
             advertisement
                 .refs
                 .iter()
-                .filter(|reference| !reference.peeled)
+                .filter(|reference| reference.kind == girt::fetch::AdvertisementKind::Tip)
                 .map(|reference| reference.id)
                 .collect()
         },

@@ -40,7 +40,7 @@ fn workflow(c: &mut Criterion) {
                     AdvertisedRef::new(
                         RefName::new(format!("refs/tags/{i}")).unwrap(),
                         ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
-                        false,
+                        girt::fetch::AdvertisementKind::Tip,
                     )
                 })
                 .collect(),

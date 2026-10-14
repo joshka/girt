@@ -30,14 +30,14 @@ fn clone_plan(c: &mut Criterion) {
                 AdvertisedRef::new(
                     RefName::new(format!("refs/heads/b{i}")).unwrap(),
                     ObjectId::for_blob(girt::ObjectFormat::Sha1, i.to_string().as_bytes()),
-                    false,
+                    girt::fetch::AdvertisementKind::Tip,
                 )
             })
             .collect();
         refs.push(AdvertisedRef::new(
             RefName::new("HEAD").unwrap(),
             refs[0].id,
-            false,
+            girt::fetch::AdvertisementKind::Tip,
         ));
         let ad = Advertisement::new(refs, vec![b"symref=HEAD:refs/heads/b0".to_vec()]);
         group.bench_with_input(BenchmarkId::new("plan", count), &ad, |b, ad| {

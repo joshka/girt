@@ -418,17 +418,17 @@ fn git_annotated_tag_and_symbolic_head_keep_advertised_identities(
             AdvertisedRef::new(
                 RefName::new("HEAD").unwrap(),
                 text(&head).parse().unwrap(),
-                false,
+                girt::fetch::AdvertisementKind::Tip,
             ),
             AdvertisedRef::new(
                 RefName::new("refs/tags/v1").unwrap(),
                 text(&tag).parse().unwrap(),
-                false,
+                girt::fetch::AdvertisementKind::Tip,
             ),
             AdvertisedRef::new(
                 RefName::new("refs/tags/v1").unwrap(),
                 text(&head).parse().unwrap(),
-                true,
+                girt::fetch::AdvertisementKind::PeeledHint,
             ),
         ],
         vec![

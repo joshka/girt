@@ -182,14 +182,24 @@ pub enum EndpointError {
     Refused,
 }
 
+/// Whether protocol use was initiated by the user or by an automatic operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum ProtocolOrigin {
+    /// Allow protocols configured with the `user` policy.
+    User,
+    /// Refuse protocols requiring user initiation.
+    Automatic,
+}
+
 /// Explicit environment policy for one resolution call. A present allow-list overrides config.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct ProtocolEnvironment {
     /// `GIT_ALLOW_PROTOCOL`, split on `:`; an empty list allows no protocols.
     pub allow_protocol: Option<Vec<u8>>,
-    /// `GIT_PROTOCOL_FROM_USER`; false refuses protocols with `user` policy.
-    pub from_user: Option<bool>,
+    /// `GIT_PROTOCOL_FROM_USER`; automatic use refuses protocols with `user` policy.
+    pub origin: Option<ProtocolOrigin>,
 }
 
 impl ProtocolEnvironment {
@@ -200,10 +210,10 @@ impl ProtocolEnvironment {
         self
     }
 
-    /// Sets [`Self::from_user`].
+    /// Sets [`Self::origin`].
     #[must_use]
-    pub fn with_from_user(mut self, from_user: Option<bool>) -> Self {
-        self.from_user = from_user;
+    pub fn with_origin(mut self, origin: Option<ProtocolOrigin>) -> Self {
+        self.origin = origin;
         self
     }
 }
@@ -229,14 +239,22 @@ impl ProtocolEnvironment {
         {
             return Err(EndpointError::Configuration("protocol allow list"));
         }
-        let from_user = get("GIT_PROTOCOL_FROM_USER")
+        let origin = get("GIT_PROTOCOL_FROM_USER")
             .map(|value| {
-                boolean(Some(&value)).ok_or(EndpointError::Configuration("protocol user policy"))
+                boolean(Some(&value))
+                    .map(|user| {
+                        if user {
+                            ProtocolOrigin::User
+                        } else {
+                            ProtocolOrigin::Automatic
+                        }
+                    })
+                    .ok_or(EndpointError::Configuration("protocol user policy"))
             })
             .transpose()?;
         Ok(Self {
             allow_protocol,
-            from_user,
+            origin,
         })
     }
 }
@@ -452,7 +470,7 @@ fn allowed(
     match policy {
         b"always" => Ok(true),
         b"never" => Ok(false),
-        b"user" => Ok(user && env.from_user.unwrap_or(true)),
+        b"user" => Ok(user && env.origin.unwrap_or(ProtocolOrigin::User) == ProtocolOrigin::User),
         _ => Err(EndpointError::Configuration("protocol policy")),
     }
 }
@@ -564,7 +582,7 @@ mod tests {
                 &config,
                 &ProtocolEnvironment {
                     allow_protocol: Some(b"https".to_vec()),
-                    from_user: None,
+                    origin: None,
                 },
             )
             .unwrap();
@@ -581,7 +599,7 @@ mod tests {
                 &config,
                 &ProtocolEnvironment {
                     allow_protocol: None,
-                    from_user: Some(false)
+                    origin: Some(ProtocolOrigin::Automatic)
                 }
             ),
             Err(EndpointError::Refused)
@@ -591,7 +609,7 @@ mod tests {
                 &config,
                 &ProtocolEnvironment {
                     allow_protocol: Some(b"ssh:https".to_vec()),
-                    from_user: None
+                    origin: None
                 }
             ),
             Err(EndpointError::Refused)
@@ -602,7 +620,7 @@ mod tests {
                     &config,
                     &ProtocolEnvironment {
                         allow_protocol: Some(b"file".to_vec()),
-                        from_user: Some(false)
+                        origin: Some(ProtocolOrigin::Automatic)
                     }
                 )
                 .unwrap()

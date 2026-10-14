@@ -257,12 +257,9 @@ impl CloneReady {
         cancel: &AtomicBool,
         report: &mut CloneReport,
     ) -> Result<(), CloneFailure> {
-        let has_head = self
-            .received
-            .advertisement()
-            .refs
-            .iter()
-            .any(|r| !r.peeled && r.name.as_bytes() == b"HEAD");
+        let has_head = self.received.advertisement().refs.iter().any(|r| {
+            r.kind == crate::fetch::AdvertisementKind::Tip && r.name.as_bytes() == b"HEAD"
+        });
         let request = FetchRequest::prepare(
             repo,
             plan::specs(has_head),
@@ -345,7 +342,7 @@ fn head_edits(head: &CloneHead, reflog: &Reflog) -> Vec<RefEdit> {
         CloneHead::Branch { name, id } => {
             edits.push(RefEdit {
                 name: name.clone(),
-                dereference: false,
+                dereference: crate::refs::Dereference::Stored,
                 target: Some(Target::Direct(*id)),
                 expected: Expected::Absent,
                 reflog: reflog.clone(),
@@ -362,7 +359,7 @@ fn head_edits(head: &CloneHead, reflog: &Reflog) -> Vec<RefEdit> {
     };
     edits.push(RefEdit {
         name: RefName::new("HEAD").unwrap(),
-        dereference: false,
+        dereference: crate::refs::Dereference::Stored,
         target: Some(target),
         expected: Expected::Value(Target::Symbolic(crate::repository::initial_branch())),
         reflog: head_reflog,
