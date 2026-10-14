@@ -35,10 +35,9 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request supersedes its running checks.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Repeated pull_request events can check the same commit. Let every run finish:
+# cancelling a duplicate leaves a failed required check on an otherwise passing commit.
+# Do not serialize runs either: pending runs can be cancelled by newer events.
 
 jobs:
   msrv:
