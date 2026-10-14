@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/joshka/girt/compare/v0.8.0...v0.8.1) - 2026-10-14
+
+### Other
+
+- Add value traits and name byte conversions ([#182](https://github.com/joshka/girt/pull/182))
+- Test malformed pkt-line read boundaries ([#179](https://github.com/joshka/girt/pull/179))
+- Test the remaining commit parent bound ([#180](https://github.com/joshka/girt/pull/180))
+- Update rustls for RUSTSEC advisories ([#189](https://github.com/joshka/girt/pull/189))
+- Serialize duplicate CI runs by PR head SHA ([#173](https://github.com/joshka/girt/pull/173))
+- Follow protocol.version in Repository fetch workflows ([#169](https://github.com/joshka/girt/pull/169))
+- Request protocol v2 over HTTP and SSH ([#165](https://github.com/joshka/girt/pull/165))
+
 ## [0.8.0](https://github.com/joshka/girt/compare/v0.7.2...v0.8.0) - 2026-10-14
 
 ### Changed
