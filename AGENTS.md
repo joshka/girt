@@ -31,6 +31,10 @@ tracker.
 - Do not use upstream Git, gix, or libgit2 implementation or test source as implementation input,
   including copyright-audit comparisons. Use specifications, jj call-site requirements, and
   independently generated observations of the Git executable.
+- Do not read upstream Git, gix, or libgit2 source, even to learn ideas, edge cases or design. No
+  automated process may derive information from that source. If you need to know how Git handles
+  a problem, ask the maintainer to examine it and report the issues, problems or edge cases; you may
+  also learn behavior by running the `git` executable.
 - Establish compatibility through format specifications and observable behavior; record reference
   and fixture provenance.
 - Check dependency licenses before adding dependencies.
