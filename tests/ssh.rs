@@ -1641,7 +1641,7 @@ fn repository_workflow_fetches_with_protocol_version(
     }
     let repo = Repository::open(root.path()).unwrap();
     let config = server.root.join("config");
-    let environment: girt::transfer::Environment = [
+    let environment: girt::workflow::Environment = [
         (OsString::from("PATH"), std::env::var_os("PATH").unwrap()),
         (
             OsString::from("GIT_SSH_COMMAND"),
@@ -1650,14 +1650,13 @@ fn repository_workflow_fetches_with_protocol_version(
     ]
     .into_iter()
     .collect();
-    let mut callbacks = girt::transfer::NoCallbacks;
-    let head = repo
-        .remote_head("origin", &environment, &mut callbacks)
-        .unwrap();
+    let mut callbacks = girt::workflow::NoCallbacks;
+    let head = girt::workflow::remote_head(&repo, "origin", &environment, &mut callbacks).unwrap();
     assert!(matches!(head, fetch::RemoteHead::Symbolic { .. }));
-    repo.fetch(
+    girt::workflow::fetch(
+        &repo,
         "origin",
-        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
         &environment,
         &mut callbacks,
     )

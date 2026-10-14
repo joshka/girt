@@ -67,6 +67,11 @@
 //!
 //! # Features and platforms
 //!
+//! [`workflow`] provides optional configured-remote convenience functions for applications such
+//! as jj: refspecs, configuration and environment resolution remain outside the core repository
+//! API. [`workflow::fetch`], [`workflow::push`] and [`workflow::remote_head`] take the repository
+//! explicitly and own synchronous network runtime/credential orchestration.
+//!
 //! Local storage, references, and native local transfer need no optional feature. `http` adds
 //! smart-HTTP(S) transfer; `ssh` adds system OpenSSH transfer on macOS/Linux. Both network paths
 //! use a caller-owned Tokio runtime. Their fetch adapters return downloaded data for explicit
@@ -275,10 +280,10 @@ pub mod retention;
 pub mod rewrites;
 pub mod status;
 mod tag;
-pub mod transfer;
 pub mod transport;
 mod tree;
 mod tree_compare;
+pub mod workflow;
 
 pub use commit::{
     Commit, CommitError, CommitFields, CommitHeader, CommitHeaderRef, CommitPayload, IdentityDate,

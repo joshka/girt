@@ -241,7 +241,7 @@ fn git_local_transfer_progress_and_repository_callbacks() {
 
     #[derive(Default)]
     struct Observer(Vec<ValidationProgress>);
-    impl girt::transfer::TransferCallbacks for Observer {
+    impl girt::workflow::TransferCallbacks for Observer {
         fn validation_progress(&mut self, progress: ValidationProgress) {
             self.0.push(progress);
         }
@@ -265,19 +265,21 @@ fn git_local_transfer_progress_and_repository_callbacks() {
     );
     let repo = Repository::open(repo.git_dir()).unwrap();
     let mut callbacks = Observer::default();
-    repo.fetch(
+    girt::workflow::fetch(
+        &repo,
         "origin",
-        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
-        &girt::transfer::Environment::default(),
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::Environment::default(),
         &mut callbacks,
     )
     .unwrap();
     assert!(callbacks.0.last().unwrap().complete);
     callbacks.0.clear();
-    repo.fetch(
+    girt::workflow::fetch(
+        &repo,
         "origin",
-        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
-        &girt::transfer::Environment::default(),
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::Environment::default(),
         &mut callbacks,
     )
     .unwrap();
@@ -308,14 +310,15 @@ fn git_local_transfer_progress_and_repository_callbacks() {
         .parse()
         .unwrap();
     let repo = Repository::open(repo.git_dir()).unwrap();
-    repo.push(
+    girt::workflow::push(
+        &repo,
         "push",
         vec![
             PushCommand::new(RefName::new("refs/heads/main").unwrap(), None, id)
                 .with_force(ForcePolicy::FastForwardOnly),
         ],
-        &girt::transfer::PushOptions::default(),
-        &girt::transfer::Environment::default(),
+        &girt::workflow::PushOptions::default(),
+        &girt::workflow::Environment::default(),
         &mut callbacks,
     )
     .unwrap();
@@ -444,7 +447,7 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
     )
     .unwrap();
     struct Panics;
-    impl girt::transfer::TransferCallbacks for Panics {
+    impl girt::workflow::TransferCallbacks for Panics {
         fn validation_progress(&mut self, progress: ValidationProgress) {
             if progress.objects.0 > 0 {
                 panic!("observer panic");
@@ -498,21 +501,23 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
                 );
             }
             "repository-fetch" => {
-                let _ = destination.fetch(
+                let _ = girt::workflow::fetch(
+                    &destination,
                     "origin",
-                    &girt::transfer::FetchOptions::new([
+                    &girt::workflow::FetchOptions::new([
                         "refs/heads/main:refs/remotes/origin/main",
                     ]),
-                    &girt::transfer::Environment::default(),
+                    &girt::workflow::Environment::default(),
                     &mut Panics,
                 );
             }
             "repository-push" => {
-                let _ = source.push(
+                let _ = girt::workflow::push(
+                    &source,
                     "panic-target",
                     vec![command.clone()],
-                    &girt::transfer::PushOptions::default(),
-                    &girt::transfer::Environment::default(),
+                    &girt::workflow::PushOptions::default(),
+                    &girt::workflow::Environment::default(),
                     &mut Panics,
                 );
             }

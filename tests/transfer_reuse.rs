@@ -503,12 +503,13 @@ fn unreferenced_commit_does_not_prove_complete_history(
     assert_eq!(tip(&path), old);
     let dest = Repository::open(&path).unwrap();
     if configured {
-        let options = girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
-        dest.fetch(
+        let options = girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+        girt::workflow::fetch(
+            &dest,
             "origin",
             &options,
-            &girt::transfer::Environment::from_process(),
-            &mut girt::transfer::NoCallbacks,
+            &girt::workflow::Environment::from_process(),
+            &mut girt::workflow::NoCallbacks,
         )
         .unwrap();
         git(&path, &["fsck", "--strict"]);
@@ -793,16 +794,16 @@ fn damaged_source_entry_cannot_change_destination(
         let command =
             girt::push::PushCommand::new(RefName::new("refs/for/blob").unwrap(), None, id)
                 .with_force(girt::push::ForcePolicy::Allow);
-        let error = repo
-            .push(
-                "origin",
-                vec![command],
-                &girt::transfer::PushOptions::default(),
-                &girt::transfer::Environment::from_process(),
-                &mut girt::transfer::NoCallbacks,
-            )
-            .unwrap_err();
-        let girt::transfer::TransferError::Push(error) = error else {
+        let error = girt::workflow::push(
+            &repo,
+            "origin",
+            vec![command],
+            &girt::workflow::PushOptions::default(),
+            &girt::workflow::Environment::from_process(),
+            &mut girt::workflow::NoCallbacks,
+        )
+        .unwrap_err();
+        let girt::workflow::TransferError::Push(error) = error else {
             panic!("{error:?}")
         };
         assert!(
@@ -877,11 +878,12 @@ fn tree_reference_does_not_prove_its_missing_blob_exists(
             ],
         );
         let dest = Repository::open(&path).unwrap();
-        dest.fetch(
+        girt::workflow::fetch(
+            &dest,
             "origin",
-            &girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
-            &girt::transfer::Environment::from_process(),
-            &mut girt::transfer::NoCallbacks,
+            &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
+            &girt::workflow::Environment::from_process(),
+            &mut girt::workflow::NoCallbacks,
         )
         .unwrap();
         git(&path, &["fsck", "--strict"]);

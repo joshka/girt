@@ -912,13 +912,13 @@ fn local_workflow_ignores_protocol_version(#[case] setting: &str) {
     });
     fs::write(&config, text).unwrap();
     let repo = Repository::open(root.path()).unwrap();
-    let environment = girt::transfer::Environment::default();
-    let mut callbacks = girt::transfer::NoCallbacks;
-    repo.remote_head("origin", &environment, &mut callbacks)
-        .unwrap();
-    repo.fetch(
+    let environment = girt::workflow::Environment::default();
+    let mut callbacks = girt::workflow::NoCallbacks;
+    girt::workflow::remote_head(&repo, "origin", &environment, &mut callbacks).unwrap();
+    girt::workflow::fetch(
+        &repo,
         "origin",
-        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
         &environment,
         &mut callbacks,
     )
@@ -930,14 +930,15 @@ fn local_workflow_ignores_protocol_version(#[case] setting: &str) {
         .unwrap();
     assert_eq!(tracking, Some(Target::Direct(main_id(&fixture))));
     let copy = RefName::new("refs/heads/protocol-version-copy").unwrap();
-    repo.push(
+    girt::workflow::push(
+        &repo,
         "origin",
         vec![girt::push::PushCommand::new(
             copy.clone(),
             None,
             main_id(&fixture),
         )],
-        &girt::transfer::PushOptions::default(),
+        &girt::workflow::PushOptions::default(),
         &environment,
         &mut callbacks,
     )

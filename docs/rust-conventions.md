@@ -18,6 +18,12 @@ Use these conventions alongside the [Rustdoc Standard](rustdoc.md) and
   should reuse those values for exact-byte or expected-value preconditions instead of reconstructing
   them; otherwise a formatting or default change can break a later workflow phase.
 
+Configured refspec/config/environment orchestration belongs in `workflow`. Its free functions take
+an explicit repository; the core `Repository` API exposes Git concepts and storage operations. jj
+adapters wanting command-like resolution call `workflow::fetch`, `workflow::push` and
+`workflow::remote_head`, importing their options, callbacks and environment from that namespace.
+Callers that own transport scheduling and publication use the lower-level `fetch`/`push` artifacts.
+
 ## Domain Types at API Boundaries
 
 - Use domain types when a primitive would admit invalid choices, obscure meaning, or allow unrelated

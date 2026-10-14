@@ -252,7 +252,7 @@ fn invalid_maintenance_configuration_leaves_references_loose(
 }
 
 thread_local! {
-    /// Runs inside [`Repository::fetch`] after its reference transaction commits and before the
+    /// Runs inside [`crate::workflow::fetch`] after its reference transaction commits and before the
     /// automatic pack.
     pub(super) static BEFORE_AUTO_PACK: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::Cell::new(None) };

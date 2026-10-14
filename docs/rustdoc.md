@@ -14,6 +14,11 @@ require crate-wide passes.
   Explain surprising private helpers, ordering, and representations when they affect maintenance.
 - Trace construction, mutation, and failure paths before claiming an invariant.
 
+Teach configured-remote resolution through `workflow` examples with an explicit repository. Explain
+its synchronous runtime and credential ownership for jj adapters. Core fetch/push examples should
+keep caller-selected plans, controls, artifact validation and publication visible; link to
+`workflow` when automatic configured resolution is useful.
+
 ## Comment Spacing
 
 - Follow every Markdown heading with one empty doc-comment line before its content.
