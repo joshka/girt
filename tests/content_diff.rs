@@ -4,9 +4,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::atomic::AtomicBool;
 
-use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, DiffLimits, diff};
+use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, ContentEdit, DiffLimits, diff};
 use girt::{
-    EntryMode, InitKind, PackLimits, ReadLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
+    EntryMode, ObjectFormat, PackLimits, ReadLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
 };
 use rstest::rstest;
 
@@ -257,8 +257,11 @@ fn ordinary_nul_binary_classification_agrees_with_git() {
 #[rstest]
 #[case::loose(false)]
 #[case::packed(true)]
-fn tree_changes_load_verified_content_for_diff(#[case] packed: bool) {
-    let fixture = tree_fixture(packed);
+fn tree_changes_load_verified_content_for_diff(
+    #[case] packed: bool,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let fixture = tree_fixture(packed, format);
     let repo = Repository::open(fixture.0.path().join("repo")).unwrap();
     let objects = repo.objects(PackLimits::default()).unwrap();
     let cancel = AtomicBool::new(false);
@@ -270,8 +273,30 @@ fn tree_changes_load_verified_content_for_diff(#[case] packed: bool) {
             &cancel,
         )
         .unwrap();
-    let change = &changes[0];
-    assert_eq!(change.path, b"file");
+    let raw = git(
+        &fixture.0.path().join("repo"),
+        &[
+            "diff-tree",
+            "-r",
+            "--no-renames",
+            "--no-abbrev",
+            &fixture.1.to_string(),
+            &fixture.2.to_string(),
+        ],
+    );
+    assert!(raw.status.success(), "{:?}", raw.stderr);
+    let [change] = changes.as_slice() else {
+        panic!("one change: {changes:?}")
+    };
+    let (old, new) = (change.old.unwrap(), change.new.unwrap());
+    assert_eq!(
+        String::from_utf8(raw.stdout).unwrap(),
+        format!(":100644 100755 {} {} M\tfile\n", old.id, new.id)
+    );
+    assert_eq!(
+        (change.path.as_slice(), old.mode, new.mode),
+        (b"file".as_slice(), EntryMode::Blob, EntryMode::Executable)
+    );
     let content =
         BlobContent::read(&objects, change, ReadLimits::default(), 1024, &cancel).unwrap();
     assert_eq!(content.old, b"old\r\n");
@@ -286,19 +311,34 @@ fn tree_changes_load_verified_content_for_diff(#[case] packed: bool) {
     .unwrap() else {
         panic!("text")
     };
-    assert_eq!(text.edits()[0].old_bytes, 0..5);
-    assert_eq!(text.edits()[0].new_bytes, 0..4);
+    assert_eq!(
+        text.edits(),
+        [ContentEdit {
+            old_lines: 0..1,
+            new_lines: 0..1,
+            old_bytes: 0..5,
+            new_bytes: 0..4,
+        }]
+    );
 }
 
-fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::ObjectId) {
+fn tree_fixture(
+    packed: bool,
+    format: ObjectFormat,
+) -> (tempfile::TempDir, girt::ObjectId, girt::ObjectId) {
     let root = tempfile::tempdir().unwrap();
-    let repo = Repository::init(
-        girt::ObjectFormat::Sha1,
-        root.path().join("repo"),
-        InitKind::Bare,
-    )
-    .unwrap();
     let path = root.path().join("repo");
+    let init = git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            &format!("--object-format={format}"),
+            "repo",
+        ],
+    );
+    assert!(init.status.success(), "{:?}", init.stderr);
+    let repo = Repository::open(&path).unwrap();
     // Git independently writes the byte payloads; no filesystem text conversion is involved.
     std::fs::write(root.path().join("old"), b"old\r\n").unwrap();
     std::fs::write(root.path().join("new"), b"new\xff").unwrap();
@@ -316,7 +356,7 @@ fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::Objec
     let old = store
         .write_tree(
             &Tree::new(
-                girt::ObjectFormat::Sha1,
+                format,
                 vec![TreeEntry {
                     name: b"file".to_vec(),
                     mode: EntryMode::Blob,
@@ -329,7 +369,7 @@ fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::Objec
     let new = store
         .write_tree(
             &Tree::new(
-                girt::ObjectFormat::Sha1,
+                format,
                 vec![TreeEntry {
                     name: b"file".to_vec(),
                     mode: EntryMode::Executable,
@@ -339,6 +379,14 @@ fn tree_fixture(packed: bool) -> (tempfile::TempDir, girt::ObjectId, girt::Objec
             .unwrap(),
         )
         .unwrap();
+    for (tree, mode, blob) in [(old, "100644", ids[0]), (new, "100755", ids[1])] {
+        let listed = git(&path, &["ls-tree", "--full-tree", &tree.to_string()]);
+        assert!(listed.status.success(), "{:?}", listed.stderr);
+        assert_eq!(
+            String::from_utf8(listed.stdout).unwrap(),
+            format!("{mode} blob {blob}\tfile\n")
+        );
+    }
     if packed {
         // Git can retain trees directly in refs; girt's Windows ref backend is not involved.
         assert!(

@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 
 use girt::index::{Entry, Index, Mode, Stage};
 use girt::status::{Baseline, Change, Comparison, Error, Limits, Report, Untracked};
-use girt::{InitKind, ObjectId, Repository};
+use girt::{InitKind, ObjectFormat, ObjectId, Repository};
 use rstest::rstest;
 
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
@@ -56,6 +56,15 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
         String::from_utf8_lossy(&output.stderr)
     );
     output.stdout
+}
+fn fixture_in(format: ObjectFormat) -> (tempfile::TempDir, Repository) {
+    let temp = tempfile::tempdir().unwrap();
+    git(
+        temp.path(),
+        &["init", "-q", &format!("--object-format={format}"), "repo"],
+    );
+    let repo = Repository::open(temp.path().join("repo")).unwrap();
+    (temp, repo)
 }
 fn fixture() -> (tempfile::TempDir, Repository) {
     let temp = tempfile::tempdir().unwrap();
@@ -110,11 +119,17 @@ fn agrees_with_git_staged_and_unstaged(
     #[case] expected: &[u8],
     #[case] staged_count: usize,
     #[case] unstaged_count: usize,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
 ) {
-    let (_temp, repo) = fixture();
+    let (_temp, repo) = fixture_in(format);
     seed(&repo, initial, staged, work);
     let before = fs::read(repo.git_dir().join("index")).unwrap();
     let result = status(&repo);
+    let head_tree = git(repo.worktree().unwrap(), &["rev-parse", "HEAD^{tree}"]);
+    assert_eq!(
+        result.baseline_tree.map(|tree| tree.to_string()).as_deref(),
+        Some(std::str::from_utf8(&head_tree).unwrap().trim())
+    );
     assert_eq!(result.staged.len(), staged_count);
     assert_eq!(result.unstaged.len(), unstaged_count);
     assert_eq!(result.comparison, Comparison::RawBytesAndPosixModes);
@@ -131,8 +146,61 @@ fn agrees_with_git_staged_and_unstaged(
         ),
         expected
     );
+    assert_eq!(porcelain(&result), expected);
+    assert_identities(&repo, &result);
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     assert!(!repo.git_dir().join("index.lock").exists());
+}
+/// Renders girt's report as Git's `--porcelain=v1 -z` line for the single `file` path.
+fn porcelain(report: &Report) -> Vec<u8> {
+    let staged = report.staged.iter().find(|c| c.path == b"file");
+    let unstaged = report.unstaged.iter().find(|c| c.path == b"file");
+    let x = match staged {
+        None => b' ',
+        Some(change) if change.old.is_none() => b'A',
+        Some(change) if change.new.is_none() => b'D',
+        Some(_) => b'M',
+    };
+    let y = match unstaged.map(|c| &c.change) {
+        None => b' ',
+        Some(Change::Deleted) => b'D',
+        Some(Change::Modified(_)) => b'M',
+        Some(Change::Obstructed { .. }) => panic!("unexpected obstruction"),
+    };
+    if (x, y) == (b' ', b' ') {
+        return Vec::new();
+    }
+    [&[x, y, b' '][..], b"file\0"].concat()
+}
+/// Checks every reported identity against Git's HEAD tree, index and working-file hash.
+fn assert_identities(repo: &Repository, report: &Report) {
+    let root = repo.worktree().unwrap();
+    let id = |args: &[&str]| -> ObjectId {
+        std::str::from_utf8(&git(root, args))
+            .unwrap()
+            .split_whitespace()
+            .find(|field| field.len() >= 40)
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let indexed = || id(&["ls-files", "--stage", "--", "file"]);
+    for change in &report.staged {
+        assert_eq!(change.path, b"file");
+        if let Some(old) = change.old {
+            assert_eq!(old.id, id(&["rev-parse", "HEAD:file"]));
+        }
+        if let Some(new) = change.new {
+            assert_eq!(new.id, indexed());
+        }
+    }
+    for change in &report.unstaged {
+        assert_eq!(change.path, b"file");
+        assert_eq!(change.index.id, indexed());
+        if let Change::Modified(value) = &change.change {
+            assert_eq!(value.id, id(&["hash-object", "--no-filters", "file"]));
+        }
+    }
 }
 
 #[test]
@@ -176,8 +244,11 @@ fn missing_index_with_existing_head_reports_deletions_and_raw_files() {
 #[rstest]
 #[case::loose(false)]
 #[case::packed(true)]
-fn detached_head_and_explicit_tree_use_verified_storage(#[case] packed: bool) {
-    let (_temp, repo) = fixture();
+fn detached_head_and_explicit_tree_use_verified_storage(
+    #[case] packed: bool,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let (_temp, repo) = fixture_in(format);
     seed(&repo, Some(b"old"), Some(b"old"), Some(b"new"));
     let root = repo.worktree().unwrap();
     git(root, &["checkout", "--detach", "-q"]);

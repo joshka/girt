@@ -1,6 +1,6 @@
 //! Checks commit history queries against the Git executable.
 
-use girt::{HistoryError, HistoryLimits, ObjectId};
+use girt::{HistoryError, HistoryLimits, ObjectFormat, ObjectId};
 use rstest::rstest;
 #[path = "support/history_git.rs"]
 mod history_git;
@@ -9,8 +9,15 @@ use history_git::History;
 #[rstest]
 #[case::loose(false)]
 #[case::packed(true)]
-fn criss_cross_matches_git(#[case] packed: bool) {
-    let h = History::new(&[vec![], vec![0], vec![0], vec![1, 2], vec![2, 1]], packed);
+fn criss_cross_matches_git(
+    #[case] packed: bool,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+) {
+    let h = History::with_format(
+        &[vec![], vec![0], vec![0], vec![1, 2], vec![2, 1]],
+        packed,
+        format,
+    );
     let objects = h.objects();
     let mut reachable = objects
         .walk(&[h.ids[3], h.ids[4]], HistoryLimits::default())
@@ -67,8 +74,9 @@ fn endpoint_queries(
     #[case] right: usize,
     #[case] bases: Vec<usize>,
     #[case] ancestor: bool,
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
 ) {
-    let h = History::new(&[vec![], vec![0], vec![]], false);
+    let h = History::with_format(&[vec![], vec![0], vec![]], false, format);
     let expected: Vec<_> = bases.iter().map(|&i| h.ids[i]).collect();
     assert_eq!(
         h.query("merge-base", &[h.ids[left], h.ids[right]]),
