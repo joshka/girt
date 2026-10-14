@@ -23,6 +23,10 @@ Show receiver roots explicitly in `PreparedPush::new`; `&[]` requests a full tra
 use the same preparation contract for native and wire transports. Observer examples use
 `PreparedPush::new_with_progress`; the local constructor aliases are removed.
 
+Native-fetch examples construct `LocalFetchRequest` and show controls and observers separately. Use
+`LocalFetchObserver::default()` when notifications are unnecessary. Source construction and
+validation completion do not establish installation or publication, including in jj adapter docs.
+
 ## Comment Spacing
 
 - Follow every Markdown heading with one empty doc-comment line before its content.

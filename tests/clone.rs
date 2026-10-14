@@ -226,7 +226,7 @@ fn populated_clone_and_subsequent_fetch_use_persisted_configuration(
             &KnownHistory::default(),
             FetchLimits::default(),
             TransportControl::new(&AtomicBool::new(false)),
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap()
         .finish(FetchUpdateLimits::default(), &AtomicBool::new(false))

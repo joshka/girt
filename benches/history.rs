@@ -125,7 +125,7 @@ fn prepare_one_commit(h: &history_git::History) -> (tempfile::TempDir, girt::fet
             &known,
             FetchLimits::default(),
             girt::transport::TransportControl::new(&cancel),
-            |_| std::ops::ControlFlow::Continue(()),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
     (root, ready)

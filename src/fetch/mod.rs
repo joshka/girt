@@ -61,7 +61,6 @@
 //!
 //! ```
 //! use std::collections::BTreeSet;
-//! use std::ops::ControlFlow;
 //! use std::sync::atomic::AtomicBool;
 //!
 //! use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory};
@@ -112,7 +111,7 @@
 //!     &KnownHistory::default(),
 //!     FetchLimits::default(),
 //!     TransportControl::new(&cancel),
-//!     |_progress| ControlFlow::Continue(()),
+//!     girt::fetch::LocalFetchObserver::default(),
 //! )?;
 //! let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
 //! assert_eq!(report.references.len(), 1);
@@ -211,10 +210,9 @@ pub(crate) use install::NativeContents;
 pub(crate) use install::PackInput;
 pub use install::{FetchInstalled, ReceivedFetch};
 pub use known::KnownHistory;
-pub use local::{
-    receive_local, receive_local_with_control, receive_local_with_known,
-    receive_local_with_known_and_progress, receive_local_with_validation_progress,
-};
+pub use local::receive_local;
+mod local_request;
+pub use local_request::{LocalFetchObserver, LocalFetchRequest};
 pub(crate) use progress::ValidationObserver;
 pub use protocol::{
     AdvertisedRef, Advertisement, AdvertisementKind, receive, receive_with_known,

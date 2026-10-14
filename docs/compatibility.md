@@ -1080,8 +1080,8 @@ absolute deadlines and process-group cleanup on macOS/Linux. Generic streams mus
 interruption.
 
 Native local fetch can separately report typed source-reading and pack-construction events through
-`receive_local_with_known_and_progress` or `FetchRequest::receive_local_with_progress`. Source reads
-count unique selected objects, using decoded structured payloads and packed blob framing; known
+`receive_local` or `FetchRequest::receive_local` with a `LocalFetchObserver`. Source reads count
+unique selected objects, using decoded structured payloads and packed blob framing; known
 complete-history boundaries are excluded. Their total is unknown during traversal. Packing counts
 only selected outgoing entries. Completing those counts does not establish a finished index. The
 terminal `Complete` event follows construction and the final cancellation/deadline check, before
@@ -1327,10 +1327,10 @@ platform and transport evidence is recorded separately.
 ## Owned Transport Interruption
 
 `TransportControl` carries a borrowed cancellation flag and an optional absolute monotonic deadline.
-`fetch::receive_local_with_control` and `push::send_local_with_control` use it for owned local Git
-servers. Existing `receive_local` / `send_local` signatures remain usable and now interrupt blocked
-pipes when their flag is set. Generic `receive` / `send` streams retain cooperative cancellation:
-only their owner can arrange to unblock an arbitrary `Read` or `Write` implementation.
+`fetch::receive_local` and `push::send_local_with_control` use it for owned local Git servers.
+Explicit transport controls interrupt blocked pipes when their flag is set. Generic `receive` /
+`send` streams retain cooperative cancellation: only their owner can arrange to unblock an arbitrary
+`Read` or `Write` implementation.
 
 The deadline expires at the caller's chosen `Instant`, includes time already elapsed before entry,
 and is never reset by traffic. Checks run before path resolution/spawn, at each owned pipe
@@ -1390,10 +1390,10 @@ process/import/cleanup measurements and source fingerprints.
 ## Bounded Incremental Transfers
 
 The full-transfer entry points remain available as reproducible baselines. Fetch adds
-`KnownHistory::new`, `receive_with_known` and `receive_local_with_known`. Explicit local roots are
-read with verified identities and complete typed connectivity before use. Trees, commit parents and
-tag targets are followed; gitlinks remain external. Missing, corrupt or mistyped local history fails
-preparation. No local refs are inferred and no shallow or partial history is accepted.
+`KnownHistory::new`, `receive_with_known` and `LocalFetchRequest::with_known`. Explicit local roots
+are read with verified identities and complete typed connectivity before use. Trees, commit parents
+and tag targets are followed; gitlinks remain external. Missing, corrupt or mistyped local history
+fails preparation. No local refs are inferred and no shallow or partial history is accepted.
 
 Negotiation follows the public [pack protocol](https://git-scm.com/docs/pack-protocol) and
 [capability specification](https://git-scm.com/docs/protocol-capabilities), implemented

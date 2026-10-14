@@ -170,7 +170,6 @@ impl DirectoryIdentity {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::ControlFlow;
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
 
@@ -211,9 +210,9 @@ mod tests {
             let received = crate::fetch::receive_local(
                 root.path(),
                 |_| vec![id],
-                crate::fetch::FetchLimits::trusted(),
-                &cancel,
-                |_| ControlFlow::Continue(()),
+                crate::fetch::LocalFetchRequest::new(crate::fetch::FetchLimits::trusted()),
+                crate::transport::TransportControl::new(&cancel),
+                crate::fetch::LocalFetchObserver::default(),
             )
             .unwrap();
             let primary = Repository::open(root.path()).unwrap();

@@ -150,7 +150,7 @@ fn clone(history: &History) -> (tempfile::TempDir, FetchReady) {
             &KnownHistory::default(),
             FetchLimits::default(),
             crate::transport::TransportControl::new(&cancel),
-            |_| std::ops::ControlFlow::Continue(()),
+            crate::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
     (root, ready)
@@ -250,7 +250,7 @@ fn incremental_publication_still_checks_local_dependencies(#[case] format: Objec
             &known,
             FetchLimits::default(),
             crate::transport::TransportControl::new(&cancel),
-            |_| std::ops::ControlFlow::Continue(()),
+            crate::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
     assert!(!ready.received.dependencies().is_empty());

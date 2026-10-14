@@ -300,13 +300,13 @@ fn local_progress_plan_failure_has_no_completion() {
     let id = source.loose_objects().write_blob(b"source").unwrap();
     std::fs::write(source.git_dir().join("refs/heads/main"), format!("{id}\n")).unwrap();
     let mut events = Vec::new();
-    let result = request.receive_local_with_progress(
+    let result = request.receive_local(
         source.git_dir(),
         &KnownHistory::default(),
         FetchLimits::default(),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |event| events.push(event),
+        crate::fetch::LocalFetchObserver::default()
+            .with_construction(&mut |event| events.push(event)),
     );
     assert!(matches!(
         result,
@@ -380,7 +380,7 @@ fn received_git_history() -> (tempfile::TempDir, FetchReady) {
             &KnownHistory::default(),
             FetchLimits::default(),
             TransportControl::new(&cancel),
-            |_| std::ops::ControlFlow::Continue(()),
+            crate::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
     (_root, ready)

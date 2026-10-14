@@ -44,9 +44,9 @@ fn fetch(path: &Path) -> ReceivedFetch {
     let result = receive_local(
         path,
         select_all,
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     result.unwrap()
 }
@@ -172,9 +172,9 @@ fn empty_selection_does_not_request_a_pack() {
     let received = receive_local(
         fixture.root.path(),
         |_| vec![],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     let received = received.unwrap();
     assert_eq!(received.object_count(), 0);
@@ -200,9 +200,9 @@ fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
                 .map(|r| r.id)
                 .collect()
         },
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     let received = received.unwrap();
     received
@@ -530,13 +530,12 @@ fn complete_transfer_when_any_selected_tip_is_not_known(#[case] format: girt::Ob
 }
 
 fn negotiated(path: &Path, known: &girt::fetch::KnownHistory) -> ReceivedFetch {
-    girt::fetch::receive_local_with_known(
+    girt::fetch::receive_local(
         path,
         select_all,
-        known,
-        FetchLimits::default(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(known),
         girt::transport::TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap()
 }
@@ -755,13 +754,13 @@ fn zero_have_budget_uses_full_transfer_without_losing_known_wants() {
     let known = known(&fixture.repo, &[tag]);
     let next = child(&fixture, &[main_id(&fixture)], b"no have budget\n");
     set_main(&fixture, next);
-    let received = girt::fetch::receive_local_with_known(
+    let received = girt::fetch::receive_local(
         fixture.root.path(),
         select_all,
-        &known,
-        FetchLimits::default().with_max_haves(0),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default().with_max_haves(0))
+            .with_known(&known),
         girt::transport::TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     // No knowledge is offered, so local transfer includes the new commit and the selected tag.
