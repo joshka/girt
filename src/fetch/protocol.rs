@@ -1096,7 +1096,13 @@ mod tests {
         let unshallow_offered = format!("unshallow {offered}\n");
         assert_eq!(
             v2_sections_offering(
-                &["shallow-info\n", &shallow, &unshallow_offered, "0001", "packfile\n"],
+                &[
+                    "shallow-info\n",
+                    &shallow,
+                    &unshallow_offered,
+                    "0001",
+                    "packfile\n"
+                ],
                 Some(2),
                 &[offered]
             )

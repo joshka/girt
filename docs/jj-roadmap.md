@@ -610,9 +610,9 @@ follow-up only when a case demonstrates a missing required behavior.
   Source: [jj reftable request](https://github.com/jj-vcs/jj/issues/9358). Restart with a
   reproducible nonempty consumer failure and exact backend/ref state.
 - **SHA-256 clone (L; R35 with R26–R28 transfer):** Discover the remote format before creating local
-  storage, then verify local, HTTP and Unix SSH clone results, refs and working state. Keep the
-  verified v0/v1 transfer boundary distinct from protocol-v2-only endpoints and report an actionable
-  unsupported endpoint. Source:
+  storage, then verify local, HTTP and Unix SSH clone results, refs and working state. Protocol v2
+  endpoints use the same verified transfer boundary
+  ([#158](https://github.com/joshka/girt/issues/158)). Source:
   [jj SHA-256 remote request](https://github.com/jj-vcs/jj/issues/3813). Restart with a destination
   created in the wrong format or a failed supported transfer.
 - **Remote rename (M; R35 with R09 config and R28 ref composition):** Preserve `gh-resolved`,
@@ -735,8 +735,9 @@ R27 offers at most 32 verified commits in one wire batch before `done`. A peer t
 common commit in that batch sends a complete history; integrity still requires every received object
 and dependency to validate. Measure a representative jj fetch before adding further have/ACK rounds
 and stateless HTTP requests. Reopen if transfer size or latency materially affects an ordinary
-consumer workflow. This deferral does not cover a required v2-only endpoint or any missing/corrupt
-object acceptance; R35 must resolve those before integration.
+consumer workflow. This deferral does not cover missing/corrupt object acceptance. Protocol v2 fetch
+([#158](https://github.com/joshka/girt/issues/158)) uses the same single batch: one `fetch` command
+carries the haves and `done`, so v2 adds no negotiation rounds either.
 
 ### B08 — Nonadmin Windows Destructive Maintenance
 

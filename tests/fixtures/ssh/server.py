@@ -305,6 +305,8 @@ def service(args):
     root = Path(args.root)
     with (root / "requests").open("a") as out:
         out.write(original + "\n")
+    with (root / "protocols").open("a") as out:
+        out.write(os.environ.get("GIT_PROTOCOL", "") + "\n")
     if args.fault == "before-advertisement":
         time.sleep(10)
         return 1

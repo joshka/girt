@@ -343,6 +343,7 @@ struct Http {
     remote_name: Vec<u8>,
     destination: Destination,
     environment: crate::transport::http::HttpEnvironment,
+    protocol: crate::transport::RequestedProtocol,
     helpers: Vec<crate::remote::CredentialHelper>,
     /// URL for prompts, without userinfo.
     display_url: String,
@@ -362,7 +363,8 @@ impl Http {
         )
         .map_err(|error| TransferError::Configuration(error.to_string()))?;
         let remote = crate::transport::http::HttpRemote::configured(settings)
-            .map_err(|error| TransferError::Configuration(error.to_string()))?;
+            .map_err(|error| TransferError::Configuration(error.to_string()))?
+            .with_protocol(self.protocol);
         match credentials {
             Some(session) => remote
                 .with_credentials(session)
@@ -622,6 +624,24 @@ fn http_environment(
     })
 }
 
+#[cfg(any(
+    feature = "http",
+    all(feature = "ssh", any(target_os = "macos", target_os = "linux"))
+))]
+/// Reads `protocol.version` for an HTTP or SSH endpoint, defaulting to v2 like Git. Only
+/// upload-pack sends the request; a server answering v0/v1 is accepted. Native local transfer never
+/// reads it, so enabling a network feature cannot change local fetch or push.
+fn requested_protocol(
+    config: &crate::Config,
+) -> Result<crate::transport::RequestedProtocol, TransferError> {
+    match config.value("protocol", None, "version") {
+        None => Ok(crate::transport::RequestedProtocol::V2),
+        Some(value) => value
+            .and_then(crate::transport::RequestedProtocol::from_config)
+            .ok_or_else(|| TransferError::Configuration("invalid protocol.version".into())),
+    }
+}
+
 #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
 fn ssh_endpoint(
     config: &crate::Config,
@@ -719,6 +739,7 @@ impl Repository {
             #[cfg(feature = "http")]
             Protocol::Http | Protocol::Https => Endpoint::Http(Box::new(Http {
                 environment: http_environment(config, &destination, environment)?,
+                protocol: requested_protocol(config)?,
                 helpers: credential_helpers(config, environment),
                 display_url: redacted_url(destination.bytes()),
                 settings_config: config.clone(),
@@ -726,9 +747,10 @@ impl Repository {
                 destination: destination.clone(),
             })),
             #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-            Protocol::Ssh => {
-                Endpoint::Ssh(Box::new(ssh_endpoint(config, &destination, environment)?))
-            }
+            Protocol::Ssh => Endpoint::Ssh(Box::new(
+                ssh_endpoint(config, &destination, environment)?
+                    .with_protocol(requested_protocol(config)?),
+            )),
             _ => return Err(TransferError::UnsupportedTransport(remote_name.to_owned())),
         };
         Ok((endpoint, destination))
@@ -786,7 +808,9 @@ impl Repository {
     /// Destinations must be remote-tracking references (`refs/remotes/`), tags, or a namespace
     /// allowed with [`FetchOptions::tag_namespace`]. Exact sources the remote doesn't have are
     /// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
-    /// is written and tags are not followed implicitly.
+    /// is written and tags are not followed implicitly. HTTP and SSH remotes request the
+    /// `protocol.version` upload-pack protocol (v2 when unset, as Git does) and accept a v0/v1
+    /// answer; an invalid value is a configuration error.
     ///
     /// Afterwards, like `git fetch`, runs Git's automatic pack-refs task; see
     /// [`Self::auto_pack_references`]. A pack failure does not fail the fetch.

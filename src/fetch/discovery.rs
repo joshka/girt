@@ -453,8 +453,14 @@ pub async fn discover_ssh_with_diagnostics(
     traced_async("ssh", async {
         control.check()?;
         let mut session = remote.connect("git-upload-pack", control)?;
-        let (advertisement, _, version, used) =
-            super::ssh::open(&mut session, remote.protocol(), limits, control, &mut diagnostics).await?;
+        let (advertisement, _, version, used) = super::ssh::open(
+            &mut session,
+            remote.protocol(),
+            limits,
+            control,
+            &mut diagnostics,
+        )
+        .await?;
         let mut discovered = RemoteDiscovery::from_advertisement(advertisement)?;
         discovered.version = version;
         // A flush ends both a v0 selection and a v2 session; the server then exits.

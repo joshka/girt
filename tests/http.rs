@@ -2854,7 +2854,11 @@ fn unsolicited_v2_answer_is_rejected_before_any_command(
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let rt = runtime();
-    let discovered = rt.block_on(fetch::discover_http(&remote, FetchLimits::default(), control));
+    let discovered = rt.block_on(fetch::discover_http(
+        &remote,
+        FetchLimits::default(),
+        control,
+    ));
     let received = rt.block_on(fetch::receive_http(
         &remote,
         all,
@@ -2872,4 +2876,80 @@ fn unsolicited_v2_answer_is_rejected_before_any_command(
     }
     // No ls-refs or fetch POST follows either advertisement.
     assert_eq!(server.requests(), ["GET", "GET"]);
+}
+
+/// A destination repository whose `origin` is the fixture server, with optional `protocol.version`.
+fn workflow_destination(url: &str, version: Option<&str>) -> (tempfile::TempDir, Repository) {
+    let root = tempfile::tempdir().unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            "--initial-branch=main",
+            ".",
+        ],
+        b"",
+    );
+    git(root.path(), &["remote", "add", "origin", url], b"");
+    if let Some(version) = version {
+        git(root.path(), &["config", "protocol.version", version], b"");
+    }
+    let repo = Repository::open(root.path()).unwrap();
+    (root, repo)
+}
+
+#[rstest]
+#[case::default_is_v2(None, &["GET", "POST", "GET", "POST", "POST"])]
+#[case::explicit_v2(Some("2"), &["GET", "POST", "GET", "POST", "POST"])]
+#[case::v1(Some("1"), &["GET", "GET", "POST"])]
+#[case::v0(Some("0"), &["GET", "GET", "POST"])]
+fn repository_workflow_follows_protocol_version(
+    #[case] version: Option<&str>,
+    #[case] requests: &[&str],
+) {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "", "", None);
+    let (_root, repo) = workflow_destination(&server.url, version);
+    let environment = girt::transfer::Environment::default();
+    let mut callbacks = girt::transfer::NoCallbacks;
+    let head = repo
+        .remote_head("origin", &environment, &mut callbacks)
+        .unwrap();
+    assert!(matches!(head, fetch::RemoteHead::Symbolic { .. }));
+    repo.fetch(
+        "origin",
+        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    assert_eq!(
+        tip(&repo, "refs/remotes/origin/main"),
+        tip(&f.repo, "refs/heads/main")
+    );
+    // V2 adds an `ls-refs` POST to discovery and to the fetch.
+    assert_eq!(server.requests(), requests);
+    git(repo.git_dir(), &["fsck", "--full"], b"");
+}
+
+#[test]
+fn repository_workflow_rejects_invalid_protocol_version() {
+    let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
+    let server = Server::new(f.root.path(), "", "", None);
+    let (_root, repo) = workflow_destination(&server.url, Some("3"));
+    let error = repo
+        .fetch(
+            "origin",
+            &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+            &girt::transfer::Environment::default(),
+            &mut girt::transfer::NoCallbacks,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        girt::transfer::TransferError::Configuration(_)
+    ));
+    assert!(server.requests().is_empty());
 }

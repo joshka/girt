@@ -872,3 +872,70 @@ fn known_only_installation_can_exceed_default_snapshot_count() {
         .install(&repo, snapshot, &AtomicBool::new(false))
         .unwrap();
 }
+
+/// `protocol.version` selects the network upload-pack protocol only: native local fetch, discovery
+/// and push ignore it, whatever features are enabled.
+#[rstest]
+#[case::invalid("protocol.version=3")]
+#[case::valueless("protocol.version")]
+fn local_workflow_ignores_protocol_version(#[case] setting: &str) {
+    let fixture = Fixture::new(girt::ObjectFormat::Sha1, true, 4);
+    let (root, _) = destination();
+    git(
+        root.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            fixture.root.path().to_str().unwrap(),
+        ],
+        b"",
+    );
+    let config = root.path().join("config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    let (key, value) = setting
+        .split_once('=')
+        .map_or((setting, None), |(k, v)| (k, Some(v)));
+    let name = key.split_once('.').unwrap().1;
+    text.push_str(&match value {
+        Some(value) => format!("[protocol]\n\t{name} = {value}\n"),
+        None => format!("[protocol]\n\t{name}\n"),
+    });
+    fs::write(&config, text).unwrap();
+    let repo = Repository::open(root.path()).unwrap();
+    let environment = girt::transfer::Environment::default();
+    let mut callbacks = girt::transfer::NoCallbacks;
+    repo.remote_head("origin", &environment, &mut callbacks)
+        .unwrap();
+    repo.fetch(
+        "origin",
+        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    let tracking = repo
+        .references()
+        .unwrap()
+        .read(&RefName::new("refs/remotes/origin/main").unwrap())
+        .unwrap();
+    assert_eq!(tracking, Some(Target::Direct(main_id(&fixture))));
+    let copy = RefName::new("refs/heads/protocol-version-copy").unwrap();
+    repo.push(
+        "origin",
+        vec![girt::push::PushCommand::new(
+            copy.clone(),
+            None,
+            main_id(&fixture),
+        )],
+        &girt::transfer::PushOptions::default(),
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    let source = Repository::open(fixture.root.path()).unwrap();
+    assert_eq!(
+        source.references().unwrap().read(&copy).unwrap(),
+        Some(Target::Direct(main_id(&fixture)))
+    );
+}
