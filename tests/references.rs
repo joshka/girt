@@ -1638,6 +1638,16 @@ fn enumerated_packed_peels_and_loose_overrides_agree_with_git(#[case] format: gi
         &["update-ref", "refs/heads/nested/other", &commit.to_string()],
         b"",
     );
+    git(
+        root.path(),
+        &["symbolic-ref", "refs/heads/alias", "refs/heads/nested/main"],
+        b"",
+    );
+    git(
+        root.path(),
+        &["symbolic-ref", "refs/heads/dangling", "refs/heads/missing"],
+        b"",
+    );
     let refs = repo.references().unwrap();
     let observations = refs
         .list_observations_controlled(100, 100_000, &std::sync::atomic::AtomicBool::new(false))
@@ -1645,8 +1655,14 @@ fn enumerated_packed_peels_and_loose_overrides_agree_with_git(#[case] format: gi
     let actual = observations
         .iter()
         .map(|entry| {
-            let Target::Direct(id) = entry.target else {
-                panic!("fixture has only direct refs")
+            let id = match &entry.target {
+                Target::Direct(id) => *id,
+                Target::Symbolic(target) if target == &name("refs/heads/nested/main") => commit,
+                Target::Symbolic(target) => {
+                    assert_eq!(target, &name("refs/heads/missing"));
+                    return String::new(); // Git omits dangling symrefs from for-each-ref.
+                }
+                _ => panic!("unexpected reference target"),
             };
             format!(
                 "{id} {}\n",
@@ -1662,6 +1678,18 @@ fn enumerated_packed_peels_and_loose_overrides_agree_with_git(#[case] format: gi
             b""
         )
     );
+    fs::write(root.path().join("refs/heads/broken"), b"garbage\n").unwrap();
+    assert!(matches!(
+        refs.list_observations_controlled(100, 100_000, &std::sync::atomic::AtomicBool::new(false)),
+        Err(girt::refs::ReferenceError::Malformed { .. })
+    ));
+    let git_with_broken = git(
+        root.path(),
+        &["for-each-ref", "--format=%(objectname) %(refname)"],
+        b"",
+    );
+    assert_eq!(actual.as_bytes(), git_with_broken);
+    fs::remove_file(root.path().join("refs/heads/broken")).unwrap();
     let tags = refs
         .list_namespace_observations(&name("refs/tags/group"))
         .unwrap();

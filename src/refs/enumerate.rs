@@ -514,10 +514,9 @@ fn open_walked(path: &Path) -> Result<Option<fs::File>, ReferenceError> {
         Err(source) => return Err(io_error(path, source)),
     };
     let metadata = file.metadata().map_err(|source| io_error(path, source))?;
-    // A leaf can disappear and become a directory while Git resolves a file/directory name
-    // conflict. Like a disappeared leaf, it may be missed by this live inventory.
+    // Match check_path on hosts whose leaf open cannot open a directory.
     if metadata.is_dir() {
-        return Ok(None);
+        return Err(ReferenceError::Conflict(path.into()));
     }
     if !metadata.is_file() {
         return Err(ReferenceError::Unsupported("non-regular reference file"));
@@ -777,7 +776,27 @@ mod tests {
             Err(ReferenceError::Unsupported(_))
         ));
         assert_eq!(read_walked(&dir.path().join("gone")).unwrap(), None);
-        assert_eq!(read_walked(dir.path()).unwrap(), None);
+    }
+
+    #[test]
+    fn walked_open_reports_file_replaced_by_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced");
+        fs::write(&path, b"ref: refs/heads/main\n").unwrap();
+        assert!(fs::symlink_metadata(&path).unwrap().is_file());
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(
+            matches!(read_walked(&path), Err(ReferenceError::Conflict(found)) if found == path)
+        );
+        let mut budget = ScanBudget {
+            entries: 1,
+            bytes: 1000,
+            cancel: &std::sync::atomic::AtomicBool::new(false),
+        };
+        assert!(
+            matches!(read_limited_walked(&path, &mut budget), Err(ReferenceError::Conflict(found)) if found == path)
+        );
     }
 
     /// Reads continue to end of file however few bytes each read returns.
