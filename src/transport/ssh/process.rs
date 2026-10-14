@@ -189,6 +189,37 @@ impl Session {
         result
     }
 
+    /// Writes one request without closing input, then reads one flush-terminated response.
+    ///
+    /// Serves mid-session protocol v2 commands such as `ls-refs`. A request this small cannot fill
+    /// the pipe while the server is still writing, so writing before reading cannot deadlock.
+    pub(crate) async fn command_with_diagnostics(
+        &mut self,
+        request: &[u8],
+        limit: usize,
+        control: TransportControl<'_>,
+        diagnostics: &mut impl FnMut(&[u8]),
+    ) -> Result<Vec<u8>, SshError> {
+        let input = self
+            .input
+            .as_mut()
+            .ok_or(SshError::Protocol("session input closed"))?;
+        let output = &mut self.output;
+        let exchange = async {
+            write_bytes(input, request, &mut 0).await?;
+            advertisement(output, limit).await
+        };
+        controlled(
+            exchange,
+            &mut self.process,
+            &mut self.diagnostics,
+            &mut self.diagnostics_open,
+            control,
+            diagnostics,
+        )
+        .await
+    }
+
     #[cfg(test)]
     pub(crate) async fn exchange(
         &mut self,

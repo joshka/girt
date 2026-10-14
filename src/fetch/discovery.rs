@@ -385,8 +385,9 @@ fn traced(
 
 /// Discovers a smart-HTTP upload-pack endpoint without sending a fetch RPC.
 ///
-/// Uses the endpoint's owned trust, credential, redirect and deadline policy. The HTTP service
-/// currently requests v0; a v2-only response is rejected before any object or ref mutation.
+/// Uses the endpoint's owned trust, credential, redirect and deadline policy. Requests the
+/// endpoint's [`crate::transport::http::HttpRemote::protocol`]; a v2 server is listed with one
+/// `ls-refs` request, a v0/v1 server by its advertisement.
 ///
 /// # Errors
 ///
@@ -399,21 +400,18 @@ pub async fn discover_http(
 ) -> Result<RemoteDiscovery, FetchError> {
     traced_async("http", async {
         control.check()?;
-        let (bytes, _) = remote
-            .discover(
-                "git-upload-pack",
-                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-                control,
-            )
-            .await?;
-        discover(&mut bytes.as_slice(), limits, control.cancel)
+        let (advertisement, _, version, _) = super::http::open(remote, limits, control).await?;
+        let mut discovered = RemoteDiscovery::from_advertisement(advertisement)?;
+        discovered.version = version;
+        Ok(discovered)
     })
     .await
 }
 
 /// Discovers a Unix OpenSSH upload-pack endpoint in one process session.
 ///
-/// Sends only the v0 empty selection flush after discovery so the service exits. The configured
+/// Requests the remote's [`crate::transport::ssh::SshRemote::protocol`]. A v2 server is listed
+/// with one `ls-refs` command. A final flush ends the session so the service exits. The configured
 /// endpoint controls SSH trust, authentication and process cleanup. No transfer is requested.
 ///
 /// # Errors
@@ -455,19 +453,16 @@ pub async fn discover_ssh_with_diagnostics(
     traced_async("ssh", async {
         control.check()?;
         let mut session = remote.connect("git-upload-pack", control)?;
-        let bytes = session
-            .advertise_with_diagnostics(
-                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-                control,
-                &mut diagnostics,
-            )
-            .await?;
-        let discovered = discover(&mut bytes.as_slice(), limits, control.cancel)?;
+        let (advertisement, _, version, used) =
+            super::ssh::open(&mut session, remote.protocol(), limits, control, &mut diagnostics).await?;
+        let mut discovered = RemoteDiscovery::from_advertisement(advertisement)?;
+        discovered.version = version;
+        // A flush ends both a v0 selection and a v2 session; the server then exits.
         let (body, result, _) = session
             .exchange_with_diagnostics(
                 b"0000",
                 &[],
-                limits.max_wire_bytes - bytes.len(),
+                limits.max_wire_bytes - used,
                 control,
                 &mut diagnostics,
             )

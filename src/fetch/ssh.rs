@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use super::live_progress::LiveProgress;
+use super::v2::Capabilities;
 use super::{
     Advertisement, DownloadedFetch, FetchError, FetchLimits, FetchOptions, KnownHistory, protocol,
 };
@@ -10,7 +11,73 @@ use crate::packet::Wire;
 use crate::transport::TransportControl;
 use crate::transport::ssh::SshRemote;
 
-/// Downloads a bounded protocol v0 response over system OpenSSH without changing local storage.
+/// Reads an SSH upload-pack advertisement and, for a v2 server, lists every reference with one
+/// `ls-refs` command on the same session. Returns the advertisement, its dialect and version, and
+/// the response bytes consumed, all within `max_advertisement_bytes`.
+pub(super) async fn open(
+    session: &mut crate::transport::ssh::Session,
+    requested: crate::transport::RequestedProtocol,
+    limits: FetchLimits,
+    control: TransportControl<'_>,
+    diagnostics: &mut impl FnMut(&[u8]),
+) -> Result<
+    (
+        Advertisement,
+        protocol::Dialect,
+        super::ProtocolVersion,
+        usize,
+    ),
+    FetchError,
+> {
+    let budget = limits.max_advertisement_bytes.min(limits.max_wire_bytes);
+    let bytes = session
+        .advertise_with_diagnostics(budget, control, diagnostics)
+        .await?;
+    let mut reader = bytes.as_slice();
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: budget,
+        cancel: control.cancel,
+    };
+    if !bytes.starts_with(b"000eversion 2\n") {
+        let (advertisement, version) = protocol::advertise_with_version(&mut wire, limits)?;
+        wire.end()?;
+        return Ok((advertisement, protocol::Dialect::V0, version, bytes.len()));
+    }
+    // Only a v2 request may be answered with v2; nothing is sent after an unsolicited answer.
+    if requested != crate::transport::RequestedProtocol::V2 {
+        return Err(FetchError::Unsupported("protocol version"));
+    }
+    wire.packet()?;
+    let capabilities = Capabilities::read(&mut wire, limits)?;
+    wire.end()?;
+    let mut request = Vec::new();
+    capabilities.write_ls_refs(&mut request, &[], limits, control.cancel)?;
+    let left = budget.saturating_sub(bytes.len());
+    let response = session
+        .command_with_diagnostics(&request, left, control, diagnostics)
+        .await?;
+    let mut reader = response.as_slice();
+    let mut wire = Wire {
+        reader: &mut reader,
+        remaining: left,
+        cancel: control.cancel,
+    };
+    let advertisement = capabilities.read_ls_refs(&mut wire, limits)?;
+    wire.end()?;
+    advertisement.object_format()?;
+    Ok((
+        advertisement,
+        protocol::Dialect::V2(capabilities),
+        super::ProtocolVersion::V2,
+        bytes.len() + response.len(),
+    ))
+}
+
+/// Downloads a bounded upload-pack response over system OpenSSH without changing local storage.
+///
+/// Requests the remote's [`SshRemote::protocol`] (v0 unless changed); a v2 server adds one
+/// `ls-refs` command to the same session before `fetch`.
 ///
 /// Uses the selection, negotiation and history contracts of [`super::receive_with_known`].
 /// Requires a caller-owned Tokio runtime with I/O/time enabled. [`SshRemote`] defines executable,
@@ -115,21 +182,8 @@ pub async fn receive_ssh_with_progress(
         let history = known.as_deref().unwrap_or(&empty);
         protocol::validate_known(history, limits, control.cancel)?;
         let mut session = remote.connect("git-upload-pack", control)?;
-        let bytes = session
-            .advertise_with_diagnostics(
-                limits.max_advertisement_bytes.min(limits.max_wire_bytes),
-                control,
-                &mut diagnostics,
-            )
-            .await?;
-        let mut reader = bytes.as_slice();
-        let mut wire = Wire {
-            reader: &mut reader,
-            remaining: limits.max_wire_bytes,
-            cancel: control.cancel,
-        };
-        let (advertisement, _) = protocol::advertise_with_version(&mut wire, limits)?;
-        wire.end()?;
+        let (advertisement, dialect, _, used) =
+            open(&mut session, remote.protocol(), limits, control, &mut diagnostics).await?;
         let wants = select(&advertisement);
         if depth.is_none()
             && known
@@ -141,13 +195,13 @@ pub async fn receive_ssh_with_progress(
                 .map(|history| Arc::new(history.shallow_only()));
         }
         let history = known.as_deref().unwrap_or(&empty);
-        let remaining = limits.max_wire_bytes - bytes.len();
+        let remaining = limits.max_wire_bytes - used;
         control.check()?;
         let mut request = Vec::new();
         let negotiation = protocol::request(
             &mut request,
             &advertisement,
-            &protocol::Dialect::V0,
+            &dialect,
             wants,
             history,
             depth,
@@ -155,7 +209,11 @@ pub async fn receive_ssh_with_progress(
             control.cancel,
         )?;
         control.check()?;
-        let mut live = LiveProgress::new(depth.is_some(), limits.max_shallow_roots);
+        let mut live = if negotiation.is_v2() {
+            LiveProgress::new_v2(limits.max_shallow_roots)
+        } else {
+            LiveProgress::new(depth.is_some(), limits.max_shallow_roots)
+        };
         let mut validate_prefix = |bytes: &[u8]| {
             let mut reader = bytes;
             let mut wire = Wire {

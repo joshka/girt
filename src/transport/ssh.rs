@@ -1,4 +1,5 @@
-//! Async protocol v0 over a caller-approved OpenSSH executable and configuration.
+//! Async Git protocol over a caller-approved OpenSSH executable and configuration: upload-pack
+//! speaks v0, v1 or v2 as selected by [`SshRemote::with_protocol`]; receive-pack speaks v0/v1.
 //!
 //! [`SshRemote::new`] accepts explicit endpoint and trusted executable inputs;
 //! [`SshRemote::configured`] resolves a selected [`Destination`] with [`crate::Config`] and
@@ -273,6 +274,7 @@ pub struct SshRemote {
     arguments: Vec<String>,
     policy: LaunchPolicy,
     terminal: Option<std::sync::Arc<ForegroundTerminal>>,
+    protocol: super::RequestedProtocol,
 }
 
 enum LaunchPolicy {
@@ -390,6 +392,7 @@ impl SshRemote {
             executable: executable.into(),
             arguments: Vec::new(),
             terminal: None,
+            protocol: super::RequestedProtocol::V0,
             policy: LaunchPolicy::Restricted {
                 config: config.into(),
                 agent_socket: None,
@@ -496,6 +499,23 @@ impl SshRemote {
         Ok(self)
     }
 
+    /// Selects the upload-pack protocol version requested through `GIT_PROTOCOL`.
+    ///
+    /// The default is v0, which sends nothing. For v1 or v2, upload-pack sessions set
+    /// `GIT_PROTOCOL` for the local OpenSSH process and add `-o SendEnv=GIT_PROTOCOL`; the server
+    /// must accept the variable (OpenSSH `AcceptEnv`). A server that does not receive it speaks
+    /// v0, which is accepted. Receive-pack sessions never send it.
+    #[must_use]
+    pub fn with_protocol(mut self, protocol: super::RequestedProtocol) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    /// The upload-pack protocol version this remote requests.
+    pub fn protocol(&self) -> super::RequestedProtocol {
+        self.protocol
+    }
+
     /// Returns whether this remote uses an explicit foreground terminal attachment.
     pub fn has_terminal(&self) -> bool {
         self.terminal.is_some()
@@ -513,6 +533,10 @@ impl SshRemote {
     fn command(&self, service: &str) -> Command {
         let mut command = Command::new(&self.executable);
         command.env_clear();
+        let version = self
+            .protocol
+            .parameter()
+            .filter(|_| service == "git-upload-pack");
         match &self.policy {
             LaunchPolicy::Restricted {
                 config,
@@ -584,6 +608,10 @@ impl SshRemote {
                     command.args(["-o", option]);
                 }
 
+                if let Some(version) = version {
+                    command.env("GIT_PROTOCOL", version);
+                    command.args(["-o", "SendEnv=GIT_PROTOCOL"]);
+                }
                 command.args(&self.arguments);
                 command.args(["-p", &self.port.expect("restricted port").to_string(), "-l"]);
                 command.arg(self.user.as_deref().expect("restricted user"));
@@ -591,7 +619,12 @@ impl SshRemote {
             }
             LaunchPolicy::OpenSsh(environment) => {
                 command.envs(environment);
+                // An approved command is `/bin/sh -c '<command> "$@"'`; options follow it.
                 command.args(&self.arguments);
+                if let Some(version) = version {
+                    command.env("GIT_PROTOCOL", version);
+                    command.args(["-o", "SendEnv=GIT_PROTOCOL"]);
+                }
                 if let Some(port) = self.port {
                     command.args(["-p", &port.to_string()]);
                 }

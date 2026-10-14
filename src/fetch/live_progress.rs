@@ -6,9 +6,12 @@ pub(super) struct LiveProgress {
     buffered: Vec<u8>,
     shallow_left: usize,
     acknowledgements_left: usize,
+    delimited: bool,
 }
 
 enum Phase {
+    /// V2 `shallow-info` lines and delimiters before the `packfile` header.
+    Sections,
     Shallow,
     Acknowledgements,
     Sideband,
@@ -22,11 +25,25 @@ impl LiveProgress {
             buffered: Vec::new(),
             shallow_left: max_shallow_roots,
             acknowledgements_left: 33,
+            delimited: false,
             phase: if depth {
                 Phase::Shallow
             } else {
                 Phase::Acknowledgements
             },
+        }
+    }
+
+    /// Observes a v2 response, whose prefix is an optional `shallow-info` section.
+    pub(super) fn new_v2(max_shallow_roots: usize) -> Self {
+        Self {
+            offset: 0,
+            buffered: Vec::new(),
+            // Allow the section header alongside the bounded shallow lines.
+            shallow_left: max_shallow_roots.saturating_add(1),
+            acknowledgements_left: 0,
+            delimited: false,
+            phase: Phase::Sections,
         }
     }
 
@@ -64,13 +81,26 @@ impl LiveProgress {
             let Some(header) = remaining.first_chunk::<4>() else {
                 return;
             };
+            // Only the delimiter closing `shallow-info` may precede `packfile`.
+            if matches!(self.phase, Phase::Sections) && header == b"0001" {
+                if std::mem::replace(&mut self.delimited, true) {
+                    self.phase = Phase::Stopped;
+                    return;
+                }
+                self.offset += 4;
+                continue;
+            }
             let Ok(length) = crate::packet::packet_length(header) else {
                 self.phase = Phase::Stopped;
                 return;
             };
             // A v0 shallow/ACK line contains at most a 64-byte hex ID, its keyword and
             // framing. Stop observing malformed prefixes before they can retain pack-sized data.
-            if matches!(self.phase, Phase::Shallow | Phase::Acknowledgements) && length > 82 {
+            if matches!(
+                self.phase,
+                Phase::Sections | Phase::Shallow | Phase::Acknowledgements
+            ) && length > 82
+            {
                 self.phase = Phase::Stopped;
                 return;
             }
@@ -88,6 +118,20 @@ impl LiveProgress {
             };
             self.offset += length;
             match self.phase {
+                Phase::Sections => {
+                    if packet == b"packfile\n" {
+                        self.phase = if validate_prefix(&bytes[..self.offset]) {
+                            Phase::Sideband
+                        } else {
+                            Phase::Stopped
+                        };
+                    } else if self.shallow_left == 0 {
+                        self.phase = Phase::Stopped;
+                        return;
+                    } else {
+                        self.shallow_left -= 1;
+                    }
+                }
                 Phase::Shallow => {
                     if self.shallow_left == 0 {
                         self.phase = Phase::Stopped;
@@ -276,5 +320,21 @@ mod tests {
             &mut |bytes| messages.push(bytes.to_vec()),
         );
         assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn repeated_v2_delimiters_do_not_accumulate_response_bytes() {
+        let bytes = b"0001".repeat(16 * 16 * 1024);
+        for chunk in [64 * 1024, 4097, 3] {
+            let mut live = LiveProgress::new_v2(0);
+            feed_chunks(
+                &mut live,
+                &bytes,
+                chunk,
+                &mut |_| panic!("no packfile header"),
+                &mut |_| panic!("no progress"),
+            );
+            assert!(live.buffered.len() <= chunk.max(8));
+        }
     }
 }
