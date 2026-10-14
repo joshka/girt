@@ -284,7 +284,9 @@ fn workflow_publishes_initial_and_deepened_shallow_history(#[case] format: Objec
 #[case::sha256_v0(ObjectFormat::Sha256, "0")]
 #[case::sha1_v1(ObjectFormat::Sha1, "1")]
 #[case::sha256_v1(ObjectFormat::Sha256, "1")]
-fn git_v0_v1_wire_fetch_installs_objects(#[case] format: ObjectFormat, #[case] version: &str) {
+#[case::sha1_v2(ObjectFormat::Sha1, "2")]
+#[case::sha256_v2(ObjectFormat::Sha256, "2")]
+fn git_wire_fetch_installs_objects(#[case] format: ObjectFormat, #[case] version: &str) {
     let source = repository(format);
     let tip = commit(&source);
     let mut child = Command::new("git")
@@ -327,16 +329,21 @@ fn git_v0_v1_wire_fetch_installs_objects(#[case] format: ObjectFormat, #[case] v
 }
 
 #[rstest]
-#[case::sha1(ObjectFormat::Sha1)]
-#[case::sha256(ObjectFormat::Sha256)]
-fn git_v0_depth_reports_boundary_without_installing(#[case] format: ObjectFormat) {
+#[case::sha1_v0(ObjectFormat::Sha1, "0")]
+#[case::sha256_v0(ObjectFormat::Sha256, "0")]
+#[case::sha1_v2(ObjectFormat::Sha1, "2")]
+#[case::sha256_v2(ObjectFormat::Sha256, "2")]
+fn git_depth_reports_boundary_without_installing(
+    #[case] format: ObjectFormat,
+    #[case] version: &str,
+) {
     let source = repository(format);
     let parent = commit(&source);
     let tip = child_commit(&source, parent);
     let mut child = Command::new("git")
         .current_dir(source.path())
         .args(["upload-pack", "."])
-        .env("GIT_PROTOCOL", "version=0")
+        .env("GIT_PROTOCOL", format!("version={version}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -375,9 +382,11 @@ fn git_v0_depth_reports_boundary_without_installing(#[case] format: ObjectFormat
 }
 
 #[rstest]
-#[case::sha1(ObjectFormat::Sha1)]
-#[case::sha256(ObjectFormat::Sha256)]
-fn git_v0_deepens_verified_shallow_history(#[case] format: ObjectFormat) {
+#[case::sha1_v0(ObjectFormat::Sha1, "0")]
+#[case::sha256_v0(ObjectFormat::Sha256, "0")]
+#[case::sha1_v2(ObjectFormat::Sha1, "2")]
+#[case::sha256_v2(ObjectFormat::Sha256, "2")]
+fn git_deepens_verified_shallow_history(#[case] format: ObjectFormat, #[case] version: &str) {
     let source = repository(format);
     let first = commit(&source);
     let previous = child_commit(&source, first);
@@ -406,7 +415,7 @@ fn git_v0_deepens_verified_shallow_history(#[case] format: ObjectFormat) {
     let mut ordinary = Command::new("git")
         .current_dir(source.path())
         .args(["upload-pack", "."])
-        .env("GIT_PROTOCOL", "version=0")
+        .env("GIT_PROTOCOL", format!("version={version}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -437,7 +446,7 @@ fn git_v0_deepens_verified_shallow_history(#[case] format: ObjectFormat) {
     let mut child = Command::new("git")
         .current_dir(source.path())
         .args(["upload-pack", "."])
-        .env("GIT_PROTOCOL", "version=0")
+        .env("GIT_PROTOCOL", format!("version={version}"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -670,7 +679,7 @@ fn git_v2_unborn_ls_refs_matches_request(#[case] format: ObjectFormat) {
     assert_eq!(actual, expected);
     assert_eq!(discovered.object_format, format);
     assert_eq!(discovered.version, ProtocolVersion::V2);
-    assert!(!discovered.supports_current_fetch());
+    assert!(discovered.supports_current_fetch());
     assert!(
         matches!(discovered.head, RemoteHead::Unborn { branch } if branch.as_bytes() == b"refs/heads/main")
     );
@@ -1231,4 +1240,116 @@ fn git_v2_prefix_selection_interprets_partial_head(
         )),
         ExpectedHead::Missing => assert_eq!(discovered.head, RemoteHead::Missing),
     }
+}
+
+/// Presents stateless `git http-backend` v2 exchanges as one caller-owned stream: a read with
+/// no buffered response POSTs everything written since the previous exchange.
+#[derive(Clone)]
+struct HttpBackendSession(std::rc::Rc<std::cell::RefCell<HttpBackendState>>);
+
+struct HttpBackendState {
+    repository: std::path::PathBuf,
+    request: Vec<u8>,
+    response: std::collections::VecDeque<u8>,
+    posts: usize,
+}
+
+impl HttpBackendSession {
+    fn new(repository: &Path) -> Self {
+        let advertisement = http_backend_v2(repository, "GET", "info/refs", b"");
+        Self(std::rc::Rc::new(std::cell::RefCell::new(
+            HttpBackendState {
+                repository: repository.to_path_buf(),
+                request: Vec::new(),
+                response: advertisement.into(),
+                posts: 0,
+            },
+        )))
+    }
+
+    fn posts(&self) -> usize {
+        self.0.borrow().posts
+    }
+}
+
+impl std::io::Read for HttpBackendSession {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let mut state = self.0.borrow_mut();
+        if state.response.is_empty() && !state.request.is_empty() {
+            let request = std::mem::take(&mut state.request);
+            state.posts += 1;
+            let body = http_backend_v2(&state.repository, "POST", "git-upload-pack", &request);
+            state.response.extend(body);
+        }
+        std::io::Read::read(&mut state.response, out)
+    }
+}
+
+impl std::io::Write for HttpBackendSession {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().request.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn receive_http_backend(
+    source: &Path,
+    tip: ObjectId,
+    known: &KnownHistory,
+) -> (girt::fetch::ReceivedFetch, usize) {
+    let session = HttpBackendSession::new(source);
+    let fetched = girt::fetch::receive_with_known(
+        &mut session.clone(),
+        &mut session.clone(),
+        |_| vec![tip],
+        known,
+        FetchLimits::default(),
+        &AtomicBool::new(false),
+        |_| ControlFlow::Continue(()),
+    )
+    .unwrap();
+    (fetched, session.posts())
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn git_http_backend_v2_fetch_installs_incremental_history(#[case] format: ObjectFormat) {
+    let source = repository(format);
+    let base = commit(&source);
+    let destination = repository(format);
+    let repo = Repository::open(destination.path()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let (fetched, posts) = receive_http_backend(source.path(), base, &KnownHistory::default());
+    // `ls-refs`, then `fetch` plus the session-ending flush.
+    assert_eq!(posts, 2);
+    fetched
+        .install(&repo, PackLimits::default(), &cancel)
+        .unwrap();
+
+    let tip = child_commit(&source, base);
+    let store = repo.objects(PackLimits::default()).unwrap();
+    let known = KnownHistory::new(&store, &[base], FetchLimits::default(), &cancel).unwrap();
+    let (fetched, _) = receive_http_backend(source.path(), tip, &known);
+    // The shared root commit and empty tree are not resent: only the new commit arrives.
+    assert_eq!(fetched.object_count(), 1);
+    fetched
+        .install(&repo, PackLimits::default(), &cancel)
+        .unwrap();
+    git(destination.path(), &["fsck", "--full"], b"", None);
+    assert_eq!(
+        Repository::open(destination.path())
+            .unwrap()
+            .objects(PackLimits::default())
+            .unwrap()
+            .read(tip, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .id(),
+        tip
+    );
 }

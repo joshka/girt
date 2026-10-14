@@ -5,10 +5,11 @@ use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 
 use super::known::KnownObjects as _;
+use super::v2::Capabilities;
 use super::{
     FetchError as Error, FetchLimits, FetchOptions, KnownHistory, ReceivedFetch, check_cancelled,
 };
-use crate::packet::{Wire, packet, put};
+use crate::packet::{Frame, Wire, packet, put};
 use crate::refs::RefName;
 use crate::{IdSet, ObjectFormat, ObjectId};
 
@@ -52,7 +53,8 @@ impl AdvertisedRef {
     }
 }
 
-/// A complete v0 advertisement, independent of local references and policy.
+/// References and capabilities from a v0/v1 advertisement or a v2 `ls-refs` listing, independent of
+/// local references and policy. A prefix-selected v2 listing may omit references.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Advertisement {
@@ -85,8 +87,10 @@ impl Advertisement {
 
 /// Receives a complete, validated fetch without changing storage.
 ///
-/// Streams must already speak upload-pack v0 or v1 and terminate at EOF after the final flush. This
-/// is a single session, not stateless HTTP or a reusable connection. `select` runs once after a
+/// Streams must already speak upload-pack v0, v1 or v2 and terminate at EOF after the final flush.
+/// This is a single session, not stateless HTTP or a reusable connection. A v2 session lists every
+/// reference with one `ls-refs` command, sends one `fetch` command, then ends the session with a
+/// flush so the server exits. `select` runs once after a
 /// complete advertisement and returns explicit advertised tip IDs. Empty selection writes only a
 /// flush and expects EOF. No haves are sent; a nonempty selection requests the complete reachable
 /// history. Progress channel bytes are passed to `progress`; returning `Break(())` cancels the
@@ -101,7 +105,8 @@ impl Advertisement {
 ///
 /// # Errors
 ///
-/// Rejects unsupported protocol versions or object formats, missing sideband capability, invalid
+/// Rejects unsupported protocol versions or object formats, missing sideband or v2 `fetch`
+/// capability, unexpected v2 response sections, invalid
 /// advertisements, unadvertised wants, unexpected ACKs, truncation, trailing bytes, peer errors,
 /// corruption, missing delta bases or reachable objects, and exceeded limits. No partial fetch
 /// is returned. All received object identities are computed; selected tip connectivity and edge
@@ -131,7 +136,8 @@ pub fn receive(
 ///
 /// Uses the same stream, cancellation and capability contract as [`receive`]. Sends at most
 /// `min(max_haves, 32)` verified commits in one batch followed immediately by `done`, requesting
-/// `multi_ack` when advertised. Without it, sends at most one have. ACKs must name offered IDs;
+/// `multi_ack` when advertised. Without it, sends at most one have; v2 always sends the full batch
+/// and expects no acknowledgments after `done`. ACKs must name offered IDs;
 /// duplicate continuation ACKs, unsupported states and excess replies fail. No extra rounds or
 /// unbounded ancestry walks occur. Selected IDs already verified locally are omitted from wire
 /// wants; an entirely known selection sends only a flush. Tags and blobs can therefore be no-ops
@@ -202,7 +208,7 @@ pub fn receive_with_known_depth(
             remaining: limits.max_wire_bytes,
             cancel,
         };
-        let advertisement = advertise(&mut wire, limits)?;
+        let (advertisement, dialect) = open(&mut wire, writer, limits)?;
         check_cancelled(cancel)?;
         let wants = select(&advertisement);
         let empty = known.shallow_only();
@@ -211,7 +217,21 @@ pub fn receive_with_known_depth(
         } else {
             &empty
         };
-        let negotiation = request(writer, &advertisement, wants, known, depth, limits, cancel)?;
+        let negotiation = request(
+            writer,
+            &advertisement,
+            &dialect,
+            wants,
+            known,
+            depth,
+            limits,
+            cancel,
+        )?;
+        if negotiation.v2 && negotiation.needs_pack {
+            // End the v2 session after the one command; the server exits after its response.
+            put(writer, b"0000", cancel)?;
+            writer.flush()?;
+        }
         if !negotiation.needs_pack {
             wire.end()?;
             return ReceivedFetch::without_pack(
@@ -249,6 +269,42 @@ pub(super) struct Negotiation {
     pub(super) needs_pack: bool,
     shallow: Vec<ObjectId>,
     depth: Option<NonZeroU32>,
+    v2: bool,
+}
+
+/// The upload-pack protocol a session speaks after its first response line.
+pub(super) enum Dialect {
+    /// V0, or v1's version marker followed by a v0 advertisement.
+    V0,
+    /// V2 capabilities; references came from `ls-refs`.
+    V2(Capabilities),
+}
+
+/// Reads the server's opening and, for v2, lists every reference with `ls-refs`.
+///
+/// The capability advertisement and reference listing together stay within
+/// `max_advertisement_bytes`, as a v0 advertisement does.
+pub(super) fn open(
+    wire: &mut Wire<'_, impl Read>,
+    writer: &mut impl Write,
+    limits: FetchLimits,
+) -> Result<(Advertisement, Dialect), Error> {
+    let saved = wire
+        .remaining
+        .saturating_sub(limits.max_advertisement_bytes);
+    wire.remaining -= saved;
+    let first = wire.packet()?;
+    let result = if first.as_deref() == Some(b"version 2\n") {
+        let capabilities = Capabilities::read(wire, limits)?;
+        let advertisement = capabilities.ls_refs(wire, writer, &[], limits)?;
+        advertisement.object_format()?;
+        (advertisement, Dialect::V2(capabilities))
+    } else {
+        let (advertisement, _) = advertise_after(wire, Some(first), limits)?;
+        (advertisement, Dialect::V0)
+    };
+    wire.remaining += saved;
+    Ok(result)
 }
 
 pub(super) fn validate_known(
@@ -273,9 +329,11 @@ pub(super) fn validate_known(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn request(
     writer: &mut impl Write,
     advertisement: &Advertisement,
+    dialect: &Dialect,
     selected: Vec<ObjectId>,
     known: &KnownHistory,
     depth: Option<NonZeroU32>,
@@ -290,7 +348,11 @@ pub(super) fn request(
     {
         return Err(Error::Unsupported("known object format differs"));
     }
-    if (!known.shallow.is_empty() || depth.is_some()) && !advertisement.has(b"shallow") {
+    let shallow_supported = match dialect {
+        Dialect::V0 => advertisement.has(b"shallow"),
+        Dialect::V2(capabilities) => capabilities.has_feature(b"fetch", b"shallow"),
+    };
+    if (!known.shallow.is_empty() || depth.is_some()) && !shallow_supported {
         return Err(Error::Unsupported("shallow negotiation"));
     }
     if selected.len() > limits.max_wants {
@@ -328,7 +390,20 @@ pub(super) fn request(
             needs_pack: false,
             shallow: known.shallow.clone(),
             depth,
+            v2: matches!(dialect, Dialect::V2(_)),
         });
+    }
+    if let Dialect::V2(capabilities) = dialect {
+        return request_v2(
+            writer,
+            capabilities,
+            wants,
+            &wire_wants,
+            known,
+            depth,
+            limits,
+            cancel,
+        );
     }
     if !advertisement.has(b"side-band-64k") {
         return Err(Error::Unsupported("side-band-64k is required"));
@@ -381,6 +456,56 @@ pub(super) fn request(
         needs_pack: true,
         shallow: known.shallow.clone(),
         depth,
+        v2: false,
+    })
+}
+
+// V2 has no multi_ack: with `done` in the only request, the server sends no acknowledgments and
+// the response starts at an optional `shallow-info` section followed by `packfile`.
+#[allow(clippy::too_many_arguments)]
+fn request_v2(
+    writer: &mut impl Write,
+    capabilities: &Capabilities,
+    wants: Vec<ObjectId>,
+    wire_wants: &[ObjectId],
+    known: &KnownHistory,
+    depth: Option<NonZeroU32>,
+    limits: FetchLimits,
+    cancel: &AtomicBool,
+) -> Result<Negotiation, Error> {
+    if !capabilities.has(b"fetch") {
+        return Err(Error::Unsupported("v2 fetch"));
+    }
+    let have_count = limits.max_haves.min(32);
+    capabilities.write_command(writer, b"fetch", cancel)?;
+    if !known.haves.is_empty() && have_count > 0 {
+        packet(writer, b"thin-pack\n", cancel)?;
+    }
+    packet(writer, b"ofs-delta\n", cancel)?;
+    for id in wire_wants {
+        packet(writer, format!("want {id}\n").as_bytes(), cancel)?;
+    }
+    for id in &known.shallow {
+        packet(writer, format!("shallow {id}\n").as_bytes(), cancel)?;
+    }
+    if let Some(depth) = depth {
+        packet(writer, format!("deepen {depth}\n").as_bytes(), cancel)?;
+    }
+    let haves: IdSet = known.haves.iter().take(have_count).copied().collect();
+    for id in known.haves.iter().take(have_count) {
+        packet(writer, format!("have {id}\n").as_bytes(), cancel)?;
+    }
+    packet(writer, b"done\n", cancel)?;
+    put(writer, b"0000", cancel)?;
+    writer.flush()?;
+    Ok(Negotiation {
+        wants,
+        haves,
+        multi_ack: false,
+        needs_pack: true,
+        shallow: known.shallow.clone(),
+        depth,
+        v2: true,
     })
 }
 
@@ -454,9 +579,50 @@ pub(super) fn read_response_prefix(
     negotiation: &Negotiation,
     limits: FetchLimits,
 ) -> Result<Vec<ObjectId>, Error> {
+    if negotiation.v2 {
+        return read_v2_sections(wire, negotiation, limits);
+    }
     let shallow = read_shallow(wire, negotiation, limits)?;
     read_ack(wire, &negotiation.haves, negotiation.multi_ack)?;
     Ok(shallow)
+}
+
+// Reads sections up to and including the `packfile` header. `acknowledgments` cannot appear after
+// `done`; `wanted-refs` and `packfile-uris` were never requested.
+fn read_v2_sections(
+    wire: &mut Wire<'_, impl Read>,
+    negotiation: &Negotiation,
+    limits: FetchLimits,
+) -> Result<Vec<ObjectId>, Error> {
+    let mut roots: HashSet<_> = negotiation.shallow.iter().copied().collect();
+    let mut header = wire.packet()?.ok_or(Error::Protocol("v2 fetch response"))?;
+    if header == b"shallow-info\n" {
+        if negotiation.depth.is_none() && negotiation.shallow.is_empty() {
+            return Err(Error::Unsupported("shallow server"));
+        }
+        let format = negotiation.wants[0].format();
+        let mut count = 0;
+        loop {
+            match wire.frame()? {
+                Frame::Delim => break,
+                Frame::Data(bytes) => {
+                    count += 1;
+                    if count > limits.max_shallow_roots {
+                        return Err(Error::Limit("shallow response"));
+                    }
+                    apply_shallow_line(&mut roots, &negotiation.shallow, line(&bytes), format)?;
+                }
+                Frame::Flush | Frame::ResponseEnd => {
+                    return Err(Error::Protocol("v2 shallow-info section"));
+                }
+            }
+        }
+        header = wire.packet()?.ok_or(Error::Protocol("v2 fetch response"))?;
+    }
+    if header != b"packfile\n" {
+        return Err(Error::Protocol("v2 fetch response section"));
+    }
+    finish_roots(roots, limits)
 }
 
 fn read_shallow(
@@ -477,24 +643,38 @@ fn read_shallow(
         if count > limits.max_shallow_roots {
             return Err(Error::Limit("shallow response"));
         }
-        let bytes = line(&bytes);
-        let (add, raw) = if let Some(raw) = bytes.strip_prefix(b"shallow ") {
-            (true, raw)
-        } else if let Some(raw) = bytes.strip_prefix(b"unshallow ") {
-            (false, raw)
-        } else {
-            return Err(Error::Protocol("shallow response"));
-        };
-        let id = std::str::from_utf8(raw)
-            .ok()
-            .and_then(|raw| ObjectId::from_hex(format, raw).ok())
-            .ok_or(Error::Protocol("shallow object ID"))?;
-        if add {
-            roots.insert(id);
-        } else if !roots.remove(&id) {
-            return Err(Error::Protocol("unknown unshallow root"));
-        }
+        apply_shallow_line(&mut roots, &negotiation.shallow, line(&bytes), format)?;
     }
+    finish_roots(roots, limits)
+}
+
+// `unshallow` may only name a root the client sent; repeating one removes nothing and fails.
+fn apply_shallow_line(
+    roots: &mut HashSet<ObjectId>,
+    offered: &[ObjectId],
+    bytes: &[u8],
+    format: ObjectFormat,
+) -> Result<(), Error> {
+    let (add, raw) = if let Some(raw) = bytes.strip_prefix(b"shallow ") {
+        (true, raw)
+    } else if let Some(raw) = bytes.strip_prefix(b"unshallow ") {
+        (false, raw)
+    } else {
+        return Err(Error::Protocol("shallow response"));
+    };
+    let id = std::str::from_utf8(raw)
+        .ok()
+        .and_then(|raw| ObjectId::from_hex(format, raw).ok())
+        .ok_or(Error::Protocol("shallow object ID"))?;
+    if add {
+        roots.insert(id);
+    } else if !offered.contains(&id) || !roots.remove(&id) {
+        return Err(Error::Protocol("unknown unshallow root"));
+    }
+    Ok(())
+}
+
+fn finish_roots(roots: HashSet<ObjectId>, limits: FetchLimits) -> Result<Vec<ObjectId>, Error> {
     if roots.len() > limits.max_shallow_roots {
         return Err(Error::Limit("shallow roots"));
     }
@@ -567,15 +747,17 @@ impl Advertisement {
     }
 }
 
-pub(super) fn advertise(
-    wire: &mut Wire<'_, impl Read>,
-    limits: FetchLimits,
-) -> Result<Advertisement, Error> {
-    advertise_with_version(wire, limits).map(|(advertisement, _)| advertisement)
-}
-
 pub(super) fn advertise_with_version(
     wire: &mut Wire<'_, impl Read>,
+    limits: FetchLimits,
+) -> Result<(Advertisement, super::ProtocolVersion), Error> {
+    advertise_after(wire, None, limits)
+}
+
+/// Parses a v0/v1 advertisement whose first packet, if `first` is `Some`, was already read.
+fn advertise_after(
+    wire: &mut Wire<'_, impl Read>,
+    mut first_packet: Option<Option<Vec<u8>>>,
     limits: FetchLimits,
 ) -> Result<(Advertisement, super::ProtocolVersion), Error> {
     let mut advertisement = Advertisement {
@@ -593,7 +775,10 @@ pub(super) fn advertise_with_version(
     wire.remaining -= saved;
     let mut version_checked = false;
     let mut version = super::ProtocolVersion::V0;
-    while let Some(bytes) = wire.packet()? {
+    while let Some(bytes) = match first_packet.take() {
+        Some(packet) => packet,
+        None => wire.packet()?,
+    } {
         let bytes = line(&bytes);
         if !version_checked && bytes == b"version 1" {
             version_checked = true;
@@ -702,6 +887,7 @@ mod tests {
                 needs_pack: true,
                 shallow: vec![],
                 depth: NonZeroU32::new(1),
+                v2: false,
             },
             limits,
         )
@@ -801,5 +987,124 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn v2_sections(packets: &[&str], depth: Option<u32>) -> Result<Vec<ObjectId>, Error> {
+        v2_sections_offering(packets, depth, &[])
+    }
+
+    fn v2_sections_offering(
+        packets: &[&str],
+        depth: Option<u32>,
+        offered: &[ObjectId],
+    ) -> Result<Vec<ObjectId>, Error> {
+        let cancel = AtomicBool::new(false);
+        let mut bytes = Vec::new();
+        for packet_bytes in packets {
+            match *packet_bytes {
+                "0001" | "0000" => bytes.extend_from_slice(packet_bytes.as_bytes()),
+                other => packet(&mut bytes, other.as_bytes(), &cancel).unwrap(),
+            }
+        }
+        let mut reader = bytes.as_slice();
+        let mut wire = Wire {
+            reader: &mut reader,
+            remaining: 1024,
+            cancel: &cancel,
+        };
+        read_v2_sections(
+            &mut wire,
+            &Negotiation {
+                wants: vec![ObjectId::Sha1([1; 20])],
+                haves: IdSet::default(),
+                multi_ack: false,
+                needs_pack: true,
+                shallow: offered.to_vec(),
+                depth: depth.and_then(NonZeroU32::new),
+                v2: true,
+            },
+            FetchLimits::default(),
+        )
+    }
+
+    #[test]
+    fn v2_sections_accept_packfile_and_shallow_info() {
+        let id = ObjectId::Sha1([1; 20]);
+        assert_eq!(v2_sections(&["packfile\n"], None).unwrap(), vec![]);
+        let shallow = format!("shallow {id}\n");
+        assert_eq!(
+            v2_sections(
+                &["shallow-info\n", shallow.as_str(), "0001", "packfile\n"],
+                Some(1)
+            )
+            .unwrap(),
+            vec![id]
+        );
+    }
+
+    #[rstest]
+    #[case::acknowledgments_after_done(&["acknowledgments\n", "NAK\n", "0001", "packfile\n"], Some(1), "v2 fetch response section")]
+    #[case::wanted_refs(&["wanted-refs\n"], None, "v2 fetch response section")]
+    #[case::packfile_uris(&["packfile-uris\n"], None, "v2 fetch response section")]
+    #[case::flush(&["0000"], None, "v2 fetch response")]
+    #[case::shallow_info_without_delim(&["shallow-info\n", "0000"], Some(1), "v2 shallow-info section")]
+    #[case::bad_shallow_line(&["shallow-info\n", "deepen 1\n", "0001"], Some(1), "shallow response")]
+    fn v2_sections_reject_unexpected_responses(
+        #[case] packets: &[&str],
+        #[case] depth: Option<u32>,
+        #[case] reason: &str,
+    ) {
+        assert!(matches!(
+            v2_sections(packets, depth),
+            Err(Error::Protocol(actual)) if actual == reason
+        ));
+    }
+
+    #[test]
+    fn v2_shallow_info_from_shallow_server_is_unsupported() {
+        let shallow = format!("shallow {}\n", ObjectId::Sha1([1; 20]));
+        assert!(matches!(
+            v2_sections(&["shallow-info\n", shallow.as_str(), "0001"], None),
+            Err(Error::Unsupported("shallow server"))
+        ));
+    }
+
+    #[test]
+    fn unshallow_requires_a_root_the_client_sent() {
+        let id = ObjectId::Sha1([1; 20]);
+        let offered = ObjectId::Sha1([2; 20]);
+        let shallow = format!("shallow {id}\n");
+        let unshallow = format!("unshallow {id}\n");
+        assert!(matches!(
+            v2_sections(
+                &["shallow-info\n", &shallow, &unshallow, "0001", "packfile\n"],
+                Some(1)
+            ),
+            Err(Error::Protocol("unknown unshallow root"))
+        ));
+        let unshallow_offered = format!("unshallow {offered}\n");
+        assert_eq!(
+            v2_sections_offering(
+                &["shallow-info\n", &shallow, &unshallow_offered, "0001", "packfile\n"],
+                Some(2),
+                &[offered]
+            )
+            .unwrap(),
+            vec![id]
+        );
+        assert!(matches!(
+            v2_sections_offering(
+                &[
+                    "shallow-info\n",
+                    &unshallow_offered,
+                    &unshallow_offered,
+                    "0001",
+                    "packfile\n"
+                ],
+                Some(2),
+                &[offered]
+            ),
+            Err(Error::Protocol("unknown unshallow root"))
+        ));
     }
 }

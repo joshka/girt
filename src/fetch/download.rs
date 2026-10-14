@@ -207,6 +207,7 @@ mod tests {
         let negotiation = protocol::request(
             &mut Vec::new(),
             &advertisement,
+            &protocol::Dialect::V0,
             vec![wanted],
             known.as_deref().unwrap_or(&empty),
             None,
