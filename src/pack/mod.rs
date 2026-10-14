@@ -69,6 +69,9 @@
 mod compression;
 pub(crate) mod delta;
 mod file;
+#[cfg(feature = "tracing")]
+pub(crate) use file::is_damage_io;
+pub(crate) use file::{DamageHistory, ReadFailure};
 pub(crate) mod index;
 pub(crate) mod reader;
 mod rebuild;

@@ -8,10 +8,12 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 mod window;
 pub(crate) use window::HeaderScope;
@@ -26,7 +28,7 @@ use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error
 /// A pinned artifact read with positioned reads, so lookups share no cursor or lock.
 #[derive(Debug)]
 struct Artifact {
-    file: File,
+    file: Arc<File>,
     path: PathBuf,
     len: usize,
     stamp: Stamp,
@@ -54,7 +56,7 @@ impl Artifact {
         let len = stamp.len;
         let len = usize::try_from(len).map_err(|_| Error::Limit("artifact address space"))?;
         Ok(Self {
-            file,
+            file: Arc::new(file),
             path: path.to_owned(),
             len,
             stamp,
@@ -110,7 +112,7 @@ impl Artifact {
 }
 
 /// Identity and content-generation metadata of the open handle, never the current pathname.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct Stamp {
     len: u64,
     modified: std::time::SystemTime,
@@ -220,12 +222,201 @@ pub(crate) struct FilePack {
     base_cache: super::reader::BaseCache,
     /// Resolved base kind and depth of each delta entry, by index position; see [`ChainKinds`].
     chain_kinds: ChainKinds,
+    damage: Arc<Damage>,
+}
+
+/// Damage belongs to the pinned artifact generation, not its filename. The empty atomic avoids
+/// locking on healthy reads; errors are bounded by the number of indexed offsets encountered.
+#[derive(Debug, Default)]
+struct Damage {
+    present: AtomicBool,
+    entries: Mutex<BTreeMap<usize, Arc<Error>>>,
+}
+
+/// Refresh retains generation evidence without retaining old file handles or index tables.
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct PackGeneration {
+    stamp: Stamp,
+    checksum: ObjectId,
+    /// Platforms without native file identity distinguish artifacts by their canonical paths.
+    fallback_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PackDamage {
+    generation: PackGeneration,
+    damage: Arc<Damage>,
+    /// Weak handles prove that native identities cannot have been recycled. Metadata-only
+    /// freshening of a still-pinned pack must not clear its damage evidence.
+    pinned: Vec<Weak<File>>,
+}
+
+impl PackDamage {
+    fn same_pinned_pack(&self, generation: &PackGeneration) -> bool {
+        self.generation.stamp.identity != (0, 0)
+            && self.generation.stamp.identity == generation.stamp.identity
+            && self.generation.stamp.len == generation.stamp.len
+            && self.generation.checksum == generation.checksum
+            && self.pinned.iter().any(|file| file.upgrade().is_some())
+    }
+}
+
+/// Shared across clone/refresh generations. Entries grow with distinct packs opened during the
+/// handle family's lifetime, while each damage map grows only with failed offsets in that pack.
+#[derive(Debug, Default)]
+pub(crate) struct DamageHistory(Mutex<HashMap<PackGeneration, PackDamage>>);
+
+impl DamageHistory {
+    pub(crate) fn share(&self, pack: &mut FilePack) {
+        let mut record = pack.damage_record();
+        let mut history = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(previous) = history.get_mut(&record.generation) {
+            previous.pinned.retain(|file| file.strong_count() != 0);
+            previous.pinned.append(&mut record.pinned);
+            pack.damage = previous.damage.clone();
+            return;
+        }
+        if let Some(previous) = history
+            .values()
+            .find(|previous| previous.same_pinned_pack(&record.generation))
+        {
+            record.damage = previous.damage.clone();
+        }
+        pack.damage = record.damage.clone();
+        history.insert(record.generation.clone(), record);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum ReadFailure {
+    Damaged(Error),
+    Other(Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("damaged packed entry at offset {offset}")]
+struct BadEntry {
+    offset: usize,
+    #[source]
+    cause: Arc<Error>,
+}
+
+#[cfg(feature = "tracing")]
+pub(crate) fn is_damage_io(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|source| source.is::<BadEntry>())
 }
 
 impl FilePack {
+    fn damage_record(&self) -> PackDamage {
+        PackDamage {
+            generation: PackGeneration {
+                stamp: self.pack.stamp.clone(),
+                checksum: self.table.pack_hash,
+                fallback_path: (self.pack.stamp.identity == (0, 0)).then(|| self.pack.path.clone()),
+            },
+            damage: self.damage.clone(),
+            pinned: vec![Arc::downgrade(&self.pack.file)],
+        }
+    }
+
+    #[cfg(test)]
+    fn inherit_damage(&mut self, records: &[PackDamage]) -> bool {
+        let generation = self.damage_record().generation;
+        if let Some(record) = records
+            .iter()
+            .find(|record| record.generation == generation)
+        {
+            self.damage = record.damage.clone();
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn check_damage(&self) -> Result<(), Error> {
+        if self.damage.present.load(Ordering::Acquire) {
+            let entries = self
+                .damage
+                .entries
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some((&offset, cause)) = entries.first_key_value() {
+                return Err(self.damage_error(offset, cause.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    fn damage_error(&self, offset: usize, cause: Arc<Error>) -> Error {
+        path_error(
+            &self.pack.path,
+            io::Error::new(io::ErrorKind::InvalidData, BadEntry { offset, cause }),
+        )
+    }
+
+    fn known_damage(&self, position: usize) -> Option<Error> {
+        if !self.damage.present.load(Ordering::Acquire) {
+            return None;
+        }
+        let entries = self
+            .damage
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let offset = self.offset(position);
+        entries
+            .get(&offset)
+            .map(|cause| self.damage_error(offset, cause.clone()))
+    }
+
+    fn failed_read(&self, position: usize, error: Error) -> ReadFailure {
+        if !matches!(error, Error::Corrupt(_) | Error::DeltaCycle) {
+            return ReadFailure::Other(error);
+        }
+        let mut entries = self
+            .damage
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let offset = self.offset(position);
+        let cause = entries
+            .entry(offset)
+            .or_insert_with(|| Arc::new(error))
+            .clone();
+        self.damage.present.store(true, Ordering::Release);
+        ReadFailure::Damaged(self.damage_error(offset, cause))
+    }
+
+    pub(crate) fn read_candidate(
+        &self,
+        position: usize,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<Object, ReadFailure> {
+        if let Some(error) = self.known_damage(position) {
+            return Err(ReadFailure::Damaged(error));
+        }
+        self.read(position, limits, cancel)
+            .map_err(|error| self.failed_read(position, error))
+    }
+
+    pub(crate) fn read_candidate_unverified(
+        &self,
+        position: usize,
+        limits: ReadLimits,
+        cancel: &AtomicBool,
+    ) -> Result<crate::UnverifiedObject, ReadFailure> {
+        if let Some(error) = self.known_damage(position) {
+            return Err(ReadFailure::Damaged(error));
+        }
+        self.read_unverified(position, limits, cancel)
+            .map_err(|error| self.failed_read(position, error))
+    }
     pub(crate) fn check_unchanged(&self) -> Result<(), Error> {
         self.pack.check_unchanged()?;
-        self.index.check_unchanged()
+        self.index.check_unchanged()?;
+        self.check_damage()
     }
 
     pub(crate) fn open(
@@ -297,6 +488,7 @@ impl FilePack {
             index_verified: std::sync::OnceLock::new(),
             base_cache: super::reader::BaseCache::new(),
             chain_kinds: ChainKinds::default(),
+            damage: Arc::new(Damage::default()),
         })
     }
 
@@ -393,13 +585,12 @@ impl FilePack {
     /// without hashing the objects they name, such as copying entries into a new pack, checks this
     /// first so a damaged name cannot label other bytes.
     pub(crate) fn verify_index(&self) -> Result<(), Error> {
-        if self.index_verified.get().is_some() {
-            return Ok(());
+        if self.index_verified.get().is_none() {
+            self.index.check_not_truncated()?;
+            verify_hash(self.format, &self.index_bytes, "index checksum")?;
+            let _ = self.index_verified.set(());
         }
-        self.index.check_not_truncated()?;
-        verify_hash(self.format, &self.index_bytes, "index checksum")?;
-        let _ = self.index_verified.set(());
-        Ok(())
+        self.check_damage()
     }
 
     pub(crate) fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
@@ -1022,6 +1213,300 @@ mod publication_tests {
         fs::write(&path, index).unwrap();
         fs::write(path.with_extension("pack"), bytes).unwrap();
         path
+    }
+
+    #[rstest]
+    #[case::sha1(ObjectFormat::Sha1)]
+    #[case::sha256(ObjectFormat::Sha256)]
+    fn remembered_damage_skips_io_and_refuses_mutation(#[case] format: ObjectFormat) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "damaged", format, b"content");
+        let pack_path = path.with_extension("pack");
+        let mut bytes = fs::read(&pack_path).unwrap();
+        let end = bytes.len() - format.digest_len();
+        bytes[end - 1] ^= 1;
+        fs::write(&pack_path, bytes).unwrap();
+        let cancel = AtomicBool::new(false);
+        let pack = FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
+        let position = pack
+            .find(ObjectId::for_blob(format, b"content"))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            pack.read_candidate(position, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        counters::reset();
+        assert!(matches!(
+            pack.read_candidate(position, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        assert!(matches!(
+            pack.read_candidate_unverified(position, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        #[cfg(feature = "tracing")]
+        assert!(
+            matches!(pack.read_candidate(position, ReadLimits::default(), &cancel), Err(ReadFailure::Damaged(ref error)) if crate::trace::object(error) == "corrupt")
+        );
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
+        assert!(pack.check_unchanged().is_err());
+        assert!(pack.verify_index().is_err());
+        let mut refreshed =
+            FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
+        assert!(refreshed.inherit_damage(&[pack.damage_record()]));
+        counters::reset();
+        assert!(matches!(
+            refreshed.read_candidate(position, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
+    }
+
+    #[rstest]
+    #[case::cancelled(Error::Cancelled)]
+    #[case::limit(Error::Limit("object bytes"))]
+    #[case::unsupported(Error::ObjectType(5))]
+    #[case::io(Error::Path { path: PathBuf::from("fixture.pack"), source: io::ErrorKind::PermissionDenied.into() })]
+    fn transient_failure_keeps_the_entry_readable(#[case] error: Error) {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "healthy", ObjectFormat::Sha1, b"content");
+        let cancel = AtomicBool::new(false);
+        let pack = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let position = pack
+            .find(ObjectId::for_blob(ObjectFormat::Sha1, b"content"))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            pack.failed_read(position, error),
+            ReadFailure::Other(_)
+        ));
+        assert_eq!(
+            pack.read_candidate(position, ReadLimits::default(), &cancel)
+                .unwrap()
+                .data(),
+            b"content"
+        );
+        pack.check_unchanged().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn freshening_a_pinned_pack_preserves_damage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "pack", ObjectFormat::Sha1, b"content");
+        let cancel = AtomicBool::new(false);
+        let history = DamageHistory::default();
+        let mut before = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        history.share(&mut before);
+        let _ = before.failed_read(0, Error::Corrupt("entry CRC"));
+        before
+            .pack
+            .file
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
+        let mut after = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        history.share(&mut after);
+        assert_ne!(before.pack.stamp, after.pack.stamp);
+        counters::reset();
+        assert!(matches!(
+            after.read_candidate(0, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unpinned_metadata_change_cannot_transfer_old_damage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "pack", ObjectFormat::Sha1, b"content");
+        let cancel = AtomicBool::new(false);
+        let history = DamageHistory::default();
+        let mut before = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        history.share(&mut before);
+        let _ = before.failed_read(0, Error::Corrupt("entry CRC"));
+        let identity = before.pack.stamp.identity;
+        drop(before);
+        File::open(path.with_extension("pack"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+            .unwrap();
+        let mut after = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        assert_eq!(after.pack.stamp.identity, identity);
+        history.share(&mut after);
+        assert_eq!(
+            after
+                .read_candidate(0, ReadLimits::default(), &cancel)
+                .unwrap()
+                .data(),
+            b"content"
+        );
+        after.check_unchanged().unwrap();
+    }
+
+    #[test]
+    fn reused_native_identity_does_not_inherit_another_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "old", ObjectFormat::Sha1, b"old");
+        let new_path = pair(
+            root.path(),
+            "new",
+            ObjectFormat::Sha1,
+            b"new different content",
+        );
+        let cancel = AtomicBool::new(false);
+        let old = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let _ = old.failed_read(0, Error::Corrupt("entry CRC"));
+        let mut new = FilePack::open(
+            ObjectFormat::Sha1,
+            &new_path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let mut record = old.damage_record();
+        // Model inode reuse after all old handles are released; generation metadata and the
+        // trailer checksum must still distinguish the unrelated artifact.
+        record.generation.stamp.identity = new.pack.stamp.identity;
+        assert!(!new.inherit_damage(&[record]));
+        assert_eq!(
+            new.read_candidate(0, ReadLimits::default(), &cancel)
+                .unwrap()
+                .data(),
+            b"new different content"
+        );
+    }
+
+    #[test]
+    fn replaced_index_keeps_damage_attached_to_pack_offset() {
+        let root = tempfile::tempdir().unwrap();
+        let format = ObjectFormat::Sha1;
+        let objects = [
+            PackObject {
+                id: ObjectId::for_blob(format, b"one"),
+                kind: ObjectKind::Blob,
+                data: b"one",
+            },
+            PackObject {
+                id: ObjectId::for_blob(format, b"two"),
+                kind: ObjectKind::Blob,
+                data: b"two",
+            },
+        ];
+        let (mut bytes, mut index) = (Vec::new(), Vec::new());
+        crate::write_pack(
+            format,
+            &objects,
+            &mut bytes,
+            &mut index,
+            PackWriteLimits::default(),
+        )
+        .unwrap();
+        let path = root.path().join("pair.idx");
+        fs::write(&path, &index).unwrap();
+        fs::write(path.with_extension("pack"), bytes).unwrap();
+        let cancel = AtomicBool::new(false);
+        let old = FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
+        let position = old.find(objects[0].id).unwrap().unwrap();
+        let offset = old.offset(position);
+        let _ = old.failed_read(position, Error::Corrupt("entry CRC"));
+        let crcs = 1032 + 2 * 20;
+        let offsets = crcs + 2 * 4;
+        for byte in 0..4 {
+            index.swap(crcs + byte, crcs + 4 + byte);
+            index.swap(offsets + byte, offsets + 4 + byte);
+        }
+        let end = index.len() - 20;
+        let checksum = format.checksum(&index[..end]);
+        index[end..].copy_from_slice(checksum.as_bytes());
+        let replacement = root.path().join("replacement.idx");
+        fs::write(&replacement, index).unwrap();
+        fs::rename(replacement, &path).unwrap();
+        let mut new = FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
+        assert!(new.inherit_damage(&[old.damage_record()]));
+        let moved_position = new.table.at_offset(offset).unwrap();
+        assert_ne!(moved_position, position);
+        counters::reset();
+        assert!(matches!(
+            new.read_candidate(moved_position, ReadLimits::default(), &cancel),
+            Err(ReadFailure::Damaged(_))
+        ));
+        assert_eq!(counters::OS_READS.with(|reads| reads.get()), 0);
+    }
+
+    #[test]
+    fn atomic_replacement_does_not_inherit_old_damage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = pair(root.path(), "original", ObjectFormat::Sha1, b"content");
+        let cancel = AtomicBool::new(false);
+        let old = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        let id = ObjectId::for_blob(ObjectFormat::Sha1, b"content");
+        let position = old.find(id).unwrap().unwrap();
+        let _ = old.failed_read(position, Error::Corrupt("entry CRC"));
+        let replacement = pair(root.path(), "replacement", ObjectFormat::Sha1, b"content");
+        fs::rename(&replacement, &path).unwrap();
+        fs::rename(
+            replacement.with_extension("pack"),
+            path.with_extension("pack"),
+        )
+        .unwrap();
+        let mut new = FilePack::open(
+            ObjectFormat::Sha1,
+            &path,
+            &mut PackLimits::default(),
+            &cancel,
+        )
+        .unwrap();
+        assert!(!new.inherit_damage(&[old.damage_record()]));
+        assert_eq!(
+            new.read_candidate(position, ReadLimits::default(), &cancel)
+                .unwrap()
+                .data(),
+            b"content"
+        );
     }
 
     #[rstest]

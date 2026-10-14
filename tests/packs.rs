@@ -705,10 +705,10 @@ fn corrupt_entry_is_detected_on_read_not_open(#[case] format: girt::ObjectFormat
         objects.verify_packs(&std::sync::atomic::AtomicBool::new(false)),
         Err(ObjectReadError::Corrupt(_))
     ));
-    assert!(matches!(
-        objects.read(fixture.ordinary, ReadLimits::default()),
-        Err(ObjectReadError::Corrupt(_))
-    ));
+    let error = objects
+        .read(fixture.ordinary, ReadLimits::default())
+        .unwrap_err();
+    assert!(error_chain(&error).contains("corrupt packed storage"));
     assert_eq!(
         objects
             .read(good.0, ReadLimits::default())
@@ -736,14 +736,22 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, index).unwrap();
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
-    assert!(matches!(
-        objects.read(fixture.delta, ReadLimits::default()),
-        Err(ObjectReadError::Corrupt("entry CRC"))
-    ));
-    assert!(matches!(
-        objects.read(fixture.ordinary, ReadLimits::default()),
-        Err(ObjectReadError::Corrupt("entry CRC"))
-    ));
+    assert!(
+        error_chain(
+            &objects
+                .read(fixture.delta, ReadLimits::default())
+                .unwrap_err()
+        )
+        .contains("entry CRC")
+    );
+    assert!(
+        error_chain(
+            &objects
+                .read(fixture.ordinary, ReadLimits::default())
+                .unwrap_err()
+        )
+        .contains("entry CRC")
+    );
 }
 
 #[rstest]
@@ -1062,7 +1070,71 @@ struct DamagedCopies {
 
 impl DamagedCopies {
     fn new(format: ObjectFormat, damage: &str, graph: bool) -> Self {
-        let fixture = Fixture::new(format, true, 4);
+        let mut fixture = Fixture::new(format, true, 4);
+        // Keep an unreachable object only in the damaged pack. A rescued root must never
+        // authorize discarding it as part of retiring that pack.
+        let unique_data = b"unreachable unique object";
+        let unique: ObjectId = std::str::from_utf8(&git(
+            fixture.root.path(),
+            &["hash-object", "-w", "--stdin"],
+            unique_data,
+        ))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+        fixture
+            .records
+            .push((unique, ObjectKind::Blob, unique_data.to_vec()));
+        let tree = fixture
+            .records
+            .iter()
+            .find(|record| record.1 == ObjectKind::Tree)
+            .unwrap()
+            .0;
+        let swap: ObjectId = std::str::from_utf8(&git(
+            fixture.root.path(),
+            &["commit-tree", &tree.to_string()],
+            b"unreachable different commit\n",
+        ))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+        let swap_data = git(
+            fixture.root.path(),
+            &["cat-file", "commit", &swap.to_string()],
+            b"",
+        );
+        fixture.records.push((swap, ObjectKind::Commit, swap_data));
+        let input = fixture
+            .records
+            .iter()
+            .map(|record| format!("{}\n", record.0))
+            .collect::<String>();
+        let original = git(
+            fixture.root.path(),
+            &[
+                "pack-objects",
+                "--stdout",
+                "--no-reuse-object",
+                "--no-reuse-delta",
+                "--window=0",
+            ],
+            input.as_bytes(),
+        );
+        fs::remove_file(fixture.index_path.with_extension("pack")).unwrap();
+        fs::remove_file(&fixture.index_path).unwrap();
+        fs::write(fixture.index_path.with_extension("pack"), original).unwrap();
+        git(
+            fixture.root.path(),
+            &[
+                "index-pack",
+                fixture.index_path.with_extension("pack").to_str().unwrap(),
+            ],
+            b"",
+        );
+        git(fixture.root.path(), &["prune-packed"], b"");
         let record = fixture
             .records
             .iter()
@@ -1103,13 +1175,16 @@ impl DamagedCopies {
             .unwrap();
         let crcs = 1032 + count * width;
         let offsets = crcs + count * 4;
+        let other = index[1032..1032 + count * width]
+            .chunks_exact(width)
+            .position(|name| name == swap.as_bytes())
+            .unwrap();
         match damage {
             "crc" => index[crcs + position * 4] ^= 1,
             "zlib" => pack[offset + length - 1] ^= 1,
             "identity" => {
                 // Swap complete representations while preserving sorted names, valid CRCs,
                 // exact offset tiling and both artifact checksums.
-                let other = (position + 1) % count;
                 for byte in 0..4 {
                     index.swap(crcs + position * 4 + byte, crcs + other * 4 + byte);
                     index.swap(offsets + position * 4 + byte, offsets + other * 4 + byte);
@@ -1122,14 +1197,6 @@ impl DamagedCopies {
                 .try_into()
                 .unwrap(),
         ) as usize;
-        let other = (position + 1) % count;
-        let other_name = &index[1032 + other * width..1032 + (other + 1) * width];
-        let unique = fixture
-            .records
-            .iter()
-            .find(|record| record.0 != target && record.0.as_bytes() != other_name)
-            .unwrap()
-            .0;
         rehash_index(format, &mut index);
         fs::write(&damaged, pack).unwrap();
         fs::remove_file(damaged.with_extension("idx")).unwrap();
@@ -1143,6 +1210,48 @@ impl DamagedCopies {
             offset,
             unique,
         }
+    }
+
+    fn git_content(&self, damage: &str) -> Vec<u8> {
+        // Git cat-file does not hash intact mislabelled bytes. For identity-only damage,
+        // compare with the good Git-generated representation in isolation.
+        let index = self.damaged.with_extension("idx");
+        let hidden = self.fixture.root.path().join("hidden.idx");
+        if damage == "identity" {
+            fs::rename(&index, &hidden).unwrap();
+        }
+        let content = git(
+            self.fixture.root.path(),
+            &["cat-file", "blob", &self.target.to_string()],
+            b"",
+        );
+        if damage == "identity" {
+            fs::rename(hidden, index).unwrap();
+        }
+        content
+    }
+
+    fn write_loose(&self) {
+        // hash-object avoids writing an already packed object. Hide its index while Git
+        // generates the loose copy, then restore the damaged pair before opening girt.
+        let index = self.damaged.with_extension("idx");
+        let hidden = self.fixture.root.path().join("hidden.idx");
+        fs::rename(&index, &hidden).unwrap();
+        git(
+            self.fixture.root.path(),
+            &["hash-object", "-w", "--stdin"],
+            &self.expected,
+        );
+        fs::rename(hidden, index).unwrap();
+        let hex = self.target.to_string();
+        assert!(
+            self.fixture
+                .repo
+                .object_dir()
+                .join(&hex[..2])
+                .join(&hex[2..])
+                .exists()
+        );
     }
 
     fn remove_good(&self) {
@@ -1160,6 +1269,7 @@ impl DamagedCopies {
 #[case::identity_sha256(ObjectFormat::Sha256, "identity")]
 fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case] damage: &str) {
     let copies = DamagedCopies::new(format, damage, false);
+    let from_git = copies.git_content(damage);
     let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
     assert_eq!(
         objects
@@ -1169,13 +1279,14 @@ fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case
             .data(),
         copies.expected
     );
+    assert_eq!(from_git, copies.expected);
     assert_eq!(
-        git(
-            copies.fixture.root.path(),
-            &["cat-file", "blob", &copies.target.to_string()],
-            b""
-        ),
-        copies.expected
+        objects
+            .read(copies.unique, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+        b"unreachable unique object"
     );
     assert_eq!(
         objects
@@ -1194,11 +1305,7 @@ fn damaged_pack_reads_another_verified_pack(#[case] format: ObjectFormat, #[case
 fn damaged_pack_reads_verified_loose_fallback(#[case] format: ObjectFormat) {
     let copies = DamagedCopies::new(format, "zlib", false);
     copies.remove_good();
-    git(
-        copies.fixture.root.path(),
-        &["hash-object", "-w", "--stdin"],
-        &copies.expected,
-    );
+    copies.write_loose();
     let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
     assert_eq!(
         objects
@@ -1294,6 +1401,7 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
             .data(),
         copies.expected
     );
+    let inventory = pack_inventory(copies.fixture.repo.object_dir());
     let pack = fs::read(&copies.damaged).unwrap();
     let index = fs::read(copies.damaged.with_extension("idx")).unwrap();
     let policy = girt::retention::RetentionPolicy {
@@ -1301,6 +1409,13 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
         ..Default::default()
     };
     let cancel = std::sync::atomic::AtomicBool::new(false);
+    let plan = copies.fixture.repo.plan_retention(&policy, &cancel);
+    assert!(
+        matches!(plan.outcome, girt::retention::RetentionOutcome::Incomplete(ref reason)
+        if reason.contains("a-damaged.pack") && reason.contains("offset ") && reason.contains("corrupt")),
+        "{:?}",
+        plan.outcome
+    );
     if maintenance {
         let error = copies
             .fixture
@@ -1325,13 +1440,14 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
             .collect_garbage(&mut FallbackIsolation, &policy, &cancel)
             .unwrap_err();
     }
+    assert_eq!(pack_inventory(copies.fixture.repo.object_dir()), inventory);
     assert_eq!(fs::read(&copies.damaged).unwrap(), pack);
     assert_eq!(
         fs::read(copies.damaged.with_extension("idx")).unwrap(),
         index
     );
     // This object is unique to the damaged pack, but its own representation remains intact.
-    let tag = copies
+    let unique = copies
         .fixture
         .records
         .iter()
@@ -1339,11 +1455,11 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
         .unwrap();
     assert_eq!(
         objects
-            .read(tag.0, ReadLimits::default())
+            .read(unique.0, ReadLimits::default())
             .unwrap()
             .unwrap()
             .data(),
-        tag.2
+        unique.2
     );
 }
 
@@ -1412,5 +1528,71 @@ fn read_limit_does_not_poison_a_pack_entry() {
             .unwrap()
             .id(),
         fixture.ordinary
+    );
+}
+
+#[test]
+fn corrupt_loose_fallback_still_reports_the_damaged_pack() {
+    let copies = DamagedCopies::new(ObjectFormat::Sha1, "crc", false);
+    copies.remove_good();
+    copies.write_loose();
+    let hex = copies.target.to_string();
+    let loose = copies
+        .fixture
+        .repo
+        .object_dir()
+        .join(&hex[..2])
+        .join(&hex[2..]);
+    fs::remove_file(&loose).unwrap();
+    fs::write(loose, b"damaged loose stream").unwrap();
+    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    let error = objects
+        .read(copies.target, ReadLimits::default())
+        .unwrap_err();
+    assert!(error_chain(&error).contains(copies.damaged.to_str().unwrap()));
+}
+
+#[cfg(unix)]
+fn pack_inventory(objects: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(objects.join("pack"))
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn corrupt_loose_fallback_does_not_hide_a_verified_alternate() {
+    let copies = DamagedCopies::new(ObjectFormat::Sha1, "crc", false);
+    let alternate = tempfile::tempdir().unwrap();
+    fs::create_dir(alternate.path().join("pack")).unwrap();
+    fs::rename(&copies.good, alternate.path().join("pack/good.pack")).unwrap();
+    fs::rename(
+        copies.good.with_extension("idx"),
+        alternate.path().join("pack/good.idx"),
+    )
+    .unwrap();
+    let hex = copies.target.to_string();
+    let directory = copies.fixture.repo.object_dir().join(&hex[..2]);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join(&hex[2..]), b"corrupt loose fallback").unwrap();
+    fs::write(
+        copies.fixture.repo.object_dir().join("info/alternates"),
+        format!("{}\n", alternate.path().display()),
+    )
+    .unwrap();
+    let objects = copies.fixture.repo.objects(PackLimits::default()).unwrap();
+    assert_eq!(
+        objects
+            .read(copies.target, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+        copies.expected
     );
 }

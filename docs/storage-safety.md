@@ -77,6 +77,30 @@ that copy decodes to the right object.
 When several packs or stores hold an object, copy the representation object lookup reads; another
 copy may be corrupt where the scanned one was not.
 
+## Damaged packed copies
+
+Content lookup retries a damaged packed entry through the remaining packs and loose files in its
+existing store order. After packed damage, a corrupt loose fallback also continues to the remaining
+stores. Each fallback copy passes complete decoding and identity verification. The reader remembers
+failed pinned pack/offset pairs, shared by clones and retained across refresh of the same immutable
+pack generations. A rescued read proves only the returned copy. If no good copy exists, the error
+names the damaged pack and its source chain includes the entry offset and original corruption cause.
+
+Known input damage refuses retention planning and every existing pinned-input mutation boundary,
+including identity failures that leave raw checksums intact. GC and maintenance preserve that pack
+and its unique objects. Raw pack/index checksum gates, protected-copy checks, survivor decoding and
+pinned-handle freshness checks remain required. Recovery never marks a damaged pack healthy.
+
+Cancellation, limits, unsupported types and missing/external delta bases remain immediate errors;
+header damage that presents as one of those errors does not trigger fallback. Header-only locating
+keeps its existing policy, and raw reuse refuses a known damaged pack instead of rescuing its bytes.
+Retained evidence uses pinned native identity, metadata and the pack checksum. Metadata-only
+freshening of a still-pinned pack preserves its damage; weak handle records prevent inode reuse from
+inheriting another artifact's failures. Repairing only an index keeps bad pack offsets excluded;
+open a new reader after repair. Separate `Objects` handles, including fresh retention scans,
+establish their own damage evidence. Broaden these paths when a consumer needs recovery from
+header-derived errors or raw transfer failures, while preserving limits and mutation gates.
+
 ## Identity checks in walks
 
 Every read that returns object content to a caller hashes the payload against the requested
@@ -144,9 +168,9 @@ trust cache, and the caller's existing trusted-directory and GC coordination obl
 apply.
 
 A walk locates blobs without decoding them, so it does not see a damaged blob. A content read of
-that blob reports the damage, as do `Objects::verify_packs` (entry CRCs and pack checksums) and
-`git fsck`. Repack and retirement fail at the blob because copying checks its CRC and retirement
-decodes it.
+that blob retries other verified copies or reports the damage. `Objects::verify_packs` checks entry
+CRCs and pack checksums and refuses remembered damage; `git fsck` also reports damage. Repack and
+retirement fail at the blob because copying checks its CRC and retirement decodes it.
 
 ## Index checksums at open
 
@@ -160,11 +184,11 @@ any of those fails the open.
 Damage the structure cannot see stays harmless because content reads are identity-checked (see
 [Identity checks in walks](#identity-checks-in-walks)). Swapped offsets fail the entry CRC, or the
 identity hash for v1. A changed name makes its object read as absent, and the changed name fails its
-identity check. A read therefore fails rather than returning the wrong content. The index checksum
-moves to the paths that trust names without hashing objects: `Objects::verify_packs`, retention
-planning (which checks every pinned index before it can authorize a deletion), verification of a
-replacement pack before retirement, and entry reuse when writing a pack, which checks each source
-index once before copying bytes under its names.
+identity check. A read therefore retries a verified copy or fails rather than returning the wrong
+content. The index checksum moves to the paths that trust names without hashing objects:
+`Objects::verify_packs`, retention planning (which checks every pinned index before it can authorize
+a deletion), verification of a replacement pack before retirement, and entry reuse when writing a
+pack, which checks each source index once before copying bytes under its names.
 
 ## Fast path contracts
 

@@ -236,6 +236,13 @@
 //! attributes, filters, or EOL conversion. Branch switching, sparse checkout, and submodule
 //! operations remain outside this API. Each operation's module and item docs state its narrower
 //! accepted formats, resource limits, and failure effects.
+// Let library unit tests share the Git-generated integration fixtures.
+#[cfg(test)]
+extern crate self as girt;
+#[cfg(test)]
+#[path = "../tests/support/pack_git.rs"]
+mod pack_git;
+
 mod bytes;
 pub mod checkout;
 pub mod clone;

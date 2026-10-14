@@ -48,6 +48,7 @@ pub(crate) fn object(error: &crate::ObjectReadError) -> &'static str {
     use crate::ObjectReadError::*;
     match error {
         Cancelled => "cancelled",
+        Path { source, .. } if crate::pack::is_damage_io(source) => "corrupt",
         Path { source, .. } => io(source),
         PackArtifacts { source, .. } => object(source),
         PackChanged { .. } => "conflict",
