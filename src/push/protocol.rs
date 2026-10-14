@@ -561,7 +561,11 @@ pub(crate) fn fuzz_exchange(
         .map(|(position, (name, &id))| super::PushCommand {
             name: name.clone(),
             expected: Some(id),
-            new: if position % 2 == 0 { id } else { ObjectId::null(format) },
+            new: if position % 2 == 0 {
+                id
+            } else {
+                ObjectId::null(format)
+            },
             force: super::ForcePolicy::default(),
         })
         .collect();

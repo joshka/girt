@@ -81,3 +81,45 @@ path = "fuzz_targets/push.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_includes"
+path = "fuzz_targets/config_includes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ignore"
+path = "fuzz_targets/ignore.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "index"
+path = "fuzz_targets/index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "refs"
+path = "fuzz_targets/refs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reftable"
+path = "fuzz_targets/reftable.rs"
+test = false
+doc = false
+bench = false

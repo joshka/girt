@@ -111,6 +111,12 @@ FUZZ_TARGETS = {
     "fetch_discovery": ["pkt-line protocol"],
     "fetch_receive": ["pkt-line protocol", "pack reading"],
     "push": ["pkt-line protocol"],
+    "config": ["configuration"],
+    "config_includes": ["configuration"],
+    "ignore": ["ignore rules"],
+    "index": ["index"],
+    "refs": ["files references", "reflogs"],
+    "reftable": ["reftable"],
 }
 
 # Core modules sampled for mutation testing: object formats whose bugs corrupt or misread data.

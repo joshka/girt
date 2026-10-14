@@ -279,7 +279,157 @@ pub fn push(data: &[u8]) {
         ..crate::push::PushLimits::default()
     };
     let caps = (flags & 2 != 0, flags & 4 != 0);
-    crate::push::fuzz_exchange(format, advertisement, input.rest(), caps, limits, &NOT_CANCELLED);
+    crate::push::fuzz_exchange(
+        format,
+        advertisement,
+        input.rest(),
+        caps,
+        limits,
+        &NOT_CANCELLED,
+    );
+}
+
+/// Parses one configuration file both ways and checks the document retains its exact bytes.
+pub fn config(data: &[u8]) {
+    let parsed = crate::Config::parse(data);
+    let document = crate::config::Document::parse(data);
+    assert_eq!(parsed.is_ok(), document.is_ok());
+    if let Ok(document) = document {
+        assert_eq!(document.as_bytes(), data);
+        let _ = document.sections().count();
+    }
+}
+
+/// Resolves `[root part][a part][b part][c]` as a local config whose includes name `~/a`-`~/c`.
+///
+/// Files live in one directory reused for the life of the process; it is also the include home
+/// and the repository's parent, so `gitdir` conditions can match. Every `/` must follow `~`, so
+/// includes stay within that directory: opening a FIFO or device blocks Git and girt alike,
+/// which is not a parser defect.
+pub fn config_includes(data: &[u8]) {
+    static DIRECTORY: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let confined = data.iter().enumerate().all(|(i, &byte)| {
+        byte != b'/' || i.checked_sub(1).and_then(|p| data.get(p)) == Some(&b'~')
+    });
+    if !confined {
+        return;
+    }
+    let directory = DIRECTORY.get_or_init(|| tempfile::tempdir().expect("fuzz config directory"));
+    let home = directory.path();
+    let mut input = Input(data);
+    for name in ["config", "a", "b"] {
+        std::fs::write(home.join(name), input.part()).expect("write fuzz config");
+    }
+    std::fs::write(home.join("c"), input.rest()).expect("write fuzz config");
+    let inputs = crate::config::ConfigInputs {
+        files: vec![crate::config::ConfigFile {
+            path: home.join("config"),
+            scope: crate::config::ConfigScope::Local,
+            optional: false,
+        }],
+        context: crate::config::IncludeContext {
+            home: Some(home.to_path_buf()),
+            git_dirs: vec![home.join(".git")],
+            branch: Some(b"main".to_vec()),
+            ..Default::default()
+        },
+        limits: crate::config::ResolveLimits {
+            depth: 4,
+            bytes: MAX_BYTES,
+            entries: 4096,
+            match_cells: 100_000,
+        },
+        ..Default::default()
+    };
+    let _ = crate::Config::resolve(&inputs);
+}
+
+/// Adds `[case][global part][directory part][rules]` as ignore sources, then checks every
+/// line of the directory part as a path.
+pub fn ignore(data: &[u8]) {
+    use crate::ignore::{Case, Ignore, Limits, Source};
+    let mut input = Input(data);
+    let case = if input.byte() & 1 == 0 {
+        Case::Sensitive
+    } else {
+        Case::AsciiInsensitive
+    };
+    let limits = Limits {
+        bytes: MAX_BYTES,
+        sources: 8,
+        patterns: 4096,
+        line_bytes: 4096,
+        path_bytes: 4096,
+        work: 1_000_000,
+    };
+    let mut ignore = Ignore::new(case, limits);
+    let global = input.part();
+    let paths = input.part();
+    if ignore.add(Source::Global, global).is_err() {
+        return;
+    }
+    if ignore.add(Source::Directory(b"dir"), input.rest()).is_err() {
+        return;
+    }
+    for path in paths.split(|&byte| byte == b'\n').take(MAX_VISITS) {
+        let directory = path.ends_with(b"/");
+        let path = path.strip_suffix(b"/").unwrap_or(path);
+        // A whole-path query adds excluded ancestors to the final path's own rules.
+        if let (Ok(full), Ok(Some(_))) = (
+            ignore.check(path, directory),
+            ignore.check_direct(path, directory),
+        ) {
+            assert!(full.is_some());
+        }
+    }
+}
+
+/// Parses `[format][index file]` and checks that re-encoding parses to the same index.
+pub fn index(data: &[u8]) {
+    let mut input = Input(data);
+    let format = input.format();
+    let limits = crate::index::Limits {
+        max_bytes: 4 * MAX_BYTES,
+        max_entries: 4096,
+        max_path_bytes: 4096,
+        max_extensions: 16,
+    };
+    let Ok(index) = crate::index::Index::parse(format, input.rest(), limits) else {
+        return;
+    };
+    let encoded = index.encode(limits).expect("parsed index re-encodes");
+    let reparsed = crate::index::Index::parse(format, &encoded, limits).expect("encoding parses");
+    assert_eq!(reparsed.version(), index.version());
+    assert_eq!(reparsed.entries(), index.entries());
+    assert_eq!(reparsed.extensions(), index.extensions());
+}
+
+/// Parses `[format][kind][bytes]` as a loose ref, packed-refs file, reflog or reference name.
+pub fn refs(data: &[u8]) {
+    let mut input = Input(data);
+    let format = input.format();
+    let kind = input.byte();
+    crate::refs::fuzz_files(format, kind, input.rest());
+}
+
+/// Decodes a reftable and checks that re-encoding decodes to the same table.
+pub fn reftable(data: &[u8]) {
+    use crate::refs::reftable::{Limits, Table};
+    let limits = Limits {
+        bytes: 4 * MAX_BYTES,
+        block_bytes: MAX_BYTES,
+        records: 4096,
+        string_bytes: 4096,
+        decoded_bytes: 4 * MAX_BYTES,
+    };
+    let Ok(table) = Table::decode(data, limits) else {
+        return;
+    };
+    let Ok(encoded) = table.encode(limits) else {
+        return;
+    };
+    let decoded = Table::decode(&encoded, limits).expect("encoded table decodes");
+    assert_eq!(decoded, table);
 }
 
 #[cfg(test)]
@@ -287,7 +437,7 @@ mod tests {
     /// Every entry point tolerates empty and short inputs; fuzzing explores the rest.
     #[test]
     fn entry_points_accept_trivial_inputs() {
-        let entries: [fn(&[u8]); 9] = [
+        let entries: [fn(&[u8]); 15] = [
             super::object,
             super::loose,
             super::delta,
@@ -297,6 +447,12 @@ mod tests {
             super::fetch_discovery,
             super::fetch_receive,
             super::push,
+            super::config,
+            super::config_includes,
+            super::ignore,
+            super::index,
+            super::refs,
+            super::reftable,
         ];
         for entry in entries {
             for input in [&b""[..], b"\0", b"\x01\x02", b"\xff\xff\xff\xff\xff\xff"] {
