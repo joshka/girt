@@ -143,9 +143,14 @@ jobs:
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
 
   windows:
-    name: Test (windows-2022)
+    name: Test (windows-2022, ${{ matrix.suite }})
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' && !inputs.ignore_only && !inputs.http_only && !inputs.alternates_only && !inputs.storage_only && !inputs.retention_only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [all-features, core, integrations]
+    # Divide the existing checks by feature configuration to avoid duplicate builds.
     # Portable integrations are explicit; native local transfer runs on Windows.
     runs-on: windows-2022
     timeout-minutes: 20
@@ -166,42 +171,64 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         with:
-          shared-key: stable-tests
+          shared-key: stable-tests-${{ matrix.suite }}
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install nextest
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-nextest@0.9.140
       - name: Native local transfer
-        run: cargo +stable test --locked --no-default-features --test local_native --test transfer_reuse --test push_deltas --test local_transfer_progress
+        if: ${{ matrix.suite == 'integrations' }}
+        run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --test local_native --test transfer_reuse --test push_deltas --test local_transfer_progress
       - name: Core-only library
+        if: ${{ matrix.suite == 'core' }}
         run: cargo +stable check --locked --lib --no-default-features
       - name: HTTP-only library
+        if: ${{ matrix.suite == 'core' }}
         run: cargo +stable check --locked --lib --no-default-features --features http
       - name: Tracing without network dependencies
-        run: cargo +stable test --locked --no-default-features --features tracing --test tracing
+        if: ${{ matrix.suite == 'core' }}
+        run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --features tracing --test tracing
       - name: Tracing HTTP lifecycle
-        run: cargo +stable test --locked --no-default-features --features tracing,http --test tracing
+        if: ${{ matrix.suite == 'core' }}
+        run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --features tracing,http --test tracing
       - name: Tracing SSH-only library
+        if: ${{ matrix.suite == 'core' }}
         run: cargo +stable check --locked --lib --no-default-features --features tracing,ssh
       - name: SSH-only library
+        if: ${{ matrix.suite == 'core' }}
         run: cargo +stable check --locked --lib --no-default-features --features ssh
       - run: cargo +stable clippy --locked --all-features --all-targets -- -D warnings
-      - run: cargo +stable test --locked --all-features --lib
+        if: ${{ matrix.suite == 'all-features' }}
+      - run: cargo +stable nextest run --profile windows-ci --locked --all-features --lib
+        if: ${{ matrix.suite == 'all-features' }}
       - name: Core-only units without tracing
-        run: cargo +stable test --locked --no-default-features --lib
+        if: ${{ matrix.suite == 'core' }}
+        run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --lib
       - run: cargo +stable test --locked --all-features --doc
+        if: ${{ matrix.suite == 'all-features' }}
       - name: Portable Git interoperability in both object formats
+        if: ${{ matrix.suite == 'integrations' }}
         run: >-
-          cargo +stable test --locked --no-default-features --no-fail-fast
+          cargo +stable nextest run --profile windows-ci --locked --no-default-features --no-fail-fast
           --test object_ids --test sha256 --test blobs --test trees --test commits --test decoding --test discovery --test tags --test packs --test pack_index_rebuild
           --test history --test repositories --test layout_shallow --test worktree_create --test worktree_admin --test config_resolution --test config_edit --test remotes --test tree_compare --test content_diff --test index --test colocation --test status_portable --test checkout_portable --test references --test references_portable --test reflog_expiry --test retention
       - name: Portable HTTP runtime
-        if: ${{ !cancelled() }}
-        run: cargo +stable test --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
+        if: ${{ !cancelled() && matrix.suite == 'integrations' }}
+        run: cargo +stable nextest run --profile windows-ci --locked --no-default-features --features http --no-fail-fast --test http --test http_portable
       - run: cargo +stable run --locked --example content_diff
+        if: ${{ matrix.suite == 'all-features' }}
       - run: cargo +stable run --locked --example index
+        if: ${{ matrix.suite == 'all-features' }}
       - run: cargo +stable run --locked --example write_pack
+        if: ${{ matrix.suite == 'all-features' }}
       - run: cargo +stable run --locked --example init_repository
+        if: ${{ matrix.suite == 'all-features' }}
       - run: cargo +stable run --locked --features tracing --example tracing
+        if: ${{ matrix.suite == 'all-features' }}
       - name: Public Rustdoc
+        if: ${{ matrix.suite == 'all-features' }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --locked --all-features --no-deps
