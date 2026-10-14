@@ -192,6 +192,102 @@ def protocol_seeds(corpus, repo, format):
         corpus.add("push", f"{format}-{flags}", bytes([flags]) + u32(len(receive)) + receive + report)
 
 
+def config_seeds(corpus, repo, scratch):
+    """Config files written by `git config`, including include and includeIf directives."""
+    path = scratch / "seed.config"
+    for key, value in [
+        ("core.bare", "false"), ("remote.origin.url", "https://example.com/r.git"),
+        ("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"), ("branch.main.remote", "origin"),
+        ("user.name", "Name With \"Quotes\" and \\ slash"), ("alias.lg", "log --graph ; # not a comment"),
+        ("include.path", "~/a"), ("includeIf.gitdir:~/.path", "~/b"), ("includeIf.onbranch:main.path", "~/c"),
+        ("section.with.dots.key", "multi\nline\tvalue"),
+    ]:
+        git(scratch, "config", "--file", str(path), "--add", key, value)
+    corpus.add("config", "written", path.read_bytes())
+    corpus.add("config", "repository", (repo / ".git" / "config").read_bytes())
+    root = scratch / "root.config"
+    for key, value in [("include.path", "~/a"), ("includeIf.gitdir:~/.path", "~/b"),
+                       ("includeIf.onbranch:main.path", "~/c"), ("core.bare", "false")]:
+        git(scratch, "config", "--file", str(root), "--add", key, value)
+    files = [root.read_bytes(), b"[a]\n\tkey = 1\n[include]\n\tpath = ~/b\n",
+             b"[b]\n\tkey = 2\n[includeIf \"onbranch:ma*\"]\n\tpath = ~/c\n", b"[c]\n\tkey = 3\n"]
+    corpus.add("config_includes", "chain", b"".join(u32(len(f)) + f for f in files[:3]) + files[3])
+
+
+def ignore_seeds(corpus):
+    """Ignore rules written from the gitignore pattern syntax, with paths to check."""
+    rules = b"*.o\n!keep.o\n/build/\ndoc/**/*.html\n\\#literal\n trailing\\ \n[a-c]?.txt\n**/deep\n"
+    paths = b"a.o\nkeep.o\nbuild/\nbuild/x\ndoc/a/b/c.html\n#literal\nb1.txt\nx/y/deep/\nDIR/A.O\n"
+    for case in (0, 1):
+        corpus.add("ignore", f"rules-{case}", bytes([case]) + u32(len(rules)) + rules + u32(len(paths)) + paths + rules)
+
+
+def index_seeds(corpus, repo, format):
+    """Index files Git writes in each version and with each optional extension it produces."""
+    selector = bytes([FORMATS[format]])
+    index = repo / ".git" / "index"
+    git(repo, "read-tree", "HEAD")
+    corpus.add("index", f"{format}-tree", selector + index.read_bytes())
+    for version in (2, 3, 4):
+        git(repo, "update-index", "--index-version", str(version))
+        corpus.add("index", f"{format}-v{version}", selector + index.read_bytes())
+    git(repo, "update-index", "--index-version", "2")
+    git(repo, "-c", "index.recordEndOfIndexEntries=true", "-c", "index.recordOffsetTable=true",
+        "-c", "index.threads=2", "update-index", "--really-refresh")
+    corpus.add("index", f"{format}-eoie", selector + index.read_bytes())
+    git(repo, "update-index", "--untracked-cache")
+    git(repo, "status", "--porcelain")
+    corpus.add("index", f"{format}-untracked", selector + index.read_bytes())
+    git(repo, "update-index", "--no-untracked-cache")
+    git(repo, "update-index", "--assume-unchanged", "file.txt")
+    git(repo, "update-index", "--skip-worktree", "run.sh")
+    corpus.add("index", f"{format}-flags", selector + index.read_bytes())
+    git(repo, "update-index", "--no-assume-unchanged", "file.txt")
+    git(repo, "update-index", "--no-skip-worktree", "run.sh")
+    git(repo, "update-index", "--split-index")
+    corpus.add("index", f"{format}-split", selector + index.read_bytes())
+    git(repo, "update-index", "--no-split-index")
+    git(repo, "sparse-checkout", "set", "--sparse-index", "dir")
+    corpus.add("index", f"{format}-sparse", selector + index.read_bytes())
+    git(repo, "sparse-checkout", "disable")
+    git(repo, "checkout", "-q", "-b", "conflict", "HEAD~2")
+    (repo / "file.txt").write_text("conflicting\n")
+    git(repo, "commit", "-q", "-am", "conflict")
+    subprocess.run(["git", "-C", str(repo), "merge", "-q", "main"], env=ENV, capture_output=True)
+    corpus.add("index", f"{format}-conflict", selector + index.read_bytes())
+    git(repo, "checkout", "--theirs", "file.txt")
+    git(repo, "add", "file.txt")
+    corpus.add("index", f"{format}-resolve-undo", selector + index.read_bytes())
+    git(repo, "reset", "-q", "--hard")
+    git(repo, "checkout", "-q", "main")
+
+
+def ref_seeds(corpus, repo, format, scratch):
+    """Loose refs, packed-refs and reflogs written by Git, and a reftable repository's tables."""
+    selector = FORMATS[format]
+    git_dir = repo / ".git"
+    for name, path in [("head", git_dir / "HEAD"), ("branch", git_dir / "refs" / "heads" / "main")]:
+        if path.exists():
+            corpus.add("refs", f"{format}-loose-{name}", bytes([selector, 0]) + path.read_bytes())
+    git(repo, "pack-refs", "--all")
+    corpus.add("refs", f"{format}-packed", bytes([selector, 1]) + (git_dir / "packed-refs").read_bytes())
+    corpus.add("refs", f"{format}-reflog", bytes([selector, 2]) + (git_dir / "logs" / "HEAD").read_bytes())
+    for name in [b"refs/heads/main", b"refs/tags/v1^{}", b"HEAD", b"refs/heads/a..b", b"refs/heads/x.lock"]:
+        corpus.add("refs", f"name-{name.hex()}", bytes([0, 3]) + name)
+
+    reftable = scratch / f"{format}-reftable"
+    git(scratch, "init", "-q", f"--object-format={format}", "--ref-format=reftable", "-b", "main", reftable.name)
+    for round in range(3):
+        git(reftable, "commit", "-q", "--allow-empty", "-m", f"r{round}")
+        git(reftable, "tag", "-a", "-m", "t", f"t{round}")
+        git(reftable, "branch", f"b{round}")
+    for number, table in enumerate(sorted((reftable / ".git" / "reftable").glob("*.ref"))):
+        corpus.add("reftable", f"{format}-{number}", table.read_bytes())
+    git(reftable, "pack-refs")
+    for table in (reftable / ".git" / "reftable").glob("*.ref"):
+        corpus.add("reftable", f"{format}-compacted-{table.stem}", table.read_bytes())
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent / "corpus")
     corpus = Corpus(root)
@@ -201,6 +297,10 @@ def main():
             object_seeds(corpus, repo, format)
             pack_seeds(corpus, repo, format)
             protocol_seeds(corpus, repo, format)
+            index_seeds(corpus, repo, format)
+            ref_seeds(corpus, repo, format, Path(scratch))
+        config_seeds(corpus, repo, Path(scratch))
+    ignore_seeds(corpus)
     delta_seeds(corpus)
     print(f"wrote {corpus.count} seeds under {root}")
 

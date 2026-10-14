@@ -103,3 +103,39 @@ pub use transaction::{LogOutcome, RefEdit, RefEditOutcome, RefOutcome, Transacti
 
 #[cfg(test)]
 mod observation_tests;
+
+/// Parses `bytes` as one files-backend format and checks re-encoding where girt encodes it.
+///
+/// `kind` selects a loose reference, a packed-refs file, a reflog or a reference name; see
+/// [`crate::fuzzing::refs`].
+#[cfg(any(fuzzing, test))]
+pub(crate) fn fuzz_files(format: crate::ObjectFormat, kind: u8, bytes: &[u8]) {
+    let path = std::path::Path::new("<fuzz>");
+    match kind % 4 {
+        0 => {
+            if let Ok(Target::Symbolic(name)) = store::parse_loose(format, bytes, path) {
+                assert!(bytes.trim_ascii_end().ends_with(name.as_bytes()));
+            }
+        }
+        1 => {
+            let _ = packed::parse(format, bytes, path);
+        }
+        2 => {
+            let Ok(records) = ReflogRecord::parse(format, bytes) else {
+                return;
+            };
+            for record in &records {
+                let Ok(encoded) = record.entry().encode() else {
+                    continue;
+                };
+                let reparsed = ReflogEntry::parse(format, &encoded).expect("encoded entry parses");
+                assert_eq!(reparsed.as_slice(), std::slice::from_ref(record.entry()));
+            }
+        }
+        _ => {
+            if let Ok(name) = RefName::new(bytes) {
+                assert_eq!(name.as_bytes(), bytes);
+            }
+        }
+    }
+}
