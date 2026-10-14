@@ -25,12 +25,13 @@ pub struct Remote {
 /// use girt::Config;
 /// use girt::remote::RemoteUrls;
 ///
-/// let config = Config::parse(b"[remote \"origin\"]\nurl=short:repo\n").unwrap();
-/// let urls = RemoteUrls::find(&config, b"origin").unwrap().unwrap();
+/// let config = Config::parse(b"[remote \"origin\"]\nurl=short:repo\n")?;
+/// let urls = RemoteUrls::find(&config, b"origin")?.ok_or("remote absent")?;
 /// assert_eq!(
-///     urls.fetch_display_url(&config).unwrap(),
+///     urls.fetch_display_url(&config)?,
 ///     Some(b"short:repo".to_vec())
 /// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct RemoteUrls {

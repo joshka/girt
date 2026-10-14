@@ -18,6 +18,11 @@ pub trait MaintenanceIsolation {
     type Guard;
 
     /// Acquires the boundary before any maintenance scan or mutation.
+    ///
+    /// # Errors
+    ///
+    /// Implementors must return an error when repository-wide exclusion cannot be established.
+    /// A failed acquisition must not grant a guard that suggests maintenance can proceed.
     fn acquire(&mut self, repository: &Repository) -> io::Result<Self::Guard>;
 }
 

@@ -482,6 +482,11 @@ impl KnownHistory {
     ///
     /// Uses [`Self::new`]'s graph, resource and cancellation contract. The caller must keep
     /// verified roots available through publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::new`]'s missing/corrupt object, graph, resource-limit or cancellation
+    /// errors. Validation leaves storage and references unchanged.
     pub fn new_local(
         store: &Objects,
         roots: &[ObjectId],

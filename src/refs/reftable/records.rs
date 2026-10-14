@@ -169,6 +169,18 @@ pub enum Error {
 ///
 /// Reference operations use [`RefName`]; the wider binary codec also preserves names such as
 /// `ORIG_HEAD` while compacting a private worktree stack.
+///
+/// ```
+/// use girt::refs::RefName;
+/// use girt::refs::reftable::RecordName;
+///
+/// let record = RecordName::from(RefName::new(b"refs/heads/topic")?);
+/// assert_eq!(record.as_ref(), b"refs/heads/topic");
+/// let pseudoref = RecordName::new(b"ORIG_HEAD")?;
+/// assert!(pseudoref.reference_name().is_none());
+/// assert_eq!(pseudoref.into_bytes(), b"ORIG_HEAD");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct RecordName(Vec<u8>);
 

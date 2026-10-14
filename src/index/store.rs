@@ -128,7 +128,8 @@ impl LeafSnapshot {
 /// [`Repository::edit_index_at_with_options`], derive edits from
 /// [`Self::index`], and call [`Self::replace_entries`] then [`Self::commit`]. Missing storage
 /// starts as an empty index. Dropping without committing abandons the edit and removes only the
-/// acquired lock. Existing locks are never stolen. Cleanup is best effort; a filesystem cleanup
+/// acquired lock. Existing locks are never stolen. Drop performs blocking, best-effort filesystem
+/// cleanup; a cleanup
 /// failure can leave the owned lock for manual removal. [`Self::abort`] explicitly reports cleanup
 /// errors; failed reads and commits retain both operation and cleanup causes. Unix
 /// cleanup/publication rechecks the acquired lock inode, refusing an observed replacement.

@@ -205,6 +205,13 @@ impl HttpRemote {
     /// first tries anonymously, then uses Basic authentication only when a 401 challenge advertises
     /// Basic. Subsequent requests send that credential only to the same origin; credential-bearing
     /// redirects remain disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HttpError::Configuration`] for mismatched credential scope, incomplete
+    /// credentials, an existing Authorization header, a previously recorded redirect, or
+    /// poisoned internal state. This method sends no request and consumes both the remote and
+    /// session on failure.
     pub fn with_credentials(mut self, session: CredentialSession) -> Result<Self, HttpError> {
         if self
             .redirected_base

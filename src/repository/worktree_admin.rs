@@ -186,6 +186,12 @@ impl Repository {
     ///
     /// The same exclusion and partial-failure contract as [`Self::repair_worktree`] applies.
     /// The direct repository configuration is still validated, but is not changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::repair_worktree`]'s metadata, exclusion and I/O errors, including invalid
+    /// direct repository configuration. Later failures can leave partially repaired links or a
+    /// temporary repair file; inspect the affected paths before retrying.
     pub fn repair_worktree_with_link_style(
         &self,
         registration: impl AsRef<Path>,

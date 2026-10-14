@@ -23,8 +23,16 @@
 //! let mut ignore = Ignore::new(Case::Sensitive, Limits::default());
 //! ignore.add(Source::Global, b"*.log\n")?;
 //! ignore.add(Source::Directory(b""), b"!keep.log\nbuild/\n!build/keep\n")?;
-//! assert!(!ignore.check(b"keep.log", false)?.unwrap().ignored);
-//! assert!(ignore.check(b"build/keep", false)?.unwrap().ignored);
+//! assert!(
+//!     ignore
+//!         .check(b"keep.log", false)?
+//!         .is_some_and(|matched| !matched.ignored)
+//! );
+//! assert!(
+//!     ignore
+//!         .check(b"build/keep", false)?
+//!         .is_some_and(|matched| matched.ignored)
+//! );
 //! # Ok::<(), girt::ignore::Error>(())
 //! ```
 

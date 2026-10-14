@@ -3,6 +3,21 @@
 /// Accepts `refs/…` names following Git's check-ref-format rules, without normalization or
 /// UTF-8 validation. `HEAD` is the only accepted name outside `refs/`; revision expressions,
 /// shorthand branches, other pseudorefs, and cross-worktree aliases are outside this API.
+///
+/// Borrow a validated name through [`AsRef`] when passing it to a byte-oriented consumer, or
+/// recover its owned buffer with [`Self::into_bytes`]:
+///
+/// ```
+/// use girt::refs::RefName;
+///
+/// let name = RefName::new(b"refs/heads/topic")?;
+/// // Construction still validates when its input is another validated name.
+/// let copied = RefName::new(&name)?;
+/// assert_eq!(copied, name);
+/// let bytes = name.into_bytes();
+/// assert_eq!(bytes, b"refs/heads/topic");
+/// # Ok::<(), girt::refs::InvalidRefName>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RefName(Vec<u8>);
 

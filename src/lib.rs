@@ -7,7 +7,7 @@
 //!
 //! # First use
 //!
-//! Add `girt = "0.4"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
+//! Add `girt = "0.8"` to a project using Rust 1.97.1 or newer. Compute a Git blob identity
 //! without opening a repository:
 //!
 //! ```rust
