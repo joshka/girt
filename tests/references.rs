@@ -1603,3 +1603,102 @@ fn packed_record_framing_against_git(
         Err(girt::refs::ReferenceError::Malformed { .. })
     ));
 }
+
+/// A loose replacement clears the packed peel even when its target ID is unchanged.
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn enumerated_packed_peels_and_loose_overrides_agree_with_git(#[case] format: girt::ObjectFormat) {
+    let (root, repo, commit) = fixture(format);
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/nested/main", &commit.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["tag", "-a", "-m", "one", "group/one", &commit.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["tag", "-a", "-m", "two", "group/two", &commit.to_string()],
+        b"",
+    );
+    git(root.path(), &["pack-refs", "--all"], b"");
+    let one = oid(&git(
+        root.path(),
+        &["rev-parse", "refs/tags/group/one"],
+        b"",
+    ));
+    fs::create_dir_all(root.path().join("refs/tags/group")).unwrap();
+    fs::write(root.path().join("refs/tags/group/one"), format!("{one}\n")).unwrap();
+    git(
+        root.path(),
+        &["update-ref", "refs/heads/nested/other", &commit.to_string()],
+        b"",
+    );
+    git(
+        root.path(),
+        &["symbolic-ref", "refs/heads/alias", "refs/heads/nested/main"],
+        b"",
+    );
+    git(
+        root.path(),
+        &["symbolic-ref", "refs/heads/dangling", "refs/heads/missing"],
+        b"",
+    );
+    let refs = repo.references().unwrap();
+    let observations = refs
+        .list_observations_controlled(100, 100_000, &std::sync::atomic::AtomicBool::new(false))
+        .unwrap();
+    let actual = observations
+        .iter()
+        .map(|entry| {
+            let id = match &entry.target {
+                Target::Direct(id) => *id,
+                Target::Symbolic(target) if target == &name("refs/heads/nested/main") => commit,
+                Target::Symbolic(target) => {
+                    assert_eq!(target, &name("refs/heads/missing"));
+                    return String::new(); // Git omits dangling symrefs from for-each-ref.
+                }
+                _ => panic!("unexpected reference target"),
+            };
+            format!(
+                "{id} {}\n",
+                std::str::from_utf8(entry.name.as_bytes()).unwrap()
+            )
+        })
+        .collect::<String>();
+    assert_eq!(
+        actual.as_bytes(),
+        git(
+            root.path(),
+            &["for-each-ref", "--format=%(objectname) %(refname)"],
+            b""
+        )
+    );
+    fs::write(root.path().join("refs/heads/broken"), b"garbage\n").unwrap();
+    assert!(matches!(
+        refs.list_observations_controlled(100, 100_000, &std::sync::atomic::AtomicBool::new(false)),
+        Err(girt::refs::ReferenceError::Malformed { .. })
+    ));
+    let git_with_broken = git(
+        root.path(),
+        &["for-each-ref", "--format=%(objectname) %(refname)"],
+        b"",
+    );
+    assert_eq!(actual.as_bytes(), git_with_broken);
+    fs::remove_file(root.path().join("refs/heads/broken")).unwrap();
+    let tags = refs
+        .list_namespace_observations(&name("refs/tags/group"))
+        .unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags[0].peeled_hint, None);
+    assert_eq!(tags[1].peeled_hint, Some(commit));
+    assert!(
+        refs.list_namespace(&name("refs/tags/grou"))
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -136,14 +136,36 @@ pub(super) fn parse_id(
             "expected repository-format reference target",
         ));
     }
-    let id = std::str::from_utf8(bytes)
-        .ok()
-        .and_then(|v| ObjectId::from_hex(format, v).ok())
-        .ok_or_else(|| malformed(path, "invalid repository-format reference target"))?;
+    // Decode ASCII pairs directly: reference inventories parse thousands of IDs, and neither
+    // UTF-8 validation nor a separate whole-string hexadecimal pass is needed.
+    let mut digest = [0; 32];
+    for (&[high, low], output) in bytes.as_chunks::<2>().0.iter().zip(digest.iter_mut()) {
+        let value = hex_digit(high)
+            .zip(hex_digit(low))
+            .map(|(high, low)| high << 4 | low)
+            .ok_or_else(|| malformed(path, "invalid repository-format reference target"))?;
+        *output = value;
+    }
+    let id = ObjectId::from_bytes(
+        format,
+        digest
+            .get(..format.digest_len())
+            .ok_or_else(|| malformed(path, "unsupported reference digest width"))?,
+    )
+    .map_err(|_| malformed(path, "invalid repository-format reference target"))?;
     if id.is_null() {
         return Err(malformed(path, "zero reference target"));
     }
     Ok(id)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -152,6 +174,34 @@ mod tests {
 
     use super::*;
     const ID: &str = "1111111111111111111111111111111111111111";
+
+    #[rstest]
+    #[case::sha1_lower(crate::ObjectFormat::Sha1, "0123456789abcdef0123456789abcdef01234567")]
+    #[case::sha1_upper(crate::ObjectFormat::Sha1, "0123456789ABCDEF0123456789ABCDEF01234567")]
+    #[case::sha256(
+        crate::ObjectFormat::Sha256,
+        "0123456789ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef"
+    )]
+    fn decodes_reference_ids_in_either_hex_case(
+        #[case] format: crate::ObjectFormat,
+        #[case] hex: &str,
+    ) {
+        assert_eq!(
+            parse_id(format, hex.as_bytes(), Path::new("packed-refs")).unwrap(),
+            ObjectId::from_hex(format, hex).unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case::high(b"g111111111111111111111111111111111111111")]
+    #[case::low(b"1g11111111111111111111111111111111111111")]
+    #[case::last(b"111111111111111111111111111111111111111g")]
+    #[case::non_ascii(b"\xff111111111111111111111111111111111111111")]
+    #[case::multibyte(b"\xc3\xa911111111111111111111111111111111111111")]
+    fn rejects_non_hex_reference_pairs(#[case] bytes: &[u8]) {
+        assert_eq!(bytes.len(), 40);
+        assert!(parse_id(crate::ObjectFormat::Sha1, bytes, Path::new("packed-refs")).is_err());
+    }
 
     #[test]
     fn reads_unsorted_records_and_retains_valid_peeled_metadata() {
