@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/joshka/girt/compare/v0.10.0...v0.10.1) - 2026-10-16
+
+### Other
+
+- prioritize fast PR feedback ([#235](https://github.com/joshka/girt/pull/235))
+
 ## [0.10.0](https://github.com/joshka/girt/compare/v0.9.2...v0.10.0) - 2026-10-16
 
 ### Other
