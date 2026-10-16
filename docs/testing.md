@@ -270,13 +270,18 @@ resource use: validate those contracts separately. No numerical code-coverage th
 
 ## Native Platform Coverage
 
-The platform workflow runs the full all-feature suite on Ubuntu 22.04/24.04 and macOS 14. Windows
-runs all-feature library units and doctests, an explicit core-only integration selection, and a
-separate HTTP-only runtime suite. All hosts independently compile core-only, HTTP-only, and SSH-only
-libraries and run all-feature/all-target Clippy. Unix also runs core-only units and selected
-both-format interoperability suites, plus isolated HTTP and SSH runtime suites, with tracing
-disabled. Windows runs core-only units and its portable selection without tracing. Compilation is
-not runtime evidence; SSH feature compilation on Windows does not expose a Windows SSH adapter.
+Ordinary pull requests run the platform workflow on Ubuntu 26.04. Main pushes, nightly runs,
+release-plz pull requests and `full-ci` pull requests also run macOS 14 and Windows 2022. See
+[CI selection and the full-ci policy](../CONTRIBUTING.md#development-checks) for the coverage moved
+after merge and when agents must request full native coverage.
+
+The Unix jobs run the full all-feature suite. Windows runs all-feature library units and doctests,
+an explicit core-only integration selection, and a separate HTTP-only runtime suite. All hosts
+independently compile core-only, HTTP-only, and SSH-only libraries and run all-feature/all-target
+Clippy. Unix also runs core-only units and selected both-format interoperability suites, plus
+isolated HTTP and SSH runtime suites, with tracing disabled. Windows runs core-only units and its
+portable selection without tracing. Compilation is not runtime evidence; SSH feature compilation on
+Windows does not expose a Windows SSH adapter.
 
 The Windows integration selection follows implemented operations, not just file portability:
 
