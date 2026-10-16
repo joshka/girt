@@ -2677,19 +2677,18 @@ fn http_fetch_authenticates_from_native_store_without_running_git() {
     );
     std::fs::write(destination.join("config"), config).unwrap();
 
-    let environment = girt::transfer::Environment::default()
+    let environment = girt::workflow::Environment::default()
         .with("HOME", &home)
         .with("PATH", &tripwires)
         .with("GIT_EXEC_PATH", &tripwires);
-    let outcome = Repository::open(&destination)
-        .unwrap()
-        .fetch(
-            "origin",
-            &girt::transfer::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
-            &environment,
-            &mut girt::transfer::NoCallbacks,
-        )
-        .unwrap();
+    let outcome = girt::workflow::fetch(
+        &Repository::open(&destination).unwrap(),
+        "origin",
+        &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]),
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
     assert!(!outcome.updated.is_empty());
     assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap());
     // Approval rewrote the entry, and Git still reads it back.
@@ -2928,15 +2927,14 @@ fn repository_workflow_follows_protocol_version(
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
     let server = Server::new(f.root.path(), "", "", None);
     let (_root, repo) = workflow_destination(&server.url, version);
-    let environment = girt::transfer::Environment::default();
-    let mut callbacks = girt::transfer::NoCallbacks;
-    let head = repo
-        .remote_head("origin", &environment, &mut callbacks)
-        .unwrap();
+    let environment = girt::workflow::Environment::default();
+    let mut callbacks = girt::workflow::NoCallbacks;
+    let head = girt::workflow::remote_head(&repo, "origin", &environment, &mut callbacks).unwrap();
     assert!(matches!(head, fetch::RemoteHead::Symbolic { .. }));
-    repo.fetch(
+    girt::workflow::fetch(
+        &repo,
         "origin",
-        &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
         &environment,
         &mut callbacks,
     )
@@ -2955,17 +2953,17 @@ fn repository_workflow_rejects_invalid_protocol_version() {
     let f = Fixture::new(girt::ObjectFormat::Sha1, true, 8);
     let server = Server::new(f.root.path(), "", "", None);
     let (_root, repo) = workflow_destination(&server.url, Some("3"));
-    let error = repo
-        .fetch(
-            "origin",
-            &girt::transfer::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
-            &girt::transfer::Environment::default(),
-            &mut girt::transfer::NoCallbacks,
-        )
-        .unwrap_err();
+    let error = girt::workflow::fetch(
+        &repo,
+        "origin",
+        &girt::workflow::FetchOptions::new(["refs/heads/main:refs/remotes/origin/main"]),
+        &girt::workflow::Environment::default(),
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
-        girt::transfer::TransferError::Configuration(_)
+        girt::workflow::TransferError::Configuration(_)
     ));
     assert!(server.requests().is_empty());
 }

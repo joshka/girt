@@ -32,6 +32,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   publication authorization. `ProtocolEnvironment::from_user`/`with_from_user` become
   `origin`/`with_origin` with `ProtocolOrigin::{User, Automatic}`; `None` retains the user default.
   Existing named bit setters and `push::ForcePolicy` are unchanged.
+- Configured-remote convenience APIs move from `transfer` to `workflow`. Replace
+  `repository.fetch(...)`, `repository.push(...)` and `repository.remote_head(...)` with
+  `workflow::fetch(&repository, ...)`, `workflow::push(&repository, ...)` and
+  `workflow::remote_head(&repository, ...)`. Import environment, callbacks, options and outcomes
+  from `girt::workflow`. jj's synchronous adapter keeps the same refspec, credential, runtime and
+  automatic-maintenance behavior. Core fetch/push plans and artifacts retain their namespaces.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 

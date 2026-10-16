@@ -756,7 +756,7 @@ least 16 loose candidates exist, and the threshold grows by 5 for each doubling 
 past 12 KiB. Git's exact heuristic is not reproduced. Clone packs every fetched ref before
 publishing the local branch and HEAD, leaving the same loose files as `git clone`.
 
-`Repository::fetch` then runs the pack-refs task of Git's automatic maintenance, which `git fetch`
+`workflow::fetch` then runs the pack-refs task of Git's automatic maintenance, which `git fetch`
 runs afterwards as `git pack-refs --all --prune --auto`. `Repository::auto_pack_references` exposes
 the same task for consumers to run after their own batches of reference writes, as Git porcelain
 such as `git commit` does. As observed with Git 2.56, the task runs when `maintenance.auto` is true
@@ -1442,7 +1442,7 @@ pruning still requires coordination. Packs remain non-thin; ordinary entries rem
 bounded delta selection is now opt-in. No HTTP/SSH, credentials, pruning, shallow/partial support or
 new ref features are introduced.
 
-`Repository::push` reads the receiver's advertisement before preparing, as `git send-pack` does, and
+`workflow::push` reads the receiver's advertisement before preparing, as `git send-pack` does, and
 uses every advertised tip and `.have` as a receiver root, whatever the commands' expected values. A
 new branch therefore sends only the history the receiver lacks. Over HTTP the advertisement is the
 discovery response and the pack goes in the following POST; over SSH the session stays open while

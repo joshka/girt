@@ -454,8 +454,9 @@ impl crate::Repository {
     /// [`PackRefsOptions::AUTO`] when configuration enables the task.
     ///
     /// Git runs this task after porcelain commands that write references, such as `git fetch`
-    /// and `git commit`. [`Self::fetch`] runs it itself; call this after other batches of
-    /// reference writes so readers enumerate one `packed-refs` file instead of many loose files.
+    /// and `git commit`. [`crate::workflow::fetch`] runs it itself; call this after other batches
+    /// of reference writes so readers enumerate one `packed-refs` file instead of many loose
+    /// files.
     ///
     /// As observed with Git 2.56, the task is enabled when `maintenance.auto` is true or, if
     /// unset, when `gc.auto` is positive (the default), and when `maintenance.pack-refs.enabled`

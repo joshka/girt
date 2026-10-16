@@ -445,21 +445,20 @@ fn empty_receiver_gets_every_delta_base_in_the_same_pack(#[case] format: ObjectF
     git(&empty, &["fsck", "--strict"], &[]);
 }
 
-fn configured_push(f: &Fixture, url: &str, environment: &girt::transfer::Environment) {
+fn configured_push(f: &Fixture, url: &str, environment: &girt::workflow::Environment) {
     git(&f.source, &["remote", "add", "origin", url], &[]);
-    let report = Repository::open(&f.source)
-        .unwrap()
-        .push(
-            "origin",
-            vec![
-                PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
-                    .with_force(ForcePolicy::FastForwardOnly),
-            ],
-            &girt::transfer::PushOptions::default(),
-            environment,
-            &mut girt::transfer::NoCallbacks,
-        )
-        .unwrap();
+    let report = girt::workflow::push(
+        &Repository::open(&f.source).unwrap(),
+        "origin",
+        vec![
+            PushCommand::new(RefName::new("refs/heads/main").unwrap(), Some(f.old), f.new)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
+        &girt::workflow::PushOptions::default(),
+        environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
     assert!(report.all_succeeded());
     assert_eq!(git(&f.dest, &["cat-file", "blob", &f.blob], &[]), f.data);
     git(&f.dest, &["fsck", "--strict"], &[]);
@@ -473,7 +472,7 @@ fn configured_native_push_imports_thin_delta(#[case] format: ObjectFormat) {
     configured_push(
         &f,
         f.dest.to_str().unwrap(),
-        &girt::transfer::Environment::default(),
+        &girt::workflow::Environment::default(),
     );
 }
 
@@ -485,7 +484,7 @@ fn configured_http_push_sends_thin_delta_to_git(#[case] format: ObjectFormat) {
     let f = fixture(format);
     git(&f.dest, &["config", "http.receivepack", "true"], &[]);
     let server = http_git::Server::new(&f.dest, "", "", None);
-    configured_push(&f, &server.url, &girt::transfer::Environment::default());
+    configured_push(&f, &server.url, &girt::workflow::Environment::default());
     assert_eq!(server.requests(), vec!["GET", "POST"]);
 }
 
@@ -498,7 +497,7 @@ fn configured_ssh_push_sends_thin_delta_to_git_without_sshd(#[case] format: Obje
     let client = f._root.path().join("ssh");
     stand_in::shell(&client, "for last; do :; done\nexec /bin/sh -c \"$last\"\n");
     let url = format!("ssh://localhost{}", f.dest.display());
-    let environment = girt::transfer::Environment::default()
+    let environment = girt::workflow::Environment::default()
         .with("PATH", std::env::var_os("PATH").unwrap())
         .with("GIT_SSH_COMMAND", client);
     configured_push(&f, &url, &environment);
@@ -575,19 +574,18 @@ fn configured_default_push_does_not_use_hidden_receiver_history_as_external_base
         &["remote", "add", "origin", f.dest.to_str().unwrap()],
         &[],
     );
-    let report = Repository::open(&f.source)
-        .unwrap()
-        .push(
-            "origin",
-            vec![
-                PushCommand::new(RefName::new("refs/heads/topic").unwrap(), None, f.new)
-                    .with_force(ForcePolicy::FastForwardOnly),
-            ],
-            &girt::transfer::PushOptions::default(),
-            &girt::transfer::Environment::default(),
-            &mut girt::transfer::NoCallbacks,
-        )
-        .unwrap();
+    let report = girt::workflow::push(
+        &Repository::open(&f.source).unwrap(),
+        "origin",
+        vec![
+            PushCommand::new(RefName::new("refs/heads/topic").unwrap(), None, f.new)
+                .with_force(ForcePolicy::FastForwardOnly),
+        ],
+        &girt::workflow::PushOptions::default(),
+        &girt::workflow::Environment::default(),
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
     assert!(report.all_succeeded());
     assert_eq!(
         text(git(&f.dest, &["rev-parse", "refs/heads/topic"], &[])),
