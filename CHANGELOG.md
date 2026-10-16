@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/joshka/girt/compare/v0.10.1...v0.10.2) - 2026-10-16
+
+### Other
+
+- Open Git-scale local push destinations under caller pack limits ([#243](https://github.com/joshka/girt/pull/243))
+- Count rewrite candidates for the limit as Git does ([#238](https://github.com/joshka/girt/pull/238))
+- Open Git-scale local fetch sources under caller pack limits ([#237](https://github.com/joshka/girt/pull/237))
+
 ### Breaking changes
 
 - The rewrite candidate limit counts files as Git does: binary files count even when
