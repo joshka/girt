@@ -16,6 +16,9 @@ permissions:
 jobs:
   release:
     name: Publish
+    concurrency:
+      group: release-plz-publish
+      cancel-in-progress: false
     # A push starts full CI; publish only its exact, successful main revision.
     if: >-
       github.event_name == 'workflow_run' &&

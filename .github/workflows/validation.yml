@@ -97,11 +97,6 @@ jobs:
             diskutil info "$(df . | tail -1 | awk '{print $1}')"
             diskutil info "$(df "$(python3 -c 'import tempfile; print(tempfile.gettempdir())')" | tail -1 | awk '{print $1}')"
           fi
-      - name: Rust formatting
-        if: runner.os == 'Linux'
-        run: |
-          rustup toolchain install nightly --profile minimal --component rustfmt
-          cargo +nightly fmt --all -- --check
       - name: Rust cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         env:
@@ -149,6 +144,11 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --locked --all-features --no-deps --document-private-items
+      - name: Rust formatting
+        if: runner.os == 'Linux'
+        run: |
+          rustup toolchain install nightly --profile minimal --component rustfmt
+          cargo +nightly fmt --all -- --check
       - name: docs.rs build
         if: runner.os == 'Linux'
         env:
@@ -483,11 +483,10 @@ jobs:
         id: paths
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
         run: |
-          # Nightly checks the complete default-branch tree, regardless of recent paths.
-          if [ "$EVENT" = schedule ]; then
-            printf '%s\n' rust=true docs=false index=true references=true security=true >> "$GITHUB_OUTPUT"
+          # Every publishable main revision needs full evidence, including docs-only pushes.
+          if [ "$EVENT" = schedule ] || [ "$EVENT" = push ]; then
+            printf '%s\n' rust=true docs=true index=true references=true security=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A manual run keeps the Rust jobs, whose inputs select focused checks, and skips the rest.
@@ -498,8 +497,6 @@ jobs:
           # A pull request checks out its merge commit, whose first parent is the base branch.
           if [ "$EVENT" = pull_request ]; then
             changed=$(git diff --name-only HEAD^1 HEAD)
-          elif git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            changed=$(git diff --name-only "$BEFORE" HEAD)
           else
             changed=
             all=true
@@ -738,8 +735,9 @@ jobs:
               .map(([name, job]) => `${name}: ${job.result}`).join('\n');
             const body = `Full main/nightly CI failed at ${context.sha}.\n\n${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\n${failed}\n\nInvestigate before releasing; use full-ci on the fix PR.`;
             const issues = await github.paginate(github.rest.issues.listForRepo,
-              {owner, repo, state: 'open', creator: 'github-actions[bot]', per_page: 100});
-            const existing = issues.find(issue => !issue.pull_request && issue.title === title);
+              {owner, repo, state: 'open', per_page: 100});
+            const existing = issues.find(issue => !issue.pull_request && issue.title === title &&
+              issue.user?.login === 'github-actions[bot]');
             if (existing) {
               await github.rest.issues.createComment({owner, repo, issue_number: existing.number, body});
             } else {

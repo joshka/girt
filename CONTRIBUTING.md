@@ -62,25 +62,27 @@ The [platform workflow](.github/workflows/validation.yml) runs full Linux valida
 pull requests: tests, feature checks, examples, Clippy, Rust formatting, docs.rs and API
 compatibility. Index and References checks also run on Linux when their paths change. macOS and
 Windows coverage runs after pushes to `main`, nightly, on release-plz pull requests, and on pull
-requests labeled `full-ci`. Nightly checks the whole tree; main pushes retain path filtering. The
-native test commands and Windows feature lanes are the same in those full runs. See
+requests labeled `full-ci`. Main and nightly checks cover the whole tree. The native test commands
+and Windows feature lanes are the same in those full runs. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
 making support claims.
 
 Agents must apply `full-ci` before requesting merge for platform-sensitive changes: filesystem
-operations, file locking, paths and permissions, process execution, Windows-specific code, or
-platform-dependent dependencies. Apply it when uncertain whether Linux establishes the contract.
-Adding or removing the label starts a new CI run; after adding it, wait for that run's `required`
-check. Release branches named `release-plz-*` always get the full matrix, regardless of labels.
-Ordinary pull requests can merge before a macOS/Windows regression is detected. Main and nightly
-failures open or update the `CI regression on main` issue; investigate that issue before releasing.
+operations, file locking, paths and permissions, process execution, Windows-specific code,
+platform-dependent dependencies, or CI workflow changes. Apply it when uncertain whether Linux
+establishes the contract. Adding or removing the label starts a new CI run; after adding it, wait
+for that run's `required` check. Do not remove `full-ci` to bypass a platform failure; fix the
+failure and rerun instead. Any label change starts another CI run, including labels unrelated to CI.
+Release branches named `release-plz-*` always get the full matrix, regardless of labels. Ordinary
+pull requests can merge before a macOS/Windows regression is detected. Main and nightly failures
+open or update the `CI regression on main` issue; investigate that issue before releasing.
 
-Changes that touch only Markdown, `docs/`, licenses, `.vale.ini`, `.config/rumdl.toml` or
-`.config/vale/` run just `Docs` (`just docs-check`); Rust and platform tests report as skipped even
-with `full-ci`. Any other path runs Rust validation. CI calls the index, references and security
-workflows when a change touches their paths. Its `required` job is the single merge gate: it fails
-when any other CI job fails or is cancelled, and treats skipped jobs as passing. Add new CI jobs to
-its `needs` list. Rust caches are saved only on main.
+On pull requests, changes that touch only Markdown, `docs/`, licenses, `.vale.ini`,
+`.config/rumdl.toml` or `.config/vale/` run just `Docs` (`just docs-check`); Rust and platform tests
+report as skipped even with `full-ci`. Any other path runs Rust validation. CI calls the index,
+references and security workflows when a change touches their paths. Its `required` job is the
+single merge gate: it fails when any other CI job fails or is cancelled, and treats skipped jobs as
+passing. Add new CI jobs to its `needs` list. Rust caches are saved only on main.
 
 ## API Compatibility Gate
 
@@ -186,7 +188,10 @@ The release workflow uses GitHub's default token, so checks on the release pull 
 on their own: GitHub holds them for approval. Approve the waiting runs, or close and reopen the pull
 request, after its last update, then wait for `required` before merging. The publish job uses a
 short-lived crates.io token obtained through OIDC; do not add a persistent registry token to the
-workflow.
+workflow. To retry publishing after a transient failure, rerun the successful push-to-main CI run;
+its completion starts publishing again. Manually dispatching Release only prepares a release pull
+request. The first release after changing this workflow still needs hosted verification of the
+exact-commit checkout and OIDC publishing path.
 
 ## HTTP Fixtures
 
