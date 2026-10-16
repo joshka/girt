@@ -1,10 +1,14 @@
 name: Release
 
-on:
+on: # zizmor: ignore[dangerous-triggers] -- publish checks out only successful push-to-main CI; no PR artifacts
   push:
     branches:
       - main
   workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -12,7 +16,14 @@ permissions:
 jobs:
   release:
     name: Publish
-    if: github.ref == 'refs/heads/main'
+    # A push starts full CI; publish only its exact, successful main revision.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.path == '.github/workflows/validation.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -23,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: rustup toolchain install stable --profile minimal
       - name: Rust cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -42,7 +53,7 @@ jobs:
 
   release-pr:
     name: Release PR
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
       contents: write

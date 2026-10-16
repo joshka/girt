@@ -3,6 +3,11 @@ name: Index
 # CI calls this workflow for pushes and pull requests that touch its paths.
 on:
   workflow_call:
+    inputs:
+      full:
+        description: Include macOS and Windows coverage
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       r38_only:
@@ -19,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-14, windows-2022]
+        os: ${{ (github.event_name == 'workflow_dispatch' || inputs.full) && fromJSON('["ubuntu-26.04", "macos-14", "windows-2022"]') || fromJSON('["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

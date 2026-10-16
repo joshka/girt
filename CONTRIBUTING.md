@@ -58,20 +58,29 @@ For performance-sensitive changes, run `just bench`. See
 and recorded results. Changes touching fetch, object reading, packing or retention also need the
 [large-repository benchmark](docs/jj-replacement-status.md#large-repository-benchmark).
 
-The [platform workflow](.github/workflows/validation.yml) repeats runtime and interoperability
-checks on macOS and Linux, with a separate Windows portable-test job. Its explicit
-[integration selection](docs/testing.md#native-platform-coverage) covers storage, objects,
-repository operations, remote mapping, references, and HTTP runtime suites. See
+The [platform workflow](.github/workflows/validation.yml) runs full Linux validation on ordinary
+pull requests: tests, feature checks, examples, Clippy, Rust formatting, docs.rs and API
+compatibility. Index and References checks also run on Linux when their paths change. macOS and
+Windows coverage runs after pushes to `main`, nightly, on release-plz pull requests, and on pull
+requests labeled `full-ci`. Nightly checks the whole tree; main pushes retain path filtering. The
+native test commands and Windows feature lanes are the same in those full runs. See
 [platform evidence and gaps](docs/compatibility.md#platform-and-git-version-validation) before
-making support claims. Local cross-compilation does not replace executing the test suite on the
-target OS.
+making support claims.
 
-CI runs on pull requests and on pushes to `main`. It calls the index, references and security
-workflows when a change touches their paths. Changes that touch only Markdown, `docs/`, licenses,
-`.vale.ini`, `.config/rumdl.toml` or `.config/vale/` run just the `Docs` job (`just docs-check`);
-the MSRV and platform test jobs report as skipped. Any other path runs them. Its `required` job is
-the single merge gate: it fails when any other CI job fails or is cancelled, and treats skipped jobs
-as passing. Add new CI jobs to its `needs` list.
+Agents must apply `full-ci` before requesting merge for platform-sensitive changes: filesystem
+operations, file locking, paths and permissions, process execution, Windows-specific code, or
+platform-dependent dependencies. Apply it when uncertain whether Linux establishes the contract.
+Adding or removing the label starts a new CI run; after adding it, wait for that run's `required`
+check. Release branches named `release-plz-*` always get the full matrix, regardless of labels.
+Ordinary pull requests can merge before a macOS/Windows regression is detected. Main and nightly
+failures open or update the `CI regression on main` issue; investigate that issue before releasing.
+
+Changes that touch only Markdown, `docs/`, licenses, `.vale.ini`, `.config/rumdl.toml` or
+`.config/vale/` run just `Docs` (`just docs-check`); Rust and platform tests report as skipped even
+with `full-ci`. Any other path runs Rust validation. CI calls the index, references and security
+workflows when a change touches their paths. Its `required` job is the single merge gate: it fails
+when any other CI job fails or is cancelled, and treats skipped jobs as passing. Add new CI jobs to
+its `needs` list. Rust caches are saved only on main.
 
 ## API Compatibility Gate
 
@@ -169,8 +178,9 @@ Keep documentation consistent with what the library actually implements.
 
 The first `girt` release was published manually. Subsequent releases use
 [`release-plz`](https://release-plz.dev/docs/github/quickstart): a push to `main` prepares a release
-pull request, and merging that request permits the release job to publish through crates.io trusted
-publishing. Review the proposed version, changelog, CI results and supported scope before merging.
+pull request, and merging that request starts full main CI. Only successful full CI for that exact
+main revision permits the release job to publish through crates.io trusted publishing. Review the
+proposed version, changelog, CI results and supported scope before merging.
 
 The release workflow uses GitHub's default token, so checks on the release pull request do not start
 on their own: GitHub holds them for approval. Approve the waiting runs, or close and reopen the pull
