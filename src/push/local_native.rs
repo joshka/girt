@@ -173,6 +173,9 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             return Err(PushError::NotSent(PushFailure::KnowledgeChanged(*root)));
         }
     }
+    // A live reader lets each later open of an unchanged destination pack reuse its validated
+    // index instead of parsing it again. Every open still takes its own snapshot.
+    let mut index_pin = None;
     if !prepared.receiver_roots.is_empty() {
         // Like Git, the destination's existing objects are trusted to have complete history, so
         // the pack may omit anything reachable from these roots.
@@ -192,6 +195,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
                 return Err(PushError::NotSent(PushFailure::KnowledgeChanged(root)));
             }
         }
+        index_pin = Some(store);
     }
     let limits = FetchLimits {
         max_pack_bytes: prepared
@@ -223,6 +227,7 @@ pub(super) fn send_preparing<P: Borrow<PreparedPush>>(
             .map_err(|error| {
                 PushError::NotSent(PushFailure::install(FetchError::Destination(error)))
             })?;
+        index_pin.get_or_insert_with(|| store.clone());
         let roots: Vec<_> = current
             .iter()
             .filter_map(|reference| match reference.target {
