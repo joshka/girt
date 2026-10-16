@@ -536,6 +536,125 @@ jobs:
     if: ${{ needs.changes.outputs.security == 'true' }}
     uses: $/.github/workflows/security.yml
 
+  semver:
+    # The trusted semver-label workflow matches this job name.
+    name: Semver
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    outputs:
+      breaking: ${{ steps.result.outputs.breaking }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Keep the merge commit and both parents available for --baseline-rev.
+          fetch-depth: 2
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        with:
+          shared-key: semver
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-semver-checks
+        env:
+          SEMVER_SHA256: cacadafaa5cd27ae6d05a74a103266917ebab4c5e43c898360e177d4fbf06a65
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/semver.tar.gz" https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.51.0/cargo-semver-checks-x86_64-unknown-linux-gnu.tar.gz
+          echo "$SEMVER_SHA256  $RUNNER_TEMP/semver.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/semver.tar.gz" -C "$HOME/.cargo/bin" cargo-semver-checks
+      - name: Latest published release
+        id: baseline
+        run: |
+          version=$(curl -fsSL --retry 3 -A 'girt-semver-ci (https://github.com/joshka/girt)' https://crates.io/api/v1/crates/girt | jq -er '[.versions[] | select(.yanked == false and (.num | contains("-") | not)) | .num] | sort_by(split(".") | map(tonumber)) | last')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Baseline: girt $version"
+      - name: Compare public API
+        id: compare
+        env:
+          BASELINE: ${{ steps.baseline.outputs.version }}
+        run: |
+          status=0
+          cargo +stable semver-checks -p girt --baseline-version "$BASELINE" --release-type minor --all-features || status=$?
+          case "$status" in
+            0) echo breaking=false >> "$GITHUB_OUTPUT" ;;
+            100) echo breaking=true >> "$GITHUB_OUTPUT" ;;
+            *) echo "cargo-semver-checks failed to complete (exit $status)" >&2; exit "$status" ;;
+          esac
+      - name: Compare PR base
+        id: base-compare
+        if: ${{ github.event_name == 'pull_request' && steps.compare.outputs.breaking == 'true' }}
+        # Match Changes: use the actual merge parent, even if main advanced since the event.
+        run: |
+          status=0
+          cargo +stable semver-checks -p girt --baseline-rev HEAD^1 --release-type minor --all-features || status=$?
+          case "$status" in
+            0) echo breaking=false >> "$GITHUB_OUTPUT" ;;
+            100) echo breaking=true >> "$GITHUB_OUTPUT" ;;
+            *) echo "PR-base comparison failed to complete (exit $status)" >&2; exit "$status" ;;
+          esac
+      - name: Select PR compatibility result
+        id: result
+        env:
+          EVENT: ${{ github.event_name }}
+          PUBLISHED_BREAK: ${{ steps.compare.outputs.breaking }}
+          BASE_BREAK: ${{ steps.base-compare.outputs.breaking }}
+        run: |
+          breaking="$PUBLISHED_BREAK"
+          if [ "$EVENT" = pull_request ] && [ "$PUBLISHED_BREAK" = true ]; then
+            breaking="${BASE_BREAK:?base comparison result missing}"
+            if [ "$breaking" = false ]; then
+              echo 'Only previously merged release breaks remain; this PR adds no break'
+            fi
+          fi
+          case "$breaking" in
+            true|false) ;;
+            *) echo 'Compatibility result missing or invalid' >&2; exit 1 ;;
+          esac
+          echo "breaking=$breaking" >> "$GITHUB_OUTPUT"
+      # The trusted workflow_run labeler also uses this named step for fork PRs.
+      - name: Record breaking change
+        if: ${{ steps.result.outputs.breaking == 'true' }}
+        run: echo 'New published API break detected'
+
+  semver-policy:
+    name: Semver policy
+    needs: semver
+    if: ${{ github.event_name == 'pull_request' && needs.semver.outputs.breaking == 'true' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # No checkout or PR code runs with the label-writing token.
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const {data: pr} = await github.rest.pulls.get({owner, repo, pull_number: issue_number});
+            if (pr.head.sha !== context.payload.pull_request.head.sha) {
+              core.setFailed('PR head changed; wait for its current Semver check');
+              return;
+            }
+            if (pr.head.repo?.full_name === `${owner}/${repo}`) {
+              try {
+                await github.rest.issues.addLabels({owner, repo, issue_number, labels: ['breaking']});
+              } catch (error) {
+                if (error.status !== 403) throw error;
+                core.warning('Read-only bot token: the trusted workflow_run job will add breaking');
+              }
+            }
+            if (!pr.labels.some(label => label.name === 'next-breaking')) {
+              core.setFailed(`API breaks require next-breaking; batch them deliberately, then rerun this job. See Semver logs: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`);
+            }
+
   # The single merge gate: list every job above. Skipped jobs pass; failed or cancelled jobs fail.
   required:
     name: required
@@ -554,6 +673,8 @@ jobs:
       - index
       - references
       - security
+      - semver
+      - semver-policy
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
