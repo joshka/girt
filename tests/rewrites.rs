@@ -441,6 +441,14 @@ fn blob_entries<'a>(
     Some((1, 2, 2)),
     "A\tb1\nA\tdst\nD\tsrc\n",
 )]
+#[case::binary_counted_without_scorable_source(
+    &[(&b"b1"[..], &b"bin\0one\n"[..]), (b"b2", b"bin\0two\n")],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..])],
+    false,
+    &["--no-rename-empty"],
+    Some((2, 1, 2)),
+    "D\tb1\nD\tb2\nA\tdst\n",
+)]
 fn candidate_counts_match_git(
     #[values("sha1", "sha256")] format: &str,
     #[case] old: &[(&[u8], &[u8])],

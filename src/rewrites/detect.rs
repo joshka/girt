@@ -290,8 +290,9 @@ impl<'a> Selection<'a> {
         blobs: &mut BTreeMap<ObjectId, Blob>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<InexactSkipped>, Error> {
-        // Git counts every file left unpaired by exact matching, including binary files, and
-        // empty files when empty renames are enabled; scoring then skips what it cannot pair.
+        // Git counts available sources (reusable ones too, with copies) and unmatched destinations,
+        // including binary files, and empty files when empty renames are enabled. Decide the skip
+        // before filtering to scorable files, which can leave nothing to score.
         let counted = |blob: &Blob| self.options.track_empty || !blob.bytes.is_empty();
         let scorable = |blob: &Blob| {
             !blob.bytes.is_empty() && (self.options.approximate_binary || !blob.binary())

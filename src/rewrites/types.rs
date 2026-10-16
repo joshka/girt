@@ -37,7 +37,8 @@ pub struct Options {
     /// [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns
     /// [`Error::Candidates`]. Neither reports an incomplete inference as complete.
     ///
-    /// The counts are the files left unpaired by exact matching, as Git counts them: binary files
+    /// The counts are the sources still available after exact matching (including exact-paired
+    /// sources reused for copies) and the unmatched destinations, as Git counts them: binary files
     /// count even when [`Self::approximate_binary`] is false, and empty files count when
     /// [`Self::track_empty`] is true, as with Git's default of detecting empty renames. Git pairs
     /// some files before this check, such as an edited file moved to a path with the same
@@ -241,7 +242,8 @@ pub struct Detection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct InexactSkipped {
-    /// Sources remaining after exact matching, counted as [`Options::candidate_limit`] describes.
+    /// Sources still available after exact matching, counted as
+    /// [`Options::candidate_limit`] describes.
     pub sources: usize,
     /// Destinations remaining after exact matching, counted the same way.
     pub targets: usize,
