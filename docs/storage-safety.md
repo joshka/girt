@@ -200,12 +200,12 @@ any of those fails the open.
 
 Overlapping readers in one process share fully structurally validated index bytes and entry tables
 for an unchanged pair of pinned index/pack generations. The process-local LRU indexes at most eight
-pairs and 64 MiB of live representations; larger representations bypass it. Each key includes object
-format and both handles' native file identity, size, modification time and metadata change time
-(Unix ctime or Windows ChangeTime). Change time discriminates cache generations without changing the
-pinned-reader freshness contract: rename/unlink can change it while the original artifact remains
-readable. Platforms without native file identity or change time bypass the cache. Concurrent misses
-can validate independently.
+pairs of any size: its records are weak, so the bound limits lookup work, not memory. Each key
+includes object format and both handles' native file identity, size, modification time and metadata
+change time (Unix ctime or Windows ChangeTime). Change time discriminates cache generations without
+changing the pinned-reader freshness contract: rename/unlink can change it while the original
+artifact remains readable. Platforms without native file identity or change time bypass the cache.
+Concurrent misses can validate independently.
 
 The cache holds only weak references. Readers own the shared validation and independent artifact
 pins that prevent file-ID reuse, including during an in-flight cache lookup, without extending
