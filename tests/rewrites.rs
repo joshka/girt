@@ -4,7 +4,7 @@ mod fixture;
 
 use std::sync::atomic::AtomicBool;
 
-use fixture::{Fixture, git};
+use fixture::{Fixture, git, git_output};
 use girt::rewrites::{Copies, Error, Kind, Limits, Options};
 use rstest::rstest;
 
@@ -297,6 +297,135 @@ fn exact_precedes_candidate_limit(
             })
         ),
         !exact
+    );
+}
+
+/// Git skips edited detection when remaining sources times destinations exceeds the squared
+/// limit, still reporting exact renames: one source and three destinations fit a limit of 2.
+#[rstest]
+#[case::within_squared_limit(
+    2,
+    None,
+    &[(&b"source"[..], &b"edited"[..], 75), (b"exact", b"moved", 100)],
+    "R075\tsource\tedited\nR100\texact\tmoved\nA\tnew1\nA\tnew2\n",
+    "",
+)]
+#[case::over_squared_limit(
+    1,
+    Some((1, 3)),
+    &[(&b"exact"[..], &b"moved"[..], 100)],
+    "A\tedited\nR100\texact\tmoved\nA\tnew1\nA\tnew2\nD\tsource\n",
+    "warning: exhaustive rename detection was skipped due to too many files.\n\
+     warning: you may want to set your diff.renameLimit variable to at least 3 and retry the \
+     command.\n",
+)]
+fn candidate_limit_matches_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[case] limit: usize,
+    #[case] skipped: Option<(usize, usize)>,
+    #[case] expected: &[(&[u8], &[u8], u8)],
+    #[case] git_stdout: &str,
+    #[case] git_stderr: &str,
+) {
+    let f = Fixture::new(format);
+    let exact = f.blob(b"exact\nfile\n");
+    let old = f.tree(&[
+        ("100644", exact, b"exact"),
+        ("100644", f.blob(b"a\nb\nc\nd\n"), b"source"),
+    ]);
+    let new = f.tree(&[
+        ("100644", exact, b"moved"),
+        ("100644", f.blob(b"a\nb\nc\nx\n"), b"edited"),
+        ("100644", f.blob(b"one\n"), b"new1"),
+        ("100644", f.blob(b"two\n"), b"new2"),
+    ]);
+    let objects = f.objects();
+    let options = Options::default().with_candidate_limit(limit);
+    let detection = objects
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            options,
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let records: Vec<_> = detection
+        .rewrites
+        .iter()
+        .map(|r| (r.source.as_slice(), r.target.as_slice(), r.similarity))
+        .collect();
+    assert_eq!(records, expected);
+    assert_eq!(
+        detection
+            .inexact_skipped
+            .map(|s| (s.sources, s.targets, s.limit, s.required_limit())),
+        skipped.map(|(sources, targets)| (sources, targets, limit, 3))
+    );
+    let strict = objects.detect_rewrites(
+        Some(old),
+        Some(new),
+        options,
+        Limits::default(),
+        None,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(
+        strict.err().map(|e| e.to_string()),
+        skipped.map(|(sources, targets)| format!(
+            "rewrite candidates ({sources} sources, {targets} targets) exceed limit {limit}"
+        ))
+    );
+    let observed = git_output(
+        f.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "--no-commit-id",
+            "--name-status",
+            "-M50%",
+            &format!("-l{limit}"),
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    assert_eq!(String::from_utf8(observed.stdout).unwrap(), git_stdout);
+    assert_eq!(String::from_utf8(observed.stderr).unwrap(), git_stderr);
+}
+
+/// Over the limit, an exact match stays a rename and the report names the remaining counts.
+#[test]
+fn skipped_report_keeps_exact_rename() {
+    let f = Fixture::new("sha1");
+    let exact = f.blob(b"same\n");
+    let old = f.tree(&[
+        ("100644", exact, b"old"),
+        ("100644", f.blob(b"a\nb\n"), b"gone"),
+    ]);
+    let new = f.tree(&[
+        ("100644", exact, b"new"),
+        ("100644", f.blob(b"a\nc\n"), b"added"),
+    ]);
+    let detection = f
+        .objects()
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default().with_candidate_limit(0),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(detection.rewrites.len(), 1);
+    assert_eq!(detection.rewrites[0].kind, Kind::Rename);
+    assert_eq!(
+        detection
+            .inexact_skipped
+            .map(|s| (s.sources, s.targets, s.limit)),
+        Some((1, 1, 0))
     );
 }
 

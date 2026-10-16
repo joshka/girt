@@ -6,6 +6,11 @@ use std::process::{Command, Stdio};
 use girt::{ObjectId, Objects, PackLimits, Repository};
 
 pub fn git(root: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
+    git_output(root, args, input).stdout
+}
+
+/// Runs a successful Git command, keeping stderr for observed warnings.
+pub fn git_output(root: &Path, args: &[&str], input: &[u8]) -> std::process::Output {
     let mut command = Command::new("git");
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -29,7 +34,7 @@ pub fn git(root: &Path, args: &[&str], input: &[u8]) -> Vec<u8> {
         "git {args:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    output.stdout
+    output
 }
 
 pub fn id(bytes: &[u8]) -> ObjectId {
