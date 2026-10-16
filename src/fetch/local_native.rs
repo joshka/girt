@@ -81,8 +81,8 @@ pub(super) fn receive_depth_observed(
         return Err(FetchError::Unsupported("shallow local source"));
     }
     let store = source
-        .objects(Default::default())
-        .map_err(FetchError::Destination)?;
+        .objects(limits.source_packs)
+        .map_err(FetchError::SourceObjects)?;
     let advertisement = advertise_store(source, &store, limits, control)?;
     let wants = select(&advertisement);
     if depth.is_some() && wants.iter().copied().collect::<IdSet>().len() != 1 {
@@ -323,7 +323,12 @@ pub(super) fn receive_depth_observed(
                 max_object_bytes: limits.max_object_bytes as u64,
                 max_input_bytes: limits.max_decode_bytes as u64,
                 max_pack_bytes: limits.max_pack_bytes as u64,
-                ..Default::default()
+                // The index size follows from the object count: header, fanout and trailer, plus at
+                // most a 32-byte ID, CRC, offset and large offset per object. `max_objects` bounds
+                // it, so a fixed index cap would only refuse sources within every other bound.
+                max_index_bytes: (limits.max_objects as u64)
+                    .saturating_mul(48)
+                    .saturating_add(1096),
             },
             crate::PackCompression::Ordinary,
             (
@@ -382,8 +387,8 @@ pub(super) fn advertise(
 ) -> Result<Advertisement, FetchError> {
     check(control)?;
     let store = source
-        .objects(Default::default())
-        .map_err(FetchError::Destination)?;
+        .objects(limits.source_packs)
+        .map_err(FetchError::SourceObjects)?;
     advertise_store(source, &store, limits, control)
 }
 

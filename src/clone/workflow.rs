@@ -288,7 +288,7 @@ impl CloneReady {
         cancelled(cancel)?;
         // Like Git's clone, publish fetched refs packed; the local branch and HEAD stay loose.
         if repo.reference_backend() == crate::refs::Backend::Files {
-            let objects = repo.objects(crate::PackLimits::default())?;
+            let objects = repo.objects(limits.snapshot)?;
             report.packed_refs = Some(
                 repo.references()?
                     .pack(&objects, crate::refs::PackRefsOptions::ALL)?,

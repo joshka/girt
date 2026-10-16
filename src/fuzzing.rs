@@ -212,6 +212,11 @@ fn fetch_limits() -> crate::fetch::FetchLimits {
         max_resolution_steps: 100_000,
         max_connectivity_edges: 100_000,
         max_threads: 1,
+        source_packs: crate::PackLimits {
+            max_bytes: 8 * MAX_BYTES,
+            max_index_bytes: MAX_BYTES,
+            ..crate::PackLimits::default()
+        },
     }
 }
 

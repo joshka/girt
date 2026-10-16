@@ -5,7 +5,7 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
-use girt::fetch::{FetchError, FetchLimits, receive_local};
+use girt::fetch::{FetchError, FetchLimits, discover_local, receive_local};
 use girt::push::{
     ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, RejectionOrigin,
     send_local,
@@ -1075,4 +1075,97 @@ fn pre_receive_rejection_does_not_materialize_unstored_empty_tree(#[case] format
             .unwrap(),
         Some(Target::Direct(child))
     );
+}
+
+/// Runs Git in `directory` without global or system configuration, returning trimmed stdout.
+fn git_in(directory: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .current_dir(directory)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", directory.join("absent-config"))
+        .args([
+            "-c",
+            "user.name=Local Test",
+            "-c",
+            "user.email=local@example.invalid",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Builds a Git-written source with one packed commit; returns its path, tip and `.idx` size.
+fn packed_git_source(root: &tempfile::TempDir) -> (std::path::PathBuf, girt::ObjectId, usize) {
+    let path = root.path().join("source");
+    std::fs::create_dir(&path).unwrap();
+    git_in(&path, &["init", "-q", "--template=", "-b", "main"]);
+    std::fs::write(path.join("file"), b"packed source\n").unwrap();
+    git_in(&path, &["add", "file"]);
+    git_in(&path, &["commit", "-q", "-m", "packed"]);
+    git_in(&path, &["repack", "-adq"]);
+    let tip = git_in(&path, &["rev-parse", "HEAD"]).parse().unwrap();
+    let pack_dir = path.join(".git/objects/pack");
+    let index = std::fs::read_dir(&pack_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
+        .unwrap();
+    let index_len = std::fs::metadata(index).unwrap().len().try_into().unwrap();
+    (path, tip, index_len)
+}
+
+/// The source store opens under `FetchLimits::source_packs`, not a fixed default: a source whose
+/// index exceeds the bound is refused as a source failure, and one within it is fetched intact.
+#[rstest]
+#[case::index_over_limit(1, false)]
+#[case::index_at_limit(0, true)]
+fn native_fetch_opens_source_within_source_pack_limits(
+    #[case] below_index: usize,
+    #[case] fetched: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let (source, tip, index_len) = packed_git_source(&root);
+    let limits = FetchLimits::default()
+        .with_source_packs(PackLimits::default().with_max_index_bytes(index_len - below_index));
+    let received = receive_local(
+        &source,
+        |_| vec![tip],
+        girt::fetch::LocalFetchRequest::new(limits),
+        TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
+    );
+    let discovered = discover_local(
+        &source,
+        limits,
+        TransportControl::new(&AtomicBool::new(false)),
+    );
+    assert_eq!(
+        received.as_ref().err().map(ToString::to_string),
+        (!fetched).then(|| "opening source object store".to_owned())
+    );
+    assert_eq!(
+        matches!(received, Err(FetchError::SourceObjects(_))),
+        !fetched
+    );
+    assert_eq!(
+        matches!(discovered, Err(FetchError::SourceObjects(_))),
+        !fetched
+    );
+    let destination = repository(&root, "destination", ObjectFormat::Sha1, Backend::Files);
+    let installed = received.map(|received| {
+        received
+            .install(&destination, PackLimits::default(), &AtomicBool::new(false))
+            .unwrap();
+        git_in(
+            destination.git_dir(),
+            &["cat-file", "-p", &format!("{tip}^{{tree}}:file")],
+        )
+    });
+    assert_eq!(installed.ok(), fetched.then(|| "packed source".to_owned()));
 }
