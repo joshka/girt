@@ -323,7 +323,7 @@ impl Source for Pack {
         Ok(self.find(id))
     }
     fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        self.index.at_offset(offset)
+        self.index.at_offset(&self.index_bytes, offset)
     }
     fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error> {
         Ok(self.data[entry.offset..entry.end.min(entry.offset.saturating_add(64))].to_vec())
