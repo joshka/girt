@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `Objects::detect_rewrites_or_exact` returns exact rename and copy matches with an explicit
+  `InexactSkipped` report when the candidate limit skips edited-content detection, as Git reports
+  exact renames when it skips rename detection for too many files.
+
+### Changed
+
+- `Options::candidate_limit` now skips edited detection only when remaining sources times remaining
+  destinations exceeds the squared limit, the bound Git applies for `diff.renameLimit`; the
+  candidate counts can still differ from Git's (see `Options::candidate_limit`). Calls that previously
+  succeeded return the same result; some that returned `Error::Candidates`, such as a few sources
+  against many new files, now complete.
+
 ### Breaking changes for 0.10.0
 
 - Represent `RetentionPolicy::recent_cutoff` as `Option<SystemTime>`; `None` disables age-based
