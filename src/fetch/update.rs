@@ -154,7 +154,7 @@ pub(super) fn validate(
         update.kind = commit_update_kind(
             name,
             fast_forward,
-            update.mapping.force,
+            update.mapping.force == crate::remote::ForceIntent::Requested,
             authorized.contains(name),
         )?;
     }

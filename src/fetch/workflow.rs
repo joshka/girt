@@ -300,7 +300,7 @@ impl FetchRequest {
                     name,
                     previous,
                     new,
-                    mapping.force,
+                    mapping.force == crate::remote::ForceIntent::Requested,
                     self.authorized_force.contains(name),
                     tag_destination,
                 )?;
@@ -315,7 +315,7 @@ impl FetchRequest {
             let advertised: BTreeSet<_> = advertisement
                 .refs
                 .iter()
-                .filter(|reference| !reference.peeled)
+                .filter(|reference| reference.kind == crate::fetch::AdvertisementKind::Tip)
                 .map(|reference| reference.name.as_bytes().to_vec())
                 .collect();
             let selected: BTreeSet<_> = updates
@@ -347,7 +347,7 @@ impl FetchRequest {
                     mapping: Mapping {
                         source: None,
                         destination: Some(name.clone()),
-                        force: false,
+                        force: crate::remote::ForceIntent::Normal,
                     },
                     previous: Some(*previous),
                     kind: FetchUpdateKind::Prune,
@@ -926,7 +926,7 @@ impl FetchReady {
                     .expect("changed destination");
                 RefEdit {
                     name: name.clone(),
-                    dereference: false,
+                    dereference: crate::refs::Dereference::Stored,
                     target: update
                         .mapping
                         .source

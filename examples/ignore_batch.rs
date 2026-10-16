@@ -2,7 +2,7 @@
 //! Input paths are NUL-separated file paths; source content is one root .gitignore.
 use std::io::{Read, Write};
 
-use girt::ignore::{Case, Ignore, Limits, Source};
+use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = std::env::args_os().nth(1).ok_or("supply an ignore file")?;
@@ -22,7 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut output = std::io::BufWriter::new(std::io::stdout().lock());
     for path in input.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-        if rules.check(path, false)?.is_some_and(|m| m.ignored) {
+        if rules
+            .check(path, InputKind::File)?
+            .is_some_and(|m| m.ignored)
+        {
             output.write_all(path)?;
             output.write_all(&[0])?;
         }

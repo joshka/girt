@@ -437,7 +437,7 @@ fn linked_worktree_import_routes_private_and_shared_history(
     );
     let private = Repository::open(&linked).unwrap();
     let mut change = append(tip, b"private update");
-    change.dereference = true;
+    change.dereference = girt::refs::Dereference::Follow;
     private
         .references()
         .unwrap()

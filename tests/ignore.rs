@@ -5,7 +5,7 @@ mod git;
 use std::fs;
 
 use girt::ObjectFormat;
-use girt::ignore::{Case, Ignore, Limits, Source};
+use girt::ignore::{Case, Ignore, InputKind, Limits, Source};
 use rstest::rstest;
 
 fn repository(format: ObjectFormat) -> tempfile::TempDir {
@@ -131,7 +131,17 @@ fn git_patterns(
     );
     rules.add(Source::Directory(b""), content).unwrap();
     assert_eq!(
-        rules.check(path, directory).unwrap().map(|m| m.ignored),
+        rules
+            .check(
+                path,
+                if directory {
+                    InputKind::Directory
+                } else {
+                    InputKind::File
+                }
+            )
+            .unwrap()
+            .map(|m| m.ignored),
         oracle(root.path(), path, directory)
     );
 }
@@ -182,26 +192,35 @@ fn hierarchy_and_loading_policy(
         .unwrap();
     assert_eq!(
         rules
-            .check(b"nested/deep.log", false)
+            .check(b"nested/deep.log", InputKind::File)
             .unwrap()
             .map(|m| m.ignored),
         oracle(root.path(), b"nested/deep.log", false)
     );
     assert_eq!(
-        rules.check(b"root.log", false).unwrap().map(|m| m.ignored),
+        rules
+            .check(b"root.log", InputKind::File)
+            .unwrap()
+            .map(|m| m.ignored),
         oracle(root.path(), b"root.log", false)
     );
     assert_eq!(
-        rules.check(b"info.log", false).unwrap().map(|m| m.ignored),
+        rules
+            .check(b"info.log", InputKind::File)
+            .unwrap()
+            .map(|m| m.ignored),
         oracle(root.path(), b"info.log", false)
     );
     assert_eq!(
-        rules.check(b"other.tmp", false).unwrap().map(|m| m.ignored),
+        rules
+            .check(b"other.tmp", InputKind::File)
+            .unwrap()
+            .map(|m| m.ignored),
         oracle(root.path(), b"other.tmp", false)
     );
     assert_eq!(
         rules
-            .check(b"blocked/keep", false)
+            .check(b"blocked/keep", InputKind::File)
             .unwrap()
             .map(|m| m.ignored),
         oracle(root.path(), b"blocked/keep", false)
@@ -218,7 +237,13 @@ fn tracked_selection_remains_caller_owned(
     fs::write(root.path().join(".gitignore"), b"tracked\n").unwrap();
     let mut rules = Ignore::new(Case::Sensitive, Limits::default());
     rules.add(Source::Directory(b""), b"tracked\n").unwrap();
-    assert!(rules.check(b"tracked", false).unwrap().unwrap().ignored);
+    assert!(
+        rules
+            .check(b"tracked", InputKind::File)
+            .unwrap()
+            .unwrap()
+            .ignored
+    );
     assert_eq!(oracle(root.path(), b"tracked", false), Some(true));
     assert_eq!(
         git::attempt(root.path(), &["check-ignore", "tracked"], b"")

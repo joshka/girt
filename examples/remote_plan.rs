@@ -33,7 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tag_name = RefName::new("refs/tags/remote")?;
     let advertised_id = ObjectId::for_blob(girt::ObjectFormat::Sha1, b"advertised fixture");
     let advertisement = Advertisement::new(
-        vec![AdvertisedRef::new(tag_name.clone(), advertised_id, false)],
+        vec![AdvertisedRef::new(
+            tag_name.clone(),
+            advertised_id,
+            girt::fetch::AdvertisementKind::Tip,
+        )],
         Vec::new(),
     );
     let mut planned = None;
@@ -92,7 +96,7 @@ fn selected_ids(plan: &[Mapping]) -> Vec<ObjectId> {
 fn creation_commands(plan: &[Mapping]) -> Result<Vec<PushCommand>, Box<dyn std::error::Error>> {
     let mut commands = Vec::new();
     for mapping in plan {
-        if mapping.force {
+        if mapping.force == girt::remote::ForceIntent::Requested {
             return Err("this consumer has not authorized force".into());
         }
         let source = mapping

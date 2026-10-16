@@ -36,7 +36,7 @@ fn select_all(advertisement: &Advertisement) -> Vec<ObjectId> {
     advertisement
         .refs
         .iter()
-        .filter(|r| !r.peeled)
+        .filter(|r| r.kind == girt::fetch::AdvertisementKind::Tip)
         .map(|r| r.id)
         .collect()
 }
@@ -114,7 +114,13 @@ fn imports_packed_source_and_all_object_kinds(#[case] ofs: bool) {
             .contains(&fixture.ordinary.to_string())
     );
     assert_eq!(installed.objects, fixture.records.len());
-    assert!(received.advertisement().refs.iter().any(|r| r.peeled));
+    assert!(
+        received
+            .advertisement()
+            .refs
+            .iter()
+            .any(|r| r.kind == girt::fetch::AdvertisementKind::PeeledHint)
+    );
     verify_contents(&fixture, &repo);
     assert!(
         repo.objects(PackLimits::default())
@@ -187,7 +193,10 @@ fn selects_explicit_branch_or_tag(#[case] name: &str, #[case] has_tag: bool) {
             advertisement
                 .refs
                 .iter()
-                .filter(|r| r.name.as_bytes() == name.as_bytes() && !r.peeled)
+                .filter(|r| {
+                    r.name.as_bytes() == name.as_bytes()
+                        && r.kind == girt::fetch::AdvertisementKind::Tip
+                })
                 .map(|r| r.id)
                 .collect()
         },

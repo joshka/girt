@@ -144,7 +144,7 @@ fn resolved_head_logging_and_log_deletion(#[case] spelling: &str, #[case] format
             Expected::Value(Target::Direct(id)),
             log(),
         );
-        input.with_dereference(true)
+        input.with_dereference(girt::refs::Dereference::Follow)
     }])
     .unwrap();
     assert_eq!(
@@ -238,7 +238,7 @@ fn linked_worktree_routes_head_and_branch_logs(
             Expected::Exists,
             log(),
         );
-        input.with_dereference(true)
+        input.with_dereference(girt::refs::Dereference::Follow)
     }])
     .unwrap();
     assert_eq!(

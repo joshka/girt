@@ -30,7 +30,7 @@ fn log() -> Reflog {
 fn edit(format: crate::ObjectFormat, s: &str) -> RefEdit {
     RefEdit {
         name: name(s),
-        dereference: false,
+        dereference: crate::refs::Dereference::Stored,
         target: Some(Target::Direct(id(format, 1))),
         expected: Expected::Absent,
         reflog: log(),
@@ -63,7 +63,7 @@ fn resolved_head_and_second_ref_log_exact_ids(#[case] format: crate::ObjectForma
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let mut head = edit(format, "HEAD");
-    head.dereference = true;
+    head.dereference = crate::refs::Dereference::Follow;
     let result = refs
         .transaction(&[head, edit(format, "refs/tags/v1")])
         .unwrap();
@@ -139,7 +139,7 @@ fn rejects_conflicting_batch(
 fn overlapping_symbolic_destination_is_rejected(#[case] format: crate::ObjectFormat) {
     let (_temp, repo) = fixture(format);
     let mut head = edit(format, "HEAD");
-    head.dereference = true;
+    head.dereference = crate::refs::Dereference::Follow;
     assert!(matches!(
         repo.references()
             .unwrap()
@@ -214,7 +214,7 @@ fn malformed_log_prevents_reference_publication(#[case] format: crate::ObjectFor
 fn deletion(s: &str) -> RefEdit {
     RefEdit {
         name: name(s),
-        dereference: false,
+        dereference: crate::refs::Dereference::Stored,
         target: None,
         expected: Expected::Any,
         reflog: Reflog::Preserve,
@@ -411,7 +411,7 @@ fn failing_second_chain_log_preserves_first_log_outcome(#[case] format: crate::O
     let (_temp, repo) = fixture(format);
     let refs = repo.references().unwrap();
     let mut head = edit(format, "HEAD");
-    head.dereference = true;
+    head.dereference = crate::refs::Dereference::Follow;
     let prepared = refs.prepare_files_transaction(&[head]).unwrap();
     fs::create_dir(repo.git_dir().join("logs/refs/heads/main")).unwrap();
     let Err(TransactionError::Publish { outcomes, .. }) = prepared.publish() else {
@@ -521,7 +521,7 @@ fn resolved_cycle_is_rejected_without_publication(#[case] format: crate::ObjectF
     )
     .unwrap();
     let mut head = edit(format, "HEAD");
-    head.dereference = true;
+    head.dereference = crate::refs::Dereference::Follow;
     assert!(matches!(
         refs.transaction(&[head]),
         Err(TransactionError::Prepare {
@@ -535,7 +535,7 @@ fn resolved_cycle_is_rejected_without_publication(#[case] format: crate::ObjectF
 fn detach(format: crate::ObjectFormat) -> RefEdit {
     RefEdit {
         name: name("HEAD"),
-        dereference: false,
+        dereference: crate::refs::Dereference::Stored,
         target: Some(Target::Direct(id(format, 1))),
         expected: Expected::Value(Target::Symbolic(name("refs/heads/main"))),
         reflog: log(),
@@ -1285,7 +1285,7 @@ fn existing_append_accepts_empty_log_and_selects_each_symbolic_chain_log(
     fs::create_dir_all(repo.git_dir().join("logs")).unwrap();
     fs::write(repo.git_dir().join("logs/HEAD"), b"").unwrap();
     let mut operation = edit(format, "HEAD");
-    operation.dereference = true;
+    operation.dereference = crate::refs::Dereference::Follow;
     operation.expected = Expected::Exists;
     operation.target = Some(Target::Direct(id(format, 2)));
     operation.reflog = append_existing_if_changed();

@@ -194,7 +194,7 @@ mod tests {
             refs: vec![super::super::AdvertisedRef {
                 name: crate::refs::RefName::new("refs/heads/main").unwrap(),
                 id: wanted,
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             }],
             capabilities: vec![
                 b"side-band-64k".to_vec(),

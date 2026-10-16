@@ -288,7 +288,7 @@ fn read_refs(
             refs.push(AdvertisedRef {
                 name: name.clone(),
                 id,
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             });
             if let Some(id) = peeled {
                 if !name.as_bytes().starts_with(b"refs/tags/") {
@@ -300,7 +300,7 @@ fn read_refs(
                 refs.push(AdvertisedRef {
                     name,
                     id,
-                    peeled: true,
+                    kind: crate::fetch::AdvertisementKind::PeeledHint,
                 });
             }
         } else if peeled.is_some() {

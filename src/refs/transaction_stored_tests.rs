@@ -174,7 +174,11 @@ fn invalid_later_edit_is_rejected_before_any_lock(
     let (_temp, repo) = fixture(format);
     write(&repo, "packed-refs.lock", b"foreign");
     let mut invalid = edit(format, "refs/heads/b");
-    invalid.dereference = dereference;
+    invalid.dereference = if dereference {
+        crate::refs::Dereference::Follow
+    } else {
+        crate::refs::Dereference::Stored
+    };
     if symbolic {
         invalid.target = Some(Target::Symbolic(name("refs/heads/a")));
     }

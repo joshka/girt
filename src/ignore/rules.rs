@@ -1,5 +1,15 @@
 use super::pattern::Pattern;
 
+/// The filesystem kind of a queried ignore path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum InputKind {
+    /// A file, symlink or other non-directory path.
+    File,
+    /// A directory; directory-only patterns apply.
+    Directory,
+}
+
 /// Explicit byte comparison policy, independent of the host filesystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -260,7 +270,7 @@ impl Ignore {
         clippy::indexing_slicing,
         reason = "each end is the position of a `/` in path"
     )]
-    pub fn check(&self, path: &[u8], is_directory: bool) -> Result<Option<Match>, Error> {
+    pub fn check(&self, path: &[u8], kind: InputKind) -> Result<Option<Match>, Error> {
         validate_path(path, false, self.limits.path_bytes)?;
         let mut work = self.limits.work;
         for end in path
@@ -273,7 +283,7 @@ impl Ignore {
                 return Ok(found);
             }
         }
-        self.direct(path, is_directory, &mut work)
+        self.direct(path, kind == InputKind::Directory, &mut work)
     }
 
     /// Resolves rules for this path without checking excluded ancestors.
@@ -286,10 +296,10 @@ impl Ignore {
     ///
     /// Returns [`Error::Path`] for invalid paths and [`Error::Limit`] for path or matching-work
     /// exhaustion. No partial decision is returned.
-    pub fn check_direct(&self, path: &[u8], is_directory: bool) -> Result<Option<Match>, Error> {
+    pub fn check_direct(&self, path: &[u8], kind: InputKind) -> Result<Option<Match>, Error> {
         validate_path(path, false, self.limits.path_bytes)?;
         let mut work = self.limits.work;
-        self.direct(path, is_directory, &mut work)
+        self.direct(path, kind == InputKind::Directory, &mut work)
     }
 
     fn direct(

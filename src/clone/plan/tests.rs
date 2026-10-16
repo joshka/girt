@@ -16,7 +16,7 @@ fn advertisement(refs: &[(&str, u8)], caps: &[&str]) -> Advertisement {
             .map(|(n, i)| AdvertisedRef {
                 name: name(n),
                 id: id(*i),
-                peeled: false,
+                kind: crate::fetch::AdvertisementKind::Tip,
             })
             .collect(),
         capabilities: caps.iter().map(|c| c.as_bytes().to_vec()).collect(),

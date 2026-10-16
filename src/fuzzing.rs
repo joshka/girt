@@ -376,8 +376,22 @@ pub fn ignore(data: &[u8]) {
         let path = path.strip_suffix(b"/").unwrap_or(path);
         // A whole-path query adds excluded ancestors to the final path's own rules.
         if let (Ok(full), Ok(Some(_))) = (
-            ignore.check(path, directory),
-            ignore.check_direct(path, directory),
+            ignore.check(
+                path,
+                if directory {
+                    crate::ignore::InputKind::Directory
+                } else {
+                    crate::ignore::InputKind::File
+                },
+            ),
+            ignore.check_direct(
+                path,
+                if directory {
+                    crate::ignore::InputKind::Directory
+                } else {
+                    crate::ignore::InputKind::File
+                },
+            ),
         ) {
             assert!(full.is_some());
         }

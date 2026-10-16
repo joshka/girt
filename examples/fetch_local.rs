@@ -63,7 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             advertisement
                 .refs
                 .iter()
-                .filter(|reference| reference.name == branch && !reference.peeled)
+                .filter(|reference| {
+                    reference.name == branch
+                        && reference.kind == girt::fetch::AdvertisementKind::Tip
+                })
                 .map(|reference| reference.id)
                 .collect()
         },

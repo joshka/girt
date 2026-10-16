@@ -13,6 +13,16 @@ use crate::packet::{Frame, Wire, packet, put};
 use crate::refs::RefName;
 use crate::{IdSet, ObjectFormat, ObjectId};
 
+/// Whether an advertisement identifies a stored tip or a peeled tag hint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
+pub enum AdvertisementKind {
+    /// Stored reference tip; eligible for selection as a want.
+    Tip,
+    /// Peeled tag target hint; never a selectable reference tip.
+    PeeledHint,
+}
+
 /// One byte-preserving reference advertisement. Peeling hints cannot be selected as wants.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -21,14 +31,14 @@ pub struct AdvertisedRef {
     pub name: RefName,
     /// Advertised SHA-1 or SHA-256 tip or peeled target.
     pub id: ObjectId,
-    /// True for the `^{}` hint following an annotated tag.
-    pub peeled: bool,
+    /// Meaning of the advertised object ID.
+    pub kind: AdvertisementKind,
 }
 
 impl AdvertisedRef {
-    /// Creates an advertised reference with its peeled-tag flag.
-    pub fn new(name: RefName, id: ObjectId, peeled: bool) -> Self {
-        Self { name, id, peeled }
+    /// Creates an advertised reference with explicit tip or peeled-hint meaning.
+    pub fn new(name: RefName, id: ObjectId, kind: AdvertisementKind) -> Self {
+        Self { name, id, kind }
     }
 
     /// Sets [`Self::name`].
@@ -45,10 +55,10 @@ impl AdvertisedRef {
         self
     }
 
-    /// Sets [`Self::peeled`].
+    /// Sets [`Self::kind`].
     #[must_use]
-    pub fn with_peeled(mut self, peeled: bool) -> Self {
-        self.peeled = peeled;
+    pub fn with_kind(mut self, kind: AdvertisementKind) -> Self {
+        self.kind = kind;
         self
     }
 }
@@ -372,7 +382,7 @@ pub(super) fn request(
     let advertised: HashSet<_> = advertisement
         .refs
         .iter()
-        .filter(|reference| !reference.peeled)
+        .filter(|reference| reference.kind == crate::fetch::AdvertisementKind::Tip)
         .map(|reference| reference.id)
         .collect();
     let mut wants = Vec::new();
@@ -852,7 +862,15 @@ fn advertise_after(
             if !names.insert((name.clone(), peeled)) {
                 return Err(Error::Protocol("duplicate ref"));
             }
-            advertisement.refs.push(AdvertisedRef { name, id, peeled });
+            advertisement.refs.push(AdvertisedRef {
+                name,
+                id,
+                kind: if peeled {
+                    crate::fetch::AdvertisementKind::PeeledHint
+                } else {
+                    crate::fetch::AdvertisementKind::Tip
+                },
+            });
         }
         first = false;
     }

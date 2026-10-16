@@ -231,7 +231,7 @@ pub(crate) fn single(
     name: &RefName,
     target: Option<Target>,
     expected: Expected,
-    dereference: bool,
+    dereference: crate::refs::Dereference,
 ) -> Result<RefEditOutcome, ReferenceError> {
     let edit = RefEdit {
         name: name.clone(),
@@ -346,12 +346,14 @@ fn prepare_controlled(
             operation: Some(index),
             source,
         };
-        let chain = if edit.dereference || edit.reflog.append_fields().is_some() {
+        let chain = if edit.dereference == crate::refs::Dereference::Follow
+            || edit.reflog.append_fields().is_some()
+        {
             resolve(&values, &edit.name).map_err(error)?
         } else {
             vec![edit.name.clone()]
         };
-        let name = if edit.dereference {
+        let name = if edit.dereference == crate::refs::Dereference::Follow {
             chain.last().unwrap().clone()
         } else {
             edit.name.clone()
@@ -406,7 +408,7 @@ fn prepare_controlled(
             Reflog::Append { .. }
             | Reflog::AppendIfChanged { .. }
             | Reflog::AppendExistingIfChanged { .. }
-                if edit.dereference =>
+                if edit.dereference == crate::refs::Dereference::Follow =>
             {
                 chain
             }
@@ -629,7 +631,7 @@ mod tests {
     fn edit() -> RefEdit {
         RefEdit {
             name: RefName::new(b"HEAD").unwrap(),
-            dereference: true,
+            dereference: crate::refs::Dereference::Follow,
             target: None,
             expected: Expected::Exists,
             reflog: Reflog::Append {
