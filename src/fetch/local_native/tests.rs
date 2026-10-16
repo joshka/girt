@@ -358,3 +358,78 @@ fn worker_counts_select_identical_packs_and_keep_limits(#[case] format: ObjectFo
         ));
     }
 }
+
+/// Dependencies a walk to the tip of `commits` new commits records over a Git-written base whose
+/// unchanged `keep` subtree holds `files` blobs. Only the base is known complete, so only the
+/// oldest new commit has a complete parent.
+fn chain_dependencies(format: ObjectFormat, files: usize, commits: usize) -> usize {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", path.join("absent-config"))
+            .env("GIT_AUTHOR_NAME", "A")
+            .env("GIT_AUTHOR_EMAIL", "a@example.com")
+            .env("GIT_COMMITTER_NAME", "A")
+            .env("GIT_COMMITTER_EMAIL", "a@example.com")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    git(&["init", "-q", &format!("--object-format={format}"), "."]);
+    git(&["config", "gc.auto", "0"]);
+    git(&["config", "maintenance.auto", "false"]);
+    for file in 0..files {
+        let dir = path.join(format!("keep/d{}", file % 8));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("f{file}")), format!("keep {file}\n")).unwrap();
+    }
+    let commit = |message: &str| {
+        std::fs::write(path.join("edit"), format!("{message}\n")).unwrap();
+        git(&["add", "-A"]);
+        git(&["-c", "commit.gpgsign=false", "commit", "-qm", message]);
+        git(&["rev-parse", "HEAD"])
+            .trim()
+            .parse::<ObjectId>()
+            .unwrap()
+    };
+    let base = commit("base");
+    for n in 0..commits {
+        commit(&format!("edit {n}"));
+    }
+    let head = git(&["rev-parse", "HEAD"]).trim().parse().unwrap();
+    let repo = Repository::open(path.join(".git")).unwrap();
+    let cancel = AtomicBool::new(false);
+    let known = KnownHistory::from_store_roots(
+        repo.objects(crate::PackLimits::default()).unwrap(),
+        &[base],
+        &cancel,
+    )
+    .unwrap();
+    let received = receive(
+        &repo,
+        |_| vec![head],
+        &known,
+        FetchLimits::default(),
+        TransportControl::new(&cancel),
+        |_| ControlFlow::Continue(()),
+        |_| {},
+    )
+    .unwrap();
+    received.dependencies().len()
+}
+
+/// The oldest new commit's paired tree marks the unchanged subtree complete before any later
+/// commit's tree is walked, so a chain records that subtree once instead of walking into it.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn commit_chain_does_not_walk_unchanged_subtrees(#[case] format: ObjectFormat) {
+    let small = chain_dependencies(format, 16, 10);
+    let large = chain_dependencies(format, 400, 10);
+    assert_eq!(small, large, "{large} dependencies for 400 unchanged blobs");
+}
