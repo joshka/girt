@@ -1157,6 +1157,7 @@ fn native_fetch_opens_source_within_source_pack_limits(
         matches!(discovered, Err(FetchError::SourceObjects(_))),
         !fetched
     );
+    assert_eq!(discovered.is_ok(), fetched);
     let destination = repository(&root, "destination", ObjectFormat::Sha1, Backend::Files);
     let installed = received.map(|received| {
         received
