@@ -74,7 +74,7 @@ use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use crate::refs::{ImportedRecord, RefName, ReflogLimits, Target};
 use crate::{
@@ -168,11 +168,13 @@ pub enum ReflogExpiryPolicy {
 pub struct RetentionPolicy {
     /// Metadata heads retained by the caller regardless of Git references.
     pub heads: Vec<ObjectId>,
-    /// Loose objects modified at or after this instant survive as traversal roots.
-    /// Packs modified at or after it remain untouched. Their objects do not classify histories
-    /// as live; their dependencies receive a separate protection closure when deletion is
-    /// possible.
-    pub recent_cutoff: SystemTime,
+    /// Optional age cutoff for loose roots and protected packs; `None` retains all of them.
+    /// With `Some(cutoff)`, loose objects modified strictly after the instant survive as traversal
+    /// roots. Loose files at or before it may be pruned only outside the retained closure. Packs
+    /// modified at or after it remain untouched. Their objects do not classify histories as live;
+    /// their dependencies receive a separate protection closure when deletion is possible.
+    /// The default is `None`; use [`Self::with_recent_cutoff`] to enable age-based reclamation.
+    pub recent_cutoff: Option<SystemTime>,
     /// Reflog expiry selection; the default retains every record.
     pub reflog_expiry: ReflogExpiryPolicy,
     /// Maximum names, directory entries, and graph objects visited in each bounded phase.
@@ -207,10 +209,10 @@ impl RetentionPolicy {
         self
     }
 
-    /// Sets [`Self::recent_cutoff`].
+    /// Enables age-based reclamation by setting [`Self::recent_cutoff`] to `Some(recent_cutoff)`.
     #[must_use]
     pub fn with_recent_cutoff(mut self, recent_cutoff: SystemTime) -> Self {
-        self.recent_cutoff = recent_cutoff;
+        self.recent_cutoff = Some(recent_cutoff);
         self
     }
 
@@ -296,7 +298,7 @@ impl Default for RetentionPolicy {
     fn default() -> Self {
         Self {
             heads: Vec::new(),
-            recent_cutoff: UNIX_EPOCH,
+            recent_cutoff: None,
             reflog_expiry: ReflogExpiryPolicy::KeepAll,
             max_entries: 1_000_000,
             max_edges: 4_000_000,
@@ -459,11 +461,11 @@ impl Repository {
     /// completion. The caller supplies cutoffs in place of Git's `gc.pruneExpire`,
     /// reflog configuration, or selects [`ReflogExpiryPolicy::Configured`] with a resolved
     /// snapshot. Scans are synchronous and do not coordinate concurrent writers. The default
-    /// cutoffs retain all reflog entries and all existing loose objects. Valid registered
-    /// private metadata remains a root even when its checkout is missing or now points to
-    /// another registration. Malformed or unrelated registration metadata makes the scan
-    /// incomplete. Commits, trees and tags are identity-checked and parsed. Blob edges are
-    /// located through the same pinned store and checked for kind, size and bounded delta
+    /// policy retains all reflog entries, loose objects and packs regardless of their timestamps.
+    /// Valid registered private metadata remains a root even when its checkout is missing or
+    /// now points to another registration. Malformed or unrelated registration metadata makes
+    /// the scan incomplete. Commits, trees and tags are identity-checked and parsed. Blob edges
+    /// are located through the same pinned store and checked for kind, size and bounded delta
     /// ancestry; their payload, zlib completion, CRC and identity are not validated.
     /// Blob-shaped untyped roots use ordinary identity-verified reads so a damaged graph header
     /// cannot erase root edges. `max_bytes` counts only decoded commit, tree and tag bytes,
@@ -995,10 +997,11 @@ fn recent_objects(
                 }
                 if path.extension().is_some_and(|ext| ext == "keep") {
                     plan.protected_packs.insert(path.with_extension("pack"));
-                } else if path.extension().is_some_and(|ext| ext == "pack")
-                    && metadata.modified().map_err(|e| e.to_string())? >= policy.recent_cutoff
-                {
-                    plan.protected_packs.insert(path);
+                } else if path.extension().is_some_and(|ext| ext == "pack") {
+                    let modified = metadata.modified().map_err(|e| e.to_string())?;
+                    if policy.recent_cutoff.is_none_or(|cutoff| modified >= cutoff) {
+                        plan.protected_packs.insert(path);
+                    }
                 }
             }
             continue;
@@ -1023,7 +1026,8 @@ fn recent_objects(
             if !metadata.is_file() {
                 return Err("non-file loose object".into());
             }
-            if metadata.modified().map_err(|e| e.to_string())? >= policy.recent_cutoff {
+            let modified = metadata.modified().map_err(|e| e.to_string())?;
+            if policy.recent_cutoff.is_none_or(|cutoff| modified > cutoff) {
                 let Some(suffix) = file.file_name().to_str().map(str::to_owned) else {
                     return Err("non-UTF-8 loose object".into());
                 };

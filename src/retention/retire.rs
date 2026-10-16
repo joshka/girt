@@ -103,8 +103,10 @@ impl Repository {
     /// operation refuses before publication because directory durability is not established.
     ///
     /// An old pair is removed only after its retained objects are present in a verified durable
-    /// replacement or surviving protected pack. Unreachable objects older than `recent_cutoff`
-    /// may be reclaimed; newer objects retain a verified readable copy. Failure after publication
+    /// replacement or surviving protected pack. Unreachable objects in unprotected packs may be
+    /// reclaimed; loose roots strictly newer than `recent_cutoff` retain their complete closure.
+    /// Packs exactly at the cutoff remain protected: pack protection conservatively preserves the
+    /// whole pack rather than applying Git's per-loose-file expiry rule. Failure after publication
     /// can leave the new pair and a prefix of old paths removed. An index-only removal leaves
     /// an unindexed old pack; readers ignore it. Cancellation is checked before each pair, not
     /// between its two unlinks. A failed unlink or directory synchronization names its
@@ -725,7 +727,7 @@ mod tests {
             .find(|path| path.extension().is_some_and(|ext| ext == "idx"))
             .unwrap();
         let policy = RetentionPolicy {
-            recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+            recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
             ..Default::default()
         };
         (root, repository, policy, old_index)

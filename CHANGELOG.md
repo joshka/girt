@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking changes for 0.10.0
+
+- Represent `RetentionPolicy::recent_cutoff` as `Option<SystemTime>`; `None` disables age-based
+  reclamation and is the default, retaining even epoch-zero loose objects. Existing
+  `with_recent_cutoff(time)` calls keep their behavior; direct field assignments use `Some(time)`.
+  Explicit loose expiry now includes equality with the cutoff, matching Git's prune boundary.
+
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 
 ### Other

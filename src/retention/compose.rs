@@ -360,8 +360,9 @@ mod tests {
         let error = repository
             .maintain_exclusive(
                 &RetentionPolicy {
-                    recent_cutoff: std::time::SystemTime::now()
-                        + std::time::Duration::from_secs(60),
+                    recent_cutoff: Some(
+                        std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+                    ),
                     ..Default::default()
                 },
                 None,

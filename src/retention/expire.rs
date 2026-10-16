@@ -780,7 +780,7 @@ mod tests {
         fs::write(&path_b, &record).unwrap();
         let repository = Repository::open(root.path()).unwrap();
         let policy = RetentionPolicy {
-            recent_cutoff: SystemTime::now() + Duration::from_secs(60),
+            recent_cutoff: Some(SystemTime::now() + Duration::from_secs(60)),
             reflog_expiry: crate::retention::ReflogExpiryPolicy::ClassifiedCutoffs {
                 live_before: None,
                 disconnected_before: Some(1700000001),

@@ -2869,45 +2869,322 @@ fn reftable_noop_expiry_preserves_missing_history_stack(#[case] format: &str) {
 }
 
 #[cfg(unix)]
-#[test]
-fn loose_cutoff_equality_is_conservative_relative_to_git() {
-    let (root, repo, _, _) = fixture();
-    let (oracle, _, _, _) = fixture();
+#[derive(Clone, Copy)]
+enum CutoffOperation {
+    Prune,
+    GarbageCollection,
+    Maintenance,
+}
+
+#[cfg(unix)]
+fn prune_at_cutoff(
+    repo: &Repository,
+    policy: &RetentionPolicy,
+    operation: CutoffOperation,
+) -> Vec<ObjectId> {
+    let cancel = AtomicBool::new(false);
+    match operation {
+        CutoffOperation::Prune => {
+            repo.prune_unreachable_loose(&mut FixtureIsolation, policy, &cancel)
+                .unwrap()
+                .deleted
+        }
+        CutoffOperation::GarbageCollection => {
+            repo.collect_garbage(&mut FixtureIsolation, policy, &cancel)
+                .unwrap()
+                .pruned
+                .unwrap()
+                .deleted
+        }
+        CutoffOperation::Maintenance => {
+            repo.run_maintenance(
+                &mut FixtureIsolation,
+                policy,
+                RepackLimits::default(),
+                &cancel,
+            )
+            .unwrap()
+            .pruned
+            .unwrap()
+            .deleted
+        }
+    }
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn default_policy_preserves_epoch_zero_loose_objects(
+    #[case] format: &str,
+    #[values(
+        CutoffOperation::Prune,
+        CutoffOperation::GarbageCollection,
+        CutoffOperation::Maintenance
+    )]
+    operation: CutoffOperation,
+) {
+    let (root, repo, _, _) = fixture_format(format);
     let id: ObjectId = git(
         root.path(),
         &["hash-object", "-w", "--stdin"],
-        b"cutoff equality",
+        b"epoch zero",
     )
     .parse()
     .unwrap();
-    let oracle_id = git(
-        oracle.path(),
-        &["hash-object", "-w", "--stdin"],
-        b"cutoff equality",
+    fs::File::open(loose_path(root.path(), id))
+        .unwrap()
+        .set_modified(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    assert_eq!(
+        fs::metadata(loose_path(root.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        SystemTime::UNIX_EPOCH
     );
-    assert_eq!(oracle_id, id.to_string());
-    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000);
-    let times = fs::FileTimes::new().set_modified(cutoff);
-    let file = fs::File::open(loose_path(root.path(), id)).unwrap();
-    file.set_times(times).unwrap();
-    drop(file);
-    let oracle_file = fs::File::open(loose_path(oracle.path(), id)).unwrap();
-    oracle_file.set_times(times).unwrap();
-    drop(oracle_file);
+    assert!(prune_at_cutoff(&repo, &RetentionPolicy::default(), operation).is_empty());
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
+        "epoch zero"
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn subsecond_grace_deliberately_keeps_more_than_git(
+    #[case] format: &str,
+    #[values(
+        CutoffOperation::Prune,
+        CutoffOperation::GarbageCollection,
+        CutoffOperation::Maintenance
+    )]
+    operation: CutoffOperation,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let (oracle, _, _, _) = fixture_format(format);
+    let id: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"half second",
+    )
+    .parse()
+    .unwrap();
+    assert_eq!(
+        git(
+            oracle.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"half second"
+        ),
+        id.to_string()
+    );
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let modified = cutoff + Duration::from_millis(500);
+    fs::File::open(loose_path(root.path(), id))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    fs::File::open(loose_path(oracle.path(), id))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert_eq!(
+        fs::metadata(loose_path(root.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    assert_eq!(
+        fs::metadata(loose_path(oracle.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    // Git's second-resolution expiry deletes this object; girt preserves its exact grace period.
     git(
         oracle.path(),
         &["prune", "--expire=2023-11-14T22:13:20Z"],
         b"",
     );
     assert!(!loose_path(oracle.path(), id).exists());
-    let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
-    let report = repo
-        .prune_unreachable_loose(&mut FixtureIsolation, &policy, &AtomicBool::new(false))
-        .unwrap();
-    assert!(report.deleted.is_empty());
+    assert!(
+        prune_at_cutoff(
+            &repo,
+            &RetentionPolicy::default().with_recent_cutoff(cutoff),
+            operation
+        )
+        .is_empty()
+    );
     assert_eq!(
         git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
-        "cutoff equality"
+        "half second"
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::before(-1, true)]
+#[case::equal(0, true)]
+#[case::after(1, false)]
+fn loose_prune_cutoff_agrees_with_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[values(
+        CutoffOperation::Prune,
+        CutoffOperation::GarbageCollection,
+        CutoffOperation::Maintenance
+    )]
+    operation: CutoffOperation,
+    #[case] offset: i64,
+    #[case] deleted: bool,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let (oracle, _, _, _) = fixture_format(format);
+    let id: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"cutoff boundary",
+    )
+    .parse()
+    .unwrap();
+    assert_eq!(
+        git(
+            oracle.path(),
+            &["hash-object", "-w", "--stdin"],
+            b"cutoff boundary"
+        ),
+        id.to_string()
+    );
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let modified = SystemTime::UNIX_EPOCH + Duration::from_secs((1_700_000_000 + offset) as u64);
+    fs::File::open(loose_path(root.path(), id))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    fs::File::open(loose_path(oracle.path(), id))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert_eq!(
+        fs::metadata(loose_path(root.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    assert_eq!(
+        fs::metadata(loose_path(oracle.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    git(
+        oracle.path(),
+        &["prune", "--expire=2023-11-14T22:13:20Z"],
+        b"",
+    );
+    assert_eq!(!loose_path(oracle.path(), id).exists(), deleted);
+    let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
+    let removed = prune_at_cutoff(&repo, &policy, operation);
+    assert_eq!(removed.contains(&id), deleted);
+    assert_eq!(!loose_path(root.path(), id).exists(), deleted);
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn loose_object_one_nanosecond_newer_than_cutoff_survives(
+    #[case] format: &str,
+    #[values(
+        CutoffOperation::Prune,
+        CutoffOperation::GarbageCollection,
+        CutoffOperation::Maintenance
+    )]
+    operation: CutoffOperation,
+) {
+    let (root, repo, _, _) = fixture_format(format);
+    let id: ObjectId = git(
+        root.path(),
+        &["hash-object", "-w", "--stdin"],
+        b"subsecond grace",
+    )
+    .parse()
+    .unwrap();
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let modified = cutoff + Duration::from_nanos(1);
+    fs::File::open(loose_path(root.path(), id))
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    assert_eq!(
+        fs::metadata(loose_path(root.path(), id))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
+    assert!(!prune_at_cutoff(&repo, &policy, operation).contains(&id));
+    assert_eq!(
+        git(root.path(), &["cat-file", "blob", &id.to_string()], b""),
+        "subsecond grace"
+    );
+}
+
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::sha1("sha1")]
+#[case::sha256("sha256")]
+fn newer_loose_root_protects_its_old_complete_closure(
+    #[case] format: &str,
+    #[values(
+        CutoffOperation::Prune,
+        CutoffOperation::GarbageCollection,
+        CutoffOperation::Maintenance
+    )]
+    operation: CutoffOperation,
+) {
+    let (root, repo, first, second) = fixture_format(format);
+    let tree: ObjectId = git(
+        root.path(),
+        &["rev-parse", &format!("{first}^{{tree}}")],
+        b"",
+    )
+    .parse()
+    .unwrap();
+    git(root.path(), &["update-ref", "-d", "refs/heads/main"], b"");
+    fs::remove_file(root.path().join("logs/refs/heads/deleted")).unwrap();
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    fs::File::open(loose_path(root.path(), first))
+        .unwrap()
+        .set_modified(cutoff)
+        .unwrap();
+    fs::File::open(loose_path(root.path(), tree))
+        .unwrap()
+        .set_modified(cutoff - Duration::from_secs(1))
+        .unwrap();
+    fs::File::open(loose_path(root.path(), second))
+        .unwrap()
+        .set_modified(cutoff + Duration::from_nanos(1))
+        .unwrap();
+    let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
+    assert!(prune_at_cutoff(&repo, &policy, operation).is_empty());
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &first.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &second.to_string()], b""),
+        "commit"
+    );
+    assert_eq!(
+        git(root.path(), &["cat-file", "-t", &tree.to_string()], b""),
+        "tree"
     );
 }
 
