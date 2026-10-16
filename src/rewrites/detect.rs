@@ -290,34 +290,37 @@ impl<'a> Selection<'a> {
         blobs: &mut BTreeMap<ObjectId, Blob>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<InexactSkipped>, Error> {
-        let sources: Vec<_> = (0..self.sources.len())
-            .filter(|&s| {
-                let blob = &blobs[&self.sources[s].value.id];
-                self.available(s)
-                    && !blob.bytes.is_empty()
-                    && (self.options.approximate_binary || !blob.binary())
-            })
-            .collect();
-        let targets: Vec<_> = (0..self.targets.len())
-            .filter(|&t| {
-                let blob = &blobs[&self.targets[t].value.id];
-                !self.used_targets[t]
-                    && !blob.bytes.is_empty()
-                    && (self.options.approximate_binary || !blob.binary())
-            })
-            .collect();
-        if sources.is_empty() || targets.is_empty() {
-            return Ok(None);
-        }
+        // Git counts available sources (reusable ones too, with copies) and unmatched destinations,
+        // including binary files, and empty files when empty renames are enabled. Decide the skip
+        // before filtering to scorable files, which can leave nothing to score.
+        let counted = |blob: &Blob| self.options.track_empty || !blob.bytes.is_empty();
+        let scorable = |blob: &Blob| {
+            !blob.bytes.is_empty() && (self.options.approximate_binary || !blob.binary())
+        };
+        let source_count = (0..self.sources.len())
+            .filter(|&s| self.available(s) && counted(&blobs[&self.sources[s].value.id]))
+            .count();
+        let target_count = (0..self.targets.len())
+            .filter(|&t| !self.used_targets[t] && counted(&blobs[&self.targets[t].value.id]))
+            .count();
         // Git compares the candidate product with the squared limit, so one source may be scored
         // against many destinations. Widen so the comparison cannot overflow.
         let limit = self.options.candidate_limit as u128;
-        if sources.len() as u128 * targets.len() as u128 > limit * limit {
+        if source_count as u128 * target_count as u128 > limit * limit {
             return Ok(Some(InexactSkipped {
-                sources: sources.len(),
-                targets: targets.len(),
+                sources: source_count,
+                targets: target_count,
                 limit: self.options.candidate_limit,
             }));
+        }
+        let sources: Vec<_> = (0..self.sources.len())
+            .filter(|&s| self.available(s) && scorable(&blobs[&self.sources[s].value.id]))
+            .collect();
+        let targets: Vec<_> = (0..self.targets.len())
+            .filter(|&t| !self.used_targets[t] && scorable(&blobs[&self.targets[t].value.id]))
+            .collect();
+        if sources.is_empty() || targets.is_empty() {
+            return Ok(None);
         }
         for id in sources
             .iter()

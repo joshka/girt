@@ -5,6 +5,7 @@ mod fixture;
 use std::sync::atomic::AtomicBool;
 
 use fixture::{Fixture, git, git_output};
+use girt::ObjectId;
 use girt::rewrites::{Copies, Error, Kind, Limits, Options};
 use rstest::rstest;
 
@@ -143,9 +144,7 @@ fn skips_approximate_binary_but_keeps_exact(#[values("sha1", "sha256")] format: 
     let old = f.tree(&[("100644", source, b"old")]);
     let edited_tree = f.tree(&[("100644", edited, b"new")]);
     let exact_tree = f.tree(&[("100644", source, b"new")]);
-    let options = Options::default()
-        .with_approximate_binary(false)
-        .with_candidate_limit(0);
+    let options = Options::default().with_approximate_binary(false);
     let objects = f.objects();
     let edited_records = objects
         .detect_rewrites(
@@ -393,6 +392,119 @@ fn candidate_limit_matches_git(
     );
     assert_eq!(String::from_utf8(observed.stdout).unwrap(), git_stdout);
     assert_eq!(String::from_utf8(observed.stderr).unwrap(), git_stderr);
+}
+
+/// Writes each `(path, content)` as a regular-file tree entry.
+fn blob_entries<'a>(
+    f: &Fixture,
+    files: &[(&'a [u8], &[u8])],
+) -> Vec<(&'static str, ObjectId, &'a [u8])> {
+    files
+        .iter()
+        .map(|&(path, content)| ("100644", f.blob(content), path))
+        .collect()
+}
+
+/// Git counts files left unpaired by exact matching toward the limit: binary files always, and
+/// empty files only when empty renames are detected (`track_empty`, Git's default, versus
+/// `--no-rename-empty`). One edited rename plus such files at limit 1 shows which were counted.
+#[rstest]
+#[case::empty_targets_counted(
+    &[(&b"src"[..], &b"a\nb\nc\nd\n"[..])],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..]), (b"e1", b""), (b"e2", b"")],
+    true,
+    &["--rename-empty"],
+    Some((1, 3, 3)),
+    "A\tdst\nA\te1\nA\te2\nD\tsrc\n",
+)]
+#[case::empty_sources_counted(
+    &[(&b"src"[..], &b"a\nb\nc\nd\n"[..]), (b"e1", b""), (b"e2", b"")],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..])],
+    true,
+    &["--rename-empty"],
+    Some((3, 1, 3)),
+    "A\tdst\nD\te1\nD\te2\nD\tsrc\n",
+)]
+#[case::empty_not_counted(
+    &[(&b"src"[..], &b"a\nb\nc\nd\n"[..]), (b"e1", b"")],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..]), (b"e2", b"")],
+    false,
+    &["--no-rename-empty"],
+    None,
+    "R075\tsrc\tdst\nD\te1\nA\te2\n",
+)]
+#[case::binary_counted(
+    &[(&b"src"[..], &b"a\nb\nc\nd\n"[..])],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..]), (b"b1", b"bin\0one\n")],
+    false,
+    &["--no-rename-empty"],
+    Some((1, 2, 2)),
+    "A\tb1\nA\tdst\nD\tsrc\n",
+)]
+#[case::binary_counted_without_scorable_source(
+    &[(&b"b1"[..], &b"bin\0one\n"[..]), (b"b2", b"bin\0two\n")],
+    &[(&b"dst"[..], &b"a\nb\nc\nx\n"[..])],
+    false,
+    &["--no-rename-empty"],
+    Some((2, 1, 2)),
+    "D\tb1\nD\tb2\nA\tdst\n",
+)]
+fn candidate_counts_match_git(
+    #[values("sha1", "sha256")] format: &str,
+    #[case] old: &[(&[u8], &[u8])],
+    #[case] new: &[(&[u8], &[u8])],
+    #[case] track_empty: bool,
+    #[case] empty_flag: &[&str],
+    #[case] skipped: Option<(usize, usize, usize)>,
+    #[case] git_stdout: &str,
+) {
+    let f = Fixture::new(format);
+    let old = f.tree(&blob_entries(&f, old));
+    let new = f.tree(&blob_entries(&f, new));
+    let detection = f
+        .objects()
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default()
+                .with_candidate_limit(1)
+                .with_track_empty(track_empty)
+                .with_approximate_binary(false),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(
+        detection
+            .inexact_skipped
+            .map(|s| (s.sources, s.targets, s.suggested_limit())),
+        skipped
+    );
+    let (old, new) = (old.to_string(), new.to_string());
+    let mut args = vec![
+        "diff-tree",
+        "-r",
+        "--no-commit-id",
+        "--name-status",
+        "-M50%",
+        "-l1",
+    ];
+    args.extend_from_slice(empty_flag);
+    args.extend([old.as_str(), new.as_str()]);
+    let observed = git_output(f.root.path(), &args, b"");
+    assert_eq!(String::from_utf8(observed.stdout).unwrap(), git_stdout);
+    let stderr = String::from_utf8(observed.stderr).unwrap();
+    assert_eq!(
+        stderr
+            .lines()
+            .find(|line| line.starts_with("warning: you may want"))
+            .map(str::to_owned),
+        skipped.map(|(_, _, suggested)| format!(
+            "warning: you may want to set your diff.renameLimit variable to at least {suggested} \
+             and retry the command."
+        ))
+    );
 }
 
 /// Over the limit, an exact match stays a rename and the report names the remaining counts.

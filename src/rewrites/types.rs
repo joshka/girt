@@ -37,13 +37,14 @@ pub struct Options {
     /// [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns
     /// [`Error::Candidates`]. Neither reports an incomplete inference as complete.
     ///
-    /// The bound matches Git's, but the counts can differ. Only candidates that could be scored
-    /// are counted: empty blobs, and binary blobs when [`Self::approximate_binary`] is false, are
-    /// excluded, while Git counts them. Git also pairs some files before this check, such as an
-    /// edited file moved to a path with the same basename, which girt leaves to edited detection.
-    /// Either difference can change whether a given input is skipped. Zero skips edited detection
-    /// whenever a scorable pair remains; Git's configuration value 0 means unlimited, which is
-    /// `usize::MAX`.
+    /// The counts are the sources still available after exact matching (including exact-paired
+    /// sources reused for copies) and the unmatched destinations, as Git counts them: binary files
+    /// count even when [`Self::approximate_binary`] is false, and empty files count when
+    /// [`Self::track_empty`] is true, as with Git's default of detecting empty renames. Git pairs
+    /// some files before this check, such as an edited file moved to a path with the same
+    /// basename; girt leaves those to edited detection, so near the limit a skip can still differ.
+    /// Zero skips edited detection whenever a counted pair remains; Git's configuration value 0
+    /// means unlimited, which is `usize::MAX`.
     pub candidate_limit: usize,
     /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
     /// Exact object-ID matches are still considered (default true).
@@ -241,9 +242,10 @@ pub struct Detection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct InexactSkipped {
-    /// Scorable sources remaining after exact matching.
+    /// Sources still available after exact matching, counted as
+    /// [`Options::candidate_limit`] describes.
     pub sources: usize,
-    /// Scorable destinations remaining after exact matching.
+    /// Destinations remaining after exact matching, counted the same way.
     pub targets: usize,
     /// Caller-specified [`Options::candidate_limit`].
     pub limit: usize,
