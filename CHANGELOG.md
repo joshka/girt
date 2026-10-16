@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Native local fetch and clone accept Git-scale sources, such as a Linux clone with a 300 MB pack
+  index. The source object store opens under the new `FetchLimits::source_packs`
+  (`PackLimits::trusted()` in `FetchLimits::trusted()`), the received index is bounded through
+  `max_objects` rather than a fixed 64 MiB, and clone packs references under its snapshot limits.
+  A source store that exceeds its limits is reported as `FetchError::SourceObjects`, not as a
+  destination failure.
+
 ## [0.10.1](https://github.com/joshka/girt/compare/v0.10.0...v0.10.1) - 2026-10-16
 
 ### Other

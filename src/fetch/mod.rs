@@ -258,7 +258,7 @@ impl FetchOptions {
 /// metadata is
 /// O(`max_objects` + `max_connectivity_edges`), plus separately retained [`KnownHistory`] payloads
 /// bounded by `max_known_bytes` and metadata bounded by `max_known_objects`. Index generation needs
-/// at most 44 bytes per object plus 1072 bytes. Native local construction spools pack bytes and
+/// at most 48 bytes per object plus 1096 bytes. Native local construction spools pack bytes and
 /// retains graph/index metadata. Graph parsing can temporarily copy a structured payload and its
 /// fields. These input/work
 /// bounds exclude allocator overhead, stream-owned buffers, fixed zlib scratch space, and server
@@ -315,6 +315,13 @@ pub struct FetchLimits {
     /// Worker threads one transfer may add for reading and validation (default 8). Zero or one
     /// runs everything on the calling thread. Fewer are used when the host has fewer.
     pub max_threads: usize,
+    /// Bounds for opening a native local source repository's object store (default
+    /// [`PackLimits::default`](crate::PackLimits::default), which admits 64 MiB of pack index).
+    ///
+    /// Git-scale sources exceed the default: a Linux kernel clone has a 300 MB index. Use
+    /// [`PackLimits::trusted`](crate::PackLimits::trusted), as [`Self::trusted`] does, for
+    /// repositories the caller trusts. Network fetches open no source store and ignore this.
+    pub source_packs: crate::PackLimits,
 }
 
 impl FetchLimits {
@@ -450,6 +457,13 @@ impl FetchLimits {
         self.max_threads = max_threads;
         self
     }
+
+    /// Sets [`Self::source_packs`].
+    #[must_use]
+    pub fn with_source_packs(mut self, source_packs: crate::PackLimits) -> Self {
+        self.source_packs = source_packs;
+        self
+    }
 }
 
 impl Default for FetchLimits {
@@ -474,6 +488,7 @@ impl Default for FetchLimits {
             max_resolution_steps: 10_000_000,
             max_connectivity_edges: 4_000_000,
             max_threads: 8,
+            source_packs: crate::PackLimits::default(),
         }
     }
 }
@@ -509,6 +524,7 @@ impl FetchLimits {
             max_resolution_steps: UNBOUNDED,
             max_connectivity_edges: UNBOUNDED,
             max_threads: 8,
+            source_packs: crate::PackLimits::trusted(),
         }
     }
 }
@@ -575,6 +591,10 @@ pub enum FetchError {
     /// The local source repository could not be opened.
     #[error("cannot open source repository")]
     Source(#[source] Box<crate::OpenError>),
+    /// The local source repository's object store could not be opened within
+    /// [`FetchLimits::source_packs`].
+    #[error("opening source object store")]
+    SourceObjects(#[source] crate::ObjectReadError),
     /// A local dependency failed during history preparation or installation rechecking.
     #[error("local fetch dependency {id}")]
     LocalRead {

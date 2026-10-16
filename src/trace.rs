@@ -126,7 +126,7 @@ pub(crate) fn fetch(error: &crate::fetch::FetchError) -> &'static str {
         Limit(_) => "limit",
         Cancelled => "cancelled",
         Deadline => "deadline",
-        Pack(e) | Destination(e) | LocalRead { source: e, .. } => object(e),
+        Pack(e) | Destination(e) | SourceObjects(e) | LocalRead { source: e, .. } => object(e),
         Index(e) | PackWrite(e) => pack(e),
         Peel(_) => "corrupt",
         Missing(_) => "missing",
