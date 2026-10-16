@@ -11,14 +11,14 @@ use crate::{ObjectId, Objects};
 ///
 /// # Preparation choices
 ///
-/// [`Self::new`] prepares a full wire transfer. [`Self::new_excluding`] can omit validated
-/// advertised receiver history; [`Self::new_local`] prepares the native local path. Add explicit
+/// [`Self::new`] prepares wire or native transfers in the source format, omitting validated
+/// advertised receiver history when roots are supplied. Add explicit
 /// options with [`Self::with_push_options`] or progress with [`Self::with_progress`] before
 /// sending. [`super::send`] and [`super::send_local`] own exchange and status reporting.
 ///
 /// Keeps exact caller expectations; wire advertisement checking occurs in [`super::send`].
-/// [`Self::new`] sends complete histories; [`Self::new_excluding`] omits explicit receiver history
-/// after validating its selected closure. The source object reader can
+/// [`Self::new`] sends complete histories with empty receiver roots, or omits explicit receiver
+/// history after validating its selected closure. The source object reader can
 /// be dropped after preparation. Reuse is permitted but each session rechecks the same
 /// expectations.
 #[derive(Debug)]
@@ -35,8 +35,8 @@ pub struct PreparedPush {
     pub(super) progress: bool,
 }
 impl PreparedPush {
-    /// Validates commands, selects all reachable objects, proves permitted branch ancestry, and
-    /// builds a spooled pack without modifying either repository or invoking Git.
+    /// Validates commands, selects outgoing reachable objects, proves permitted branch ancestry,
+    /// and builds a spooled pack without modifying either repository or invoking Git.
     ///
     /// Follows commit parents/trees, tree entries and typed tag targets; gitlinks name external
     /// submodule commits and are not followed. Branch tips must be commits. No reachable object
@@ -60,25 +60,6 @@ impl PreparedPush {
     /// must reconstruct them and repair the pack before installation. Loose objects are read
     /// one at a time. Search retains its bounded fresh window and one external candidate
     /// payload.
-    ///
-    /// # Errors
-    ///
-    /// Rejects duplicate destinations, zero expected IDs, destinations outside `refs/`, missing or
-    /// mistyped edges, invalid payloads, implicit force, shallow snapshots, exhausted bounds,
-    /// cancellation and storage/pack errors. Shallow push negotiation is not implemented.
-    /// No remote commands or repository files are changed. The temporary pack is removed on drop
-    /// or preparation failure. A receiver must independently import it before publishing refs;
-    /// copied blob identities are source-index hints until that verification.
-    pub fn new(
-        objects: &Objects,
-        commands: Vec<PushCommand>,
-        limits: PushLimits,
-        cancel: &AtomicBool,
-    ) -> Result<Self, Error> {
-        Self::new_excluding(objects, commands, &[], limits, cancel)
-    }
-
-    /// Prepares a pack omitting objects the receiver has because it has the roots.
     ///
     /// Like `git rev-list --objects <tips> --not <roots>`, preparation walks commits from the tips
     /// and the locally present roots together in committer-date order. Commits reachable from a
@@ -111,10 +92,17 @@ impl PreparedPush {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::new`]'s errors or exhausted receiver-root/exclusion bounds. Missing objects
-    /// outside every root's closure fail. A known object read locally with the wrong kind or an
-    /// invalid payload also fails. No commands are transmitted.
-    pub fn new_excluding(
+    /// Rejects duplicate destinations, zero expected IDs, destinations outside `refs/`, missing or
+    /// mistyped edges, invalid payloads, implicit force, shallow snapshots, exhausted bounds,
+    /// cancellation and storage/pack errors. Shallow push negotiation is not implemented.
+    /// No remote commands or repository files are changed. The temporary pack is removed on drop
+    /// or preparation failure. A receiver must independently import it before publishing refs;
+    /// copied blob identities are source-index hints until that verification.
+    ///
+    /// Returns graph, storage, cancellation or receiver-root/exclusion bound errors. Missing
+    /// objects outside every root's closure fail. A known object read locally with the wrong
+    /// kind or an invalid payload also fails. No commands are transmitted.
+    pub fn new(
         objects: &Objects,
         commands: Vec<PushCommand>,
         receiver_roots: &[ObjectId],
@@ -124,30 +112,9 @@ impl PreparedPush {
         Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
     }
 
-    /// Prepares a native local push in the source format.
+    /// Prepares a push while observing completed source reads and pack entries.
     ///
-    /// This has the same selection, force, exclusion and work bounds as
-    /// [`Self::new_excluding`]. Git's canonical empty tree is materialized when it is named by a
-    /// commit but absent from source storage. Other missing objects still fail. The result can be
-    /// passed to [`super::send_local`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the selection, object validation, resource-limit and cancellation errors of
-    /// [`Self::new_excluding`]. Preparation does not transmit commands or publish references.
-    pub fn new_local(
-        objects: &Objects,
-        commands: Vec<PushCommand>,
-        receiver_roots: &[ObjectId],
-        limits: PushLimits,
-        cancel: &AtomicBool,
-    ) -> Result<Self, Error> {
-        Self::prepare(objects, commands, receiver_roots, limits, cancel, |_| {})
-    }
-
-    /// Prepares a native push while observing completed source reads and pack entries.
-    ///
-    /// Uses [`Self::new_local`]'s source, force and exclusion contracts. `observe` receives
+    /// Uses [`Self::new`]'s source, force and exclusion contracts. `observe` receives
     /// [`PreparationProgress`] synchronously and must return promptly. It cannot fail; set
     /// `cancel` to stop at the next cooperative check. Completion means a prepared artifact only,
     /// before sending or publication. Empty and deletion-only batches have no packing events.
@@ -155,7 +122,7 @@ impl PreparedPush {
     /// # Errors
     ///
     /// Returns [`Self::new`]'s preparation failures without a completion notification.
-    pub fn new_local_with_progress(
+    pub fn new_with_progress(
         objects: &Objects,
         commands: Vec<PushCommand>,
         receiver_roots: &[ObjectId],

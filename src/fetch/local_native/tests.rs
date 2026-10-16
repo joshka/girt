@@ -91,7 +91,7 @@ fn local_progress_known_objects_are_not_read_or_packed() {
     let (_root, repo, id) = source(ObjectFormat::Sha1);
     let cancel = AtomicBool::new(false);
     let objects = repo.objects(Default::default()).unwrap();
-    let known = KnownHistory::new_local(&objects, &[id], FetchLimits::default(), &cancel).unwrap();
+    let known = KnownHistory::new(&objects, &[id], FetchLimits::default(), &cancel).unwrap();
     let mut events = Vec::new();
     receive(
         &repo,

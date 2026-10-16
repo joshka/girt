@@ -296,7 +296,7 @@ mod tests {
     fn incremental_history_is_rejected_before_acquiring_retention() {
         let (_root, source, destination, received) = fixture();
         let cancel = AtomicBool::new(false);
-        let known = KnownHistory::new_local(
+        let known = KnownHistory::new(
             &source.objects(PackLimits::default()).unwrap(),
             received.wants(),
             FetchLimits::default(),

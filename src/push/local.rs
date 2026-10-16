@@ -28,7 +28,7 @@ use crate::transport::TransportControl;
 /// Use [`crate::remote::Destination::local_path`] for local or `file://` destinations.
 ///
 /// Supports either object format and files or reftable references when prepared by
-/// [`PreparedPush::new_local`]. [`PreparedPush::new`] remains SHA-1 wire preparation. Ref and
+/// [`PreparedPush::new`]. Ref and
 /// worktree state may change between separate reads; conditional locks prevent stale ref
 /// overwrites. Callers must exclude external GC/pruning, checkout, symbolic-HEAD/branch changes and
 /// worktree registration changes from preparation through publication. Ref locks do not enforce

@@ -1195,8 +1195,9 @@ library signal handler is installed. This does not claim crash durability or ful
 The remainder of this section records the original R13 receive-pack implementation and its
 validation scope; its SHA-1, namespace and process restrictions do not describe the current API.
 
-`push::PreparedPush::new` prepares an immutable command list and a complete non-thin SHA-1 pack.
-`push::send` implements the receive-pack v0 client over caller-owned blocking streams;
+`push::PreparedPush::new` prepares an immutable command list and a pack in the source object format.
+Empty receiver roots select a full transfer; verified receiver roots permit exclusion and thin delta
+bases. `push::send` implements the receive-pack v0 client over caller-owned blocking streams;
 `push::send_local` starts a trusted local Git receive-pack server with binary pipes. No Git client
 command selects objects, builds the pack, applies client force policy or parses status. The adapter
 clears inherited environment except PATH, disables system/global configuration and forces v0. Local
@@ -1243,14 +1244,15 @@ capability. A thin pack must be independently imported and repaired against rece
 installation. Packs offering receiver candidates cap output depth at one so every internal base is
 an ordinary entry resolved before external lookup; complete packs without receiver candidates retain
 their configured depth. Its companion index is generated into a sink, not sent or installed.
-Repeated and incremental pushes using `new` retransmit full selected histories; `new_excluding` can
-reduce them as described below. `PreparedPush::new_local_with_progress` reports unique source reads
-and successfully encoded pack entries through `PreparationProgress`. Reads include receiver history
-later excluded from the pack; packing totals describe only selected outgoing objects. Its terminal
-`Complete` event follows pack construction and the final cancellation check. It does not report
-upload, server receipt, acceptance or publication. Observers run synchronously and must return
-promptly; setting the cancellation flag from an intermediate event stops preparation at the next
-cooperative check. Cancellation from the terminal event cannot undo completed preparation.
+Repeated and incremental pushes using `new` with empty receiver roots retransmit full selected
+histories; explicit receiver roots can reduce them as described below.
+`PreparedPush::new_with_progress` reports unique source reads and successfully encoded pack entries
+through `PreparationProgress`. Reads include receiver history later excluded from the pack; packing
+totals describe only selected outgoing objects. Its terminal `Complete` event follows pack
+construction and the final cancellation check. It does not report upload, server receipt, acceptance
+or publication. Observers run synchronously and must return promptly; setting the cancellation flag
+from an intermediate event stops preparation at the next cooperative check. Cancellation from the
+terminal event cannot undo completed preparation.
 
 Preparation releases selected payloads after spooling the pack; the caller can drop its object
 reader before connecting. Inputs, graph objects/bytes/edges, cumulative ancestry visits/parent
@@ -1418,7 +1420,7 @@ the combined graph. Installation rechecks at most the retained local dependency 
 budget, with the same per-read bound. Knowledge preparation is outside the transport deadline;
 blocking local I/O, parsing and hashing retain the existing cooperative cancellation contract.
 
-Push adds `PreparedPush::new_excluding` with explicit receiver roots. Like
+Push adds `PreparedPush::new` with explicit receiver roots. Like
 `git rev-list --objects <tips> --not <roots>`, it walks commits from the tips and the locally
 present roots together in committer-date order, marks the roots' ancestry known, and stops once
 every queued commit is known, after a five-commit allowance for clock skew. Trees of known commits

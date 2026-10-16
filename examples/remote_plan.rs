@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(commands[0].name.as_bytes(), b"refs/tags/published");
     let objects = repo.objects(PackLimits::default())?;
     let cancel = AtomicBool::new(false);
-    let _prepared = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel)?;
+    let _prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
     // Sending would be a separate, authorized call to push::send_local/send_http/send_ssh.
     // Select and validate the endpoint from remote.push_urls() before choosing an adapter.
     println!(

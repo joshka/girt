@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         PushCommand::new(RefName::new("refs/tags/v1")?, None, tag)
             .with_force(ForcePolicy::FastForwardOnly),
     ];
-    let prepared = PreparedPush::new(&objects, commands, PushLimits::default(), &cancel)?;
+    let prepared = PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel)?;
     let report = send_local_with_control(
         destination.git_dir(),
         &prepared,
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         prepared.object_count(),
         prepared.pack_bytes()
     );
-    let repeated = PreparedPush::new_excluding(
+    let repeated = PreparedPush::new(
         &objects,
         vec![
             PushCommand::new(RefName::new("refs/heads/main")?, Some(commit), commit)

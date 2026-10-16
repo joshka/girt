@@ -232,8 +232,7 @@ fn incremental_publication_still_checks_local_dependencies(#[case] format: Objec
         .unwrap();
     let cancel = AtomicBool::new(false);
     let objects = repository.objects(Default::default()).unwrap();
-    let known =
-        KnownHistory::new_local(&objects, &[first], FetchLimits::default(), &cancel).unwrap();
+    let known = KnownHistory::new(&objects, &[first], FetchLimits::default(), &cancel).unwrap();
     let request = FetchRequest::prepare(
         repository.clone(),
         Refspecs::parse(
