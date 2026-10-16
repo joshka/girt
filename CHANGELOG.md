@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking changes
+
+- The rewrite candidate limit counts files as Git does: binary files count even when
+  `approximate_binary` is false, and empty files count when `track_empty` is true. Inputs near the
+  limit with such files can now be skipped (`Error::Candidates` from `detect_rewrites`) where they
+  were previously scored.
+
 ### Fixed
 
 - Native local fetch and clone accept Git-scale sources, such as a Linux clone with a 300 MB pack
