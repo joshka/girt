@@ -1405,12 +1405,22 @@ fn rescued_damage_never_authorizes_unique_object_deletion(
         .with_recent_cutoff(std::time::SystemTime::now() + std::time::Duration::from_secs(60));
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let plan = copies.fixture.repo.plan_retention(&policy, &cancel);
-    assert!(
-        matches!(plan.outcome, girt::retention::RetentionOutcome::Incomplete(ref reason)
-        if reason.contains("a-damaged.pack") && reason.contains("offset ") && reason.contains("corrupt")),
-        "{:?}",
-        plan.outcome
-    );
+    let girt::retention::RetentionOutcome::Incomplete(girt::retention::RetentionError::Read(
+        source,
+    )) = &plan.outcome
+    else {
+        panic!("expected a preserved storage failure: {:?}", plan.outcome);
+    };
+    assert!(source.downcast_ref::<girt::ObjectReadError>().is_some());
+    let mut diagnostic = source.to_string();
+    let mut cause = source.source();
+    while let Some(error) = cause {
+        diagnostic.push_str(&error.to_string());
+        cause = error.source();
+    }
+    assert!(diagnostic.contains("a-damaged.pack"));
+    assert!(diagnostic.contains("offset "));
+    assert!(diagnostic.contains("corrupt"));
     if maintenance {
         let error = copies
             .fixture

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
     ExpireFailure, ExpireReport, MaintenanceIsolation, PruneFailure, PruneReport, RepackLimits,
-    RetentionPolicy, RetireFailure, RetireReport,
+    RetentionError, RetentionPolicy, RetireFailure, RetireReport,
 };
 use crate::Repository;
 
@@ -36,8 +36,8 @@ pub enum MaintenanceCause {
     #[error("maintenance cancelled")]
     Cancelled,
     /// A bounded plan or input observation was incomplete; no phase has started.
-    #[error("retention scan incomplete: {0}")]
-    Incomplete(String),
+    #[error("retention scan incomplete")]
+    Incomplete(#[source] RetentionError),
     /// An input changed after planning; retry with a fresh isolated plan.
     #[error("maintenance inputs changed")]
     Changed,

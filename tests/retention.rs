@@ -1004,7 +1004,7 @@ fn deleted_reflog_and_git_closure_are_retained(#[case] format: &str) {
     let policy =
         RetentionPolicy::default().with_recent_cutoff(SystemTime::now() + Duration::from_secs(60));
     let plan = repo.plan_retention(&policy, &AtomicBool::new(false));
-    assert_eq!(plan.outcome, RetentionOutcome::Complete);
+    assert!(matches!(plan.outcome, RetentionOutcome::Complete));
     assert!(plan.roots.contains(&first));
     assert!(plan.roots.contains(&second));
     let expected: std::collections::BTreeSet<ObjectId> = git(

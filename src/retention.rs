@@ -82,6 +82,8 @@ use crate::{
     Tree, index,
 };
 
+mod error;
+pub use error::{RetentionError, RetentionErrorKind};
 mod repack;
 pub use repack::{RepackError, RepackLimits, RepackPublished};
 mod prune;
@@ -382,19 +384,19 @@ struct ObjectInfo {
 }
 
 /// Why a plan can or cannot describe complete reachability.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum RetentionOutcome {
     /// Every root and edge was located; graph-bearing objects were decoded under the bounds.
     Complete,
-    /// A source or reachable graph was incomplete. The string names the failed boundary.
-    Incomplete(String),
+    /// A source or reachable graph was incomplete. The cause identifies the failed boundary.
+    Incomplete(RetentionError),
 }
 
 impl RetentionPlan {
     /// A complete scan remains advisory until an executor establishes an exclusive writer boundary.
     pub fn is_complete(&self) -> bool {
-        self.outcome == RetentionOutcome::Complete
+        matches!(self.outcome, RetentionOutcome::Complete)
     }
 
     fn check_packs_unchanged(&self, cancel: &AtomicBool) -> Result<(), crate::ObjectReadError> {
@@ -404,8 +406,8 @@ impl RetentionPlan {
         Ok(())
     }
 
-    fn fail(&mut self, reason: impl Into<String>) {
-        self.outcome = RetentionOutcome::Incomplete(reason.into());
+    fn fail(&mut self, reason: RetentionError) {
+        self.outcome = RetentionOutcome::Incomplete(reason);
     }
 }
 
@@ -435,11 +437,11 @@ impl Repository {
             .iter()
             .any(|id| id.format() != self.object_format() || id.is_null())
         {
-            plan.fail("invalid caller head");
+            plan.fail(RetentionError::InvalidCallerHead);
             return plan;
         }
         if policy.heads.len() > policy.max_entries {
-            plan.fail("caller head limit");
+            plan.fail(RetentionError::CallerHeadLimit);
             return plan;
         }
         if let Err(reason) = collect_roots(self, policy, cancel, &mut plan) {
@@ -509,14 +511,14 @@ impl Repository {
         ) {
             Ok(store) => store,
             Err(error) => {
-                plan.fail(error_detail(&error));
+                plan.fail(RetentionError::read(error));
                 return plan;
             }
         };
         // Opening checks index structure only. A plan authorizes deletion, so it also requires
         // every pinned index's checksum before trusting the identities that index claims.
         if let Err(error) = store.verify_indexes(cancel) {
-            plan.fail(error_detail(&error));
+            plan.fail(RetentionError::read(error));
             return plan;
         }
         plan.alternate_stores = store
@@ -572,7 +574,7 @@ impl Repository {
                     let cutoffs = match expiry.cutoffs(record.source.name()) {
                         Ok(cutoffs) => cutoffs,
                         Err(error) => {
-                            plan.fail(error_detail(&error));
+                            plan.fail(RetentionError::read(error));
                             return plan;
                         }
                     };
@@ -622,7 +624,7 @@ impl Repository {
         let has_candidates = match prune::candidates(self, policy, cancel) {
             Ok(candidates) => !candidates.is_empty(),
             Err(error) => {
-                plan.fail(error_detail(&error));
+                plan.fail(RetentionError::from_prune(error));
                 return plan;
             }
         };
@@ -643,11 +645,11 @@ impl Repository {
                 match fs::symlink_metadata(path) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        plan.fail(error_detail(&error));
+                        plan.fail(RetentionError::read(error));
                         return plan;
                     }
                     Ok(_) => {
-                        plan.fail("protected pack has no readable index");
+                        plan.fail(RetentionError::MissingProtectedIndex);
                         return plan;
                     }
                 }
@@ -655,7 +657,7 @@ impl Repository {
             // Classification follows normal store precedence, which can select another pack.
             // Authenticate all pinned pack headers before this protection inventory uses them.
             if let Err(error) = store.verify_packs(cancel) {
-                plan.fail(error_detail(&error));
+                plan.fail(RetentionError::read(error));
                 return plan;
             }
             let mut protected_roots = BTreeSet::new();
@@ -667,18 +669,18 @@ impl Repository {
                     let id = match id {
                         Ok(id) => id,
                         Err(error) => {
-                            plan.fail(error_detail(&error));
+                            plan.fail(RetentionError::read(error));
                             return plan;
                         }
                     };
                     let (kind, size) = match store.locate(id, policy.read, cancel) {
                         Ok(Some(info)) => info,
                         Ok(None) => {
-                            plan.fail("missing protected object");
+                            plan.fail(RetentionError::MissingProtectedObject);
                             return plan;
                         }
                         Err(error) => {
-                            plan.fail(error_detail(&error));
+                            plan.fail(RetentionError::read(error));
                             return plan;
                         }
                     };
@@ -691,7 +693,7 @@ impl Repository {
                         protected_roots.insert(id);
                     }
                     if plan.protected_objects.len() > policy.max_entries {
-                        plan.fail("protected packed object limit");
+                        plan.fail(RetentionError::ProtectedPackedObjectLimit);
                         return plan;
                     }
                 }
@@ -717,26 +719,15 @@ impl Repository {
             if let Err(error) =
                 store.check_retention_blob_kinds(policy.read, policy.max_entries, cancel, is_blob)
             {
-                plan.fail(error_detail(&error));
+                plan.fail(RetentionError::read(error));
             }
         }
         if let Err(error) = store.check_packs_unchanged(cancel) {
-            plan.fail(error_detail(&error));
+            plan.fail(RetentionError::read(error));
         }
         plan.store = Some(store);
         plan
     }
-}
-
-fn error_detail(error: &dyn std::error::Error) -> String {
-    let mut detail = error.to_string();
-    let mut source = error.source();
-    while let Some(error) = source {
-        detail.push_str(": ");
-        detail.push_str(&error.to_string());
-        source = error.source();
-    }
-    detail
 }
 
 fn collect_roots(
@@ -744,7 +735,7 @@ fn collect_roots(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     plan: &mut RetentionPlan,
-) -> Result<(), String> {
+) -> Result<(), RetentionError> {
     // Git's hook can designate otherwise old, unreachable objects as recent. Running a hook is
     // outside this read-only library operation, so its presence prevents a complete plan.
     if repository
@@ -752,20 +743,20 @@ fn collect_roots(
         .value("gc", None, "recentObjectsHook")
         .is_some()
     {
-        return Err("gc.recentObjectsHook is unsupported by retention planning".into());
+        return Err(RetentionError::RecentObjectsHook);
     }
     let mut repositories =
-        vec![Repository::open(repository.common_dir()).map_err(|e| e.to_string())?];
+        vec![Repository::open(repository.common_dir()).map_err(RetentionError::read)?];
     let mut reflog_bytes = 0u64;
     let mut seen_logs = BTreeSet::new();
     let linked = repository
         .worktrees(policy.max_entries, cancel)
-        .map_err(|e| e.to_string())?;
+        .map_err(RetentionError::read)?;
     for entry in linked {
         check(cancel)?;
         let retained = repository
             .open_retained_worktree(&entry.git_dir)
-            .map_err(|e| e.to_string())?;
+            .map_err(RetentionError::read)?;
         repositories.push(retained);
     }
     for repo in repositories {
@@ -775,36 +766,36 @@ fn collect_roots(
             .value("extensions", None, "preciousObjects")
             .is_some()
         {
-            return Err("precious-object repository forbids deletion planning".into());
+            return Err(RetentionError::PreciousObjects);
         }
         if repo
             .config()
             .value("extensions", None, "partialClone")
             .is_some()
         {
-            return Err("partial clone has an incomplete local object inventory".into());
+            return Err(RetentionError::PartialClone);
         }
         if repo
             .config()
             .value("gc", None, "recentObjectsHook")
             .is_some()
         {
-            return Err("gc.recentObjectsHook is unsupported by retention planning".into());
+            return Err(RetentionError::RecentObjectsHook);
         }
         let refs = repo
             .references()
-            .map_err(|e| e.to_string())?
+            .map_err(RetentionError::read)?
             .with_reftable_limits(policy.reftable);
         let references = refs
             .list_controlled(policy.max_entries, policy.max_reference_bytes, cancel)
-            .map_err(|e| e.to_string())?;
+            .map_err(RetentionError::read)?;
         let mut values: BTreeMap<_, _> = references
             .into_iter()
             .map(|reference| (reference.name, reference.target))
             .collect();
         if let Some(head) = refs
             .head_controlled(policy.max_reference_bytes, cancel)
-            .map_err(|e| e.to_string())?
+            .map_err(RetentionError::read)?
         {
             values.insert(RefName::new(b"HEAD").unwrap(), head);
         }
@@ -816,7 +807,7 @@ fn collect_roots(
         }
         for name in refs
             .imported_reflog_names(policy.max_entries, cancel)
-            .map_err(|e| e.to_string())?
+            .map_err(RetentionError::read)?
         {
             let root = if name.per_worktree() {
                 repo.git_dir()
@@ -829,8 +820,8 @@ fn collect_roots(
             }
             let log = refs
                 .imported_reflog(&name, policy.reflog, cancel)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("reflog disappeared during discovery: {name:?}"))?;
+                .map_err(RetentionError::read)?
+                .ok_or_else(|| RetentionError::ReflogDisappeared(name.clone()))?;
             plan.roots.extend(log.recoverable_roots());
             for (position, record) in log.records().iter().enumerate() {
                 let size = match record {
@@ -844,10 +835,10 @@ fn collect_roots(
                 };
                 reflog_bytes = reflog_bytes.saturating_add(size as u64);
                 if reflog_bytes > policy.max_reflog_bytes {
-                    return Err("aggregate reflog byte limit".into());
+                    return Err(RetentionError::AggregateReflogByteLimit);
                 }
                 if plan.observed_logs.len() >= policy.max_entries {
-                    return Err("aggregate reflog record limit".into());
+                    return Err(RetentionError::AggregateReflogRecordLimit);
                 }
                 if let Ok(fields) = record.fields() {
                     plan.observed_logs.push(ObservedLog {
@@ -860,13 +851,16 @@ fn collect_roots(
                 }
             }
             if !log.is_complete() {
-                return Err(format!("incomplete reflog {name:?}: {:?}", log.end()));
+                return Err(RetentionError::reflog(log));
             }
         }
         collect_pseudorefs(&repo, policy, plan)?;
-        if let Some(index) = repo.read_index(policy.index).map_err(|e| e.to_string())? {
+        if let Some(index) = repo
+            .read_index(policy.index)
+            .map_err(RetentionError::read)?
+        {
             if index.entries().len() > policy.max_entries {
-                return Err("index entry limit".into());
+                return Err(RetentionError::IndexEntryLimit);
             }
             for entry in index.entries() {
                 if !entry.intent_to_add && entry.mode != index::Mode::Gitlink && !entry.id.is_null()
@@ -877,7 +871,7 @@ fn collect_roots(
             }
         }
         if plan.roots.len() > policy.max_entries {
-            return Err("aggregate root limit".into());
+            return Err(RetentionError::AggregateRootLimit);
         }
     }
     recent_objects(repository, policy, cancel, plan)?;
@@ -887,7 +881,7 @@ fn collect_roots(
 fn resolve_target(
     target: &Target,
     values: &BTreeMap<RefName, Target>,
-) -> Result<Option<ObjectId>, String> {
+) -> Result<Option<ObjectId>, RetentionError> {
     let mut target = target;
     let mut visited = BTreeSet::new();
     for _ in 0..=32 {
@@ -895,7 +889,7 @@ fn resolve_target(
             Target::Direct(id) => return Ok(Some(*id)),
             Target::Symbolic(name) => {
                 if !visited.insert(name) {
-                    return Err("symbolic reference cycle".into());
+                    return Err(RetentionError::SymbolicReferenceCycle);
                 }
                 let Some(next) = values.get(name) else {
                     return Ok(None);
@@ -904,14 +898,14 @@ fn resolve_target(
             }
         }
     }
-    Err("symbolic reference depth limit".into())
+    Err(RetentionError::SymbolicReferenceDepthLimit)
 }
 
 fn collect_pseudorefs(
     repo: &Repository,
     policy: &RetentionPolicy,
     plan: &mut RetentionPlan,
-) -> Result<(), String> {
+) -> Result<(), RetentionError> {
     // These object-bearing pseudorefs do not appear in refs.list(). Treat unfamiliar framing
     // as incomplete rather than dropping a possible retention root.
     for name in [
@@ -928,14 +922,19 @@ fn collect_pseudorefs(
         let file = match fs::File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(format!("{}: {error}", path.display())),
+            Err(error) => {
+                return Err(RetentionError::PseudorefIo {
+                    path: path.clone(),
+                    source: error,
+                });
+            }
         };
         let mut bytes = Vec::new();
         file.take(policy.reflog.bytes as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|error| error.to_string())?;
+            .map_err(RetentionError::read)?;
         if bytes.len() > policy.reflog.bytes {
-            return Err(format!("pseudoref byte limit: {}", path.display()));
+            return Err(RetentionError::PseudorefByteLimit(path.clone()));
         }
         for line in bytes
             .split(|byte| *byte == b'\n')
@@ -946,16 +945,16 @@ fn collect_pseudorefs(
                 .get(..width)
                 .and_then(|value| std::str::from_utf8(value).ok())
                 .and_then(|value| ObjectId::from_hex(repo.object_format(), value).ok())
-                .ok_or_else(|| format!("malformed pseudoref: {}", path.display()))?;
+                .ok_or_else(|| RetentionError::MalformedPseudoref(path.clone()))?;
             if line.len() > width && !matches!(line[width], b'\t' | b' ' | b'\r') {
-                return Err(format!("malformed pseudoref: {}", path.display()));
+                return Err(RetentionError::MalformedPseudoref(path.clone()));
             }
             if !id.is_null() {
                 plan.roots.insert(id);
                 plan.strong_roots.insert(id);
             }
             if plan.roots.len() > policy.max_entries {
-                return Err("aggregate root limit".into());
+                return Err(RetentionError::AggregateRootLimit);
             }
         }
     }
@@ -967,38 +966,38 @@ fn recent_objects(
     policy: &RetentionPolicy,
     cancel: &AtomicBool,
     plan: &mut RetentionPlan,
-) -> Result<(), String> {
+) -> Result<(), RetentionError> {
     let mut entries = 0;
-    for dir in fs::read_dir(repo.object_dir()).map_err(|e| e.to_string())? {
+    for dir in fs::read_dir(repo.object_dir()).map_err(RetentionError::read)? {
         check(cancel)?;
         entries += 1;
         if entries > policy.max_entries {
-            return Err("object directory entry limit".into());
+            return Err(RetentionError::ObjectDirectoryEntryLimit);
         }
-        let dir = dir.map_err(|e| e.to_string())?;
+        let dir = dir.map_err(RetentionError::read)?;
         if !fs::symlink_metadata(dir.path())
-            .map_err(|e| e.to_string())?
+            .map_err(RetentionError::read)?
             .is_dir()
         {
-            return Err("non-directory object entry".into());
+            return Err(RetentionError::NonDirectoryObjectEntry);
         }
         let name = dir.file_name();
         if name == "pack" {
-            for file in fs::read_dir(dir.path()).map_err(|e| e.to_string())? {
+            for file in fs::read_dir(dir.path()).map_err(RetentionError::read)? {
                 entries += 1;
                 if entries > policy.max_entries {
-                    return Err("pack entry limit".into());
+                    return Err(RetentionError::PackEntryLimit);
                 }
-                let file = file.map_err(|e| e.to_string())?;
+                let file = file.map_err(RetentionError::read)?;
                 let path = file.path();
-                let metadata = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+                let metadata = fs::symlink_metadata(&path).map_err(RetentionError::read)?;
                 if !metadata.is_file() {
-                    return Err(format!("non-file pack entry: {}", path.display()));
+                    return Err(RetentionError::NonFilePackEntry(path.clone()));
                 }
                 if path.extension().is_some_and(|ext| ext == "keep") {
                     plan.protected_packs.insert(path.with_extension("pack"));
                 } else if path.extension().is_some_and(|ext| ext == "pack") {
-                    let modified = metadata.modified().map_err(|e| e.to_string())?;
+                    let modified = metadata.modified().map_err(RetentionError::read)?;
                     if policy.recent_cutoff.is_none_or(|cutoff| modified >= cutoff) {
                         plan.protected_packs.insert(path);
                     }
@@ -1007,32 +1006,32 @@ fn recent_objects(
             continue;
         }
         let Some(prefix) = name.to_str() else {
-            return Err("non-UTF-8 object fanout".into());
+            return Err(RetentionError::NonUtf8ObjectFanout);
         };
         if prefix == "info" {
             continue;
         }
         if prefix.len() != 2 || !prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("unknown object directory entry".into());
+            return Err(RetentionError::UnknownObjectDirectoryEntry);
         }
-        for file in fs::read_dir(dir.path()).map_err(|e| e.to_string())? {
+        for file in fs::read_dir(dir.path()).map_err(RetentionError::read)? {
             check(cancel)?;
             entries += 1;
             if entries > policy.max_entries {
-                return Err("loose object entry limit".into());
+                return Err(RetentionError::LooseObjectEntryLimit);
             }
-            let file = file.map_err(|e| e.to_string())?;
-            let metadata = fs::symlink_metadata(file.path()).map_err(|e| e.to_string())?;
+            let file = file.map_err(RetentionError::read)?;
+            let metadata = fs::symlink_metadata(file.path()).map_err(RetentionError::read)?;
             if !metadata.is_file() {
-                return Err("non-file loose object".into());
+                return Err(RetentionError::NonFileLooseObject);
             }
-            let modified = metadata.modified().map_err(|e| e.to_string())?;
+            let modified = metadata.modified().map_err(RetentionError::read)?;
             if policy.recent_cutoff.is_none_or(|cutoff| modified > cutoff) {
                 let Some(suffix) = file.file_name().to_str().map(str::to_owned) else {
-                    return Err("non-UTF-8 loose object".into());
+                    return Err(RetentionError::NonUtf8LooseObject);
                 };
                 let id = ObjectId::from_hex(repo.object_format(), &format!("{prefix}{suffix}"))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(RetentionError::malformed)?;
                 plan.roots.insert(id);
                 plan.strong_roots.insert(id);
             }
@@ -1048,7 +1047,7 @@ fn walk(
     cancel: &AtomicBool,
     roots: &BTreeSet<ObjectId>,
     object_info: &mut BTreeMap<ObjectId, ObjectInfo>,
-) -> Result<BTreeSet<ObjectId>, String> {
+) -> Result<BTreeSet<ObjectId>, RetentionError> {
     let mut pending: VecDeque<_> = roots.iter().copied().collect();
     // Hashed lookups: the walk probes these once or more per edge, on 100k-object histories.
     let mut seen = IdSet::default();
@@ -1063,7 +1062,7 @@ fn walk(
             continue;
         }
         if seen.len() >= policy.max_entries {
-            return Err("reachable object limit".into());
+            return Err(RetentionError::ReachableObjectLimit);
         }
         // Only blobs are located, after the graph walk and in pack order: they add no edges, and
         // locating them in graph order would read headers scattered across the pack. An edge
@@ -1077,13 +1076,13 @@ fn walk(
         // binds its kind; a damaged graph header could otherwise erase edges and allow pruning.
         let object = store
             .read_controlled(id, policy.read, cancel)
-            .map_err(|error| error_detail(&error))?
-            .ok_or_else(|| format!("missing reachable object {id}"))?;
+            .map_err(RetentionError::read)?
+            .ok_or_else(|| RetentionError::MissingObject(id))?;
         if expected
             .get(&id)
             .is_some_and(|asserted| *asserted != object.kind())
         {
-            return Err(format!("wrong reachable kind {id}"));
+            return Err(RetentionError::WrongObjectKind(id));
         }
         if object.kind() == ObjectKind::Blob {
             let kind = ObjectKind::Blob;
@@ -1095,25 +1094,25 @@ fn walk(
         }
         bytes = bytes
             .checked_add(object.data().len() as u64)
-            .ok_or("reachable byte overflow")?;
+            .ok_or(RetentionError::ReachableByteOverflow)?;
         if bytes > policy.max_bytes {
-            return Err("reachable byte limit".into());
+            return Err(RetentionError::ReachableByteLimit);
         }
-        let mut add = |target: ObjectId, kind: ObjectKind| -> Result<(), String> {
+        let mut add = |target: ObjectId, kind: ObjectKind| -> Result<(), RetentionError> {
             edges += 1;
             if edges > policy.max_edges {
-                return Err("reachable edge limit".into());
+                return Err(RetentionError::ReachableEdgeLimit);
             }
             if target.is_null() {
-                return Err(format!("null reachable edge from {id}"));
+                return Err(RetentionError::NullEdge(id));
             }
             if kinds.get(&target).is_some_and(|actual| *actual != kind) {
-                return Err(format!("wrong reachable kind {target}"));
+                return Err(RetentionError::WrongObjectKind(target));
             }
             if let Some(previous) = expected.insert(target, kind)
                 && previous != kind
             {
-                return Err(format!("conflicting reachable kind {target}"));
+                return Err(RetentionError::ConflictingObjectKind(target));
             }
             pending.push_back(target);
             Ok(())
@@ -1122,7 +1121,7 @@ fn walk(
             ObjectKind::Blob => {}
             ObjectKind::Commit => {
                 let commit = Commit::parse(repo.object_format(), object.data())
-                    .map_err(|e| e.to_string())?;
+                    .map_err(RetentionError::malformed)?;
                 add(commit.tree(), ObjectKind::Tree)?;
                 if !repo.shallow_roots().contains(id) {
                     for &parent in commit.parents() {
@@ -1131,8 +1130,8 @@ fn walk(
                 }
             }
             ObjectKind::Tree => {
-                let tree =
-                    Tree::parse(repo.object_format(), object.data()).map_err(|e| e.to_string())?;
+                let tree = Tree::parse(repo.object_format(), object.data())
+                    .map_err(RetentionError::malformed)?;
                 for entry in tree.entries() {
                     match entry.mode {
                         crate::EntryMode::Gitlink => {}
@@ -1142,8 +1141,8 @@ fn walk(
                 }
             }
             ObjectKind::Tag => {
-                let tag =
-                    Tag::parse(repo.object_format(), object.data()).map_err(|e| e.to_string())?;
+                let tag = Tag::parse(repo.object_format(), object.data())
+                    .map_err(RetentionError::malformed)?;
                 add(tag.target(), tag.target_kind())?;
             }
         }
@@ -1159,11 +1158,11 @@ fn walk(
     }
     let located = store
         .locate_all(blobs, policy.read, cancel)
-        .map_err(|e| e.to_string())?;
+        .map_err(RetentionError::read)?;
     for (id, located) in located {
-        let (kind, size) = located.ok_or_else(|| format!("missing reachable object {id}"))?;
+        let (kind, size) = located.ok_or_else(|| RetentionError::MissingObject(id))?;
         if kind != ObjectKind::Blob {
-            return Err(format!("wrong reachable kind {id}"));
+            return Err(RetentionError::WrongObjectKind(id));
         }
         object_info.insert(id, ObjectInfo { kind, size });
     }
@@ -1181,9 +1180,9 @@ fn canonical_empty_tree(id: ObjectId) -> Option<Object> {
     (id == empty.id()).then_some(empty)
 }
 
-fn check(cancel: &AtomicBool) -> Result<(), String> {
+fn check(cancel: &AtomicBool) -> Result<(), RetentionError> {
     if cancel.load(Ordering::Relaxed) {
-        Err("retention scan cancelled".into())
+        Err(RetentionError::Cancelled)
     } else {
         Ok(())
     }

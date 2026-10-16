@@ -106,6 +106,14 @@ not assert traits on the whole public type to hide a new field's unresolved inva
   effects in structured results. Never recommend retrying an uncertain mutation without checking
   state. Public errors need not imitate Git's CLI text.
 
+Maintenance observations use `retention::RetentionError` for failed bounds, unsupported inputs,
+changed generations and graph inconsistencies. Preserve underlying read errors through `source()`;
+jj chooses recovery from `RetentionError::kind()` and the detailed condition and renders the source
+chain once. Box large cause payloads, as `ExpireCause::Incomplete` does, so partial reports stay
+compact across platforms without suppressing size lints. Do not restore free-text `Incomplete`
+payloads when composing maintenance phases. Retained diagnostic sources keep `Send + Sync` but do
+not promise unwind safety; do not assert unwind markers for arbitrary I/O causes.
+
 ## Observability Ownership
 
 Return errors to the operation owner, which decides user-visible logging and severity. Optional

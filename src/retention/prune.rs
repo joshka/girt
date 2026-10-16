@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 use std::{fs, io};
 
-use super::RetentionPolicy;
+use super::{RetentionError, RetentionPolicy};
 use crate::{ObjectId, Repository};
 
 /// Acquires caller-owned exclusion of every writer and dependent reader.
@@ -45,8 +45,8 @@ pub enum PruneCause {
     #[error("maintenance isolation unavailable")]
     Isolation(#[source] io::Error),
     /// A root, object or storage scan was incomplete.
-    #[error("retention scan incomplete: {0}")]
-    Incomplete(String),
+    #[error("retention scan incomplete")]
+    Incomplete(#[source] RetentionError),
     /// The observed roots or loose-object generation changed before mutation.
     #[error("maintenance generation changed")]
     Changed,
@@ -201,8 +201,12 @@ impl Repository {
         check(cancel, &report)?;
         // Repository::open refreshes shallow roots and configuration that this handle may have
         // observed before the isolation boundary was acquired.
-        let current = Repository::open(self.git_dir())
-            .map_err(|error| failure(PruneCause::Incomplete(error.to_string()), report.clone()))?;
+        let current = Repository::open(self.git_dir()).map_err(|error| {
+            failure(
+                PruneCause::Incomplete(RetentionError::read(error)),
+                report.clone(),
+            )
+        })?;
         if current.object_dir() != self.object_dir()
             || current.object_format() != self.object_format()
         {
@@ -237,8 +241,12 @@ impl Repository {
         let first = &session.plan;
         after_plan();
         check(cancel, &report)?;
-        let refreshed = Repository::open(self.git_dir())
-            .map_err(|error| failure(PruneCause::Incomplete(error.to_string()), report.clone()))?;
+        let refreshed = Repository::open(self.git_dir()).map_err(|error| {
+            failure(
+                PruneCause::Incomplete(RetentionError::read(error)),
+                report.clone(),
+            )
+        })?;
         if refreshed.object_dir() != current.object_dir()
             || refreshed.object_format() != current.object_format()
             || !refreshed
@@ -319,18 +327,20 @@ pub(super) fn candidates(
             continue;
         }
         let Some(prefix) = name.to_str() else {
-            return Err(PruneCause::Incomplete("non-UTF-8 object fanout".into()));
+            return Err(PruneCause::Incomplete(RetentionError::NonUtf8ObjectFanout));
         };
         if prefix.len() != 2 || !prefix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(PruneCause::Incomplete(
-                "unknown object directory entry".into(),
+                RetentionError::UnknownObjectDirectoryEntry,
             ));
         }
         if !fs::symlink_metadata(entry.path())
             .map_err(PruneCause::Io)?
             .is_dir()
         {
-            return Err(PruneCause::Incomplete("non-directory object fanout".into()));
+            return Err(PruneCause::Incomplete(
+                RetentionError::NonDirectoryObjectFanout,
+            ));
         }
         for file in fs::read_dir(entry.path()).map_err(PruneCause::Io)? {
             check_count(&mut visited, policy.max_entries)?;
@@ -339,13 +349,13 @@ pub(super) fn candidates(
             let path = file.path();
             let metadata = fs::symlink_metadata(&path).map_err(PruneCause::Io)?;
             if !metadata.is_file() {
-                return Err(PruneCause::Incomplete("non-file loose object".into()));
+                return Err(PruneCause::Incomplete(RetentionError::NonFileLooseObject));
             }
             let Some(suffix) = file.file_name().to_str().map(str::to_owned) else {
-                return Err(PruneCause::Incomplete("non-UTF-8 loose object".into()));
+                return Err(PruneCause::Incomplete(RetentionError::NonUtf8LooseObject));
             };
             let id = ObjectId::from_hex(repository.object_format(), &format!("{prefix}{suffix}"))
-                .map_err(|error| PruneCause::Incomplete(error.to_string()))?;
+                .map_err(|error| PruneCause::Incomplete(RetentionError::malformed(error)))?;
             let modified = metadata.modified().map_err(PruneCause::Io)?;
             if policy
                 .recent_cutoff
@@ -367,7 +377,9 @@ pub(super) fn candidates(
 fn check_count(visited: &mut usize, limit: usize) -> Result<(), PruneCause> {
     *visited += 1;
     if *visited > limit {
-        Err(PruneCause::Incomplete("loose object entry limit".into()))
+        Err(PruneCause::Incomplete(
+            RetentionError::LooseObjectEntryLimit,
+        ))
     } else {
         Ok(())
     }

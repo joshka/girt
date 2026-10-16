@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tempfile::NamedTempFile;
 
-use super::RetentionPolicy;
+use super::{RetentionError, RetentionPolicy};
 use crate::pack::{
     PackObject, PackWriteError, PackWriteLimits, PackWritten, Packed, ReuseError, write_reusing,
 };
@@ -76,8 +76,8 @@ pub struct RepackPublished {
 #[non_exhaustive]
 pub enum RepackError {
     /// A fresh retention scan did not establish complete reachability.
-    #[error("retention scan incomplete: {0}")]
-    Incomplete(String),
+    #[error("retention scan incomplete")]
+    Incomplete(#[source] RetentionError),
     /// A required object disappeared between planning and reading.
     #[error("required object missing: {0}")]
     Missing(ObjectId),
@@ -208,7 +208,7 @@ impl Repository {
         let objects = plan
             .store
             .as_ref()
-            .ok_or_else(|| RepackError::Incomplete("missing pinned plan store".into()))?;
+            .ok_or_else(|| RepackError::Incomplete(RetentionError::MissingPinnedPlanStore))?;
         let required = &plan.required;
         let protected = &plan.protected_packs;
         let protected_names: std::collections::BTreeSet<_> = protected

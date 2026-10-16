@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
-use super::{RetentionPlan, RetentionPolicy, check};
+use super::{RetentionError, RetentionPlan, RetentionPolicy, check};
 use crate::object::Hasher;
 use crate::{ObjectId, Repository};
 
@@ -28,13 +28,13 @@ impl Inputs {
         repository: &Repository,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
-    ) -> Result<Self, String> {
-        let current = Repository::open(repository.git_dir()).map_err(|e| e.to_string())?;
+    ) -> Result<Self, RetentionError> {
+        let current = Repository::open(repository.git_dir()).map_err(RetentionError::read)?;
         if current.object_dir() != repository.object_dir()
             || current.object_format() != repository.object_format()
             || current.reference_backend() != repository.reference_backend()
         {
-            return Err("repository layout changed".into());
+            return Err(RetentionError::RepositoryLayoutChanged);
         }
         let mut observer = Observer {
             inputs: Self(BTreeMap::new()),
@@ -76,7 +76,7 @@ impl Inputs {
             }
         }
         let directories = crate::Objects::retention_directories(current.object_dir())
-            .map_err(|e| e.to_string())?;
+            .map_err(RetentionError::read)?;
         for directory in directories {
             observer.collect(directory.clone(), false)?;
             observer.collect(directory.join("info/alternates"), true)?;
@@ -84,11 +84,11 @@ impl Inputs {
         observer.config_sources(&current)?;
         for entry in current
             .worktrees(policy.max_entries, cancel)
-            .map_err(|e| e.to_string())?
+            .map_err(RetentionError::read)?
         {
             let worktree = current
                 .open_retained_worktree(&entry.git_dir)
-                .map_err(|e| e.to_string())?;
+                .map_err(RetentionError::read)?;
             observer.config_sources(&worktree)?;
         }
         Ok(observer.inputs)
@@ -99,17 +99,17 @@ impl Inputs {
         &mut self,
         observed: Self,
         changed: &[(PathBuf, Option<ObjectId>)],
-    ) -> Result<(), String> {
+    ) -> Result<(), RetentionError> {
         let paths: Vec<_> = changed.iter().map(|(path, _)| path.clone()).collect();
         if !self.same_except(&observed, &paths) {
-            return Err("retention inputs changed".into());
+            return Err(RetentionError::RetentionInputsChanged);
         }
         for (path, expected) in changed {
             match expected {
                 Some(digest)
                     if observed.0.get(path).and_then(|file| file.digest) == Some(*digest) => {}
                 None if !observed.0.keys().any(|input| input.starts_with(path)) => {}
-                _ => return Err("retention output changed".into()),
+                _ => return Err(RetentionError::RetentionOutputChanged),
             }
         }
         *self = observed;
@@ -137,7 +137,7 @@ struct Observer<'a> {
 }
 
 impl Observer<'_> {
-    fn collect(&mut self, path: PathBuf, content: bool) -> Result<(), String> {
+    fn collect(&mut self, path: PathBuf, content: bool) -> Result<(), RetentionError> {
         let mut pending = vec![path];
         while let Some(path) = pending.pop() {
             check(self.cancel)?;
@@ -154,22 +154,25 @@ impl Observer<'_> {
             let metadata = match fs::symlink_metadata(&path) {
                 Ok(metadata) => metadata,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(RetentionError::read(e)),
             };
             let (metadata, link) = if metadata.is_symlink() {
-                let target = fs::read_link(&path).map_err(|e| e.to_string())?;
-                let modified = metadata.modified().map_err(|e| e.to_string())?;
-                let followed = fs::metadata(&path).map_err(|e| e.to_string())?;
+                let target = fs::read_link(&path).map_err(RetentionError::read)?;
+                let modified = metadata.modified().map_err(RetentionError::read)?;
+                let followed = fs::metadata(&path).map_err(RetentionError::read)?;
                 if !followed.is_file() {
-                    return Err("non-file retention input target".into());
+                    return Err(RetentionError::NonFileRetentionInputTarget);
                 }
                 (followed, Some((target, modified)))
             } else {
                 (metadata, None)
             };
-            self.entries = self.entries.checked_add(1).ok_or("input entry overflow")?;
+            self.entries = self
+                .entries
+                .checked_add(1)
+                .ok_or(RetentionError::InputEntryOverflow)?;
             if self.entries > self.policy.max_entries {
-                return Err("input entry limit".into());
+                return Err(RetentionError::InputEntryLimit);
             }
             #[cfg(unix)]
             use std::os::unix::fs::MetadataExt;
@@ -185,17 +188,17 @@ impl Observer<'_> {
                         identity: (metadata.dev(), metadata.ino(), 0, 0),
                     },
                 );
-                for entry in fs::read_dir(&path).map_err(|e| e.to_string())? {
+                for entry in fs::read_dir(&path).map_err(RetentionError::read)? {
                     check(self.cancel)?;
                     if pending.len() >= self.policy.max_entries.saturating_sub(self.entries) {
-                        return Err("input entry limit".into());
+                        return Err(RetentionError::InputEntryLimit);
                     }
-                    pending.push(entry.map_err(|e| e.to_string())?.path());
+                    pending.push(entry.map_err(RetentionError::read)?.path());
                 }
                 continue;
             }
             if !metadata.is_file() {
-                return Err("non-file retention input".into());
+                return Err(RetentionError::NonFileRetentionInput);
             }
             let digest = if content {
                 Some(self.hash_file(&path, metadata.len())?)
@@ -206,7 +209,7 @@ impl Observer<'_> {
                 path,
                 FileInput {
                     len: metadata.len(),
-                    modified: metadata.modified().map_err(|e| e.to_string())?,
+                    modified: metadata.modified().map_err(RetentionError::read)?,
                     digest,
                     link,
                     #[cfg(unix)]
@@ -222,7 +225,7 @@ impl Observer<'_> {
         Ok(())
     }
 
-    fn config_sources(&mut self, repository: &Repository) -> Result<(), String> {
+    fn config_sources(&mut self, repository: &Repository) -> Result<(), RetentionError> {
         for entry in repository.config().entries() {
             if let Some(origin) = &entry.origin {
                 for source in std::iter::once(&origin.location).chain(origin.included_from.iter()) {
@@ -235,30 +238,30 @@ impl Observer<'_> {
         Ok(())
     }
 
-    fn hash_file(&self, path: &Path, len: u64) -> Result<ObjectId, String> {
+    fn hash_file(&self, path: &Path, len: u64) -> Result<ObjectId, RetentionError> {
         let bound = self
             .policy
             .max_reference_bytes
             .max(self.policy.reflog.bytes)
             .max(self.policy.index.max_bytes) as u64;
         if len > bound {
-            return Err("input byte limit".into());
+            return Err(RetentionError::InputByteLimit);
         }
-        let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+        let mut file = fs::File::open(path).map_err(RetentionError::read)?;
         let mut hash = Hasher::new(self.repository.object_format());
         let mut bytes = 0u64;
         let mut buffer = [0; 8192];
         loop {
             check(self.cancel)?;
-            let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+            let count = file.read(&mut buffer).map_err(RetentionError::read)?;
             if count == 0 {
                 break;
             }
             bytes = bytes
                 .checked_add(count as u64)
-                .ok_or("input byte overflow")?;
+                .ok_or(RetentionError::InputByteOverflow)?;
             if bytes > bound {
-                return Err("input byte limit".into());
+                return Err(RetentionError::InputByteLimit);
             }
             hash.update(&buffer[..count]);
         }
@@ -276,9 +279,9 @@ impl Session {
         repository: &Repository,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RetentionError> {
         let inputs = Inputs::observe(repository, policy, cancel)?;
-        let current = Repository::open(repository.git_dir()).map_err(|e| e.to_string())?;
+        let current = Repository::open(repository.git_dir()).map_err(RetentionError::read)?;
         let plan = current.plan_retention(policy, cancel);
         if let super::RetentionOutcome::Incomplete(reason) = plan.outcome {
             return Err(reason);
@@ -293,10 +296,10 @@ impl Session {
         repository: &Repository,
         policy: &RetentionPolicy,
         cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    ) -> Result<(), RetentionError> {
         let observed = Inputs::observe(repository, policy, cancel)?;
         if observed != self.inputs {
-            return Err("retention inputs changed".into());
+            return Err(RetentionError::RetentionInputsChanged);
         }
         Ok(())
     }
