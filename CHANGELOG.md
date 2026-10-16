@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
+
+### Other
+
+- Gate API breaks before merging pull requests ([#206](https://github.com/joshka/girt/pull/206))
+- Restore unwind safety for public cache owners ([#204](https://github.com/joshka/girt/pull/204))
+- Shorten Windows CI with parallel feature lanes ([#200](https://github.com/joshka/girt/pull/200))
+- stop fetch validation at a complete parent's tree ([#193](https://github.com/joshka/girt/pull/193))
+
 ## [0.9.1](https://github.com/joshka/girt/compare/v0.9.0...v0.9.1) - 2026-10-14
 
 ### Other
