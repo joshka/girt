@@ -360,7 +360,7 @@ fn candidate_limit_matches_git(
     assert_eq!(
         detection
             .inexact_skipped
-            .map(|s| (s.sources, s.targets, s.limit, s.required_limit())),
+            .map(|s| (s.sources, s.targets, s.limit, s.suggested_limit())),
         skipped.map(|(sources, targets)| (sources, targets, limit, 3))
     );
     let strict = objects.detect_rewrites(

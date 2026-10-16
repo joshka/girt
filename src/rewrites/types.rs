@@ -37,10 +37,13 @@ pub struct Options {
     /// [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns
     /// [`Error::Candidates`]. Neither reports an incomplete inference as complete.
     ///
-    /// Only candidates that could be scored are counted: empty blobs, and binary blobs when
-    /// [`Self::approximate_binary`] is false, are excluded. Git also counts those files, so it can
-    /// skip edited detection where girt still performs it. Zero skips edited detection whenever a
-    /// scorable pair remains; Git's configuration value 0 means unlimited, which is `usize::MAX`.
+    /// The bound matches Git's, but the counts can differ. Only candidates that could be scored
+    /// are counted: empty blobs, and binary blobs when [`Self::approximate_binary`] is false, are
+    /// excluded, while Git counts them. Git also pairs some files before this check, such as an
+    /// edited file moved to a path with the same basename, which girt leaves to edited detection.
+    /// Either difference can change whether a given input is skipped. Zero skips edited detection
+    /// whenever a scorable pair remains; Git's configuration value 0 means unlimited, which is
+    /// `usize::MAX`.
     pub candidate_limit: usize,
     /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
     /// Exact object-ID matches are still considered (default true).
@@ -247,11 +250,12 @@ pub struct InexactSkipped {
 }
 
 impl InexactSkipped {
-    /// Smallest [`Options::candidate_limit`] that permits edited detection for these candidates.
+    /// A [`Options::candidate_limit`] that permits edited detection for these candidates.
     ///
-    /// This is the larger of the two counts, the value Git suggests for `diff.renameLimit`.
+    /// This is the larger of the two counts, the value Git suggests for `diff.renameLimit`. It is
+    /// sufficient but not always minimal: one source against three destinations needs only 2.
     #[must_use]
-    pub fn required_limit(&self) -> usize {
+    pub fn suggested_limit(&self) -> usize {
         self.sources.max(self.targets)
     }
 }

@@ -16,7 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - `Options::candidate_limit` now skips edited detection only when remaining sources times remaining
-  destinations exceeds the squared limit, matching Git's `diff.renameLimit`. Calls that previously
+  destinations exceeds the squared limit, the bound Git applies for `diff.renameLimit`; the
+  candidate counts can still differ from Git's (see `Options::candidate_limit`). Calls that previously
   succeeded return the same result; some that returned `Error::Candidates`, such as a few sources
   against many new files, now complete.
 
