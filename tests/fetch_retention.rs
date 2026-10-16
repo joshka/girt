@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::io::Write;
-use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
@@ -103,9 +102,9 @@ fn git_collection_between_installation_and_ref_publication_preserves_history(
     let received = receive_local(
         &source_path,
         |_| vec![tip],
-        FetchLimits::default(),
-        &cancel,
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&cancel),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     // After validation the transfer owns the complete history; even losing the source cannot
@@ -165,9 +164,9 @@ fn failed_ref_publication_leaves_explicit_retention_until_abandoned(
     let received = receive_local(
         &source_path,
         |_| vec![tip],
-        FetchLimits::default(),
-        &cancel,
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&cancel),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     let (_, retention) = received

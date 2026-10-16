@@ -1,11 +1,8 @@
 //! Run `cargo run --example fetch_local`; all repositories are disposable and local.
-use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use girt::fetch::{
-    FetchLimits, KnownHistory, receive_local_with_control, receive_local_with_known,
-};
+use girt::fetch::{FetchLimits, KnownHistory, receive_local};
 use girt::refs::{Expected, RefName, Target};
 use girt::transport::TransportControl;
 use girt::{
@@ -57,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let cancel = AtomicBool::new(false);
-    let received = receive_local_with_control(
+    let received = receive_local(
         source.git_dir(),
         |advertisement| {
             advertisement
@@ -70,10 +67,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|reference| reference.id)
                 .collect()
         },
-        FetchLimits::default(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
         TransportControl::new(&cancel)
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     )?;
     let result = received.install(&destination, girt::PackLimits::default(), &cancel)?;
     // Updating a ref is a separate, conditional operation, explicitly without a reflog.
@@ -93,14 +90,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         received.pack_bytes()
     );
     let known = KnownHistory::new(&fetched, &[commit], FetchLimits::default(), &cancel)?;
-    let repeated = receive_local_with_known(
+    let repeated = receive_local(
         source.git_dir(),
         |_| vec![commit],
-        &known,
-        FetchLimits::default(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(&known),
         TransportControl::new(&cancel)
             .with_deadline(Some(Instant::now() + Duration::from_secs(30))),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     )?;
     // Recheck known dependencies in the destination even when no pack was needed.
     repeated.install(&destination, girt::PackLimits::default(), &cancel)?;

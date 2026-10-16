@@ -42,6 +42,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   receiver roots (`&[]` for a full transfer), replacing `new_excluding` and `new_local`.
   `new_local_with_progress` becomes `new_with_progress`. jj adapters select receiver roots
   explicitly; preparation, validation, cancellation and cleanup contracts are unchanged.
+- Native local fetch has one `receive_local(source, select, request, control, observer)` entry.
+  Use `LocalFetchRequest::new(limits).with_known(&history)` for incremental transfer and
+  `LocalFetchObserver` for messages, construction and validation. `FetchRequest::receive_local`
+  takes that same observer; its separate progress overloads are removed. jj's high-level workflow
+  adapter needs no additional change for these lower-level calls. Transfer, validation, cleanup
+  and publication boundaries are unchanged.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 

@@ -759,7 +759,7 @@ fn native_local_depth_one_retains_only_tip_closure(#[case] format: ObjectFormat)
             &KnownHistory::default(),
             FetchLimits::default(),
             TransportControl::new(&cancel),
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
     assert_eq!(ready.received().shallow_roots(), &[tip]);

@@ -533,9 +533,9 @@ fn native_fetch_and_push_preserve_git_objects_and_refs(
     let received = receive_local(
         source.git_dir(),
         |_| vec![id],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     assert_eq!(received.wants(), &[id]);
@@ -638,9 +638,9 @@ fn native_fetch_rejects_missing_source_object_without_installation() {
     let result = receive_local(
         source.git_dir(),
         |_| vec![id],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     assert!(matches!(result, Err(FetchError::Missing(missing)) if missing == id));
 }
@@ -661,9 +661,9 @@ fn native_fetch_materializes_absent_canonical_empty_tree(#[case] format: ObjectF
     let received = receive_local(
         source.git_dir(),
         |_| vec![id],
-        FetchLimits::default(),
-        &cancel,
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&cancel),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     received
@@ -702,9 +702,9 @@ fn resolved_file_url_fetches_from_local_storage() {
     let received = receive_local(
         destination.local_path().unwrap(),
         |_| vec![id],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     assert_eq!(received.wants(), &[id]);
@@ -721,9 +721,9 @@ fn native_fetch_rejects_corrupt_source_object() {
     let result = receive_local(
         source.git_dir(),
         |_| vec![id],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     );
     assert!(matches!(result, Err(FetchError::LocalRead { id: failed, .. }) if failed == id));
 }
@@ -736,9 +736,9 @@ fn native_fetch_callback_interruption_returns_no_pack() {
     let result = receive_local(
         source.git_dir(),
         |_| vec![id],
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Break(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default().with_messages(&mut |_| ControlFlow::Break(())),
     );
     assert!(matches!(result, Err(FetchError::Cancelled)));
 }

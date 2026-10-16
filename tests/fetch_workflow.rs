@@ -157,7 +157,7 @@ fn receive(request: FetchRequest, source: &Source, known: &KnownHistory) -> Fetc
             known,
             FetchLimits::default(),
             TransportControl::new(&AtomicBool::new(false)),
-            |_| ControlFlow::Continue(()),
+            girt::fetch::LocalFetchObserver::default(),
         )
         .unwrap()
 }
@@ -619,7 +619,7 @@ fn tag_replacement_needs_authorization_as_well_as_git_force_syntax() {
         &KnownHistory::default(),
         FetchLimits::default(),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     );
     assert!(matches!(
         rejected,
@@ -823,10 +823,10 @@ fn cancelled_transfer_has_no_storage_effects() {
         &KnownHistory::default(),
         FetchLimits::default(),
         TransportControl::new(&cancel),
-        |_| {
+        girt::fetch::LocalFetchObserver::default().with_messages(&mut |_| {
             cancel.store(true, Ordering::Relaxed);
             ControlFlow::Break(())
-        },
+        }),
     );
     assert!(matches!(
         result,

@@ -1,12 +1,9 @@
 //! Original fixtures generated with Git, with Git as the object and pack fidelity oracle.
-use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use girt::fetch::{
-    FetchLimits, KnownHistory, LocalFetchProgress, receive_local_with_known_and_progress,
-};
+use girt::fetch::{FetchLimits, KnownHistory, LocalFetchProgress, receive_local};
 use girt::refs::{Expected, RefName, Target};
 use girt::transport::TransportControl;
 use girt::{InitKind, ObjectFormat, PackLimits, Repository};
@@ -99,18 +96,16 @@ fn tip(path: &Path) -> girt::ObjectId {
 
 fn receive(path: &Path, known: &KnownHistory) -> (girt::fetch::ReceivedFetch, u64) {
     let mut reads = 0;
-    let received = receive_local_with_known_and_progress(
+    let received = receive_local(
         path,
         |_| vec![tip(path)],
-        known,
-        FetchLimits::trusted(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::trusted()).with_known(known),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |event| {
+        girt::fetch::LocalFetchObserver::default().with_construction(&mut |event| {
             if let LocalFetchProgress::Reading { objects } = event {
                 reads = objects;
             }
-        },
+        }),
     )
     .unwrap();
     (received, reads)
@@ -355,14 +350,13 @@ fn local_transfer_reencodes_chains_for_the_receiver_depth_limit() {
         InitKind::Bare,
     )
     .unwrap();
-    let received = receive_local_with_known_and_progress(
+    let received = receive_local(
         source.path(),
         |_| vec![tip(source.path())],
-        &KnownHistory::default(),
-        FetchLimits::trusted().with_max_delta_depth(0),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::trusted().with_max_delta_depth(0))
+            .with_known(&KnownHistory::default()),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |_| {},
+        girt::fetch::LocalFetchObserver::default().with_construction(&mut |_| {}),
     )
     .unwrap();
     publish(&received, &dest, tip(source.path()));
@@ -402,14 +396,13 @@ fn source_index_identity_is_not_trusted_for_a_reused_whole_object() {
     make_fixture_file_writable(&idx);
     std::fs::write(idx, index).unwrap();
     std::fs::write(root.path().join("refs/for/blob"), format!("{false_id}\n")).unwrap();
-    let result = receive_local_with_known_and_progress(
+    let result = receive_local(
         root.path(),
         |_| vec![false_id],
-        &KnownHistory::default(),
-        FetchLimits::trusted(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::trusted())
+            .with_known(&KnownHistory::default()),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |_| {},
+        girt::fetch::LocalFetchObserver::default().with_construction(&mut |_| {}),
     );
     assert!(
         matches!(result, Err(girt::fetch::FetchError::Missing(missing)) if missing == false_id)
@@ -646,18 +639,17 @@ fn mislabelled_delta_base_cannot_misdirect_a_fetched_delta(#[case] format: Objec
     )
     .unwrap();
     let mut packed = 0;
-    let result = receive_local_with_known_and_progress(
+    let result = receive_local(
         source.path(),
         |_| vec![false_base, target],
-        &known,
-        FetchLimits::trusted().with_max_haves(0),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::trusted().with_max_haves(0))
+            .with_known(&known),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |event| {
+        girt::fetch::LocalFetchObserver::default().with_construction(&mut |event| {
             if let LocalFetchProgress::Packing { objects: (done, _) } = event {
                 packed = done;
             }
-        },
+        }),
     );
     assert_eq!(
         packed, 2,
@@ -702,14 +694,13 @@ fn local_fetch_frames_deltas_by_offset(#[case] format: ObjectFormat) {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let dest = Repository::init(format, root.path().join("dest.git"), InitKind::Bare).unwrap();
-    let received = receive_local_with_known_and_progress(
+    let received = receive_local(
         source.path(),
         |_| vec![head],
-        &KnownHistory::default(),
-        FetchLimits::trusted(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::trusted())
+            .with_known(&KnownHistory::default()),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |_| {},
+        girt::fetch::LocalFetchObserver::default().with_construction(&mut |_| {}),
     )
     .unwrap();
     received
@@ -812,14 +803,13 @@ fn damaged_source_entry_cannot_change_destination(
         }) if damaged == id)
         );
     } else {
-        let result = receive_local_with_known_and_progress(
+        let result = receive_local(
             source.path(),
             |_| vec![id],
-            &KnownHistory::default(),
-            FetchLimits::trusted(),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::trusted())
+                .with_known(&KnownHistory::default()),
             TransportControl::new(&AtomicBool::new(false)),
-            |_| ControlFlow::Continue(()),
-            |_| {},
+            girt::fetch::LocalFetchObserver::default().with_construction(&mut |_| {}),
         );
         assert!(matches!(
             result,

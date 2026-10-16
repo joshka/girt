@@ -144,13 +144,12 @@ fn require_absent(basename: &Path) -> Result<(), FetchError> {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::ControlFlow;
     use std::sync::Barrier;
 
     use rstest::rstest;
 
     use super::*;
-    use crate::fetch::{FetchLimits, KnownHistory, receive_local, receive_local_with_known};
+    use crate::fetch::{FetchLimits, KnownHistory, receive_local};
     use crate::refs::{Expected, RefName, Target};
     use crate::transport::TransportControl;
     use crate::{InitKind, ObjectFormat};
@@ -185,9 +184,9 @@ mod tests {
         let received = receive_local(
             source.git_dir(),
             |_| vec![id],
-            FetchLimits::default(),
-            &AtomicBool::new(false),
-            |_| ControlFlow::Continue(()),
+            crate::fetch::LocalFetchRequest::new(FetchLimits::default()),
+            crate::transport::TransportControl::new(&AtomicBool::new(false)),
+            crate::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
         (root, source, destination, received)
@@ -303,13 +302,12 @@ mod tests {
             &cancel,
         )
         .unwrap();
-        let incremental = receive_local_with_known(
+        let incremental = receive_local(
             source.git_dir(),
             |_| received.wants().to_vec(),
-            &known,
-            FetchLimits::default(),
+            crate::fetch::LocalFetchRequest::new(FetchLimits::default()).with_known(&known),
             TransportControl::new(&cancel),
-            |_| ControlFlow::Continue(()),
+            crate::fetch::LocalFetchObserver::default(),
         )
         .unwrap();
         let error = incremental

@@ -1,6 +1,5 @@
 //! Run `cargo run --example fetch_remote`; Git serves a disposable local repository.
 use std::collections::BTreeSet;
-use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -68,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &KnownHistory::default(),
         FetchLimits::default(),
         control,
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchObserver::default(),
     )?;
     let report = match ready.finish(FetchUpdateLimits::default(), &cancel) {
         Ok(report) => report,

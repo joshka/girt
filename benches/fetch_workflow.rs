@@ -1,7 +1,6 @@
 //! Benchmarks the fetch workflow from preparation through installation and publication.
 
 use std::hint::black_box;
-use std::ops::ControlFlow;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -92,7 +91,7 @@ fn workflow(c: &mut Criterion) {
                         &KnownHistory::default(),
                         FetchLimits::default(),
                         TransportControl::new(&cancel),
-                        |_| ControlFlow::Continue(()),
+                        girt::fetch::LocalFetchObserver::default(),
                     )
                     .unwrap();
                 (root, ready)

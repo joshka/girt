@@ -3,7 +3,6 @@ use std::ops::ControlFlow;
 use std::path::Path;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 use super::receive_with_known;
@@ -30,6 +29,20 @@ use crate::transport::TransportControl;
 /// graph parse, hash or compression call cannot be interrupted. Concurrent source updates may
 /// produce a mixed advertisement; missing or corrupt selected history fails before publication.
 ///
+/// With verified history, complete known boundaries are excluded and become dependencies rechecked
+/// during [`ReceivedFetch::install`]. Declared shallow roots are expanded. Selected blobs are
+/// located by framing rather than retained as decoded payloads; the spooled pack is independently
+/// imported to check identities, delta depth and connectivity. The caller owns history preparation
+/// and protection against concurrent destination collection.
+///
+/// Validation snapshots report actual object and delta work; a pack-free fetch has no snapshots.
+/// Completion describes validation only. A later deadline check or enclosing request's planning
+/// can still fail before installation or reference publication.
+///
+/// # Panics
+///
+/// Observer panics unwind normally. No destination storage has been installed by this operation.
+///
 /// # Errors
 ///
 /// Returns path, reference, object, graph, limit and interruption failures. No destination is
@@ -37,150 +50,34 @@ use crate::transport::TransportControl;
 pub fn receive_local(
     source: impl AsRef<Path>,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    limits: FetchLimits,
-    cancel: &AtomicBool,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-) -> Result<ReceivedFetch, FetchError> {
-    receive_local_with_control(
-        source,
-        select,
-        limits,
-        TransportControl::new(cancel),
-        progress,
-    )
-}
-
-/// Receives objects from native local storage with caller-controlled interruption.
-///
-/// Uses [`receive_local`]'s path and storage contract. No destination is touched on interruption.
-///
-/// # Errors
-///
-/// Returns [`receive_local`]'s failures, [`FetchError::Cancelled`], or [`FetchError::Deadline`].
-pub fn receive_local_with_control(
-    source: impl AsRef<Path>,
-    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    limits: FetchLimits,
+    request: super::LocalFetchRequest<'_>,
     control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+    mut observer: super::LocalFetchObserver<'_>,
 ) -> Result<ReceivedFetch, FetchError> {
-    receive_local_with_known(
-        source,
-        select,
-        &KnownHistory::default(),
-        limits,
-        control,
-        progress,
-    )
-}
-
-/// Reads a local source while excluding explicitly verified destination history.
-///
-/// Stops at destination-known objects with complete history; declared shallow roots are expanded.
-/// Selected blobs are located by framing rather than retained as decoded payloads. The outgoing
-/// pack is spooled, then independently imported to check identities, delta depth and connectivity.
-/// Excluded boundaries become dependencies rechecked during installation. Knowledge preparation
-/// and protection against concurrent destination collection remain caller-owned.
-///
-/// # Errors
-///
-/// Returns path, reference, object, graph, limit and interruption failures.
-pub fn receive_local_with_known(
-    source: impl AsRef<Path>,
-    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: &KnownHistory,
-    limits: FetchLimits,
-    control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-) -> Result<ReceivedFetch, FetchError> {
-    receive_local_with_known_and_progress(source, select, known, limits, control, progress, |_| {})
-}
-
-/// Reads a local source with synchronous typed construction progress.
-///
-/// Uses [`receive_local_with_known`]'s history and storage contract. `observe` reports
-/// [`super::LocalFetchProgress`] after completed work and must return promptly. It cannot fail;
-/// set `control.cancel` to stop at the next cooperative check. The original `progress` callback
-/// retains its cancellation behavior. No destination is touched by this operation.
-///
-/// # Errors
-///
-/// Returns [`receive_local_with_known`]'s failures without a completion notification.
-pub fn receive_local_with_known_and_progress(
-    source: impl AsRef<Path>,
-    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: &KnownHistory,
-    limits: FetchLimits,
-    control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-    observe: impl FnMut(super::LocalFetchProgress),
-) -> Result<ReceivedFetch, FetchError> {
-    receive_local_with_known_depth_and_progress(
-        source, select, known, None, limits, control, progress, observe,
-    )
-}
-
-/// Reads a local source and reports actual pack-entry and delta validation work.
-///
-/// Uses [`receive_local_with_known`]'s storage contract. The synchronous observer receives
-/// [`super::ValidationProgress`], independently of receiver messages. No pack means no snapshots.
-/// Observers must return promptly; set `control.cancel` to request cooperative cancellation.
-/// Completion describes validation, before installation or reference publication. A subsequent
-/// deadline/cancellation check or planning step can still fail the enclosing fetch.
-///
-/// # Errors
-///
-/// Returns [`receive_local_with_known`]'s failures. Failed validation never reports completion.
-///
-/// # Panics
-///
-/// Observer panics unwind normally; this operation has not installed destination storage.
-pub fn receive_local_with_validation_progress(
-    source: impl AsRef<Path>,
-    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: &KnownHistory,
-    limits: FetchLimits,
-    control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-    validation: impl FnMut(super::ValidationProgress),
-) -> Result<ReceivedFetch, FetchError> {
+    let empty = KnownHistory::default();
     receive_local_observed(
         source,
         select,
-        known,
+        request.known.unwrap_or(&empty),
         None,
-        limits,
+        request.limits,
         control,
-        progress,
-        |_| {},
-        validation,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "local transfer keeps explicit selection and progress policy"
-)]
-pub(super) fn receive_local_with_known_depth_and_progress(
-    source: impl AsRef<Path>,
-    select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,
-    known: &KnownHistory,
-    depth: Option<NonZeroU32>,
-    limits: FetchLimits,
-    control: TransportControl<'_>,
-    progress: impl FnMut(&[u8]) -> ControlFlow<()>,
-    observe: impl FnMut(super::LocalFetchProgress),
-) -> Result<ReceivedFetch, FetchError> {
-    receive_local_observed(
-        source,
-        select,
-        known,
-        depth,
-        limits,
-        control,
-        progress,
-        observe,
-        |_| {},
+        |message| {
+            observer
+                .messages
+                .as_mut()
+                .map_or(ControlFlow::Continue(()), |notify| notify(message))
+        },
+        |event| {
+            if let Some(notify) = observer.construction.as_mut() {
+                notify(event);
+            }
+        },
+        |event| {
+            if let Some(notify) = observer.validation.as_mut() {
+                notify(event);
+            }
+        },
     )
 }
 

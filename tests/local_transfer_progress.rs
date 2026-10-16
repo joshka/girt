@@ -1,13 +1,9 @@
 //! Original Git-generated packs; Git verify-pack is the independent counter oracle.
 #[path = "support/pack_git.rs"]
 mod pack_git;
-
-use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use girt::fetch::{
-    FetchLimits, KnownHistory, ValidationProgress, receive_local_with_validation_progress,
-};
+use girt::fetch::{FetchLimits, KnownHistory, ValidationProgress, receive_local};
 use girt::push::{
     ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushLimits, send_local_with_progress,
 };
@@ -40,7 +36,7 @@ fn check(events: &[ValidationProgress], objects: u64, deltas: u64) {
 fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
     let mut events = Vec::new();
-    let received = receive_local_with_validation_progress(
+    let received = receive_local(
         fixture.root.path(),
         |advertisement| {
             advertisement
@@ -50,11 +46,10 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
                 .map(|reference| reference.id)
                 .collect()
         },
-        &KnownHistory::default(),
-        FetchLimits::default(),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default())
+            .with_known(&KnownHistory::default()),
         TransportControl::new(&AtomicBool::new(false)),
-        |_| ControlFlow::Continue(()),
-        |event| events.push(event),
+        girt::fetch::LocalFetchObserver::default().with_validation(&mut |event| events.push(event)),
     )
     .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -88,9 +83,9 @@ fn local_fetch_reports_git_verified_entries_and_deltas(#[case] format: ObjectFor
                 .map(|reference| reference.id)
                 .collect()
         },
-        FetchLimits::default(),
-        &AtomicBool::new(false),
-        |_| ControlFlow::Continue(()),
+        girt::fetch::LocalFetchRequest::new(FetchLimits::default()),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        girt::fetch::LocalFetchObserver::default(),
     )
     .unwrap();
     let plain_root = tempfile::tempdir().unwrap();
@@ -353,7 +348,7 @@ fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
     for delta in [false, true] {
         let cancel = AtomicBool::new(false);
         let mut events = Vec::new();
-        let result = receive_local_with_validation_progress(
+        let result = receive_local(
             fixture.root.path(),
             |advertisement| {
                 advertisement
@@ -362,11 +357,10 @@ fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
                     .map(|reference| reference.id)
                     .collect()
             },
-            &KnownHistory::default(),
-            FetchLimits::default(),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default())
+                .with_known(&KnownHistory::default()),
             TransportControl::new(&cancel),
-            |_| ControlFlow::Continue(()),
-            |event| {
+            girt::fetch::LocalFetchObserver::default().with_validation(&mut |event| {
                 events.push(event);
                 if if delta {
                     event.deltas.is_some_and(|value| value.0 > 0)
@@ -375,13 +369,13 @@ fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
                 } {
                     cancel.store(true, Ordering::Relaxed);
                 }
-            },
+            }),
         );
         assert!(matches!(result, Err(girt::fetch::FetchError::Cancelled)));
         assert!(events.iter().all(|event| !event.complete));
     }
     let result = std::panic::catch_unwind(|| {
-        receive_local_with_validation_progress(
+        receive_local(
             fixture.root.path(),
             |advertisement| {
                 advertisement
@@ -390,11 +384,11 @@ fn fetch_validation_cancellation_and_panic_leave_source_unchanged() {
                     .map(|reference| reference.id)
                     .collect()
             },
-            &KnownHistory::default(),
-            FetchLimits::default(),
+            girt::fetch::LocalFetchRequest::new(FetchLimits::default())
+                .with_known(&KnownHistory::default()),
             TransportControl::new(&AtomicBool::new(false)),
-            |_| ControlFlow::Continue(()),
-            |_| panic!("observer panic"),
+            girt::fetch::LocalFetchObserver::default()
+                .with_validation(&mut |_| panic!("observer panic")),
         )
     });
     assert!(result.is_err());

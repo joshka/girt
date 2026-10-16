@@ -104,7 +104,7 @@ impl CloneRequest {
     ///
     /// No local known history is offered. Selection uses this session's advertisement; later
     /// remote ref movement never substitutes another ID. Server refusal/lost objects fail transfer.
-    /// See [`crate::fetch::receive_local_with_control`] for process, deadline and progress policy.
+    /// See [`crate::fetch::receive_local`] for process, deadline and progress policy.
     ///
     /// # Errors
     ///
@@ -115,15 +115,15 @@ impl CloneRequest {
         source: impl AsRef<Path>,
         limits: FetchLimits,
         control: TransportControl<'_>,
-        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<CloneReady, CloneTransferError> {
         let mut saved = None;
-        let received = crate::fetch::receive_local_with_control(
+        let received = crate::fetch::receive_local(
             source,
             |ad| plan::select(self.plan(ad), &mut saved),
-            limits,
+            crate::fetch::LocalFetchRequest::new(limits),
             control,
-            progress,
+            crate::fetch::LocalFetchObserver::default().with_messages(&mut progress),
         );
         let (plan, received) = selected(saved, received)?;
         Ok(CloneReady {
