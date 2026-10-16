@@ -16,6 +16,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Native local push accepts Git-scale destinations, such as a Linux clone with a 300 MB pack
+  index. The destination object store opens under the new `PushLimits::destination_packs`
+  (`PackLimits::trusted()` in `PushLimits::trusted()`) to check history and install the pushed
+  pack, rather than a fixed 64 MiB index bound.
 - Native local fetch and clone accept Git-scale sources, such as a Linux clone with a 300 MB pack
   index. The source object store opens under the new `FetchLimits::source_packs`
   (`PackLimits::trusted()` in `FetchLimits::trusted()`), the received index is bounded through

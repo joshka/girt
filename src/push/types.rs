@@ -127,6 +127,14 @@ pub struct PushLimits {
     /// Offering receiver candidates additionally caps output depth at one so internal bases
     /// always resolve before receiver-assisted external lookup.
     pub compression: PackCompression,
+    /// Bounds for opening a native local destination repository's object store, to check its
+    /// history and install the pushed pack (default
+    /// [`PackLimits::default`](crate::PackLimits::default), which admits 64 MiB of pack index).
+    ///
+    /// Git-scale destinations exceed the default: a Linux kernel clone has a 300 MB index. Use
+    /// [`PackLimits::trusted`](crate::PackLimits::trusted), as [`Self::trusted`] does, for
+    /// repositories the caller trusts. Network pushes open no destination store and ignore this.
+    pub destination_packs: crate::PackLimits,
 }
 
 impl PushLimits {
@@ -199,7 +207,15 @@ impl PushLimits {
         self.compression = compression;
         self
     }
+
+    /// Sets [`Self::destination_packs`].
+    #[must_use]
+    pub fn with_destination_packs(mut self, destination_packs: crate::PackLimits) -> Self {
+        self.destination_packs = destination_packs;
+        self
+    }
 }
+
 impl Default for PushLimits {
     fn default() -> Self {
         Self {
@@ -213,6 +229,7 @@ impl Default for PushLimits {
             read: ReadLimits::default(),
             pack: PackWriteLimits::default(),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
+            destination_packs: crate::PackLimits::default(),
         }
     }
 }
@@ -237,6 +254,7 @@ impl PushLimits {
             read: ReadLimits::trusted(),
             pack: PackWriteLimits::trusted(),
             compression: PackCompression::Delta(crate::DeltaOptions::DEFAULT),
+            destination_packs: crate::PackLimits::trusted(),
         }
     }
 }
