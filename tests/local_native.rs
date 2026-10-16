@@ -7,8 +7,8 @@ use std::sync::atomic::AtomicBool;
 use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
 use girt::fetch::{FetchError, FetchLimits, receive_local};
 use girt::push::{
-    ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushError, PushFailure, PushLimits,
-    RejectionOrigin, send_local, send_local_with_context, send_local_with_identity,
+    ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits, RejectionOrigin,
+    send_local,
 };
 use girt::refs::{Backend, Expected, RefName, Target};
 use girt::transport::TransportControl;
@@ -104,7 +104,12 @@ fn native_push_creates_and_deletes_git_reflog_with_explicit_identity(#[case] for
     let prepared =
         PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel).unwrap();
     assert!(matches!(
-        send_local(dest.git_dir(), &prepared, &cancel),
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&prepared),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        ),
         Err(PushError::NotSent(PushFailure::Identity))
     ));
     let identity = Signature {
@@ -113,11 +118,11 @@ fn native_push_creates_and_deletes_git_reflog_with_explicit_identity(#[case] for
         seconds: 1_700_000_000,
         offset_minutes: 0,
     };
-    let report = send_local_with_identity(
+    let report = send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
         TransportControl::new(&cancel),
-        &identity,
+        |_| {},
     )
     .unwrap();
     assert!(report.all_succeeded());
@@ -155,11 +160,11 @@ fn native_push_creates_and_deletes_git_reflog_with_explicit_identity(#[case] for
         &cancel,
     )
     .unwrap();
-    let report = send_local_with_identity(
+    let report = send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
         TransportControl::new(&cancel),
-        &identity,
+        |_| {},
     )
     .unwrap();
     assert!(report.all_succeeded());
@@ -197,7 +202,13 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
         .with_force(ForcePolicy::FastForwardOnly);
     let prepared =
         PreparedPush::new(&objects, vec![update], &[], PushLimits::default(), &cancel).unwrap();
-    let refused = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    let refused = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&cancel),
+        |_| {},
+    )
+    .unwrap();
     assert!(matches!(
         refused.refs[0].status,
         Some(girt::push::Status::Rejected(_))
@@ -214,11 +225,11 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
         seconds: 1_700_000_000,
         offset_minutes: 0,
     };
-    let accepted = send_local_with_identity(
+    let accepted = send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
         TransportControl::new(&cancel),
-        &identity,
+        |_| {},
     )
     .unwrap();
     assert!(accepted.all_succeeded());
@@ -238,7 +249,13 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
         &cancel,
     )
     .unwrap();
-    let refused = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    let refused = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&cancel),
+        |_| {},
+    )
+    .unwrap();
     assert!(matches!(
         refused.refs[0].status,
         Some(girt::push::Status::Rejected(_))
@@ -249,11 +266,11 @@ fn native_current_branch_policies_distinguish_updates_and_deletes() {
         .unwrap()
         .write_all(b" denyDeleteCurrent = false\n")
         .unwrap();
-    let accepted = send_local_with_identity(
+    let accepted = send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
         TransportControl::new(&cancel),
-        &identity,
+        |_| {},
     )
     .unwrap();
     assert!(accepted.all_succeeded());
@@ -286,9 +303,14 @@ fn native_push_uses_explicit_inherited_receive_config(#[case] format: ObjectForm
     )
     .unwrap();
     assert!(
-        send_local(dest.git_dir(), &create, &cancel)
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&create),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
 
     let global_config = root.path().join("global-config");
@@ -307,11 +329,11 @@ fn native_push_uses_explicit_inherited_receive_config(#[case] format: ObjectForm
         &cancel,
     )
     .unwrap();
-    let report = send_local_with_context(
+    let report = send_local(
         dest.git_dir(),
-        &delete,
+        girt::push::LocalPushRequest::new(&delete).with_config_inputs(&config_inputs),
         TransportControl::new(&cancel),
-        LocalPushContext::new(&config_inputs).with_identity(None),
+        |_| {},
     )
     .unwrap();
     assert!(matches!(
@@ -327,9 +349,14 @@ fn native_push_uses_explicit_inherited_receive_config(#[case] format: ObjectForm
         Some(Target::Direct(id))
     );
     assert!(
-        send_local(dest.git_dir(), &delete, &cancel)
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&delete),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
 }
 
@@ -360,7 +387,13 @@ fn native_hidden_ref_rejects_independently_of_visible_ref() {
         &cancel,
     )
     .unwrap();
-    let report = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    let report = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&cancel),
+        |_| {},
+    )
+    .unwrap();
     assert!(matches!(
         report.refs[0].status,
         Some(girt::push::Status::Rejected(_))
@@ -406,7 +439,13 @@ fn native_stale_expectation_is_distinct_from_receiver_rejection(
         &cancel,
     )
     .unwrap();
-    let report = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    let report = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&cancel),
+        |_| {},
+    )
+    .unwrap();
     assert!(matches!(
         report.refs[0].status,
         Some(girt::push::Status::Rejected(_))
@@ -458,11 +497,11 @@ fn native_warn_mode_reports_accepted_current_branch_update() {
         seconds: 1_700_000_000,
         offset_minutes: 0,
     };
-    let report = send_local_with_identity(
+    let report = send_local(
         dest.git_dir(),
-        &prepared,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
         TransportControl::new(&cancel),
-        &identity,
+        |_| {},
     )
     .unwrap();
     assert!(report.all_succeeded());
@@ -504,7 +543,12 @@ fn invalid_receive_boolean_refuses_before_native_installation(#[case] key: &str)
     )
     .unwrap();
     assert!(matches!(
-        send_local(dest.git_dir(), &prepared, &cancel),
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&prepared),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        ),
         Err(PushError::NotSent(PushFailure::Unsupported(_)))
     ));
     assert!(
@@ -554,7 +598,13 @@ fn native_fetch_and_push_preserve_git_objects_and_refs(
         &AtomicBool::new(false),
     )
     .unwrap();
-    let report = send_local(pushed.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    let report = send_local(
+        pushed.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    )
+    .unwrap();
     assert!(report.all_succeeded());
     assert_eq!(
         pushed
@@ -588,9 +638,14 @@ fn native_push_deletes_one_ref_and_creates_another(
     let prepared =
         PreparedPush::new(&objects, vec![old], &[], PushLimits::default(), &cancel).unwrap();
     assert!(
-        send_local(dest.git_dir(), &prepared, &cancel)
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&prepared),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
 
     let commands = vec![
@@ -606,9 +661,14 @@ fn native_push_deletes_one_ref_and_creates_another(
     let prepared =
         PreparedPush::new(&objects, commands, &[], PushLimits::default(), &cancel).unwrap();
     assert!(
-        send_local(dest.git_dir(), &prepared, &cancel)
-            .unwrap()
-            .all_succeeded()
+        send_local(
+            dest.git_dir(),
+            girt::push::LocalPushRequest::new(&prepared),
+            girt::transport::TransportControl::new(&cancel),
+            |_| {}
+        )
+        .unwrap()
+        .all_succeeded()
     );
     let refs = dest.references().unwrap();
     assert_eq!(
@@ -803,7 +863,13 @@ fn native_push_accepts_history_reaching_unstored_empty_tree(#[case] format: Obje
         &cancel,
     )
     .unwrap();
-    let report = send_local(dest.git_dir(), &prepared, &cancel).unwrap();
+    let report = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&cancel),
+        |_| {},
+    )
+    .unwrap();
     assert_eq!(
         report.refs[0].rejection_origin,
         Some(RejectionOrigin::ExpectedValue)
@@ -849,7 +915,13 @@ fn receive_hooks_on_unsupported_platform_refuse_before_mutation() {
         &AtomicBool::new(false),
     )
     .unwrap();
-    let error = send_local(destination.git_dir(), &prepared, &AtomicBool::new(false)).unwrap_err();
+    let error = send_local(
+        destination.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    )
+    .unwrap_err();
     assert!(matches!(
         error,
         PushError::NotSent(PushFailure::Unsupported(
@@ -971,7 +1043,13 @@ fn pre_receive_rejection_does_not_materialize_unstored_empty_tree(#[case] format
         &AtomicBool::new(false),
     )
     .unwrap();
-    let report = send_local(dest.git_dir(), &prepared, &AtomicBool::new(false)).unwrap();
+    let report = send_local(
+        dest.git_dir(),
+        girt::push::LocalPushRequest::new(&prepared),
+        girt::transport::TransportControl::new(&AtomicBool::new(false)),
+        |_| {},
+    )
+    .unwrap();
     assert_eq!(
         report.refs[0].status,
         Some(girt::push::Status::Rejected(

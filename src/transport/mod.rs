@@ -24,7 +24,7 @@
 //! use girt::PackLimits;
 //! use girt::push::{
 //!     ForcePolicy, PreparedPush, PushCommand, PushError, PushFailure, PushLimits,
-//!     send_local_with_control,
+//!     send_local,
 //! };
 //! use girt::transport::TransportControl;
 //! # use girt::refs::{Expected, RefName, Target};
@@ -58,7 +58,12 @@
 //!     &objects, vec![command], &[], PushLimits::default(), &cancel,
 //! )?;
 //! let control = TransportControl::new(&cancel).with_deadline(Some(Instant::now()));
-//! let result = send_local_with_control(destination.git_dir(), &prepared, control);
+//! let result = send_local(
+//!     destination.git_dir(),
+//!     girt::push::LocalPushRequest::new(&prepared),
+//!     control,
+//!     |_| {}
+//! );
 //! assert!(matches!(result, Err(PushError::NotSent(PushFailure::Deadline))));
 //! assert_eq!(destination.references()?.read(&main)?, None);
 //! # Ok::<(), Box<dyn std::error::Error>>(())

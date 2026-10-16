@@ -1,12 +1,11 @@
 //! Original Git-generated packs; Git verify-pack is the independent counter oracle.
 #[path = "support/pack_git.rs"]
 mod pack_git;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use girt::fetch::{FetchLimits, KnownHistory, ValidationProgress, receive_local};
-use girt::push::{
-    ForcePolicy, LocalPushContext, PreparedPush, PushCommand, PushLimits, send_local_with_progress,
-};
+use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushLimits, send_local};
 use girt::refs::RefName;
 use girt::transport::TransportControl;
 use girt::{InitKind, ObjectFormat, PackLimits, Repository};
@@ -144,11 +143,10 @@ fn local_push_validation_cancellation_never_publishes(#[case] format: ObjectForm
         let cancel = AtomicBool::new(false);
         let mut events = Vec::new();
         let inputs = girt::config::ConfigInputs::default();
-        let result = send_local_with_progress(
+        let result = send_local(
             destination.git_dir(),
-            &prepared,
+            girt::push::LocalPushRequest::new(&prepared).with_config_inputs(&inputs),
             TransportControl::new(&cancel),
-            LocalPushContext::new(&inputs).with_identity(None),
             |event| {
                 events.push(event);
                 if if delta {
@@ -482,11 +480,10 @@ fn observer_panics_leave_push_and_repository_fetch_destinations_unchanged() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
             "push" => {
                 let inputs = girt::config::ConfigInputs::default();
-                let _ = send_local_with_progress(
+                let _ = send_local(
                     destination.git_dir(),
-                    &prepared,
+                    girt::push::LocalPushRequest::new(&prepared).with_config_inputs(&inputs),
                     TransportControl::new(&AtomicBool::new(false)),
-                    LocalPushContext::new(&inputs).with_identity(None),
                     |event| {
                         if event.objects.0 > 0 {
                             panic!("observer panic");

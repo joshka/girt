@@ -273,6 +273,14 @@ fn debug_redacts_inherited_configuration_and_identity() {
         seconds: 0,
         offset_minutes: 0,
     };
-    let context = super::LocalPushContext::new(&inputs).with_identity(Some(&identity));
-    assert_eq!(format!("{context:?}"), "LocalPushContext { .. }");
+    let context = super::ReceiverPolicy {
+        config_inputs: &inputs,
+        identity: Some(&identity),
+    };
+    assert_eq!(format!("{context:?}"), "ReceiverPolicy { .. }");
+    let fixture = Fixture::new();
+    let request = super::LocalPushRequest::new(&fixture.prepared)
+        .with_config_inputs(&inputs)
+        .with_identity(Some(&identity));
+    assert_eq!(format!("{request:?}"), "LocalPushRequest { .. }");
 }

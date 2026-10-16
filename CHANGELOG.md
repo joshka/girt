@@ -48,6 +48,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   takes that same observer; its separate progress overloads are removed. jj's high-level workflow
   adapter needs no additional change for these lower-level calls. Transfer, validation, cleanup
   and publication boundaries are unchanged.
+- Native local push has one `send_local(destination, request, control, validation)` entry.
+  Construct `LocalPushRequest::new(&prepared)` and set inherited configuration or reflog identity
+  rather than select an overload. The public `LocalPushContext` is removed; the request owns both inputs.
+  jj's configured workflow adapter keeps its existing receiver configuration and identity policy.
+  Preparation, validation, cancellation, cleanup and partial effects are unchanged. P3, P5 and P6
+  remain deferred; P1 requires no additional changes in those areas.
 
 ## [0.9.2](https://github.com/joshka/girt/compare/v0.9.1...v0.9.2) - 2026-10-16
 
