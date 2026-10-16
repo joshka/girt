@@ -1215,9 +1215,18 @@ fn native_push_opens_destination_within_destination_pack_limits(
         result.as_ref().map(|report| report.all_succeeded()).ok(),
         pushed.map(|()| true)
     );
+    let limit_cause = match &result {
+        Err(PushError::NotSent(PushFailure::Install(error))) => match error.as_ref() {
+            FetchError::Destination(cause) => Some(cause.to_string()),
+            _ => None,
+        },
+        _ => None,
+    };
     assert_eq!(
-        matches!(result, Err(PushError::NotSent(_))),
-        pushed.is_none()
+        limit_cause,
+        pushed
+            .is_none()
+            .then(|| "object storage limit exceeded: pack index bytes".to_owned())
     );
     let observed = git_in(
         &destination,
