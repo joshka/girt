@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/joshka/girt/compare/v0.9.2...v0.10.0) - 2026-10-16
+
+### Other
+
+- Keep exact rewrites when the candidate limit skips edited detection ([#230](https://github.com/joshka/girt/pull/230))
+- [**breaking**] consolidate native push entries ([#214](https://github.com/joshka/girt/pull/214))
+- [**breaking**] consolidate native fetch entries ([#213](https://github.com/joshka/girt/pull/213))
+- [**breaking**] remove transfer constructor aliases ([#212](https://github.com/joshka/girt/pull/212))
+- [**breaking**] move orchestration into workflow ([#209](https://github.com/joshka/girt/pull/209))
+- [**breaking**] replace API policy booleans ([#208](https://github.com/joshka/girt/pull/208))
+- [**breaking**] type maintenance failure causes ([#205](https://github.com/joshka/girt/pull/205))
+- Match Git at the loose prune cutoff ([#184](https://github.com/joshka/girt/pull/184))
+
 ### Added
 
 - `Objects::detect_rewrites_or_exact` returns exact rename and copy matches with an explicit
