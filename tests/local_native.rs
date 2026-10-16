@@ -1170,3 +1170,66 @@ fn native_fetch_opens_source_within_source_pack_limits(
     });
     assert_eq!(installed.ok(), fetched.then(|| "packed source".to_owned()));
 }
+
+/// Native local push opens the destination store under `PushLimits::destination_packs`, not a
+/// fixed default: a Git-packed destination whose index exceeds the bound refuses the push before
+/// any reference changes, and the default bound accepts it with Git-readable results.
+#[rstest]
+#[case::index_over_limit(Some(1), None)]
+#[case::default_limits(None, Some(()))]
+fn native_push_opens_destination_within_destination_pack_limits(
+    #[case] below_index: Option<usize>,
+    #[case] pushed: Option<()>,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let (destination, _, index_len) = packed_git_source(&root);
+    let source = repository(&root, "pusher", ObjectFormat::Sha1, Backend::Files);
+    let id = commit(&source);
+    let packs = below_index.map_or_else(PackLimits::default, |below| {
+        PackLimits::default().with_max_index_bytes(index_len - below)
+    });
+    let command = PushCommand::new(RefName::new("refs/heads/pushed").unwrap(), None, id);
+    let identity = Signature {
+        name: b"Local Test".to_vec(),
+        email: b"local@example.invalid".to_vec(),
+        seconds: 1_700_000_000,
+        offset_minutes: 0,
+    };
+    let cancel = AtomicBool::new(false);
+    let objects = source.objects(PackLimits::default()).unwrap();
+    let prepared = PreparedPush::new(
+        &objects,
+        vec![command],
+        &[],
+        PushLimits::default().with_destination_packs(packs),
+        &cancel,
+    )
+    .unwrap();
+    let result = send_local(
+        &destination,
+        girt::push::LocalPushRequest::new(&prepared).with_identity(Some(&identity)),
+        TransportControl::new(&cancel),
+        |_| {},
+    );
+    assert_eq!(
+        result.as_ref().map(|report| report.all_succeeded()).ok(),
+        pushed.map(|()| true)
+    );
+    assert_eq!(
+        matches!(result, Err(PushError::NotSent(_))),
+        pushed.is_none()
+    );
+    let observed = git_in(
+        &destination,
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/heads/pushed",
+        ],
+    );
+    assert_eq!(
+        (!observed.is_empty()).then(|| observed.parse::<girt::ObjectId>().unwrap()),
+        pushed.map(|()| id)
+    );
+    git_in(&destination, &["fsck", "--strict"]);
+}
