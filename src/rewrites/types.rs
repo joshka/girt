@@ -28,10 +28,19 @@ pub struct Options {
     pub copies: Copies,
     /// Include empty blobs as exact-match sources (default false).
     pub track_empty: bool,
-    /// Maximum sources or remaining destinations for edited-content detection (default 1000).
-    /// Exact matches are attempted first. Exceeding this limit returns a structured error,
-    /// with no partial results; it never silently reports an incomplete inference as complete.
-    /// Zero permits exact detection only if there are no remaining candidate pairs.
+    /// Bound on edited-content detection, as in Git's `diff.renameLimit` (default 1000).
+    ///
+    /// Exact matches are attempted first. Edited-content detection is skipped when the remaining
+    /// sources multiplied by the remaining destinations exceeds the square of this limit, as Git
+    /// does. [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact)
+    /// then returns the exact matches with an [`InexactSkipped`] report;
+    /// [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns
+    /// [`Error::Candidates`]. Neither reports an incomplete inference as complete.
+    ///
+    /// Only candidates that could be scored are counted: empty blobs, and binary blobs when
+    /// [`Self::approximate_binary`] is false, are excluded. Git also counts those files, so it can
+    /// skip edited detection where girt still performs it. Zero skips edited detection whenever a
+    /// scorable pair remains; Git's configuration value 0 means unlimited, which is `usize::MAX`.
     pub candidate_limit: usize,
     /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
     /// Exact object-ID matches are still considered (default true).
@@ -207,6 +216,46 @@ pub struct Rewrite {
     pub kind: Kind,
 }
 
+/// Inferred rewrites, with an explicit report when edited-content detection was skipped.
+///
+/// Returned by [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact).
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct Detection {
+    /// Inferred relationships, ordered by destination raw path bytes.
+    ///
+    /// When [`Self::inexact_skipped`] is set, these are the exact matches only.
+    pub rewrites: Vec<Rewrite>,
+    /// Set when [`Options::candidate_limit`] prevented edited-content detection.
+    ///
+    /// `None` means detection ran to completion under the requested options.
+    pub inexact_skipped: Option<InexactSkipped>,
+}
+
+/// Edited-content detection was skipped because too many candidates remained after exact matching.
+///
+/// Destinations without an exact match stay unpaired, even where an edited source would match.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct InexactSkipped {
+    /// Scorable sources remaining after exact matching.
+    pub sources: usize,
+    /// Scorable destinations remaining after exact matching.
+    pub targets: usize,
+    /// Caller-specified [`Options::candidate_limit`].
+    pub limit: usize,
+}
+
+impl InexactSkipped {
+    /// Smallest [`Options::candidate_limit`] that permits edited detection for these candidates.
+    ///
+    /// This is the larger of the two counts, the value Git suggests for `diff.renameLimit`.
+    #[must_use]
+    pub fn required_limit(&self) -> usize {
+        self.sources.max(self.targets)
+    }
+}
+
 /// Inference failed without returning partial records or modifying the repository.
 ///
 /// Callers may raise an exhausted bound or retry cancellation with a cleared flag. Missing/corrupt
@@ -241,6 +290,9 @@ pub enum Error {
         actual: ObjectKind,
     },
     /// Edited detection would exceed the requested candidate limit after exact matching.
+    ///
+    /// Only [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns this; see
+    /// [`InexactSkipped`] for the fields.
     #[error("rewrite candidates ({sources} sources, {targets} targets) exceed limit {limit}")]
     Candidates {
         /// Eligible sources.

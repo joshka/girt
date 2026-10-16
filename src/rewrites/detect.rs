@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 
 use super::similarity::{Budget, Content, spend};
-use super::{Copies, Error, Kind, Limits, Options, Rewrite};
+use super::{Copies, Detection, Error, InexactSkipped, Kind, Limits, Options, Rewrite};
 use crate::{EntryMode, ObjectId, ObjectKind, Objects, TreeChange, TreeValue};
 
 impl Objects {
@@ -32,6 +32,9 @@ impl Objects {
     /// return. No attributes, clean/smudge/textconv drivers, index or worktree are consulted: these
     /// are comparisons of stored blob bytes. Callers own configuration and merge/history policy.
     ///
+    /// [`Self::detect_rewrites_or_exact`] instead returns the exact matches when the
+    /// [`Options::candidate_limit`] skips edited-content detection.
+    ///
     /// # Errors
     ///
     /// Returns [`Error`] on invalid options, tree/blob storage failures, missing/wrong-kind blobs,
@@ -47,6 +50,38 @@ impl Objects {
         targets: Option<&[&[u8]]>,
         cancel: &AtomicBool,
     ) -> Result<Vec<Rewrite>, Error> {
+        let detection =
+            self.detect_rewrites_or_exact(old, new, options, limits, targets, cancel)?;
+        match detection.inexact_skipped {
+            None => Ok(detection.rewrites),
+            Some(skipped) => Err(Error::Candidates {
+                sources: skipped.sources,
+                targets: skipped.targets,
+                limit: skipped.limit,
+            }),
+        }
+    }
+
+    /// Infers rewrites as [`Self::detect_rewrites`] does, keeping exact matches over the limit.
+    ///
+    /// When the remaining candidates exceed [`Options::candidate_limit`], edited-content
+    /// detection is skipped and [`Detection::inexact_skipped`] says so; the exact matches are
+    /// still returned, as Git reports exact renames when it skips rename detection for too many
+    /// files. Callers decide whether to warn, retry with a higher limit, or accept exact matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] on the same conditions as [`Self::detect_rewrites`], except that an
+    /// exceeded candidate limit is reported in the result rather than as [`Error::Candidates`].
+    pub fn detect_rewrites_or_exact(
+        &self,
+        old: Option<ObjectId>,
+        new: Option<ObjectId>,
+        options: Options,
+        limits: Limits,
+        targets: Option<&[&[u8]]>,
+        cancel: &AtomicBool,
+    ) -> Result<Detection, Error> {
         let mut budget = Budget {
             remaining: limits,
             cancel,
@@ -68,9 +103,11 @@ impl Objects {
         }
         let mut selection = Selection::new(&sources, &destinations, options);
         selection.exact(&blobs, &mut budget)?;
-        if options.similarity < 100 {
-            selection.edited(&mut blobs, &mut budget)?;
-        }
+        let inexact_skipped = if options.similarity < 100 {
+            selection.edited(&mut blobs, &mut budget)?
+        } else {
+            None
+        };
         budget.check()?;
         let mut records = selection.records;
         if let Some(targets) = targets {
@@ -88,7 +125,10 @@ impl Objects {
         }
         records.sort_by(|a, b| a.target.cmp(&b.target));
         budget.check()?;
-        Ok(records)
+        Ok(Detection {
+            rewrites: records,
+            inexact_skipped,
+        })
     }
 }
 
@@ -244,11 +284,12 @@ impl<'a> Selection<'a> {
         Ok(())
     }
 
+    /// Pairs remaining candidates by edited content, unless the candidate limit skips it.
     fn edited(
         &mut self,
         blobs: &mut BTreeMap<ObjectId, Blob>,
         budget: &mut Budget<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<InexactSkipped>, Error> {
         let sources: Vec<_> = (0..self.sources.len())
             .filter(|&s| {
                 let blob = &blobs[&self.sources[s].value.id];
@@ -266,14 +307,17 @@ impl<'a> Selection<'a> {
             })
             .collect();
         if sources.is_empty() || targets.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        if sources.len().max(targets.len()) > self.options.candidate_limit {
-            return Err(Error::Candidates {
+        // Git compares the candidate product with the squared limit, so one source may be scored
+        // against many destinations. Widen so the comparison cannot overflow.
+        let limit = self.options.candidate_limit as u128;
+        if sources.len() as u128 * targets.len() as u128 > limit * limit {
+            return Ok(Some(InexactSkipped {
                 sources: sources.len(),
                 targets: targets.len(),
                 limit: self.options.candidate_limit,
-            });
+            }));
         }
         for id in sources
             .iter()
@@ -318,7 +362,7 @@ impl<'a> Selection<'a> {
                 self.select(source, target, score);
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn select(&mut self, source: usize, target: usize, similarity: u8) {
