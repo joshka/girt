@@ -1,32 +1,40 @@
 name: Release
 
-on: # zizmor: ignore[dangerous-triggers] -- publish checks out only successful push-to-main CI; no PR artifacts
+on:
   push:
     branches:
       - main
   workflow_dispatch:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  ci:
+    name: Wait for full main CI
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 95
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Wait for successful push CI on this SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/wait-for-release-ci.sh
+
   release:
     name: Publish
     concurrency:
       group: release-plz-publish
       cancel-in-progress: false
-    # A push starts full CI; publish only its exact, successful main revision.
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.path == '.github/workflows/validation.yml' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.conclusion == 'success'
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -37,7 +45,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
       - run: rustup toolchain install stable --profile minimal
       - name: Rust cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -56,7 +64,7 @@ jobs:
 
   release-pr:
     name: Release PR
-    if: github.event_name != 'workflow_run' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
       contents: write

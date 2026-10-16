@@ -188,10 +188,14 @@ The release workflow uses GitHub's default token, so checks on the release pull 
 on their own: GitHub holds them for approval. Approve the waiting runs, or close and reopen the pull
 request, after its last update, then wait for `required` before merging. The publish job uses a
 short-lived crates.io token obtained through OIDC; do not add a persistent registry token to the
-workflow. To retry publishing after a transient failure, rerun the successful push-to-main CI run;
-its completion starts publishing again. Manually dispatching Release only prepares a release pull
-request. The first release after changing this workflow still needs hosted verification of the
-exact-commit checkout and OIDC publishing path.
+workflow. The push-triggered Release workflow waits up to 90 minutes for full push CI on its exact
+SHA. Missing, failed, cancelled or timed-out CI prevents publishing. To retry after a transient
+failure, rerun that push-triggered Release workflow after CI succeeds. Later qualifying main pushes
+also retry unpublished versions, including a release whose version bump has already merged. Any
+unpublished version committed to main can publish after full CI, even without a release pull
+request. Manually dispatching Release only prepares a release pull request. The first release after
+changing this workflow still needs hosted verification of the exact-commit checkout and OIDC
+publishing path.
 
 ## HTTP Fixtures
 
