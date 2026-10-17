@@ -33,21 +33,30 @@ pub struct ResolveError {
 #[non_exhaustive]
 pub enum ResolveFailure {
     /// Source could not be read.
+    /// Inspect the source path and operating-system cause; optional sources suppress only absence.
     #[error("source I/O failure")]
     Io(#[source] std::io::Error),
     /// Invalid source bytes.
+    /// Correct syntax at the nested physical line before resolving again.
     #[error("invalid source syntax")]
     Parse(#[source] ConfigError),
     /// A finite work budget was exhausted.
+    /// Select a justified budget for source bytes, entries, depth or matching work.
     #[error("configuration limit: {0}")]
     Limit(&'static str),
     /// An include reaches an ancestor file.
+    /// Correct include topology; increasing the depth budget cannot resolve a cycle.
     #[error("configuration include cycle")]
     Cycle,
     /// Required expansion context or valid directive is missing.
+    /// Supply the missing context or correct the directive instead of silently guessing a path.
     #[error("invalid configuration input: {0}")]
     Input(&'static str),
     /// A hasconfig include declares a remote URL, possibly through another include.
+    /// Move the remote URL outside the selected hasconfig include subtree. A consumer explicitly
+    /// requiring root-local URL evaluation can instead select
+    /// [`RootSnapshot`](super::IncludeConditionVisibility::RootSnapshot), which permits those URLs
+    /// under its different visibility contract.
     #[error("remote URL in hasconfig include")]
     ConditionalRemote,
 }
@@ -117,12 +126,29 @@ impl Config {
     ///
     /// ```
     /// use girt::Config;
-    /// use girt::config::{ConfigInputs, IncludePlacement};
-    /// let inputs = ConfigInputs::default();
-    /// let config =
+    /// use girt::config::{ConfigFile, ConfigInputs, ConfigScope, IncludePlacement};
+    /// let directory = tempfile::tempdir()?;
+    /// let root = directory.path().join("config");
+    /// std::fs::write(&root, b"[include]\npath = first\npath = second\n")?;
+    /// std::fs::write(directory.path().join("first"), b"[core]\neditor = first\n")?;
+    /// std::fs::write(
+    ///     directory.path().join("second"),
+    ///     b"[core]\neditor = second\n",
+    /// )?;
+    /// let inputs =
+    ///     ConfigInputs::default().with_files(vec![ConfigFile::new(root, ConfigScope::Global)]);
+    /// let ordinary = Config::resolve(&inputs)?;
+    /// let reordered =
     ///     Config::resolve_with_include_placement(&inputs, IncludePlacement::AfterSectionReverse)?;
-    /// assert!(config.entries().is_empty());
-    /// # Ok::<(), girt::config::ResolveError>(())
+    /// assert_eq!(
+    ///     ordinary.string("core", None, "editor"),
+    ///     Some(&b"second"[..])
+    /// );
+    /// assert_eq!(
+    ///     reordered.string("core", None, "editor"),
+    ///     Some(&b"first"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn resolve_with_include_placement(
         inputs: &ConfigInputs,
@@ -247,6 +273,24 @@ impl Config {
     /// # Errors
     ///
     /// Rejects invalid/missing counts, keys, values, NULs and counts exceeding `max_pairs`.
+    ///
+    /// ```
+    /// use girt::Config;
+    /// let config = Config::from_environment(
+    ///     |name| match name {
+    ///         "GIT_CONFIG_COUNT" => Some(b"1".to_vec()),
+    ///         "GIT_CONFIG_KEY_0" => Some(b"core.editor".to_vec()),
+    ///         "GIT_CONFIG_VALUE_0" => Some(b"literal\nvalue".to_vec()),
+    ///         _ => None,
+    ///     },
+    ///     4,
+    /// )?;
+    /// assert_eq!(
+    ///     config.string("core", None, "editor"),
+    ///     Some(&b"literal\nvalue"[..])
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn from_environment(
         mut get: impl FnMut(&str) -> Option<Vec<u8>>,
         max_pairs: usize,

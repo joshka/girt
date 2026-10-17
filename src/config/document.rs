@@ -33,6 +33,19 @@ pub struct Document {
 /// Repeated headers are distinct even when their decoded names match. This view borrows its
 /// [`Document`]; ordinal and entry indices describe that document's current state and become stale
 /// after any edit. Comments and empty sections do not contribute entry occurrences.
+///
+/// Choose this physical-file view when editing one source. Ordinals and entry ranges describe the
+/// current draft, not permanent source identities; reacquire them after an edit.
+///
+/// ```
+/// use girt::config::Document;
+/// let mut draft = Document::parse(b"[core]\neditor = chosen\n[empty]\n")?;
+/// let empty = draft.sections().nth(1).ok_or("section absent")?;
+/// assert!(empty.entry_range().is_empty());
+/// draft.remove_sections(&[empty.ordinal()])?;
+/// assert_eq!(draft.sections().len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct DocumentSection<'a> {
     ordinal: usize,
@@ -368,6 +381,17 @@ impl Document {
     /// # Errors
     ///
     /// Invalid destination subsection bytes fail without changing any header.
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let mut draft = Document::parse(b"[remote \"old\"]\nurl = value\n")?;
+    /// draft.rename_section("remote", Some(b"old"), Some(b"new"))?;
+    /// assert_eq!(
+    ///     draft.config().string("remote", Some(b"new"), "url"),
+    ///     Some(&b"value"[..])
+    /// );
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn rename_section(
         &mut self,
         section: &str,
@@ -392,6 +416,15 @@ impl Document {
     /// # Errors
     ///
     /// Returns a syntax error if the resulting document cannot be parsed; the original is retained.
+    ///
+    /// ```
+    /// use girt::config::Document;
+    /// let mut draft = Document::parse(b"[core]\neditor = chosen\n[alias]\nx = value\n")?;
+    /// draft.remove_section("alias", None)?;
+    /// assert!(!draft.contains_section("alias", None));
+    /// assert!(draft.contains_section("core", None));
+    /// # Ok::<(), girt::ConfigError>(())
+    /// ```
     pub fn remove_section(
         &mut self,
         section: &str,
