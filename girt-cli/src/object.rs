@@ -366,10 +366,15 @@ fn count(context: &Context) -> Result<ExitCode> {
         .iter()
         .map(|pack| pack.pack_bytes() + pack.index_bytes())
         .sum();
-    let prune_packable = loose
-        .iter()
-        .filter(|&&id| packs.iter().any(|pack| pack.contains(id)))
-        .count();
+    let mut prune_packable = 0;
+    for &id in &loose {
+        for pack in &packs {
+            if pack.contains(id)? {
+                prune_packable += 1;
+                break;
+            }
+        }
+    }
     let mut out = stdout();
     if context.git {
         writeln!(out, "count: {}", loose.len())?;
