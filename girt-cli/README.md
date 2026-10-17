@@ -92,6 +92,15 @@ These come from the library and are listed in each command's `--help`:
   including fsmonitor and untracked caches, for Git to rebuild. Split/sparse indexes, resolve-undo
   data and unknown extensions are refused.
 - `diff --patch` uses a plain Myers diff, so ambiguous hunks can align differently from Git.
-- SSH is supported by `fetch` and `push` but not yet by `clone` or `remote heads`.
+- `clone`, `remote heads`, `fetch` and `push` support SSH on macOS/Linux using system OpenSSH:
+  `ssh://[user@]host[:port]/path` or `[user@]host:path`. Normal SSH config, identities, agents and
+  host trust apply. Command selection is `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`, then `ssh`
+  on PATH. Configured command strings execute through the shell, so trust the configuration.
+  Terminal prompts/job control are unavailable; use an agent or askpass. Non-OpenSSH variants,
+  percent-encoded SSH URLs, query/fragment fields and paths starting with `~` are unsupported.
+- HTTP(S) `clone` and `remote heads` still use anonymous access, without credential helpers. `fetch`
+  and `push` use the library's configured credential helpers, including `store`; they decline
+  interactive credential prompts. Adding helpers to clone/discovery requires sharing the workflow
+  adapter's helper selection and authentication retry policy.
 - `maintenance run` deletes data. It requires `--yes`, and no other process may use the repository
   while it runs.

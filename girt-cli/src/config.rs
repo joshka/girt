@@ -80,7 +80,9 @@ pub enum RemoteCommand {
     /// List the references a remote advertises as `<id>\t<ref>` (≈ `git ls-remote`).
     ///
     /// Accepts a configured remote name, a local path, a `file://` URL or an `http(s)://` URL
-    /// (anonymous access only). SSH is not supported yet. Peeled annotated tags print as
+    /// (anonymous access only), or SSH (`ssh://` and `[user@]host:path`) on macOS/Linux.
+    /// SSH uses normal OpenSSH config and configured commands; terminal prompts are unavailable.
+    /// Peeled annotated tags print as
     /// `<ref>^{}` lines after their tag.
     Heads {
         /// Remote name or URL.
@@ -347,7 +349,7 @@ fn remote_heads(target: &str, context: &Context) -> Result<ExitCode> {
         })
         .map(|url| String::from_utf8_lossy(&url).into_owned())
         .unwrap_or_else(|| target.to_owned());
-    let discovery = discover(&url, context.directory())?;
+    let discovery = discover(&url, context)?;
     let mut out = stdout();
     for reference in &discovery.advertisement.refs {
         write!(out, "{}\t", reference.id)?;
@@ -367,6 +369,9 @@ pub enum Endpoint {
     Local(PathBuf),
     /// An `http://` or `https://` URL.
     Http(String),
+    /// A system OpenSSH endpoint.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Ssh(String),
 }
 
 /// Classifies a URL or path; local paths are resolved against `base`.
@@ -380,8 +385,14 @@ pub fn endpoint(url: &str, base: &Path) -> Result<Endpoint> {
     let scp_like = url
         .split_once(':')
         .is_some_and(|(host, _)| !host.contains('/'));
-    if url.contains("://") || scp_like {
-        bail!("girt CLI does not support this transport yet (only local paths and HTTP(S))");
+    if url.starts_with("ssh://") || (!url.contains("://") && scp_like) {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        return Ok(Endpoint::Ssh(url.to_owned()));
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        bail!("SSH requires macOS or Linux");
+    }
+    if url.contains("://") {
+        bail!("girt CLI does not support this transport yet (only local paths, HTTP(S) and SSH)");
     }
     Ok(Endpoint::Local(base.join(url)))
 }
@@ -400,17 +411,93 @@ pub fn block_on<F: Future>(future: F) -> Result<F::Output> {
     Ok(runtime.block_on(future))
 }
 
-fn discover(url: &str, base: &Path) -> Result<RemoteDiscovery> {
+fn discover(url: &str, context: &Context) -> Result<RemoteDiscovery> {
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let limits = FetchLimits::trusted();
-    match endpoint(url, base)? {
+    match endpoint(url, context.directory())? {
         Endpoint::Local(path) => girt::fetch::discover_local(&path, limits, control)
             .wrap_err_with(|| format!("listing {}", path.display())),
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        Endpoint::Ssh(url) => {
+            let remote = ssh_remote(&url, context)?;
+            block_on(girt::fetch::discover_ssh(&remote, limits, control))?
+                .wrap_err("listing SSH remote")
+        }
         Endpoint::Http(url) => {
             let remote = http_remote(&url)?;
             block_on(girt::fetch::discover_http(&remote, limits, control))?
                 .wrap_err_with(|| format!("listing {url}"))
         }
     }
+}
+
+/// Use ordinary OpenSSH policy, including the same trusted shell overrides as workflow transfers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn ssh_remote(url: &str, context: &Context) -> Result<girt::transport::ssh::SshRemote> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    use girt::remote::ProtocolEnvironment;
+    use girt::transport::ssh::{ApprovedSshCommand, OpenSshOptions, SshRemote};
+
+    let config = if context.repository().is_ok() {
+        configured_repository(context)?.config().clone()
+    } else {
+        let system = SYSTEM_CONFIG
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.exists());
+        let inputs = ConfigInputs::from_environment(system, |name| std::env::var_os(name), 1024)?;
+        girt::Config::resolve(&inputs)?
+    };
+    // Build the destination through the library so protocol restrictions and URL rewrites apply.
+    let mut document = girt::config::Document::parse(b"")?;
+    document.append("remote", Some(b"source"), "url", url.as_bytes())?;
+    let remote = Remote::find(document.config(), b"source")?.expect("source remote");
+    let policy = ProtocolEnvironment::from_environment(|name| {
+        std::env::var_os(name).map(|value| value.as_bytes().to_vec())
+    })?;
+    let destination = remote.fetch_destination(&config, &policy)?;
+    let mut environment: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
+    let command = environment
+        .get(std::ffi::OsStr::new("GIT_SSH_COMMAND"))
+        .map(|value| value.as_bytes().to_vec())
+        .or_else(|| {
+            config
+                .string("core", None, "sshcommand")
+                .map(<[u8]>::to_vec)
+        });
+    let selected = command.map(|value| (value.clone(), value)).or_else(|| {
+        environment
+            .get(std::ffi::OsStr::new("GIT_SSH"))
+            .map(|value| {
+                let raw = value.as_bytes().to_vec();
+                let quoted = format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"));
+                (raw, quoted.into_bytes())
+            })
+    });
+    let approved = selected
+        .map(|(configured, command)| {
+            let command = String::from_utf8(command).wrap_err("SSH command must be UTF-8")?;
+            Ok::<_, color_eyre::Report>(ApprovedSshCommand::new(
+                configured,
+                "/bin/sh".into(),
+                vec!["-c".into(), format!("{command} \"$@\""), command],
+            ))
+        })
+        .transpose()?;
+    let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|path| path.join("ssh"))
+        .find(|path| path.is_absolute() && path.is_file())
+        .unwrap_or_else(|| PathBuf::from("/usr/bin/ssh"));
+    environment.remove(std::ffi::OsStr::new("GIT_PROTOCOL"));
+    SshRemote::openssh(
+        &config,
+        &destination,
+        OpenSshOptions::default()
+            .with_default_executable(executable)
+            .with_approved_command(approved)
+            .with_environment(environment),
+    )
+    .wrap_err("configuring SSH remote")
 }
