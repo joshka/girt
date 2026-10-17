@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/joshka/girt/compare/girt-cli-v0.2.2...girt-cli-v0.2.3) - 2026-10-17
+
+### Other
+
+- Add current and configured signature constructors ([#410](https://github.com/joshka/girt/pull/410))
+
 ## [0.2.2](https://github.com/joshka/girt/compare/girt-cli-v0.2.1...girt-cli-v0.2.2) - 2026-10-17
 
 ### Other
