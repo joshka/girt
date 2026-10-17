@@ -194,7 +194,9 @@ pub use config::{Config, ConfigError};
 pub use history::{HistoryError, HistoryLimits};
 pub use loose::{Error, LooseObjects};
 pub(crate) use object::{IdMap, IdSet, PeerIdMap, PeerIdSet};
-pub use object::{ObjectFormat, ObjectFormatError, ObjectId, ParseObjectIdError, encode_blob};
+pub use object::{
+    ObjectFormat, ObjectFormatError, ObjectId, ObjectKind, ParseObjectIdError, encode_blob,
+};
 pub(crate) use objects::UnverifiedObject;
 pub use objects::{AlternateLimits, Object, ObjectReadError, Objects, PackLimits, ReadLimits};
 pub use pack::{
@@ -209,7 +211,7 @@ pub use repository::{
     ShallowError, ShallowRoots, Worktree, WorktreeAdminError, WorktreeDurability, WorktreeError,
     WorktreeLinkStyle, WorktreeRepair, WorktreeRetirement, WorktreeState,
 };
-pub use tag::{ObjectKind, Tag, TagError, TagFields};
+pub use tag::{Tag, TagError, TagFields};
 pub use tree::{EntryMode, Tree, TreeEntry, TreeError};
 pub use tree_compare::{TreeChange, TreeCompareError, TreeCompareLimits, TreeValue};
 

@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `girt::object::ObjectKind` is the canonical path for object kinds, beside `ObjectId` and
+  `ObjectFormat`. `girt::ObjectKind` and `girt::tag::ObjectKind` remain as re-exports.
+
 ## [0.10.3](https://github.com/joshka/girt/compare/v0.10.2...v0.10.3) - 2026-10-17
 
 ### Other

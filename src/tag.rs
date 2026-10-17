@@ -42,6 +42,8 @@
     clippy::indexing_slicing,
     reason = "parses untrusted repository or network input (#103)"
 )]
+/// Re-exported for tag targets; [`crate::object`] owns the object-kind concept.
+pub use crate::object::ObjectKind;
 use crate::{CommitError, ObjectId, Signature};
 
 /// An owned SHA-1 or SHA-256 annotated tag object, including its exact original payload.
@@ -431,49 +433,7 @@ impl TagFields {
     }
 }
 
-/// One of Git's four object kinds, also used to declare an annotated tag's target type.
-///
-/// In a tag this declaration does not prove that the target exists or has the stated type.
-/// In a verified [`crate::Object`] it identifies the kind included in the object's identity.
-///
-/// This set is exhaustive: Git object framing and pack encodings define exactly these four
-/// fundamental kinds. A new hash algorithm does not add an object kind.
-///
-/// Use the stored kind to choose a payload codec after an object read. A hash or file name cannot
-/// supply this information, and blobs have no further structural codec.
-///
-/// ```
-/// use girt::{ObjectFormat, ObjectKind};
-/// let bytes = b"same payload";
-/// assert_ne!(
-///     ObjectFormat::Sha1.hash_object(ObjectKind::Blob, bytes),
-///     ObjectFormat::Sha1.hash_object(ObjectKind::Tag, bytes)
-/// );
-/// assert_eq!(ObjectKind::Commit.as_str(), "commit");
-/// ```
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ObjectKind {
-    /// File content.
-    Blob,
-    /// A directory snapshot.
-    Tree,
-    /// A recorded snapshot and its history metadata.
-    Commit,
-    /// An annotated tag; no recursive peeling is performed.
-    Tag,
-}
-
 impl ObjectKind {
-    /// Returns the type's spelling in Git object headers.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Blob => "blob",
-            Self::Tree => "tree",
-            Self::Commit => "commit",
-            Self::Tag => "tag",
-        }
-    }
-
     fn parse(bytes: &[u8]) -> Result<Self, TagError> {
         match bytes {
             b"blob" => Ok(Self::Blob),
