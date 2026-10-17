@@ -3,13 +3,14 @@ import { COMMIT_URL, provenance } from '../data/jj-performance';
 
 const short = (sha: string) => sha.slice(0, 12);
 const current = provenance.current_main_rebuild;
+const load = provenance.load_1m;
 ---
 
 <ul>
   <li>Measured {provenance.dates}.</li>
   <li>Machine: {provenance.machine}.</li>
   <li>
-    girt: <a href={`${COMMIT_URL.girt}${provenance.girt_commit}`}><code>{short(provenance.girt_commit)}</code></a>
+    girt: {provenance.girt_release && <>{provenance.girt_release}, </>}<a href={`${COMMIT_URL.girt}${provenance.girt_commit}`}><code>{short(provenance.girt_commit)}</code></a>
     {
       current && (
         <>
@@ -30,4 +31,14 @@ const current = provenance.current_main_rebuild;
   </li>
   <li>Git: {provenance.git_version.replace(/^git version /, '')} (release commit <code>{short(provenance.git_commit)}</code>).</li>
   <li>Build: {provenance.build}.</li>
+  {
+    load && (
+      <li>
+        Machine load (one-minute average at each sample): {load.min} to {load.max}, median {load.median}, on{' '}
+        {load.cores} cores. Other work competed with many samples.
+      </li>
+    )
+  }
+  <li>Each cell records the girt release it was measured on; cells from an older release are marked.</li>
+  {provenance.notes?.map((note) => <li>{note}</li>)}
 </ul>
