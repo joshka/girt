@@ -36,9 +36,12 @@ fn add_extension(repo: &Repository, signature: &[u8; 4], data: &[u8]) -> Vec<u8>
 #[rstest]
 #[case::sha1(crate::ObjectFormat::Sha1)]
 #[case::sha256(crate::ObjectFormat::Sha256)]
-fn invalidates_tree_cache_without_changing_entries(#[case] format: crate::ObjectFormat) {
+fn invalidates_tree_cache_without_changing_entries(
+    #[case] format: crate::ObjectFormat,
+    #[values(*b"TREE", *b"FSMN", *b"UNTR", *b"EOIE", *b"IEOT")] signature: [u8; 4],
+) {
     let (_root, repo) = repository(format);
-    let before = add_extension(&repo, b"TREE", b"cached tree");
+    let before = add_extension(&repo, &signature, b"cached tree");
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     let entries = edit.index().entries().to_vec();
     edit.replace_entries(entries.clone()).unwrap();
@@ -784,7 +787,7 @@ fn alternate_relative_path_uses_current_directory_once() {
 }
 
 #[rstest]
-fn discard_resolve_undo_requires_offsets_first_and_explicit_commit(
+fn discard_resolve_undo_drops_offsets_and_requires_explicit_commit(
     #[values(crate::ObjectFormat::Sha1, crate::ObjectFormat::Sha256)] format: crate::ObjectFormat,
 ) {
     let (_root, repo) = repository(format);
@@ -796,13 +799,6 @@ fn discard_resolve_undo_requires_offsets_first_and_explicit_commit(
     fs::write(&path, &bytes).unwrap();
     let mut edit = repo.edit_index(Limits::default()).unwrap();
     let before = edit.index().clone();
-    assert_eq!(
-        edit.discard_resolve_undo(),
-        Err(Error::ExtensionPreventsEdit(*b"EOIE"))
-    );
-    assert_eq!(edit.index(), &before);
-    assert_eq!(fs::read(&path).unwrap(), bytes);
-    edit.invalidate_entry_offsets().unwrap();
     edit.discard_resolve_undo().unwrap();
     assert_eq!(edit.index().entries(), before.entries());
     assert_eq!(edit.index().extensions().len(), 1);

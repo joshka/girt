@@ -2198,19 +2198,19 @@ and sparse fixtures test this boundary in both formats; see [R12 evidence](evide
 
 `IndexEdit::invalidate_entry_offsets` explicitly removes standalone `EOIE` and `IEOT` accelerators
 without changing entries, stat data, flags, framing version or `TREE`/`REUC`/`sdir` payloads. Both
-offset extensions are removed because canonical re-encoding may change entry byte boundaries. Other
-extensions, including split `link`, block this bounded edit. Absent caches preserve the original
-encoding; failures preserve the draft. Optional cache payloads may be malformed and are not
-interpreted, but normal outer framing, entry and checksum validation still precedes editing.
-Publication remains explicit through `commit`.
+offset extensions are removed because canonical re-encoding may change entry byte boundaries. `FSMN`
+and `UNTR` caches are also dropped. Other extensions, including split `link`, block this bounded
+edit. Absent caches preserve the original encoding; failures preserve the draft. Optional cache
+payloads may be malformed and are not interpreted, but normal outer framing, entry and checksum
+validation still precedes editing. Publication remains explicit through `commit`.
 
 `IndexEdit::discard_resolve_undo` explicitly removes `REUC` when the caller intends to forget old
 conflict resolutions. It preserves entries, stat words, flags, version and `TREE` bytes, and retains
-the original encoding when `REUC` is absent. Only `TREE` and `REUC` are admitted; remove offset
-accelerators first with `invalidate_entry_offsets`. Other extensions, including split `link`, and
-output-limit failures leave the draft and storage unchanged. Payloads are discarded opaquely; normal
-index framing and checksum validation still applies. Entry replacement and tree-cache invalidation
-retain their existing extension policies. Publication still requires `commit`.
+the original encoding when `REUC` is absent. Removing `REUC` also drops `FSMN`, `UNTR`, `EOIE` and
+`IEOT` caches. Other extensions, including sparse `sdir` and split `link`, and output-limit failures
+leave the draft and storage unchanged. Payloads are discarded opaquely; normal index framing and
+checksum validation still applies. Entry replacement and tree-cache invalidation retain their
+existing extension policies. Publication still requires `commit`.
 
 `Repository::read_index_at` and `edit_index_at` accept an explicit standalone index path without
 consulting `GIT_INDEX_FILE`. Relative paths resolve once against the process current directory;
@@ -2375,10 +2375,12 @@ aliases. Entry types do not narrow this predicate: even three ordinary files are
 although Git accepts that tree. This preflight prevents checkout from activating its own live guard
 midway through mutation; it does not disable guards on existing or newly created directories.
 Gitlinks, submodule recursion, sparse/split indexes, intent-to-add/skip-worktree entries and
-non-`TREE` extensions are unsupported. Full v2/v3/v4 framing is accepted. Windows and other
-platforms refuse checkout before locking or reading the index; portable tests cover that boundary
-without claiming Windows materialization support. Native hard links, symlinks and POSIX modes are
-required; filesystem emulation and shared-permission policies are excluded.
+resolve-undo and unknown extensions are unsupported. Derived `TREE`, `FSMN`, `UNTR`, `EOIE` and
+`IEOT` caches are discarded even on unchanged checkouts; Git can rebuild them. Full v2/v3/v4 framing
+is accepted. Windows and other platforms refuse checkout before locking or reading the index;
+portable tests cover that boundary without claiming Windows materialization support. Native hard
+links, symlinks and POSIX modes are required; filesystem emulation and shared-permission policies
+are excluded.
 
 ### Phases and Failure Recovery
 

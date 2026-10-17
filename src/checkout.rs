@@ -22,12 +22,13 @@
 //!
 //! Linux/macOS only, on filesystems with native hard links, symlinks and POSIX modes. macOS paths
 //! and names in enumerated directories must be ASCII. Both platforms conservatively reject ASCII
-//! case aliases, metadata names, unsafe components, gitlinks, nested repositories and non-`TREE`
-//! index extensions. Intent-to-add and skip-worktree entries require caller policy and are refused.
-//! Path components are limited to 255 bytes. Windows returns unsupported. Raw
-//! checkout preserves blob bytes without attributes, filters, EOL conversion, ignores or config
-//! overrides. Symlink blobs must be nonempty, NUL-free and at most 1024 bytes. Mode changes replace
-//! files, with permissions 0644/0755; ownership, ACLs and other metadata are not preserved.
+//! case aliases, metadata names, unsafe components, gitlinks, nested repositories and index
+//! extensions other than `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT`. Intent-to-add and skip-worktree
+//! entries require caller policy and are refused. Path components are limited to 255 bytes. Windows
+//! returns unsupported. Raw checkout preserves blob bytes without attributes, filters, EOL
+//! conversion, ignores or config overrides. Symlink blobs must be nonempty, NUL-free and at most
+//! 1024 bytes. Mode changes replace files, with permissions 0644/0755; ownership, ACLs and other
+//! metadata are not preserved.
 //!
 //! Preparation also projects the nested-repository marker policy across the planned operations,
 //! including retained siblings and directories. A non-root directory containing `HEAD`, `objects`
@@ -40,8 +41,9 @@
 //! changed tracked leaves, removes only known empty directories needed for directory-to-file
 //! transitions, creates missing directories and installs leaves. Each operation rechecks its path
 //! and ancestors. Publication rechecks all target content and the index before renaming the index
-//! lock. Unverified `TREE` caches are discarded, including on unchanged checkouts. New index
-//! entries have zero cached stat words and cleared assume-valid flags; Git may
+//! lock. Derived `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT` caches are discarded, including on
+//! unchanged checkouts. Git can rebuild them; girt does not consult fsmonitor or untracked caches.
+//! New index entries have zero cached stat words and cleared assume-valid flags; Git may
 //! need `git update-index --refresh` before stat-only plumbing such as `git diff-files`.
 //! Unrelated content and empty directories are retained. Failures report completed operations
 //! in execution order, the active stage and owned artifacts whose cleanup failed. Earlier

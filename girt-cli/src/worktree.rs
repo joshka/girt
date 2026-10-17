@@ -74,8 +74,8 @@ pub enum IgnoreCommand {
 /// staged or conflicted paths rather than overwriting them. Content is written raw (no filters or
 /// EOL conversion). Afterwards `git status` may report staged changes relative to HEAD.
 ///
-/// girt refuses indexes carrying extensions other than `TREE`, such as those Git writes with
-/// `core.untrackedCache` or `core.fsmonitor` enabled.
+/// Derived index caches (`TREE`, `FSMN`, `UNTR`, `EOIE`, `IEOT`) are dropped for Git to rebuild.
+/// Split/sparse indexes, resolve-undo data and unknown extensions are refused.
 #[derive(Debug, clap::Args)]
 pub struct CheckoutArgs {
     /// Revision whose tree to check out.

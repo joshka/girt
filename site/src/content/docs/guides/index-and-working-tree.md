@@ -142,13 +142,17 @@ does not make them safe to discard. A rejected edit leaves the guard and its dra
 a supported operation or abort instead of retrying with an empty index.
 
 - Entry-offset accelerators (`EOIE`, `IEOT`) can be removed together with `invalidate_entry_offsets`
-  before `discard_resolve_undo` or `invalidate_tree_cache`, which refuse those caches. Entry
-  replacement and framing changes already remove them.
+  along with fsmonitor (`FSMN`) and untracked (`UNTR`) caches. Tree-cache invalidation, resolve-undo
+  removal, entry replacement and framing changes also discard derived caches.
 - Resolve-undo (`REUC`) remembers prior conflict stages. `discard_resolve_undo` intentionally
   forgets that information; call it only when that matches the application operation.
 - The cached tree (`TREE`) can be invalidated without changing staged entries.
 - Unknown optional extensions stay until you choose to discard them. Unknown mandatory extensions
   are refused; choosing to discard doesn't apply to them.
+
+Checkout drops derived `TREE`, `FSMN`, `UNTR`, `EOIE` and `IEOT` caches, even when the target is
+unchanged. Git rebuilds these caches when enabled. Checkout still refuses split/sparse indexes,
+resolve-undo data and unknown extensions. Status scans working files without trusting these caches.
 
 Each operation accepts a different set of extensions. Check each method's errors before combining
 them; removing one cache successfully does not mean every later rewrite is allowed.

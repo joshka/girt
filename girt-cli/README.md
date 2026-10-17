@@ -59,8 +59,9 @@ These come from the library and are listed in each command's `--help`:
 - Abbreviated IDs in `--git` output are always seven digits; Git lengthens them on larger
   repositories, so compare with `git -c core.abbrev=7`.
 - `status` and `checkout` compare raw bytes on macOS and Linux: no attributes, filters, EOL
-  conversion or `core.filemode`. macOS paths must be ASCII. `checkout` refuses indexes with
-  extensions other than `TREE` (for example from `core.fsmonitor` or `core.untrackedCache`).
+  conversion or `core.filemode`. macOS paths must be ASCII. `checkout` drops derived index caches,
+  including fsmonitor and untracked caches, for Git to rebuild. Split/sparse indexes, resolve-undo
+  data and unknown extensions are refused.
 - `diff --patch` uses a plain Myers diff, so ambiguous hunks can align differently from Git.
 - `clone` does not check out files; run `girt checkout HEAD` afterwards. SSH is supported by `fetch`
   and `push` but not yet by `clone` or `remote heads`.

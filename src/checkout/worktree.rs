@@ -129,12 +129,12 @@ impl<'a> Plan<'a> {
                 return Err(refused(&entry.path, "staged changes or conflict"));
             }
         }
-        if edit
-            .index()
-            .extensions()
-            .iter()
-            .any(|e| e.signature() != *b"TREE")
-        {
+        if edit.index().extensions().iter().any(|e| {
+            !matches!(
+                &e.signature(),
+                b"TREE" | b"FSMN" | b"UNTR" | b"EOIE" | b"IEOT"
+            )
+        }) {
             return Err(refused(b"", "unsupported index extension"));
         }
         let mut paths = BTreeSet::new();
@@ -211,7 +211,7 @@ impl<'a> Plan<'a> {
             .map(|(path, leaf)| index::Entry::new(path.clone(), index_mode(leaf.mode), leaf.id))
             .collect();
         edit.replace_entries(replacement)?;
-        edit.discard_tree_cache();
+        edit.discard_checkout_caches();
         let fd = open_root(root)?;
         let root_stat = fstat(&fd).map_err(|e| io(b"", e))?;
         let metadata = [repo.git_dir(), repo.common_dir(), repo.object_dir()]
