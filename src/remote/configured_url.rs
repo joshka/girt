@@ -146,14 +146,15 @@ pub fn parse_configured_url(bytes: &[u8]) -> Result<ConfiguredUrlParts, Configur
 /// Accepts IPv6, credentials, authority escapes, query/fragment components, custom schemes and
 /// retained scheme case using the same pure normalization as [`super::canonicalize_user_url`].
 /// Relative local paths and file paths remain unchanged: no filesystem access or canonicalization
-/// occurs. Parsing a custom scheme does not authorize its transport.
+/// occurs. On Windows, absolute drive paths (including verbatim drive paths) remain local and
+/// retain their spelling. Parsing a custom scheme does not authorize its transport.
 ///
 /// # Errors
 ///
 /// Returns a value-free diagnostic for malformed supported syntax. Helper syntax, control bytes,
-/// Windows drive/UNC paths, bracketed scp hosts with an explicit user, and uncharacterized file
-/// authorities return
-/// [`ConfiguredUrlError::Unsupported`]. That result requests compatibility handling; it does not
+/// Windows drive paths on non-Windows hosts, UNC paths, bracketed scp hosts with an explicit user,
+/// and uncharacterized file authorities return [`ConfiguredUrlError::Unsupported`]. That result
+/// requests compatibility handling; it does not
 /// establish that the destination is malformed.
 ///
 /// ```
@@ -194,15 +195,18 @@ fn validate_input(bytes: &[u8]) -> Result<(), ConfiguredUrlError> {
     if bytes.is_empty() {
         return Err(Error::MissingPath);
     }
-    // Control-byte handling and Windows drive/UNC interpretation have separate contracts.
-    if bytes.iter().any(|b| b.is_ascii_control()) || bytes.starts_with(b"\\") {
+    if bytes.iter().any(|b| b.is_ascii_control()) {
         return Err(Error::Unsupported);
     }
-    if bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'/' | b'\\')
-    {
+    // The shared parser preserves Windows drive paths as local bytes. Keep UNC and device
+    // namespaces outside this characterized subset, apart from verbatim absolute drive paths.
+    if cfg!(windows) && absolute_windows_drive(bytes.strip_prefix(br"\\?\").unwrap_or(bytes)) {
+        return Ok(());
+    }
+    if bytes.starts_with(b"\\") {
+        return Err(Error::Unsupported);
+    }
+    if absolute_windows_drive(bytes) {
         return Err(Error::Unsupported);
     }
     let colon = bytes.iter().position(|b| *b == b':');
@@ -230,6 +234,13 @@ fn validate_input(bytes: &[u8]) -> Result<(), ConfiguredUrlError> {
         }
     }
     Ok(())
+}
+
+fn absolute_windows_drive(bytes: &[u8]) -> bool {
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
 }
 
 fn configured_error(error: super::UserUrlParseError) -> ConfiguredUrlError {
@@ -319,12 +330,28 @@ mod tests {
     #[case::empty_host(b"http:///repo", ConfiguredUrlError::Authority)]
     #[case::network_bytes(b"http://host/\xff", ConfiguredUrlError::Encoding)]
     #[case::helper(b"foo::repo", ConfiguredUrlError::Unsupported)]
+    #[case::unc(br"\\server\share\repo", ConfiguredUrlError::Unsupported)]
+    #[case::verbatim_unc(br"\\?\UNC\server\share\repo", ConfiguredUrlError::Unsupported)]
+    #[case::drive_control(b"C:/repo\n", ConfiguredUrlError::Unsupported)]
     #[case::scp_bracket_user(b"user@[::1]:repo", ConfiguredUrlError::Unsupported)]
     fn failures(#[case] input: &[u8], #[case] error: ConfiguredUrlError) {
         assert_eq!(
             crate::remote::normalize_configured_url(input).unwrap_err(),
             error
         );
+    }
+
+    #[cfg(windows)]
+    #[rstest]
+    #[case::backslash(br"C:\repo with spaces")]
+    #[case::slash(b"C:/repo with spaces")]
+    #[case::verbatim(br"\\?\C:\repo with spaces")]
+    fn absolute_drive_paths_remain_local(#[case] input: &[u8]) {
+        let parts = parse_configured_url(input).unwrap();
+        assert_eq!(parts.protocol(), crate::remote::Protocol::Local);
+        assert_eq!(parts.host(), None);
+        assert_eq!(parts.path(), input);
+        assert_eq!(normalize_configured_url(input).unwrap(), input);
     }
 
     #[test]

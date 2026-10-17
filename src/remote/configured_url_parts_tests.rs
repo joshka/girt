@@ -103,7 +103,6 @@ fn ipv6_components_retain_original_meaning_with_corrected_serialization() {
 #[case::decoded_utf8(b"https://host/%FF", ConfiguredUrlError::PathEscape)]
 #[case::raw_utf8(b"https://host/\xff", ConfiguredUrlError::Encoding)]
 #[case::helper(b"helper::repo", ConfiguredUrlError::Unsupported)]
-#[case::windows(b"C:/repo", ConfiguredUrlError::Unsupported)]
 fn parts_and_serialization_share_validation(
     #[case] input: &[u8],
     #[case] expected: ConfiguredUrlError,
@@ -158,5 +157,18 @@ fn ipv6_case_and_brackets_follow_scheme_rules(
     assert_eq!(
         normalize_configured_url(input.as_bytes()).unwrap(),
         expected.as_bytes()
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn windows_drive_path_remains_unsupported_on_other_hosts() {
+    assert_eq!(
+        normalize_configured_url(b"C:/repo"),
+        Err(ConfiguredUrlError::Unsupported)
+    );
+    assert_eq!(
+        parse_configured_url(b"C:/repo").unwrap_err(),
+        ConfiguredUrlError::Unsupported
     );
 }
