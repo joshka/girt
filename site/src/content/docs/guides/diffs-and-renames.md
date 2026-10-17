@@ -154,6 +154,26 @@ and does not promise every Git shortcut or tie decision.
 An optional target-path list filters after inference. It does not reduce candidate work or change
 pairing/classification. Retain unmatched additions and removals alongside inferred rewrites.
 
+### Interpret a postimage copy
+
+Suppose `source` changes from blob A to blob B, and the new tree also adds `copy` containing B:
+
+| Path   | Old tree | New tree |
+| ------ | -------- | -------- |
+| source | A        | B        |
+| copy   | absent   | B        |
+
+With `Copies::ModifiedPostimage` and `similarity == 100`, `copy` can be an exact copy scored against
+B. The returned `source_id` is still A, because it identifies `source` in the old snapshot;
+`target_id` is B. Keep the selected policy with the result when presenting the comparison, and read
+the new source value separately if a renderer needs the bytes used for scoring. The runnable
+[postimage copy example](https://docs.rs/girt/latest/girt/rewrites/struct.Rewrite.html)
+shows this identity distinction.
+
+Destination filters apply after this global inference. Asking only for `copy` cannot change which
+source won, convert it from a copy to a rename, or avoid an error in an omitted candidate. For a
+cheap changed-path list, choose structural comparison instead of narrowing a rewrite result.
+
 ## Handle the candidate limit explicitly
 
 After exact matching, edited detection is skipped when remaining sources times remaining

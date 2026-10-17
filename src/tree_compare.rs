@@ -87,6 +87,50 @@ pub struct TreeValue {
 /// assert_eq!(changes[0].new.unwrap().id, blob);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # File-to-directory replacement
+///
+/// A replacement is expressed as leaf removal plus descendant additions. Keep both paths when
+/// building a patch; there is no synthetic directory change record.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+///
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// let loose = repo.loose_objects();
+/// let entry = |name: &[u8], id, mode| TreeEntry {
+///     name: name.to_vec(),
+///     id,
+///     mode,
+/// };
+/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+/// let cancel = AtomicBool::new(false);
+///
+/// let id = loose.write_blob(b"data")?;
+/// let old = tree(vec![entry(b"path", id, EntryMode::Blob)])?;
+/// let child = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
+/// let new = tree(vec![entry(b"path", child, EntryMode::Tree)])?;
+/// let changes = repo.objects(Default::default())?.compare_trees(
+///     Some(old),
+///     Some(new),
+///     Default::default(),
+///     &cancel,
+/// )?;
+/// assert_eq!(changes.len(), 2);
+/// assert_eq!(changes[0].path, b"path");
+/// assert!(changes[0].new.is_none());
+/// assert_eq!(changes[1].path, b"path/file");
+/// assert!(changes[1].old.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct TreeChange {
@@ -106,6 +150,52 @@ pub struct TreeChange {
 /// Parsing one bounded payload still allocates proportional entry/name storage before the entry
 /// count check. Memory is O(total tree bytes + entries + generated path bytes + changes), plus
 /// the existing pack snapshot and per-read decoding workspace. These are not exact heap limits.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+///
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{EntryMode, Tree, TreeEntry};
+/// let loose = repo.loose_objects();
+/// let entry = |name: &[u8], id, mode| TreeEntry {
+///     name: name.to_vec(),
+///     id,
+///     mode,
+/// };
+/// let tree = |entries| loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?);
+/// let cancel = AtomicBool::new(false);
+///
+/// use girt::{TreeCompareError, TreeCompareLimits};
+/// let id = loose.write_blob(b"data")?;
+/// let root = tree(vec![entry(b"file", id, EntryMode::Blob)])?;
+/// let objects = repo.objects(Default::default())?;
+/// let result = objects.compare_trees(
+///     None,
+///     Some(root),
+///     TreeCompareLimits::default().with_max_changes(0),
+///     &cancel,
+/// );
+/// assert!(matches!(result, Err(TreeCompareError::Limit(_))));
+/// // Equal tree identities skip traversal, even under this output budget.
+/// assert!(
+///     objects
+///         .compare_trees(
+///             Some(root),
+///             Some(root),
+///             TreeCompareLimits::default().with_max_changes(0),
+///             &cancel
+///         )?
+///         .is_empty()
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct TreeCompareLimits {

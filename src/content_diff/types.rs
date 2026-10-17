@@ -103,6 +103,39 @@ pub enum ContentDiff<'a> {
 /// assert_eq!(result, text.new_bytes());
 /// # Ok::<(), girt::content_diff::DiffError>(())
 /// ```
+///
+/// # Reconstruct exact replacement bytes
+///
+/// Line ranges count LF-delimited records. Byte ranges preserve CRLF, non-UTF-8 bytes and an
+/// unterminated final line; a patch renderer must not add a newline while slicing them.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
+/// let old = b"keep\r\nold\xff";
+/// let new = b"keep\r\nnew\xff";
+/// let ContentDiff::Text(text) = diff(
+///     old,
+///     new,
+///     BinaryMode::Text,
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?
+/// else {
+///     panic!("requested text");
+/// };
+/// let mut rebuilt = Vec::new();
+/// let mut cursor = 0;
+/// for edit in text.edits() {
+///     rebuilt.extend_from_slice(&old[cursor..edit.old_bytes.start]);
+///     rebuilt.extend_from_slice(&new[edit.new_bytes.clone()]);
+///     cursor = edit.old_bytes.end;
+/// }
+/// rebuilt.extend_from_slice(&old[cursor..]);
+/// assert_eq!(rebuilt, new);
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
 #[derive(Debug, Eq, PartialEq)]
 pub struct TextDiff<'a> {
     pub(super) old: &'a [u8],
