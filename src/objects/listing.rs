@@ -299,9 +299,14 @@ impl<'a> IndexedPack<'a> {
 
     /// Whether this pack's index lists `id`, found by binary search of the pinned index.
     ///
-    /// Reads no file and does not check that the packed entry is readable.
-    pub fn contains(&self, id: ObjectId) -> bool {
-        self.pack.lists(id)
+    /// Does not check that the packed entry is readable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the mapped index file has shrunk since the snapshot pinned
+    /// it, so its bytes can no longer be read safely.
+    pub fn contains(&self, id: ObjectId) -> Result<bool, ObjectReadError> {
+        Ok(self.pack.find(id)?.is_some())
     }
 
     /// Iterates this pack's identities in index order, which is ascending identity order.
