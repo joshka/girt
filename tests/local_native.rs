@@ -988,7 +988,7 @@ fn receive_hooks_on_unsupported_platform_refuse_before_mutation() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, b"hook must not execute").unwrap();
     let prepared = PreparedPush::new(
-        &source.objects(PackLimits::default()).unwrap(),
+        &source.objects_with(PackLimits::default()).unwrap(),
         vec![
             PushCommand::new(RefName::new(b"refs/heads/main").unwrap(), None, id)
                 .with_force(ForcePolicy::FastForwardOnly),
@@ -1013,9 +1013,9 @@ fn receive_hooks_on_unsupported_platform_refuse_before_mutation() {
     ));
     assert!(
         destination
-            .objects(PackLimits::default())
+            .objects_with(PackLimits::default())
             .unwrap()
-            .read(id, Default::default())
+            .read_with(id, Default::default())
             .unwrap()
             .is_none()
     );
