@@ -100,6 +100,15 @@ pub struct RefspecsError {
 }
 
 /// Invalid syntax or a recognized form outside the supported full-name subset.
+///
+/// [`Syntax`](Self::Syntax) and [`Name`](Self::Name) mean the refspec is malformed; ask for a
+/// corrected one. [`Unsupported`](Self::Unsupported) means the refspec is outside the subset this
+/// parser accepts; it is reported before the names are checked, so it does not prove the refspec is
+/// valid. Common causes are shorthand such as `main`, which needs name resolution, and push forms
+/// such as `src:`. If the refspec is valid Git, rewrite it with full names
+/// (`refs/heads/main:refs/remotes/origin/main`) where that means the same thing, or describe it
+/// with [`ConfiguredRefspec`](super::ConfiguredRefspec), which also catches values Git would
+/// reject. [`Refspec`](super::Refspec) has examples.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RefspecError {

@@ -335,6 +335,17 @@ impl std::fmt::Debug for SshRemote {
 /// has run, an [`Exit`](Self::Exit) code of 255 can mean an authentication, host-key or network
 /// failure; OpenSSH's standard error, delivered to the diagnostics callbacks, says which.
 ///
+/// - [`Configuration`](Self::Configuration): the endpoint, command, environment or variant is
+///   unsupported or unapproved. Nothing ran; fix the inputs.
+/// - [`Exit`](Self::Exit): `ssh` or the remote Git service failed. Show OpenSSH's diagnostics.
+///   Don't retry automatically: authentication or host-key prompts may already have happened.
+/// - [`Io`](Self::Io): starting `ssh` or talking to it failed, for example because the executable
+///   is missing.
+/// - [`Protocol`](Self::Protocol): the remote end did not speak Git, often because a login shell
+///   printed text before the service started.
+/// - [`Limit`](Self::Limit), [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): a
+///   caller-set bound stopped the session; the process was terminated and reaped.
+///
 /// # Examples
 ///
 /// ```

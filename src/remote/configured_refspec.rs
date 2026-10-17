@@ -60,6 +60,37 @@ pub struct ConfiguredRefspec {
 }
 
 /// Invalid configured refspec syntax.
+///
+/// The value in `remote.<name>.fetch` or `remote.<name>.push` is not a refspec Git would accept.
+/// Show the user which remote and key it came from (see
+/// [`ConfiguredRemoteError::Refspec`](super::ConfiguredRemoteError::Refspec)) so they can
+/// correct the configuration; nothing else can repair it.
+///
+/// - [`Name`](Self::Name): a side is not a valid reference name or pattern.
+/// - [`Pattern`](Self::Pattern): a side has more than one `*`, or only one side has one.
+/// - [`Exclusion`](Self::Exclusion): a `^` refspec has a destination or names an object ID.
+/// - [`EmptyPush`](Self::EmptyPush) and [`EmptyDestination`](Self::EmptyDestination): a push value
+///   is empty or ends in `:`.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{ConfiguredRefspec, ConfiguredRefspecError, Direction};
+///
+/// let parse = ConfiguredRefspec::parse;
+/// assert_eq!(
+///     parse(Direction::Fetch, b"refs/heads/*:refs/remotes/origin/main"),
+///     Err(ConfiguredRefspecError::Pattern)
+/// );
+/// assert_eq!(
+///     parse(Direction::Fetch, b"^refs/heads/wip:refs/remotes/origin/wip"),
+///     Err(ConfiguredRefspecError::Exclusion)
+/// );
+/// assert_eq!(
+///     parse(Direction::Push, b""),
+///     Err(ConfiguredRefspecError::EmptyPush)
+/// );
+/// ```
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfiguredRefspecError {
