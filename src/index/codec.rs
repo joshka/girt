@@ -23,6 +23,28 @@ use crate::ObjectId;
 /// repairs their order. Equality compares version, entries and extensions, ignoring alternative
 /// byte encodings. Split replacement records resolve before validation; sorted additions are merged
 /// with shared entries. Editing applies the extension policy in [`Self::replace_entries`].
+///
+/// # Choosing the index
+///
+/// The index is the proposed next tree, independent of HEAD and working files. Writing a blob
+/// only puts its bytes in object storage; adding an [`Entry`] selects those bytes for a path.
+/// Use [`crate::Repository::edit_index`] for publication and [`crate::Repository::raw_status`]
+/// to compare this proposal with a tree and the working files. A parsed index alone does not
+/// establish that its objects exist or that its paths can be checked out.
+///
+/// ```
+/// use girt::index::{Entry, Index, Limits, Mode};
+/// use girt::{ObjectFormat, ObjectId};
+/// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"hello\n");
+/// let index = Index::new(
+///     ObjectFormat::Sha1,
+///     vec![Entry::new(b"hello.txt".to_vec(), Mode::Regular, id)],
+///     Limits::default(),
+/// )?;
+/// assert_eq!(index.entries()[0].id, id);
+/// // No object or working file was written by constructing this index.
+/// # Ok::<(), girt::index::Error>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Index {
     pub(super) format: crate::ObjectFormat,
@@ -86,6 +108,22 @@ impl Extension {
 /// input buffers are outside the budget. Parsing retains original bytes to preserve framing.
 /// Storage can retain original, parsed and encoded buffers
 /// simultaneously and reads at most `max_bytes + 1` bytes to detect an oversized file.
+///
+/// ```
+/// use girt::index::{Entry, Error, Index, Limits, Mode};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let limits = Limits::default().with_max_entries(0);
+/// let entry = Entry::new(
+///     b"file".to_vec(),
+///     Mode::Regular,
+///     ObjectId::for_blob(format, b""),
+/// );
+/// assert!(matches!(
+///     Index::new(format, vec![entry], limits),
+///     Err(Error::Limit(_))
+/// ));
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -155,6 +193,17 @@ impl Limits {
 }
 
 /// Index format, unsupported feature or resource-limit failure.
+///
+/// Malformed or checksum-failed input needs repair or restoration; increasing a limit cannot
+/// repair it. [`Error::SharedRequired`] requests shared-index resolution, whereas
+/// [`Error::ExtensionPreventsEdit`] requires an explicit extension policy before editing.
+/// Never turn a failed read into an empty index: doing so can discard staged work.
+///
+/// ```
+/// use girt::index::{Error, Index, Limits};
+/// let result = Index::parse(girt::ObjectFormat::Sha1, b"", Limits::default());
+/// assert!(matches!(result, Err(Error::Malformed { .. })));
+/// ```
 #[derive(Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
@@ -282,6 +331,18 @@ impl Index {
     /// # Errors
     ///
     /// V2 refuses extended flags. Limit or extension errors leave the index unchanged.
+    ///
+    /// ```
+    /// use girt::index::{Index, Limits, Version};
+    /// let mut index = Index::empty(girt::ObjectFormat::Sha1);
+    /// index.set_version(Version::V4, Limits::default())?;
+    /// let bytes = index.encode(Limits::default())?;
+    /// assert_eq!(
+    ///     Index::parse(girt::ObjectFormat::Sha1, &bytes, Limits::default())?.version(),
+    ///     Version::V4
+    /// );
+    /// # Ok::<(), girt::index::Error>(())
+    /// ```
     pub fn set_version(&mut self, version: Version, limits: Limits) -> Result<(), Error> {
         if version == Version::V2 && self.entries.iter().any(extended) {
             return Err(entry_error(0, "extended flags require v3 or v4"));
@@ -349,6 +410,27 @@ impl Index {
     ///
     /// Returns construction/limit errors or [`Error::ExtensionPreventsEdit`]. On every failure
     /// the original index, including its extensions, remains unchanged.
+    ///
+    /// Replace the complete selection, including deletions; omitted paths disappear from the index.
+    /// This does not remove the corresponding working files or stored objects.
+    ///
+    /// ```
+    /// use girt::index::{Entry, Index, Limits, Mode};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let format = ObjectFormat::Sha1;
+    /// let mut index = Index::new(
+    ///     format,
+    ///     vec![Entry::new(
+    ///         b"old".to_vec(),
+    ///         Mode::Regular,
+    ///         ObjectId::for_blob(format, b"old"),
+    ///     )],
+    ///     Limits::default(),
+    /// )?;
+    /// index.replace_entries(Vec::new(), Limits::default())?;
+    /// assert!(index.entries().is_empty());
+    /// # Ok::<(), girt::index::Error>(())
+    /// ```
     pub fn replace_entries(
         &mut self,
         mut entries: Vec<Entry>,

@@ -19,6 +19,13 @@ use crate::{ObjectFormat, Repository};
 ///
 /// Defaults preserve ordinary umask behavior and do not synchronize. Synchronization uses macOS
 /// full file flush or `File::sync_all` elsewhere; directory entries are not synchronized.
+///
+/// ```
+/// use girt::index::IndexCommitOptions;
+/// let options = IndexCommitOptions::default().with_sync(true);
+/// assert!(options.sync);
+/// // Pass to IndexEdit::commit_with_options; this flushes the file, not its parent directory.
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct IndexCommitOptions {
@@ -142,6 +149,39 @@ impl LeafSnapshot {
 /// synchronize it before rename, using full file flush on macOS or `File::sync_all` elsewhere.
 /// Directory entries are not synchronized; no crash or power-loss durability is promised. No
 /// worktree files or objects are written. Index storage does not depend on the reference backend.
+///
+/// # Stage known bytes without changing working files
+///
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::{Entry, Mode};
+/// let id = repository.loose_objects().write_blob(b"staged content\n")?;
+/// let mut edit = repository.edit_index(Default::default())?;
+/// // Derive the full replacement from the locked snapshot, retaining other paths.
+/// let mut entries = edit.index().entries().to_vec();
+/// entries.retain(|entry| entry.path != b"hello.txt");
+/// entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
+/// edit.replace_entries(entries)?;
+/// edit.commit()?;
+/// assert_eq!(
+///     repository
+///         .read_index(Default::default())?
+///         .unwrap()
+///         .entries()[0]
+///         .id,
+///     id
+/// );
+/// assert!(!repository.worktree().unwrap().join("hello.txt").exists());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct IndexEdit {
     destination: PathBuf,
@@ -158,6 +198,31 @@ pub struct IndexEdit {
 }
 
 /// Synchronous index storage failure, retaining path and underlying causes.
+///
+/// Treat [`StorageError::Locked`] as contention or a recovery task; never delete a lock just
+/// because this call could not acquire it. [`StorageError::Changed`] requires a fresh locked
+/// snapshot. Inspect both causes of [`StorageError::Cleanup`], and distinguish
+/// [`StorageError::PublishedCleanup`], where publication already succeeded, before retrying.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// use girt::index::StorageError;
+/// let edit = repository.edit_index(Default::default())?;
+/// assert!(matches!(
+///     repository.edit_index(Default::default()),
+///     Err(StorageError::Locked(_))
+/// ));
+/// edit.abort()?; // Explicit abort reports cleanup failure; Drop can only make a best effort.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum StorageError {
@@ -217,6 +282,27 @@ pub enum StorageError {
     },
 }
 
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+///
+/// assert!(repository.read_index(Default::default())?.is_none());
+/// repository.edit_index(Default::default())?.commit()?;
+/// assert!(
+///     repository
+///         .read_index(Default::default())?
+///         .unwrap()
+///         .entries()
+///         .is_empty()
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 impl Repository {
     /// Reads this worktree's `git_dir()/index`, returning `None` when missing.
     ///
@@ -302,6 +388,36 @@ impl Repository {
     ///
     /// Returns lock contention, I/O, unsupported/malformed index or resource errors. No existing
     /// index bytes are modified. See [`IndexEdit`] for filesystem and cleanup assumptions.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Worktree,
+    /// )?;
+    ///
+    /// use girt::index::{Entry, Mode};
+    /// let id = repository.loose_objects().write_blob(b"staged content\n")?;
+    /// let mut edit = repository.edit_index(Default::default())?;
+    /// // Derive the full replacement from the locked snapshot, retaining other paths.
+    /// let mut entries = edit.index().entries().to_vec();
+    /// entries.retain(|entry| entry.path != b"hello.txt");
+    /// entries.push(Entry::new(b"hello.txt".to_vec(), Mode::Regular, id));
+    /// edit.replace_entries(entries)?;
+    /// edit.commit()?;
+    /// assert_eq!(
+    ///     repository
+    ///         .read_index(Default::default())?
+    ///         .unwrap()
+    ///         .entries()[0]
+    ///         .id,
+    ///     id
+    /// );
+    /// assert!(!repository.worktree().unwrap().join("hello.txt").exists());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn edit_index(&self, limits: Limits) -> Result<IndexEdit, StorageError> {
         self.edit_index_path(
             self.git_dir().join("index"),
@@ -806,6 +922,21 @@ impl IndexEdit {
     /// recovery; no index or working-tree content is changed.
     /// An `Interrupted` I/O cause after caller cleanup means the guard was invalidated; consult
     /// cleanup's earlier report rather than inferring that an owned lock still needs recovery.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     InitKind::Worktree,
+    /// )?;
+    ///
+    /// let edit = repository.edit_index(Default::default())?;
+    /// edit.abort()?;
+    /// assert!(repository.read_index(Default::default())?.is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn abort(mut self) -> Result<(), StorageError> {
         let _lock_operation = crate::locks::operation();
         #[cfg(feature = "tracing")]

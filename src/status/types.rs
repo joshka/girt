@@ -205,6 +205,32 @@ pub enum Change {
 }
 
 /// Status failed without returning a partial report or changing repository data.
+///
+/// [`Error::Changed`] means observations raced: retry for display, but obtain exclusive ownership
+/// before using observations to change files. [`Error::Unsupported`] needs an application policy
+/// or another implementation; it does not mean clean. Preserve the source chain of object/index
+/// errors so the failing storage can be diagnosed.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::status::{Baseline, Error, Limits, Untracked};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repository = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("repo"),
+///     InitKind::Worktree,
+/// )?;
+/// let result = repository.raw_status(
+///     Baseline::Head,
+///     Untracked::Omit,
+///     Limits::default(),
+///     &AtomicBool::new(true),
+/// );
+/// assert!(matches!(result, Err(Error::Cancelled)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

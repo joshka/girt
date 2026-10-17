@@ -45,12 +45,18 @@ impl Repository {
     /// limits. Index blob targets are verified even for missing worktree files and conflicts;
     /// gitlink commits and baseline leaf targets are not resolved. No partial report is returned.
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
     /// use girt::Repository;
     /// use girt::status::{Baseline, Limits, Untracked};
-    /// let repository = Repository::open("/path/to/repository")?;
+    /// # if cfg!(not(any(target_os = "linux", target_os = "macos"))) { return Ok(()); }
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("repo"),
+    ///     girt::InitKind::Worktree,
+    /// )?;
     /// let report = repository.raw_status(
     ///     Baseline::Head,
     ///     Untracked::Omit,
