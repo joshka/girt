@@ -77,7 +77,7 @@ With the trusted handle:
 use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let mut git = Handle::discover("repo")?;
+    let git = Handle::discover("repo")?;
     let blob = git.blob_at("HEAD", b"src/lib.rs")?;
     println!("{} bytes", blob.len());
     Ok(())
@@ -103,7 +103,7 @@ With the trusted handle:
 use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let mut git = Handle::discover("repo")?;
+    let git = Handle::discover("repo")?;
     for entry in git.log("HEAD")?.take(20) {
         let (id, _) = entry?;
         println!("{id}");
@@ -450,7 +450,7 @@ With the trusted handle:
 use girt::trusted::Handle;
 
 fn main() -> girt::Result<()> {
-    let mut git = Handle::discover("repo")?;
+    let git = Handle::discover("repo")?;
     println!("{}", git.rev_parse("HEAD~1")?);
     Ok(())
 }

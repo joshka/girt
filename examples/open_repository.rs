@@ -17,7 +17,7 @@ struct Args {
 
 fn main() -> girt::Result<()> {
     let args = Args::parse();
-    let mut git = Handle::new(Repository::open(args.path)?);
+    let git = Handle::new(Repository::open(args.path)?);
     let id = git.rev_parse(&args.revision)?;
     let bytes = git.repository().objects()?.read_blob(id)?;
     println!(

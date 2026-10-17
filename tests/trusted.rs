@@ -115,7 +115,7 @@ fn tree_for_new_handle(path: &Path, bytes: &[u8]) -> ObjectId {
 
 #[test]
 fn log_is_lazy_and_stops_after_a_missing_parent() {
-    let (_dir, mut handle) = handle(ObjectFormat::Sha1);
+    let (_dir, handle) = handle(ObjectFormat::Sha1);
     let tree = tree(&handle, b"x");
     let missing = ObjectId::for_blob(ObjectFormat::Sha1, b"missing");
     let signature = Signature::now(b"Writer", b"a@example.com").unwrap();
@@ -128,7 +128,7 @@ fn log_is_lazy_and_stops_after_a_missing_parent() {
         .loose_objects()
         .write_commit(&commit)
         .unwrap();
-    let mut log = handle.log(&id.to_string()).unwrap();
+    let mut log = handle.log(id).unwrap();
 
     assert_eq!(log.next().unwrap().unwrap().0, id);
     assert!(
@@ -186,7 +186,7 @@ fn date_priority_walk_matches_git_on_monotonic_merge_history() {
         .unwrap();
 
     let actual: Vec<_> = handle
-        .log(&merge.to_string())
+        .log(merge)
         .unwrap()
         .map(|entry| entry.unwrap().0.to_string())
         .collect();
@@ -284,14 +284,14 @@ fn named_remote_fetch_and_leased_push_compose_workflow(#[case] format: ObjectFor
             source_dir.path().to_str().unwrap(),
         ],
     );
-    let mut local =
+    let local =
         Handle::new(Repository::open(local_dir.path()).unwrap()).with_environment(environment());
 
     local.fetch("origin").unwrap();
     let branch = git(source_dir.path(), &["symbolic-ref", "--short", "HEAD"]);
     assert_eq!(
         local
-            .rev_parse(&format!("refs/remotes/origin/{branch}"))
+            .rev_parse(format!("refs/remotes/origin/{branch}"))
             .unwrap(),
         root
     );
@@ -364,7 +364,7 @@ fn commit_and_switch_refuse_in_progress_operations_without_mutation() {
 #[case::dotdot(b"dir/../file")]
 #[case::empty_component(b"dir//file")]
 fn blob_paths_reject_invalid_components(#[case] path: &[u8]) {
-    let (_dir, mut handle) = handle(ObjectFormat::Sha1);
+    let (_dir, handle) = handle(ObjectFormat::Sha1);
     assert!(
         matches!(handle.blob_at("HEAD", path).unwrap_err().downcast::<girt::trusted::Error>().unwrap(), girt::trusted::Error::InvalidPath { path: actual } if actual == path)
     );
@@ -445,7 +445,7 @@ fn log_honors_shallow_boundaries_and_skewed_dates() {
         )
         .unwrap();
     let actual: Vec<_> = handle
-        .log(&child.to_string())
+        .log(child)
         .unwrap()
         .map(|entry| entry.unwrap().0)
         .collect();
@@ -455,9 +455,9 @@ fn log_honors_shallow_boundaries_and_skewed_dates() {
         format!("{child}\n"),
     )
     .unwrap();
-    let mut reopened = Handle::new(Repository::open(dir.path()).unwrap());
+    let reopened = Handle::new(Repository::open(dir.path()).unwrap());
     let shallow: Vec<_> = reopened
-        .log(&child.to_string())
+        .log(child)
         .unwrap()
         .map(|entry| entry.unwrap().0)
         .collect();
@@ -534,4 +534,59 @@ fn switch_from_unborn_head_materializes_target_and_previous_detached_checkout() 
         git(dir.path(), &["reflog", "-1", "--format=%gs", "HEAD"]),
         format!("checkout: moving from {root} to topic")
     );
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn shared_log_loop_reads_each_commits_blob_by_id(#[case] format: ObjectFormat) -> girt::Result<()> {
+    let (_dir, mut handle) = handle(format);
+    let tree = tree(&handle, b"contents\n");
+    let root = handle.commit(tree, "root")?;
+    let child = handle.commit(tree, "child")?;
+    let repo = &handle;
+
+    for commit in repo.log("main")? {
+        let (id, _) = commit?;
+        let text = repo.blob_at(id, "dir/file")?;
+        assert_eq!(text, b"contents\n");
+        assert_eq!(repo.rev_parse(id)?, id);
+    }
+    assert_eq!(repo.log(child)?.count(), 2);
+    assert_eq!(repo.log(root)?.count(), 1);
+    Ok(())
+}
+
+#[test]
+fn log_outlives_its_originating_handle() {
+    let (_dir, mut handle) = handle(ObjectFormat::Sha1);
+    let tree = tree(&handle, b"x");
+    let root = handle.commit(tree, "root").unwrap();
+    let log = handle.log(root).unwrap();
+    drop(handle);
+
+    let ids: Vec<_> = log.map(|entry| entry.unwrap().0).collect();
+    assert_eq!(ids, [root]);
+}
+
+#[test]
+fn handle_and_log_remain_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Handle>();
+    assert_send_sync::<girt::trusted::Log>();
+}
+
+#[test]
+fn shared_handles_support_parallel_content_reads() {
+    let (_dir, mut handle) = handle(ObjectFormat::Sha1);
+    let tree = tree(&handle, b"parallel");
+    let root = handle.commit(tree, "root").unwrap();
+    let handle = Handle::new(handle.repository().clone());
+    let repo = &handle;
+
+    std::thread::scope(|scope| {
+        let read = scope.spawn(|| repo.blob_at(root, "dir/file"));
+        assert_eq!(repo.rev_parse("main").unwrap(), root);
+        assert_eq!(read.join().unwrap().unwrap(), b"parallel");
+    });
 }

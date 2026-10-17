@@ -1,19 +1,22 @@
+use std::fmt::Display;
 use std::path::Path;
+use std::sync::Arc;
 
+use super::reader::ObjectView;
 use crate::config::ConfigInputs;
 use crate::refs::{Dereference, Expected, RefEdit, RefName, Reflog, Target};
-use crate::revision::{Resolver, RevisionError};
 use crate::workflow::{self, Environment, FetchOptions, NoCallbacks, PushOptions};
-use crate::{Commit, LooseObjects, ObjectId, ObjectKind, Objects, Repository, Signature};
+use crate::{Commit, LooseObjects, ObjectId, ObjectKind, Repository, Signature};
 
 /// An owning, default-policy handle for a trusted repository.
 ///
 /// Construct with [`Self::discover`] for Git-default configuration and process environment, or
-/// [`Self::new`] for an explicitly configured repository. See the [module contract](super).
+/// [`Self::new`] for an explicitly configured repository. Shared reads use immutable object
+/// snapshots and a synchronized lazy cache. This type is `Send + Sync`; `Log` owns its reader
+/// state and can outlive the handle. See the [module contract](super).
 #[derive(Debug)]
 pub struct Handle {
-    repository: Repository,
-    objects: Option<Objects>,
+    pub(super) reader: Arc<ObjectView>,
     loose: LooseObjects,
     environment: Environment,
 }
@@ -90,8 +93,7 @@ impl Handle {
     pub fn new(repository: Repository) -> Self {
         let loose = repository.loose_objects();
         Self {
-            repository,
-            objects: None,
+            reader: Arc::new(ObjectView::new(repository)),
             loose,
             environment: Environment::from_process(),
         }
@@ -120,54 +122,34 @@ impl Handle {
 
     /// Borrows the explicit API for operations outside this prototype's policy.
     pub fn repository(&self) -> &Repository {
-        &self.repository
+        &self.reader.repository
     }
 
-    /// Resolves supported revision syntax through [`Resolver::resolve`].
+    /// Resolves supported revision syntax through [`crate::revision::Resolver::resolve`].
+    /// Accepts revision text or an [`ObjectId`]; other inputs are parsed from their [`Display`].
     ///
     /// # Errors
     ///
     /// Returns parse/resolution/storage errors. Unknown revisions and missing objects trigger one
     /// object refresh and retry; corruption and resource refusals do not.
-    pub fn rev_parse(&mut self, revision: &str) -> crate::Result<ObjectId> {
-        self.resolve(revision, None)
+    pub fn rev_parse(&self, revision: impl Display) -> crate::Result<ObjectId> {
+        self.reader.resolve(revision, None)
     }
 
-    pub(super) fn resolve(
-        &mut self,
-        revision: &str,
-        kind: Option<ObjectKind>,
-    ) -> crate::Result<ObjectId> {
-        let revision = revision.parse()?;
-        let resolve = |objects: &Objects| {
-            let resolver = Resolver::new(&self.repository, objects)?;
-            match kind {
-                Some(kind) => resolver.resolve_to(&revision, kind),
-                None => resolver.resolve(&revision),
-            }
-        };
-        let objects = match &mut self.objects {
-            Some(objects) => objects,
-            slot @ None => slot.insert(self.repository.objects()?),
-        };
-        match resolve(objects) {
-            Err(error) if revision_missing(&error) => {
-                objects.refresh(Default::default(), Default::default())?;
-                Ok(resolve(objects)?)
-            }
-            result => Ok(result?),
-        }
-    }
-
-    /// Reads a byte path below a revision's tree using [`Resolver::resolve_to`],
-    /// [`Objects::read_tree`] and [`Objects::read_blob`]. Paths are literal repository-relative
-    /// components; revision path syntax is not interpolated into them.
+    /// Reads a byte path below a revision's tree using [`crate::revision::Resolver::resolve_to`],
+    /// [`crate::Objects::read_tree`] and [`crate::Objects::read_blob`]. Paths are literal
+    /// repository-relative components; revision path syntax is not interpolated into them. The
+    /// revision accepts text or an [`ObjectId`], as in [`Self::rev_parse`].
     ///
     /// # Errors
     ///
     /// Reports invalid/absent paths, wrong kinds and storage failures. Each missing object gets
     /// one refresh and retry. Gitlinks are not traversed.
-    pub fn blob_at(&mut self, revision: &str, path: impl AsRef<[u8]>) -> crate::Result<Vec<u8>> {
+    pub fn blob_at(
+        &self,
+        revision: impl Display,
+        path: impl AsRef<[u8]>,
+    ) -> crate::Result<Vec<u8>> {
         let path = path.as_ref();
         if path.is_empty()
             || path
@@ -179,10 +161,10 @@ impl Handle {
             }
             .into());
         }
-        let mut id = self.resolve(revision, Some(ObjectKind::Tree))?;
+        let mut id = self.reader.resolve(revision, Some(ObjectKind::Tree))?;
         let mut components = path.split(|b| *b == b'/').peekable();
         while let Some(component) = components.next() {
-            let tree = self.read_tree(id)?;
+            let tree = self.reader.read_tree(id)?;
             let entry = tree
                 .entries()
                 .iter()
@@ -206,33 +188,7 @@ impl Handle {
             }
             id = entry.id;
         }
-        self.read(id, |objects, id| objects.read_blob(id))
-    }
-
-    pub(super) fn read_commit(&mut self, id: ObjectId) -> crate::Result<Commit> {
-        self.read(id, |objects, id| objects.read_commit(id))
-    }
-
-    fn read_tree(&mut self, id: ObjectId) -> crate::Result<crate::Tree> {
-        self.read(id, |objects, id| objects.read_tree(id))
-    }
-
-    fn read<T, E: Into<crate::Error>>(
-        &mut self,
-        id: ObjectId,
-        read: impl Fn(&Objects, ObjectId) -> Result<T, E>,
-    ) -> crate::Result<T> {
-        let objects = match &mut self.objects {
-            Some(objects) => objects,
-            slot @ None => slot.insert(self.repository.objects()?),
-        };
-        match read(objects, id).map_err(Into::into) {
-            Err(error) if missing(&error) => {
-                objects.refresh(Default::default(), Default::default())?;
-                read(objects, id).map_err(Into::into)
-            }
-            result => result,
-        }
+        self.reader.read_blob(id)
     }
 
     /// Compares HEAD, index and raw working files through [`Repository::raw_status`].
@@ -242,7 +198,7 @@ impl Handle {
     ///
     /// Returns raw-status platform, storage and resource failures. No mutation occurs.
     pub fn status(&self) -> Result<crate::status::Report, crate::status::Error> {
-        self.repository.raw_status(
+        self.reader.repository.raw_status(
             crate::status::Baseline::Head,
             crate::status::Untracked::RawFilesWithoutIgnores,
         )
@@ -274,10 +230,10 @@ impl Handle {
     /// publication.
     pub fn commit(&mut self, tree: ObjectId, message: impl AsRef<[u8]>) -> crate::Result<ObjectId> {
         self.require_idle()?;
-        self.read_tree(tree)?;
-        let author = Signature::author(self.repository.config(), &self.environment)?;
-        let committer = Signature::committer(self.repository.config(), &self.environment)?;
-        let refs = self.repository.references()?;
+        self.reader.read_tree(tree)?;
+        let author = Signature::author(self.reader.repository.config(), &self.environment)?;
+        let committer = Signature::committer(self.reader.repository.config(), &self.environment)?;
+        let refs = self.reader.repository.references()?;
         let parent = refs.resolve(&RefName::HEAD)?.id;
         let expected = parent.map_or(Expected::Absent, |id| Expected::Value(Target::Direct(id)));
         let commit = Commit::builder(tree, author, message.as_ref())
@@ -330,8 +286,7 @@ impl Handle {
         self.require_idle()?;
         let branch_name = branch;
         let branch = RefName::branch(branch_name)?;
-        // Clone metadata so prepared locks can stay alive while this handle refreshes objects.
-        let repository = self.repository.clone();
+        let repository = &self.reader.repository;
         let refs = repository.references()?;
         let stored = refs.read(&RefName::HEAD)?;
         let from = match &stored {
@@ -364,12 +319,15 @@ impl Handle {
         // Old and new symbolic chains are now locked. Read their tips under those same locks.
         let old = refs.resolve(&RefName::HEAD)?.id;
         let baseline = old
-            .map(|id| self.read_commit(id).map(|commit| commit.tree()))
+            .map(|id| self.reader.read_commit(id).map(|commit| commit.tree()))
             .transpose()?;
         let revision = format!("refs/heads/{branch_name}");
-        let target = self.resolve(&revision, Some(ObjectKind::Commit))?;
-        let target_tree = self.read_commit(target)?.tree();
-        let checkout = self.repository.checkout_tree(baseline, Some(target_tree))?;
+        let target = self.reader.resolve(&revision, Some(ObjectKind::Commit))?;
+        let target_tree = self.reader.read_commit(target)?.tree();
+        let checkout = self
+            .reader
+            .repository
+            .checkout_tree(baseline, Some(target_tree))?;
         after_checkout();
         if let Err(source) = prepared.publish() {
             return Err(Error::SwitchHead {
@@ -383,6 +341,7 @@ impl Handle {
 
     fn require_idle(&self) -> crate::Result<()> {
         if !self
+            .reader
             .repository
             .operation_state(Default::default())?
             .is_empty()
@@ -403,11 +362,13 @@ impl Handle {
     /// Returns configured-remote and transfer errors, preserving partial installation/publication
     /// reports. Shallow boundaries in this handle remain unchanged; reopen after shallow changes.
     pub fn fetch(&self, remote: &str) -> crate::Result<workflow::FetchOutcome> {
-        let configured =
-            crate::remote::ConfiguredRemote::find(self.repository.config(), remote.as_bytes())?
-                .ok_or_else(|| Error::RemoteNotConfigured {
-                    name: remote.to_owned(),
-                })?;
+        let configured = crate::remote::ConfiguredRemote::find(
+            self.reader.repository.config(),
+            remote.as_bytes(),
+        )?
+        .ok_or_else(|| Error::RemoteNotConfigured {
+            name: remote.to_owned(),
+        })?;
         if configured.fetch_refspecs().is_empty() {
             return Err(Error::NoFetchRefspecs {
                 name: remote.to_owned(),
@@ -416,7 +377,7 @@ impl Handle {
         }
         let options = FetchOptions::new(configured.fetch_refspecs().iter().map(|r| r.to_bytes()));
         Ok(workflow::fetch(
-            &self.repository,
+            &self.reader.repository,
             remote,
             &options,
             &self.environment,
@@ -437,10 +398,10 @@ impl Handle {
         remote: &str,
         commands: Vec<crate::push::PushCommand>,
     ) -> crate::Result<crate::push::PushReport> {
-        let identity = Signature::committer(self.repository.config(), &self.environment)?;
+        let identity = Signature::committer(self.reader.repository.config(), &self.environment)?;
         let options = PushOptions::default().with_identity(identity);
         Ok(workflow::push(
-            &self.repository,
+            &self.reader.repository,
             remote,
             commands,
             &options,
@@ -448,22 +409,6 @@ impl Handle {
             &mut NoCallbacks,
         )?)
     }
-}
-
-fn missing(error: &crate::Error) -> bool {
-    matches!(error.downcast_ref(), Some(crate::ReadBlobError::Missing(_)))
-        || matches!(error.downcast_ref(), Some(crate::ReadTreeError::Missing(_)))
-        || matches!(
-            error.downcast_ref(),
-            Some(crate::ReadCommitError::Missing(_))
-        )
-}
-
-fn revision_missing(error: &RevisionError) -> bool {
-    matches!(
-        error,
-        RevisionError::NotFound(_) | RevisionError::MissingObject(_)
-    ) || matches!(error, RevisionError::Peel(error) if matches!(*error.source, crate::PeelFailure::Missing))
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -485,7 +430,7 @@ mod tests {
         let tree = handle.tree_editor().write().unwrap();
         let root = handle.commit(tree, "root").unwrap();
         handle
-            .repository
+            .repository()
             .references()
             .unwrap()
             .transaction(&[RefEdit::create(
@@ -494,7 +439,7 @@ mod tests {
                 Reflog::Preserve,
             )])
             .unwrap();
-        let git_dir = handle.repository.git_dir().to_path_buf();
+        let git_dir = handle.repository().git_dir().to_path_buf();
 
         let error = handle
             .switch_with(
@@ -515,9 +460,9 @@ mod tests {
             panic!("expected a post-checkout publication failure");
         };
         assert!(checkout.index_published);
-        assert!(handle.repository.git_dir().join("index").exists());
+        assert!(handle.repository().git_dir().join("index").exists());
         assert_eq!(
-            handle.repository.head().unwrap().name,
+            handle.repository().head().unwrap().name,
             RefName::branch("main").unwrap()
         );
     }

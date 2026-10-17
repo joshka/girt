@@ -19,7 +19,9 @@ fn git_attempt(directory: &Path, args: &[&str]) -> Output {
             command.env_remove(key);
         }
     }
+    // These fixtures are copied between oracle runs; background maintenance must not race copies.
     command
+        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .current_dir(directory)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", directory.join("absent-config"))
