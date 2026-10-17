@@ -40,6 +40,36 @@ girt diff --renames v0.9.0 main
 girt object batch --check < ids.txt
 ```
 
+## Shell completion
+
+Add one line to your shell's startup file. Tab then completes commands, options and values read from
+the current repository: revisions and ref names, remote names, linked worktree names and config
+keys.
+
+```sh
+source <(COMPLETE=zsh girt)     # ~/.zshrc
+source <(COMPLETE=bash girt)    # ~/.bashrc
+COMPLETE=fish girt | source     # ~/.config/fish/config.fish
+```
+
+The line asks `girt` for a small script that calls back into `girt` on each Tab, so completions stay
+in step with the installed version. Completing a value reads only refs, config and worktree
+registrations, never objects; outside a repository it offers no values. `-C <path>` is not applied
+while completing.
+
+Packagers can ship static scripts instead, which complete commands and options but not repository
+values: `girt completions <shell>` prints one for `bash`, `zsh`, `fish`, `elvish` or `powershell`.
+
+## Man pages
+
+`girt man` prints `girt.1`. `girt man --out <dir>` writes `girt.1` and one page per subcommand
+(`girt-object.1`, `girt-object-show.1`, ...) for installing into a `man1` directory:
+
+```sh
+girt man --out ~/.local/share/man/man1
+man girt-diff
+```
+
 ## Output and `--git`
 
 Default output is line-oriented: full object IDs, one record per line and a stable field order, so

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
+use clap_complete::ArgValueCandidates;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::Repository;
 use girt::config::{ConfigInputs, Origin};
@@ -12,8 +13,8 @@ use girt::fetch::{AdvertisementKind, FetchLimits, RemoteDiscovery};
 use girt::remote::{Remote, RemoteConfig};
 use girt::transport::TransportControl;
 
-use crate::Context;
 use crate::common::{display_bytes, stdout, write_line};
+use crate::{Context, complete};
 
 /// Installation config files probed in order; the first that exists is the system layer.
 const SYSTEM_CONFIG: &[&str] = &[
@@ -32,6 +33,7 @@ pub enum Command {
     /// Exits with status 1 when the key is not set.
     Get {
         /// Key as `section.name` or `section.subsection.name`.
+        #[arg(add = ArgValueCandidates::new(complete::config_keys))]
         key: String,
     },
     /// List every effective entry as `key=value`, lowest precedence first (≈ `git config --list`).
@@ -46,6 +48,7 @@ pub enum Command {
     /// Set a key in the repository's local config file, replacing its last local occurrence.
     Set {
         /// Key as `section.name` or `section.subsection.name`.
+        #[arg(add = ArgValueCandidates::new(complete::config_keys))]
         key: String,
         /// New value.
         value: String,
@@ -53,6 +56,7 @@ pub enum Command {
     /// Remove every occurrence of a key from the repository's local config file.
     Unset {
         /// Key as `section.name` or `section.subsection.name`.
+        #[arg(add = ArgValueCandidates::new(complete::config_keys))]
         key: String,
     },
 }
@@ -75,6 +79,7 @@ pub enum RemoteCommand {
     /// Show a remote's URLs and refspecs.
     Show {
         /// Remote name.
+        #[arg(add = ArgValueCandidates::new(complete::remotes))]
         name: String,
     },
     /// List the references a remote advertises as `<id>\t<ref>` (≈ `git ls-remote`).
@@ -86,6 +91,7 @@ pub enum RemoteCommand {
     /// `<ref>^{}` lines after their tag.
     Heads {
         /// Remote name or URL.
+        #[arg(add = ArgValueCandidates::new(complete::remotes))]
         remote: String,
     },
 }

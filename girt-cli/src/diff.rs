@@ -4,13 +4,14 @@ use std::io::Write;
 use std::ops::Range;
 use std::process::ExitCode;
 
+use clap_complete::ArgValueCompleter;
 use color_eyre::eyre::{Result, WrapErr as _};
 use girt::content_diff::{BinaryMode, ContentDiff, DiffLimits, diff};
 use girt::rewrites::{Copies, Kind, Limits, Options};
 use girt::{EntryMode, ObjectId, Objects, TreeChange, TreeCompareLimits, TreeValue};
 
-use crate::Context;
 use crate::common::{not_cancelled, objects, read_limits, resolve_tree, stdout};
+use crate::{Context, complete};
 
 /// Lines of unchanged context around each patch hunk.
 const CONTEXT: usize = 3;
@@ -29,8 +30,10 @@ const CONTEXT: usize = 3;
 #[derive(Debug, clap::Args)]
 pub struct DiffArgs {
     /// The old revision (commit or tree).
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     a: String,
     /// The new revision (commit or tree).
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     b: String,
     /// List changed paths with a status letter (the default).
     #[arg(long, conflicts_with_all = ["renames", "patch"])]

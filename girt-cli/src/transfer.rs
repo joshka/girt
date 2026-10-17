@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
+use clap_complete::ArgValueCandidates;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::clone::{BranchSelection, CloneHead, CloneRequest};
 use girt::fetch::{FetchLimits, FetchUpdateLimits};
@@ -20,11 +21,11 @@ use girt::transport::TransportControl;
 use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
-use crate::Context;
 use crate::common::{display_bytes, resolve, resolve_ref, stdout};
 use crate::config::{
     Endpoint, block_on, configured_repository, endpoint, find_remote, http_remote,
 };
+use crate::{Context, complete};
 
 /// Copy a repository into a new directory and check out its `HEAD`.
 ///
@@ -56,7 +57,7 @@ pub struct CloneArgs {
 #[derive(Debug, clap::Args)]
 pub struct FetchArgs {
     /// Configured remote name.
-    #[arg(default_value = "origin")]
+    #[arg(default_value = "origin", add = ArgValueCandidates::new(complete::remotes))]
     remote: String,
 }
 
@@ -71,6 +72,7 @@ pub struct FetchArgs {
 #[derive(Debug, clap::Args)]
 pub struct PushArgs {
     /// Configured remote name.
+    #[arg(add = ArgValueCandidates::new(complete::remotes))]
     remote: String,
     /// Refspecs to push.
     #[arg(required = true)]

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::SystemTime;
 
+use clap_complete::{ArgValueCandidates, ArgValueCompleter};
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::checkout::Action;
 use girt::ignore::{Case, Ignore, InputKind, Source};
@@ -14,10 +15,10 @@ use girt::refs::RefName;
 use girt::status::{Baseline, Change, Untracked};
 use girt::{EntryMode, ObjectId, Repository, TreeValue, WorktreeRetirement, WorktreeState};
 
-use crate::Context;
 use crate::common::{
     display_bytes, not_cancelled, objects, resolve_ref, resolve_tree, stdout, write_line,
 };
+use crate::{Context, complete};
 
 /// Maximum registrations listed by `worktree list`.
 const MAX_WORKTREES: usize = 100_000;
@@ -79,10 +80,11 @@ pub enum IgnoreCommand {
 #[derive(Debug, clap::Args)]
 pub struct CheckoutArgs {
     /// Revision whose tree to check out.
+    #[arg(add = ArgValueCompleter::new(complete::revisions))]
     revision: String,
     /// Revision whose tree the current index represents; an unborn HEAD or a missing index (as in
     /// a fresh `clone --no-checkout`) means empty.
-    #[arg(long, default_value = "HEAD")]
+    #[arg(long, default_value = "HEAD", add = ArgValueCompleter::new(complete::revisions))]
     from: String,
 }
 
@@ -99,6 +101,7 @@ pub enum WorktreeCommand {
     /// Protect a registration from pruning.
     Lock {
         /// Registration name (under `worktrees/`) or checkout path.
+        #[arg(add = ArgValueCandidates::new(complete::worktrees))]
         worktree: String,
         /// Reason recorded in the lock.
         #[arg(long, default_value = "")]
@@ -107,16 +110,19 @@ pub enum WorktreeCommand {
     /// Remove a registration's lock.
     Unlock {
         /// Registration name (under `worktrees/`) or checkout path.
+        #[arg(add = ArgValueCandidates::new(complete::worktrees))]
         worktree: String,
     },
     /// Delete one registration whose checkout no longer exists, including its HEAD and index.
     Prune {
         /// Registration name (under `worktrees/`).
+        #[arg(add = ArgValueCandidates::new(complete::worktrees))]
         worktree: String,
     },
     /// Repair the links between a registration and its (moved) checkout.
     Repair {
         /// Registration name (under `worktrees/`).
+        #[arg(add = ArgValueCandidates::new(complete::worktrees))]
         worktree: String,
         /// Current checkout directory.
         path: PathBuf,
