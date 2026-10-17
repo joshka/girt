@@ -1,5 +1,64 @@
 use std::ops::Range;
 
+/// Content classification and placement of equivalent shortest edits.
+///
+/// The defaults enable indent-aware placement calibrated against Git CLI observations. Some
+/// ambiguous placements still differ; see [`super::diff`]. Disable scoring to compare with
+/// `git diff --no-indent-heuristic`; change-group compaction still applies.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::content_diff::{ContentDiff, DiffLimits, Options, diff_with_options};
+///
+/// let result = diff_with_options(
+///     b"head\n\nhead\n  body\n}\n}\n\n\n}\n",
+///     b"head\n\nhead\n  body\nhead\n  body\n}\n}\n\n\n}\n",
+///     Options::default().with_indent_heuristic(false),
+///     DiffLimits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// let ContentDiff::Text(text) = result else {
+///     panic!("expected text")
+/// };
+/// assert_eq!(text.edits()[0].new_lines, 4..6);
+/// # Ok::<(), girt::content_diff::DiffError>(())
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Options {
+    /// How changed payloads are classified (default [`BinaryMode::Auto`]).
+    pub binary: BinaryMode,
+
+    /// Prefer structural boundaries using indentation and blank separators (default true).
+    pub indent_heuristic: bool,
+}
+
+impl Options {
+    /// Sets [`Self::binary`].
+    #[must_use]
+    pub fn with_binary(mut self, binary: BinaryMode) -> Self {
+        self.binary = binary;
+        self
+    }
+
+    /// Sets [`Self::indent_heuristic`], analogous to Git's `--[no-]indent-heuristic`.
+    #[must_use]
+    pub fn with_indent_heuristic(mut self, enabled: bool) -> Self {
+        self.indent_heuristic = enabled;
+        self
+    }
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            binary: BinaryMode::Auto,
+            indent_heuristic: true,
+        }
+    }
+}
+
 /// Classification policy for [`super::diff`], independent of paths and Git attributes.
 ///
 /// ```

@@ -2091,8 +2091,8 @@ shallow boundaries and a NUL-containing or nonregular requested file are refused
 NUL-containing versions are compared as raw lines; historical type transitions start a new file
 history. Empty files need no history attribution. Copy/move detection within or across files,
 ignore-revs, attributes/textconv and incremental output are unsupported. Repeated lines can have
-different shortest-edit alignment from Git; [440](https://github.com/joshka/girt/issues/440) tracks
-this.
+different shortest-edit alignment from Git. The shared content diff applies boundary compaction and
+indent-aware placement, with the limitations described below.
 
 Original disposable histories in `tests/blame.rs` compare commit, original line and original path
 against Git 2.56.0 `blame --line-porcelain` on macOS arm64. They cover edited renames, merges with
@@ -2109,8 +2109,8 @@ input has no lines; a nonempty unterminated suffix is one line. CRLF, bare CR, N
 invalid UTF-8 and a missing final LF are significant, with no decoding or normalization. Edit ranges
 are zero-based and half-open in both original coordinate spaces. Adjacent edit edges are coalesced;
 unchanged gaps are implicit and byte-identical. Results contain zero context and are not unified
-patch hunks. There is no context expansion, heuristic boundary shifting or rendering API. The
-example escapes bytes solely for display.
+patch hunks. Boundary compaction moves equivalent changes without adding context; render the result
+with `patch::write_hunks`. The content-diff example escapes bytes solely for display.
 
 Auto mode classifies changed payloads as binary if either contains NUL anywhere. This is an explicit
 whole-input policy, not Git's sampling or attributes policy. Forced text and forced binary override
@@ -2141,21 +2141,41 @@ For N total lines and edit distance D, search takes O(ND) line comparisons and O
 positions, plus linear line-offset and output storage. Bytes compared also consume work budget. The
 algorithm minimizes inserted plus deleted lines, greedily extends equal runs, visits insertion-heavy
 diagonals first and selects deletion when predecessor old positions tie. This establishes
-deterministic alignment independently of Git's heuristic shifts. No minimum replacement-count,
-prettiest patch, or exact Git CLI-output guarantee is made.
+deterministic search alignment. A separate boundary pass rotates byte-identical lines to coalesce
+changed groups and aligns them with changes on the opposite side where possible. Without indent
+scoring it selects the last equivalent boundary reached by these rotations. This reproduces the
+compaction observed through Git's `--no-indent-heuristic` on original fixtures; it does not
+reproduce all of Git's choices of an edit path.
+
+The default additionally scores unaligned groups using indentation and blank separators. It scans
+forward over a window of at most 100 rotations, bounded further by the changed-group length plus
+one. Equal comparisons favour the later candidate. The comparison combines the order of the two
+boundary indent sums with penalties for equal/decreasing indentation and rewards for blank
+separators; it is non-transitive, so scan order matters. Tabs advance to eight-column stops. Context
+inspection stops after 20 blank lines; a run reaching that cap acts like an absent neighbour
+(start/end of file) for scoring. The compact scoring rule is calibrated against Git CLI experiments
+rather than copied from an implementation. Some synthetic blank-run and file-edge ties still differ.
+This is an indent-aware heuristic, not a universal Git scoring-equivalence guarantee.
+`content_diff::diff_with_options` and `patch::Options::with_indent_heuristic(false)` disable scoring
+while retaining compaction. Blame uses the default shared mapping. Every rotation preserves the
+unchanged subsequence and shortest-edit count; no minimum replacement-count, prettiest-patch, or
+exact Git CLI-output guarantee is made.
 
 Defaults bound combined inputs to 64 MiB, combined lines to 1,000,000, retained frontier positions
 to 1,000,000 and work to 64 Mi units. Each frontier row reserves its full distance-plus-one width
 before allocation. Scanning and comparison charge bytes conservatively; frontier, line-comparison
-and traceback steps also charge units. Work can exhaust before other bounds, even for inputs below
-the byte cap. Empty sides bypass search; equal and binary results bypass line/trace allocation.
-Input bounds apply to all modes. Bounds are not exact process-memory limits; allocator overhead,
-spare vector capacity, caller-owned payloads and storage snapshots are separate. Raising limits can
-admit quadratic work/trace growth. Exhaustion returns an error with no approximate or partial edits.
+and traceback steps also charge units. Compaction uses linear line markers, charges its scans and
+rotations to the work budget, and checks cancellation at each step. Work can exhaust before other
+bounds, even for inputs below the byte cap. Empty sides bypass search; equal and binary results
+bypass line/trace allocation. Input bounds apply to all modes. Bounds are not exact process-memory
+limits; allocator overhead, spare vector capacity, caller-owned payloads and storage snapshots are
+separate. Raising limits can admit quadratic work/trace growth. Exhaustion returns an error with no
+approximate or partial edits.
 
 Cancellation is cooperative: checks occur before work, within byte scans at 4 KiB chunks, per
-frontier/line comparison, during traceback and before return. Allocations, deallocation and single
-storage reads cannot be interrupted. No hard wall-clock bound or async runtime is introduced.
+frontier/line comparison, during traceback and boundary selection, and before return. Allocations,
+deallocation and single storage reads cannot be interrupted. No hard wall-clock bound or async
+runtime is introduced.
 
 ### Content Diff Evidence
 
@@ -2164,11 +2184,15 @@ checked against an independent dynamic-programming edit-distance oracle, varied 
 resource/cancellation boundaries and large shapes. Adapter units test storage failure context and
 supported modes. `tests/content_diff.rs` writes original bytes into isolated temporary files and
 invokes Git `diff --no-index --text --minimal --diff-algorithm=myers --no-indent-heuristic` with
-zero context, no external drivers or textconv, and isolated configuration. The parser preserves
-patch body bytes and handles Git's missing-final-newline marker. Simple ranges/bytes agree exactly;
-ambiguous alignments are checked through reconstruction, unchanged gaps and equal minimum costs.
-This does not assert universal alignment equivalence. A separate simple NUL fixture compares
-ordinary Git binary classification; the whole-input sampling difference remains intentional.
+zero context, no external drivers or textconv, and isolated configuration. Original repetitive
+fixtures check exact coordinates for merged insertion/deletion groups and alignment with opposite
+changes. Both indent modes also compare original blank separators, file-edge blocks, tabs and
+whitespace-only lines. `tests/fixtures/content-diff/observe.py` records a small reproducible CLI
+experiment without upstream inputs. The parser preserves patch body bytes and handles Git's
+missing-final-newline marker. Simple ranges/bytes agree exactly; ambiguous alignments are checked
+through reconstruction, unchanged gaps and equal minimum costs. This does not assert universal
+alignment equivalence. A separate simple NUL fixture compares ordinary Git binary classification;
+the whole-input sampling difference remains intentional.
 
 Git `hash-object --no-filters` supplies blobs for tree-to-content integration, including CRLF and
 non-UTF-8 data. Git repack/prune-packed supplies the packed variant and a removed loose object

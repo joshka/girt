@@ -84,13 +84,15 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 mod blobs;
+mod compact;
+mod indent;
 mod myers;
 mod types;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use blobs::{BlobContent, ContentReadError};
-pub use types::{BinaryMode, ContentDiff, ContentEdit, DiffError, DiffLimits, TextDiff};
+pub use types::{BinaryMode, ContentDiff, ContentEdit, DiffError, DiffLimits, Options, TextDiff};
 
 /// Compares exact bytes, returning unchanged, binary-changed, or a shortest line edit sequence.
 ///
@@ -98,8 +100,8 @@ pub use types::{BinaryMode, ContentDiff, ContentEdit, DiffError, DiffLimits, Tex
 /// input has no lines. CR, NUL (in forced text), non-UTF-8 and missing final LF remain significant.
 /// Results borrow both inputs; no payload bytes are copied. Edits use zero-based half-open ranges
 /// into the original inputs, coalesce adjacent insertions/deletions, and contain no context.
-/// Unlisted gaps are byte-identical. They are not unified patch hunks: no context expansion,
-/// heuristic boundary shifting or rendering is provided; see [`crate::patch::write_hunks`].
+/// Unlisted gaps are byte-identical. They are not unified patch hunks: context expansion and
+/// rendering belong to [`crate::patch::write_hunks`].
 ///
 /// Equal bytes return [`ContentDiff::Unchanged`] in every mode, including binary. Auto mode scans
 /// the **entire** payloads for NUL; it does not implement Git attributes or Git's sampling policy.
@@ -107,16 +109,24 @@ pub use types::{BinaryMode, ContentDiff, ContentEdit, DiffError, DiffLimits, Tex
 /// The independent Myers implementation minimizes inserted plus deleted lines. It greedily matches
 /// equal lines, visits diagonals from insertion-heavy to deletion-heavy, and chooses deletion when
 /// predecessor frontiers reach the same old position. This fixes repeated-line alignment; it does
-/// not promise Git's heuristic output. With N total lines and edit distance D, search uses O(ND)
-/// line comparisons and O(D²) stored frontier positions, subject to [`DiffLimits`]. Byte comparison
-/// costs are charged too. Empty sides bypass search. No approximate fallback or partial edits are
-/// returned on exhaustion.
+/// not promise Git's exact search alignment. A post-processing pass rotates byte-identical
+/// boundary lines to coalesce change groups and prefers boundaries aligned with changes on the
+/// opposite side. Otherwise, the default indent-aware scoring prefers structural boundaries;
+/// [`diff_with_options`] can disable scoring while retaining compaction. Rotations preserve the
+/// unchanged subsequence and shortest-edit count. The scoring is calibrated against Git CLI
+/// experiments, but some blank-run and file-edge ties still differ from Git.
+///
+/// With N total lines and edit distance D, search uses O(ND) line comparisons and O(D²) stored
+/// frontier positions, subject to [`DiffLimits`]. Byte comparisons also consume work budget.
+/// Compaction uses O(N) additional markers and charges scans and rotations to the same work budget.
+/// Empty sides bypass search and compaction. No approximate fallback or partial edits are returned
+/// on exhaustion.
 ///
 /// This synchronous, pure operation checks cancellation before work, during scans (at most 4 KiB
-/// per chunk), at every frontier/line comparison, during traceback, and before return. Set `cancel`
-/// from another thread and leave it set until return. Allocation and destruction cannot be
-/// interrupted; this is cooperative cancellation without a wall-clock guarantee. Async callers
-/// should use a caller-bounded worker for substantial inputs.
+/// per chunk), at every frontier/line comparison, during traceback and boundary selection, and
+/// before return. Set `cancel` from another thread and leave it set until return. Allocation and
+/// destruction cannot be interrupted; this is cooperative cancellation without a wall-clock
+/// guarantee. Async callers should use a caller-bounded worker for substantial inputs.
 ///
 /// # Errors
 ///
@@ -151,6 +161,30 @@ pub fn diff<'a>(
     limits: DiffLimits,
     cancel: &AtomicBool,
 ) -> Result<ContentDiff<'a>, DiffError> {
+    diff_with_options(
+        old,
+        new,
+        Options::default().with_binary(mode),
+        limits,
+        cancel,
+    )
+}
+
+/// Compares payloads with explicit classification and boundary-placement options.
+///
+/// See [`diff`] for byte, borrowing, shortest-edit, resource and cancellation contracts. Set
+/// [`Options::indent_heuristic`] to false for compaction without indentation scoring.
+///
+/// # Errors
+///
+/// Returns the same errors as [`diff`], without returning partial edits.
+pub fn diff_with_options<'a>(
+    old: &'a [u8],
+    new: &'a [u8],
+    options: Options,
+    limits: DiffLimits,
+    cancel: &AtomicBool,
+) -> Result<ContentDiff<'a>, DiffError> {
     let mut budget = Budget {
         remaining: limits.max_work,
         cancel,
@@ -167,7 +201,7 @@ pub fn diff<'a>(
         budget.check()?;
         return Ok(ContentDiff::Unchanged);
     }
-    let binary = match mode {
+    let binary = match options.binary {
         BinaryMode::Auto => has_nul(old, &mut budget)? || has_nul(new, &mut budget)?,
         BinaryMode::Text => false,
         BinaryMode::Binary => true,
@@ -180,6 +214,13 @@ pub fn diff<'a>(
     let old_lines = Lines::new(old, &mut remaining_lines, &mut budget)?;
     let new_lines = Lines::new(new, &mut remaining_lines, &mut budget)?;
     let edits = myers::edits(&old_lines, &new_lines, limits.max_trace, &mut budget)?;
+    let edits = compact::edits(
+        &old_lines,
+        &new_lines,
+        edits,
+        options.indent_heuristic,
+        &mut budget,
+    )?;
     budget.check()?;
     Ok(ContentDiff::Text(TextDiff { old, new, edits }))
 }

@@ -108,6 +108,22 @@ fn edited_rename_and_unterminated_lines_match_git(#[case] format: &str) {
     let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "new"), oracle(dir.path(), "new"));
 }
+
+/// Original repeated block: Git's default attributes the inserted header/body before the
+/// earlier block; --no-indent-heuristic attributes the later identical pair instead.
+#[rstest]
+fn repetitive_code_uses_default_indent_heuristic(#[values("sha1", "sha256")] format: &str) {
+    let dir = fixture(format);
+    commit(dir.path(), b"head\n\nhead\n  body\n}\n}\n\n\n}\n", "code");
+    commit(
+        dir.path(),
+        b"head\n\nhead\n  body\nhead\n  body\n}\n}\n\n\n}\n",
+        "code",
+    );
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
+    assert_eq!(actual(&handle, "code"), oracle(dir.path(), "code"));
+}
+
 fn merge_fixture(both: bool) -> tempfile::TempDir {
     let dir = fixture("sha1");
     git(dir.path(), &["checkout", "-qb", "side"]);
@@ -395,9 +411,10 @@ fn empty_file_at_shallow_boundary_has_no_origins() {
     assert!(handle.blame("HEAD", b"empty").unwrap().is_empty());
 }
 
-#[test]
-fn symlink_replaced_by_regular_file_starts_new_history() {
+#[rstest]
+fn symlink_replaced_by_regular_file_starts_new_history(#[values("true", "false")] symlinks: &str) {
     let dir = fixture("sha1");
+    git(dir.path(), &["config", "core.symlinks", symlinks]);
     let repo = Repository::open(dir.path()).unwrap();
     let target = repo.loose_objects().write_blob(b"target\n").unwrap();
     git(
@@ -413,7 +430,14 @@ fn symlink_replaced_by_regular_file_starts_new_history() {
         dir.path(),
         &["-c", "commit.gpgsign=false", "commit", "-qm", "symlink"],
     );
+    // Drop the index-only symlink so adding the regular file cannot retain its old mode when
+    // core.symlinks=false (the usual Git for Windows setting).
+    git(
+        dir.path(),
+        &["update-index", "--force-remove", "--", "link"],
+    );
     commit(dir.path(), b"target\nnew file\n", "link");
+    assert!(git(dir.path(), &["ls-tree", "HEAD", "--", "link"]).starts_with("100644 blob "));
     let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "link"), oracle(dir.path(), "link"));
 }

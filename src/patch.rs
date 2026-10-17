@@ -12,11 +12,11 @@
 //! pass a buffered writer such as [`io::BufWriter`] or a `Vec<u8>`.
 //!
 //! The output matches `git diff` for the same entries with these differences: hunks come from
-//! girt's [Myers comparison](crate::content_diff::diff) without Git's indent heuristic, so an
-//! ambiguous change may align differently; binary detection scans whole blobs for NUL rather
-//! than a prefix; attributes, textconv, `diff.<driver>` function names, whitespace options,
-//! colour and binary patch encoding are not provided. The hunk header's function context uses
-//! Git's default rule.
+//! girt's [Myers comparison](crate::content_diff::diff) with boundary compaction and indent-aware
+//! scoring calibrated against Git, so some ambiguous changes may align differently; binary
+//! detection scans whole blobs for NUL rather than a prefix; attributes, textconv, `diff.<driver>`
+//! function names, whitespace options, colour and binary patch encoding are not provided. The hunk
+//! header's function context uses Git's default rule.
 //!
 //! ```
 //! use girt::tree::TreeEditor;
@@ -60,7 +60,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub use hunks::write_hunks;
 
 use crate::content_diff::{
-    BinaryMode, BlobContent, ContentDiff, ContentReadError, DiffError, DiffLimits, diff,
+    BinaryMode, BlobContent, ContentDiff, ContentReadError, DiffError, DiffLimits,
+    diff_with_options,
 };
 use crate::display::quote_path;
 use crate::rewrites::Kind;
@@ -94,6 +95,10 @@ pub struct Options {
     pub abbrev_len: Option<usize>,
     /// How changed content is classified (default [`BinaryMode::Auto`]; `Text` is `--text`).
     pub binary: BinaryMode,
+    /// Use indentation and blank separators to place equivalent changes (default true).
+    /// Set false for placement analogous to Git's `--no-indent-heuristic`; compaction still
+    /// applies. Some ambiguous placements differ from Git; see [`crate::content_diff::diff`].
+    pub indent_heuristic: bool,
 }
 
 impl Options {
@@ -111,6 +116,13 @@ impl Options {
         self
     }
 
+    /// Sets [`Self::indent_heuristic`].
+    #[must_use]
+    pub fn with_indent_heuristic(mut self, enabled: bool) -> Self {
+        self.indent_heuristic = enabled;
+        self
+    }
+
     /// Sets [`Self::binary`].
     #[must_use]
     pub fn with_binary(mut self, binary: BinaryMode) -> Self {
@@ -125,6 +137,7 @@ impl Default for Options {
             context_lines: 3,
             abbrev_len: None,
             binary: BinaryMode::Auto,
+            indent_heuristic: true,
         }
     }
 }
@@ -356,10 +369,12 @@ impl<W: io::Write> Renderer<'_, W> {
         }
 
         let content = self.read(new_path, old, new)?;
-        let content_diff = diff(
+        let content_diff = diff_with_options(
             &content.old,
             &content.new,
-            self.options.binary,
+            crate::content_diff::Options::default()
+                .with_binary(self.options.binary)
+                .with_indent_heuristic(self.options.indent_heuristic),
             self.limits.diff,
             self.cancel,
         )

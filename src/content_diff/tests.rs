@@ -29,6 +29,11 @@ fn text(old: &[u8], new: &[u8]) -> Vec<ContentEdit> {
 #[case::two_edits(b"a\nb\nc\nd\n", b"x\nb\nc\ny\n", vec![(0..1, 0..1), (3..4, 3..4)])]
 #[case::repeated_prefix(b"a\na\n", b"a\n", vec![(1..2, 1..1)])]
 #[case::ambiguous_swap(b"a\nb\n", b"b\na\n", vec![(0..1, 0..0), (2..2, 1..2)])]
+#[case::merge_insertions(b"b\n\n\nb\n", b"b\n\na\n\na\n\nb\n", vec![(2..2, 2..5)])]
+#[case::merge_deletions(b"b\n\na\n\na\n\nb\n", b"b\n\n\nb\n", vec![(2..5, 2..2)])]
+#[case::align_replacement(b"\na\n", b"a\na\n", vec![(0..1, 0..1)])]
+#[case::slide_deletion_to_addition(b"b\n\na\n\n\n", b"b\n\na\nb\nb\n\n", vec![(3..4, 3..5)])]
+#[case::merge_then_align(b"b\na\n\na\na\n", b"b\nb\na\na\n", vec![(1..3, 1..2)])]
 #[case::blank_lines(b"\n\nx\n", b"\nx\n", vec![(1..2, 1..1)])]
 #[case::crlf(b"a\r\n", b"a\n", vec![(0..1, 0..1)])]
 #[case::cr_is_not_delimiter(b"a\rb", b"a\rc", vec![(0..1, 0..1)])]
@@ -483,4 +488,15 @@ fn traceback_counts_toward_work_budget(#[case] max_work: usize, #[case] succeeds
         &AtomicBool::new(false),
     );
     assert_eq!(result.is_ok(), succeeds);
+}
+
+/// Original Git CLI observation: Git 2.56.0 selects 9..13 here. The compact empirical
+/// scoring rule selects 8..12; pin the documented blank-separator/file-edge scoring gap.
+#[test]
+fn known_indent_scoring_gap() {
+    let result = text(
+        b"prefix\n    cc\n\n  bb\n\n    cc\naa\n\n        dd\n",
+        b"prefix\n    cc\n\n  bb\n\n    cc\naa\n\n        dd\n    cc\naa\n\n        dd\n",
+    );
+    assert_eq!(result[0].new_lines, 8..12);
 }

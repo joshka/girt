@@ -4,7 +4,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::atomic::AtomicBool;
 
-use girt::content_diff::{BinaryMode, BlobContent, ContentDiff, ContentEdit, DiffLimits, diff};
+use girt::content_diff::{
+    BinaryMode, BlobContent, ContentDiff, ContentEdit, DiffLimits, Options, diff, diff_with_options,
+};
 use girt::{
     EntryMode, ObjectFormat, PackLimits, ReadLimits, Repository, Tree, TreeCompareLimits, TreeEntry,
 };
@@ -28,6 +30,10 @@ fn git(root: &Path, args: &[&str]) -> Output {
 }
 
 fn patch(old: &[u8], new: &[u8]) -> Vec<u8> {
+    patch_with_indent(old, new, false)
+}
+
+fn patch_with_indent(old: &[u8], new: &[u8], indent: bool) -> Vec<u8> {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("old"), old).unwrap();
     std::fs::write(root.path().join("new"), new).unwrap();
@@ -41,7 +47,11 @@ fn patch(old: &[u8], new: &[u8]) -> Vec<u8> {
             "--text",
             "--minimal",
             "--diff-algorithm=myers",
-            "--no-indent-heuristic",
+            if indent {
+                "--indent-heuristic"
+            } else {
+                "--no-indent-heuristic"
+            },
             "--unified=0",
             "--",
             "old",
@@ -108,6 +118,22 @@ fn hunks(patch: &[u8]) -> Vec<Hunk> {
 }
 
 #[rstest]
+#[case::eof_block(b"head\n\n  body\n", b"head\n\n  body\nhead\n\n  body\n")]
+#[case::eof_outdent(b"    head\n\n  body\n", b"    head\n\n  body\n    head\n\n  body\n")]
+#[case::tab_indentation(b"head\n\n\tbody\n", b"head\n\n\tbody\nhead\n\n\tbody\n")]
+#[case::whitespace_separator(
+    b"head\r\n \t \r\n  body\r\n",
+    b"head\r\n \t \r\n  body\r\nhead\r\n \t \r\n  body\r\n"
+)]
+#[case::blank_separator(
+    b"head\n\nhead\n  body\n}\n}\n\n\n}\n",
+    b"head\n\nhead\n  body\nhead\n  body\n}\n}\n\n\n}\n"
+)]
+#[case::merge_insertions(b"b\n\n\nb\n", b"b\n\na\n\na\n\nb\n")]
+#[case::merge_deletions(b"b\n\na\n\na\n\nb\n", b"b\n\n\nb\n")]
+#[case::align_replacement(b"\na\n", b"a\na\n")]
+#[case::slide_deletion_to_addition(b"b\n\na\n\n\n", b"b\n\na\nb\nb\n\n")]
+#[case::merge_then_align(b"b\na\n\na\na\n", b"b\nb\na\na\n")]
 #[case::replace(b"head\nold\ntail\n", b"head\nnew\ntail\n")]
 #[case::addition(b"", b"new\nlast")]
 #[case::deletion(b"old\nlast", b"")]
@@ -118,12 +144,18 @@ fn hunks(patch: &[u8]) -> Vec<Hunk> {
 #[case::crlf(b"same\r\nold\r\n", b"same\r\nnew\r\n")]
 #[case::non_utf8(b"\xff\n", b"\xfe\n")]
 #[case::forced_nul(b"a\0\n", b"b\0\n")]
-fn simple_zero_context_spans_agree_with_git(#[case] old: &[u8], #[case] new: &[u8]) {
-    let expected = hunks(&patch(old, new));
-    let ContentDiff::Text(text) = diff(
+fn simple_zero_context_spans_agree_with_git(
+    #[case] old: &[u8],
+    #[case] new: &[u8],
+    #[values(false, true)] indent: bool,
+) {
+    let expected = hunks(&patch_with_indent(old, new, indent));
+    let ContentDiff::Text(text) = diff_with_options(
         old,
         new,
-        BinaryMode::Text,
+        Options::default()
+            .with_binary(BinaryMode::Text)
+            .with_indent_heuristic(indent),
         DiffLimits::default(),
         &AtomicBool::new(false),
     )
