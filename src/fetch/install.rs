@@ -31,6 +31,41 @@ impl ValidationHistory<'_> {
 /// transfer and remove the temporary file. Native local transfers also spool their packs.
 /// Payloads used during validation are released before this result is returned. Incremental results
 /// retain IDs of known-local dependencies; installation rechecks them.
+///
+/// # Examples
+///
+/// Inspect what a transfer brought before installing it:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchLimits, LocalFetchObserver, LocalFetchRequest, receive_local};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let received = receive_local(
+///     upstream.git_dir(),
+///     |advertisement| {
+///         advertisement
+///             .refs
+///             .iter()
+///             .map(|reference| reference.id)
+///             .collect()
+///     },
+///     LocalFetchRequest::new(FetchLimits::default()),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// // `HEAD` and `main` point at the same commit.
+/// assert!(received.wants().iter().all(|&id| id == main));
+/// assert_eq!(received.object_count(), 2);
+/// assert!(received.pack_bytes() > 0);
+/// assert!(received.shallow_roots().is_empty(), "a complete history");
+/// // Dropping `received` here would discard the transfer without touching `repo`.
+/// # let _ = repo;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct ReceivedFetch {
     format: crate::ObjectFormat,
@@ -306,7 +341,9 @@ impl ReceivedFetch {
         &self.advertisement
     }
 
-    /// Deduplicated selected tip IDs, in caller order. These are not reference-update instructions.
+    /// Selected tip IDs, in the order the selection returned them. These are not reference-update
+    /// instructions. Wire transfers remove duplicate IDs; native local receive currently keeps
+    /// them ([#326](https://github.com/joshka/girt/issues/326)).
     pub fn wants(&self) -> &[ObjectId] {
         &self.wants
     }

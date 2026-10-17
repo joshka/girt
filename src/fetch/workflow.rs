@@ -648,6 +648,61 @@ impl FetchRequest {
     /// # Errors
     ///
     /// Returns planning or wire/pack validation errors without destination changes.
+    ///
+    /// # Examples
+    ///
+    /// Run a fetch over a `git upload-pack` process. It needs a Git executable, so it is not run:
+    ///
+    /// ```no_run
+    /// use std::collections::BTreeSet;
+    /// use std::ops::ControlFlow;
+    /// use std::process::{Command, Stdio};
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::Repository;
+    /// use girt::fetch::{FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory};
+    /// use girt::refs::Reflog;
+    /// use girt::remote::Remote;
+    ///
+    /// let repo = Repository::open("project")?;
+    /// let origin = Remote::find(repo.config(), b"origin")?.ok_or("no origin")?;
+    /// let request = FetchRequest::prepare(
+    ///     repo.clone(),
+    ///     origin.fetch_refspecs().clone(),
+    ///     BTreeSet::new(),
+    ///     Reflog::Preserve,
+    /// )?;
+    ///
+    /// let mut server = Command::new("git")
+    ///     .args(["upload-pack", "/srv/git/project.git"])
+    ///     .stdin(Stdio::piped())
+    ///     .stdout(Stdio::piped())
+    ///     .spawn()?;
+    /// let mut input = server.stdin.take().expect("piped");
+    /// let mut output = server.stdout.take().expect("piped");
+    /// let cancel = AtomicBool::new(false);
+    /// let result = request.receive_session(
+    ///     &mut output,
+    ///     &mut input,
+    ///     &KnownHistory::default(),
+    ///     FetchLimits::default(),
+    ///     &cancel,
+    ///     |_message| ControlFlow::Continue(()),
+    /// );
+    /// // Close the pipes and reap the process whatever happened; stop it first if the fetch failed.
+    /// drop((input, output));
+    /// if result.is_err() {
+    ///     server.kill().ok();
+    /// }
+    /// let status = server.wait()?;
+    /// let ready = result?;
+    /// // Publish only if the server also reported success.
+    /// if !status.success() {
+    ///     return Err(format!("git upload-pack failed: {status}").into());
+    /// }
+    /// ready.finish(FetchUpdateLimits::default(), &cancel)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn receive_session(
         self,
         reader: &mut impl Read,
@@ -1211,6 +1266,57 @@ impl FetchReady {
 /// have changed yet. Read [`Self::updates`] and installed objects to apply caller-specific checks,
 /// then consume this phase with [`Self::finish`] or [`Self::into_recovery`]. Dropping it releases
 /// the lock but deliberately leaves its Git `.keep` marker for recovery.
+///
+/// # Examples
+///
+/// Install the pack, check it before publishing anything, then publish and release the
+/// retention marker:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchLimits, FetchRequest, FetchUpdateLimits, KnownHistory, LocalFetchObserver,
+/// };
+/// use girt::refs::{RefName, Reflog, Target};
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+///
+/// let retained = ready.install_retained(FetchUpdateLimits::default(), &cancel)?;
+/// // The pack is installed and protected; no reference has moved yet.
+/// assert!(retained.report().installed.is_some());
+/// let tracking = RefName::new("refs/remotes/origin/main")?;
+/// assert_eq!(repo.references()?.read(&tracking)?, None);
+///
+/// // ... the application's own checks of the installed objects go here ...
+///
+/// let (report, retention) = retained.finish(&cancel)?;
+/// assert_eq!(report.references.len(), 1);
+/// assert_eq!(
+///     repo.references()?.read(&tracking)?,
+///     Some(Target::Direct(main))
+/// );
+/// retention.release()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[must_use = "publish references or recover the retained installation explicitly"]
 pub struct RetainedFetchReady {
@@ -1347,6 +1453,62 @@ impl FetchUpdateKind {
 }
 
 /// Transfer statistics and separately observable installation/publication effects.
+///
+/// # Examples
+///
+/// Summarize a fetch the way `git fetch` reports it:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{
+///     FetchLimits, FetchRequest, FetchUpdateKind, FetchUpdateLimits, KnownHistory,
+///     LocalFetchObserver,
+/// };
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+///
+/// for update in &report.updates {
+///     let Some(destination) = &update.mapping.destination else {
+///         continue;
+///     };
+///     let marker = match update.kind {
+///         FetchUpdateKind::Create => "* [new]",
+///         FetchUpdateKind::FastForward => "  [updated]",
+///         FetchUpdateKind::ForcedTracking | FetchUpdateKind::ForcedTag => "+ [forced]",
+///         FetchUpdateKind::Prune => "- [deleted]",
+///         _ => continue,
+///     };
+///     println!(
+///         "{marker} {}",
+///         String::from_utf8_lossy(destination.as_bytes())
+///     );
+/// }
+/// assert_eq!(report.updates[0].kind, FetchUpdateKind::Create);
+/// assert_eq!(report.objects, 2);
+/// # let _ = main;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct FetchReport {
