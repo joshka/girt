@@ -564,3 +564,75 @@ fn status_classifies_obstructions_like_git() {
         " D blocked/file\n D directory\n M fifo\n"
     );
 }
+
+/// A raw imported zone survives the Git-style log presentation path.
+#[test]
+fn log_preserves_noncanonical_zone() {
+    assert_log_date_parity("1700000000 +0090");
+}
+
+#[test]
+fn log_substitutes_epoch_for_malformed_date() {
+    assert_log_date_parity("unknown");
+}
+
+#[test]
+fn log_substitutes_epoch_for_negative_seconds() {
+    assert_log_date_parity("-60 +0100");
+}
+
+#[test]
+fn log_substitutes_epoch_for_explicit_plus_seconds() {
+    assert_log_date_parity("+5 +0000");
+}
+
+fn assert_log_date_parity(date: &str) {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let tree = run(
+        Command::new("git").args(["rev-parse", "HEAD^{tree}"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    let tree = String::from_utf8(tree.stdout).unwrap();
+    let raw = format!(
+        "tree {}\nauthor A <a@example.com> {date}\ncommitter C <c@example.com> 1700000000 +0000\n\nm\n",
+        tree.trim()
+    );
+    let commit = run(
+        Command::new("git").args([
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--literally",
+            "--stdin",
+        ]),
+        scratch.path(),
+        &repository,
+        Some(&raw),
+    );
+    assert!(commit.status.success());
+    let commit = String::from_utf8(commit.stdout).unwrap();
+    let ours = run(
+        Command::new(env!("CARGO_BIN_EXE_girt")).args(["--git", "log", commit.trim()]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    let expected = run(
+        Command::new("git").args(["log", commit.trim()]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    assert!(
+        ours.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ours.stderr)
+    );
+    assert!(expected.status.success());
+    assert_eq!(ours.stdout, expected.stdout);
+}

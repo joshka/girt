@@ -181,7 +181,24 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
                 writeln!(out, "Merge: {}", parents.join(" "))?;
             }
             writeln!(out, "Author: {}", identity(author))?;
-            writeln!(out, "Date:   {}", date.format(DateFormat::Default))?;
+            // Git's full log substitutes the epoch for malformed or signed seconds,
+            // unlike %ad. Valid unsigned dates still fail for a pre-epoch local time.
+            let git_date = if author
+                .date_bytes
+                .trim_ascii_start()
+                .first()
+                .is_some_and(u8::is_ascii_digit)
+                && author.date().is_ok()
+            {
+                author.format_date(DateFormat::Default)?
+            } else {
+                IdentityDate {
+                    seconds: 0,
+                    offset_minutes: 0,
+                }
+                .format(DateFormat::Default)
+            };
+            writeln!(out, "Date:   {git_date}")?;
         } else {
             if context.color {
                 writeln!(out, "commit {yellow}{id}{reset}")?;

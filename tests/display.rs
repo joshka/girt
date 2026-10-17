@@ -173,6 +173,14 @@ fn change_letters_match_git_diff_tree() {
 #[case::negative_zero("4102444800 -0000")]
 #[case::short_zone("1700000000 +130")]
 #[case::year_9999("253402300799 +0000")]
+#[case::noncanonical_east("1700000000 +0090")]
+#[case::noncanonical_west("1700000000 -0199")]
+#[case::noncanonical_carry("1700000000 +9999")]
+#[case::local_epoch("3600 -0100")]
+#[case::padded_zone("1700000000 +000090")]
+#[case::five_digit_zone("1700000000 +12345")]
+#[case::absent_default_zone("1700000000 -0001")]
+#[case::epoch_absent_zone("60 -0001")]
 fn dates_match_git_log(#[case] date: &str) {
     let f = Fixture::new("sha1");
     let tree = f.tree(&[]);
@@ -206,8 +214,128 @@ fn dates_match_git_log(#[case] date: &str) {
         .objects()
         .read_commit_with(commit, ReadLimits::default())
         .unwrap();
-    let date = parsed.author().unwrap().unwrap().date().unwrap();
+    let date = parsed.author().unwrap().unwrap();
 
-    assert_eq!(date.format(DateFormat::Default).to_string(), log("default"));
-    assert_eq!(date.format(DateFormat::Iso).to_string(), log("iso"));
+    assert_eq!(
+        date.format_date(DateFormat::Default).unwrap().to_string(),
+        log("default")
+    );
+    assert_eq!(
+        date.format_date(DateFormat::Iso).unwrap().to_string(),
+        log("iso")
+    );
+}
+
+/// Original raw commits straddle Git 2.56's local epoch refusal boundary.
+#[rstest]
+#[case::epoch_west("0 -0001")]
+#[case::one_second_before("59 -0001")]
+fn pre_epoch_local_dates_are_refused_like_git(#[case] date: &str) {
+    let f = Fixture::new("sha1");
+    let tree = f.tree(&[]);
+    let raw = format!(
+        "tree {tree}\nauthor A <a@example.com> {date}\ncommitter C <c@example.com> 1 +0000\n\nm\n"
+    );
+    let commit = id(&git(
+        f.root.path(),
+        &[
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--literally",
+            "--stdin",
+        ],
+        raw.as_bytes(),
+    ));
+    let parsed = f.objects().read_commit(commit).unwrap();
+    let author = parsed.author().unwrap().unwrap();
+    let observe = |format: &str| {
+        std::process::Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", f.root.path().join("absent-config"))
+            .env("LC_ALL", "C")
+            .current_dir(f.root.path())
+            .args(["log", "-1", "--format=%ad", format, &commit.to_string()])
+            .output()
+            .unwrap()
+    };
+    let default = observe("--date=default");
+    let iso = observe("--date=iso");
+    assert!(!default.status.success());
+    assert!(!iso.status.success());
+    assert!(String::from_utf8_lossy(&default.stderr).contains("Timestamp before Unix epoch"));
+    assert!(String::from_utf8_lossy(&iso.stderr).contains("Timestamp before Unix epoch"));
+    assert!(matches!(
+        author.format_date(DateFormat::Default),
+        Err(girt::CommitError::InvalidDate)
+    ));
+    assert!(matches!(
+        author.format_date(DateFormat::Iso),
+        Err(girt::CommitError::InvalidDate)
+    ));
+}
+
+/// Git prints no date for signed seconds; the recorded formatter explicitly refuses them.
+#[rstest]
+#[case::negative_with_positive_local("-60 +0100")]
+#[case::explicit_plus("+5 +0000")]
+fn signed_seconds_are_explicitly_refused(#[case] date: &str) {
+    let f = Fixture::new("sha1");
+    let tree = f.tree(&[]);
+    let raw = format!(
+        "tree {tree}\nauthor A <a@example.com> {date}\ncommitter C <c@example.com> 1 +0000\n\nm\n"
+    );
+    let commit = id(&git(
+        f.root.path(),
+        &[
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--literally",
+            "--stdin",
+        ],
+        raw.as_bytes(),
+    ));
+    let parsed = f.objects().read_commit(commit).unwrap();
+    let author = parsed.author().unwrap().unwrap();
+    assert_eq!(
+        git(
+            f.root.path(),
+            &[
+                "log",
+                "-1",
+                "--format=%ad",
+                "--date=default",
+                &commit.to_string()
+            ],
+            b""
+        ),
+        b"\n"
+    );
+    assert_eq!(
+        git(
+            f.root.path(),
+            &[
+                "log",
+                "-1",
+                "--format=%ad",
+                "--date=iso",
+                &commit.to_string()
+            ],
+            b""
+        ),
+        b"\n"
+    );
+    assert!(matches!(
+        author.format_date(DateFormat::Default),
+        Err(girt::CommitError::InvalidDate)
+    ));
+    assert!(matches!(
+        author.format_date(DateFormat::Iso),
+        Err(girt::CommitError::InvalidDate)
+    ));
 }
