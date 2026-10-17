@@ -10,6 +10,7 @@ use std::process::ExitCode;
 
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{ArgAction, Parser, Subcommand};
+use color_eyre::eyre::eyre;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
@@ -31,7 +32,7 @@ pub use common::Context;
 #[derive(Debug, Parser)]
 #[command(name = "girt", version, about, propagate_version = true, styles = STYLES)]
 struct Cli {
-    /// Log more detail to stderr (`-v` info, `-vv` debug, `-vvv` trace); `RUST_LOG` overrides.
+    /// Log more detail to stderr (`-v` info, `-vv` debug, `-vvv` trace); `GIRT_LOG` overrides.
     #[arg(short, long, global = true, action = ArgAction::Count)]
     verbose: u8,
 
@@ -145,6 +146,8 @@ fn main() -> ExitCode {
 
 /// Installs color-eyre error reports and a stderr tracing subscriber whose spans are captured in
 /// those reports.
+///
+/// `GIRT_LOG` (tracing `EnvFilter` directives) overrides the `-v` level; `RUST_LOG` is ignored.
 fn install_reporting(verbose: u8) -> color_eyre::Result<()> {
     let theme = if std::io::stderr().is_terminal() {
         color_eyre::config::Theme::dark()
@@ -162,7 +165,13 @@ fn install_reporting(verbose: u8) -> color_eyre::Result<()> {
         2 => "debug",
         _ => "trace",
     };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
+    // `GIRT_LOG` rather than `RUST_LOG`, so filters meant for other tools don't apply to girt.
+    let filter = match std::env::var("GIRT_LOG") {
+        Ok(directives) => EnvFilter::try_new(&directives)
+            .map_err(|error| eyre!("invalid GIRT_LOG {directives:?}: {error}"))?,
+        Err(std::env::VarError::NotPresent) => EnvFilter::new(default),
+        Err(error) => return Err(eyre!("invalid GIRT_LOG: {error}")),
+    };
     tracing_subscriber::registry()
         .with(filter)
         .with(

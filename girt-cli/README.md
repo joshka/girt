@@ -46,9 +46,12 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 
 ## Errors and logging
 
-Errors print as [color-eyre](https://docs.rs/color-eyre) reports. `-v`, `-vv` and `-vvv` (or
-`RUST_LOG`) log girt's [tracing](https://docs.rs/tracing) spans to stderr; at debug level the active
-spans are also captured in error reports.
+Errors print as [color-eyre](https://docs.rs/color-eyre) reports. `-v`, `-vv` and `-vvv` log girt's
+[tracing](https://docs.rs/tracing) spans to stderr; at debug level the active spans are also
+captured in error reports. `GIRT_LOG` takes
+[`EnvFilter` directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives)
+(for example `GIRT_LOG=girt=debug`) and overrides `-v`; an invalid value is an error. `RUST_LOG` is
+not read, so filters set for other tools don't affect girt.
 
 ## Limits
 
