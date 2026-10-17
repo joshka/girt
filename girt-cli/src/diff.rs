@@ -221,14 +221,13 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: us
         Entry::Change(change) => match (change.old, change.new) {
             (Some(old), Some(new)) if kind_of(old.mode) != kind_of(new.mode) => {
                 let path = &change.path;
-                write_file_patch(out, objects, path, path, Some(old), None, None, width)?;
-                write_file_patch(out, objects, path, path, None, Some(new), None, width)
+                write_file_patch(out, objects, (path, path), Some(old), None, None, width)?;
+                write_file_patch(out, objects, (path, path), None, Some(new), None, width)
             }
             (old, new) => write_file_patch(
                 out,
                 objects,
-                &change.path,
-                &change.path,
+                (&change.path, &change.path),
                 old,
                 new,
                 None,
@@ -245,8 +244,7 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: us
         } => write_file_patch(
             out,
             objects,
-            source,
-            target,
+            (source, target),
             Some(*old),
             Some(*new),
             Some((*kind, *similarity)),
@@ -258,8 +256,7 @@ fn write_patch(out: &mut impl Write, objects: &Objects, entry: &Entry, width: us
 fn write_file_patch(
     out: &mut impl Write,
     objects: &Objects,
-    old_path: &[u8],
-    new_path: &[u8],
+    (old_path, new_path): (&[u8], &[u8]),
     old: Option<TreeValue>,
     new: Option<TreeValue>,
     rewrite: Option<(Kind, u8)>,

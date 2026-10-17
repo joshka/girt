@@ -312,3 +312,74 @@ fn abbreviation_config_and_short_revisions_match_git() {
         assert!(!actual.status.success(), "accepted {value}");
     }
 }
+
+#[test]
+fn worktree_columns_align_when_one_id_needs_more_digits() {
+    let scratch = tempfile::tempdir().unwrap();
+    let repository = scratch.path().join("repo");
+    fixture(scratch.path(), &repository);
+    let linked = scratch.path().join("linked");
+    assert!(
+        run(
+            Command::new("git")
+                .args(["worktree", "add", "--detach"])
+                .arg(&linked)
+                .arg("first"),
+            scratch.path(),
+            &repository,
+            None
+        )
+        .status
+        .success()
+    );
+    let output = run(
+        Command::new("git").args(["rev-parse", "HEAD"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    let head = String::from_utf8(output.stdout).unwrap();
+    let repo = girt::Repository::open(&repository).unwrap();
+    let prefix = girt::ObjectIdPrefix::from_hex(repo.object_format(), &head[..4]).unwrap();
+    let bytes = (0u32..2_000_000)
+        .find(|i| {
+            prefix.matches(girt::ObjectId::for_blob(
+                repo.object_format(),
+                &i.to_le_bytes(),
+            ))
+        })
+        .unwrap()
+        .to_le_bytes();
+    repo.loose_objects().write_blob(&bytes).unwrap();
+    assert!(
+        run(
+            Command::new("git").args(["config", "core.abbrev", "4"]),
+            scratch.path(),
+            &repository,
+            None
+        )
+        .status
+        .success()
+    );
+    let actual = run(
+        Command::new(env!("CARGO_BIN_EXE_girt")).args(["--git", "worktree", "list"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    let expected = run(
+        Command::new("git").args(["worktree", "list"]),
+        scratch.path(),
+        &repository,
+        None,
+    );
+    assert!(
+        actual.status.success(),
+        "{}",
+        String::from_utf8_lossy(&actual.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(actual.stdout).unwrap(),
+        String::from_utf8(expected.stdout).unwrap()
+    );
+}

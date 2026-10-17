@@ -70,6 +70,25 @@ impl ObjectIdPrefix {
                     .is_some_and(|(a, b)| a >> 4 == b >> 4))
     }
 
+    /// Constructs a normalized prefix without reparsing an already validated identity.
+    pub(crate) fn from_id(id: ObjectId, minimum: usize) -> Self {
+        let digits = minimum.clamp(4, id.as_bytes().len() * 2);
+        let mut lower = id;
+        let bytes: &mut [u8] = match &mut lower {
+            ObjectId::Sha1(bytes) => bytes,
+            ObjectId::Sha256(bytes) => bytes,
+        };
+        if !digits.is_multiple_of(2)
+            && let Some(byte) = bytes.get_mut(digits / 2)
+        {
+            *byte &= 0xf0;
+        }
+        for byte in bytes.iter_mut().skip(digits.div_ceil(2)) {
+            *byte = 0;
+        }
+        Self { lower, digits }
+    }
+
     pub(crate) fn lower(self) -> ObjectId {
         self.lower
     }

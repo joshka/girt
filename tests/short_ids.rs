@@ -170,15 +170,12 @@ fn auto_width_tracks_git_packed_object_count_boundaries() {
     for format in [ObjectFormat::Sha1, ObjectFormat::Sha256] {
         for count in [16383, 16384, 65535, 65536] {
             let dir = tempfile::tempdir().unwrap();
-            let repo = Repository::init(format, dir.path().join("repo"), InitKind::Bare).unwrap();
-            short_ids_git::populate(repo.git_dir(), count);
+            let path = dir.path().join("repo");
+            let repo = Repository::init(format, &path, InitKind::Bare).unwrap();
+            short_ids_git::populate(&path, count);
             let objects = repo.objects(PackLimits::default()).unwrap();
             let id = ObjectId::for_blob(format, &0u32.to_le_bytes());
-            let git_short = git(
-                repo.git_dir(),
-                &["rev-parse", "--short", &id.to_string()],
-                b"",
-            );
+            let git_short = git(&path, &["rev-parse", "--short", &id.to_string()], b"");
             assert_eq!(
                 objects
                     .abbreviate(id, objects.auto_abbrev_len())
@@ -187,6 +184,45 @@ fn auto_width_tracks_git_packed_object_count_boundaries() {
                 git_short,
                 "{format} {count}"
             );
+            for text in ["0000", "ffff"] {
+                let prefix = ObjectIdPrefix::from_hex(format, text).unwrap();
+                let actual = objects
+                    .prefix_matches(prefix)
+                    .unwrap()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert_eq!(
+                    actual,
+                    git(
+                        &path,
+                        &["rev-parse", &format!("--disambiguate={text}")],
+                        b""
+                    )
+                );
+            }
+            if count == 65536 {
+                let borrower_path = dir.path().join("borrower");
+                let borrower = Repository::init(format, &borrower_path, InitKind::Bare).unwrap();
+                std::fs::write(
+                    borrower.object_dir().join("info/alternates"),
+                    "../../repo/objects\n",
+                )
+                .unwrap();
+                let borrowed = borrower.objects(PackLimits::default()).unwrap();
+                assert_eq!(
+                    borrowed
+                        .abbreviate(id, borrowed.auto_abbrev_len())
+                        .unwrap()
+                        .to_string(),
+                    git(
+                        &borrower_path,
+                        &["rev-parse", "--short", &id.to_string()],
+                        b""
+                    )
+                );
+            }
             assert_eq!(
                 objects.auto_abbrev_len(),
                 if count < 16384 {

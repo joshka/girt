@@ -1,4 +1,5 @@
 //! Prefix discovery without decoding object payloads.
+use std::sync::OnceLock;
 use std::{fs, io};
 
 use super::{ObjectReadError, Objects};
@@ -12,7 +13,7 @@ pub enum ResolvePrefixError {
     #[error("no object matches {0}")]
     Missing(ObjectIdPrefix),
     /// More than one distinct identity matches, in ascending order.
-    #[error("ambiguous object prefix {prefix}: {candidates:?}")]
+    #[error("ambiguous object prefix {prefix}: {}", candidate_list(.candidates))]
     Ambiguous {
         /// The requested prefix.
         prefix: ObjectIdPrefix,
@@ -22,6 +23,20 @@ pub enum ResolvePrefixError {
     /// Storage could not be inspected.
     #[error(transparent)]
     Read(#[from] ObjectReadError),
+}
+
+fn candidate_list(ids: &[ObjectId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Each bucket is published only after all primary/alternate directories were read successfully.
+/// Clones share immutable buckets; refresh replaces the cache rather than mutating shared state.
+#[derive(Debug, Default)]
+pub(super) struct LooseAbbreviations {
+    buckets: OnceLock<Box<[OnceLock<Vec<ObjectId>>; 256]>>,
 }
 
 impl Objects {
@@ -36,14 +51,39 @@ impl Objects {
     /// Reports format mismatch, directory I/O, or a changed/truncated pinned index.
     pub fn prefix_matches(&self, prefix: ObjectIdPrefix) -> Result<Vec<ObjectId>, ObjectReadError> {
         self.require_prefix_format(prefix)?;
-        let mut ids = Vec::new();
         let text = prefix.to_string();
-        let directory_name = &text[..2];
+        let mut ids = self.loose_prefix_matches(&text[..2], Some(prefix))?;
+        self.append_pack_matches(prefix, &mut ids)?;
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    fn append_pack_matches(
+        &self,
+        prefix: ObjectIdPrefix,
+        ids: &mut Vec<ObjectId>,
+    ) -> Result<(), ObjectReadError> {
+        for store in &self.stores {
+            for pack in &store.packs {
+                ids.extend(pack.prefix_matches(prefix)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn loose_prefix_matches(
+        &self,
+        directory_name: &str,
+        prefix: Option<ObjectIdPrefix>,
+    ) -> Result<Vec<ObjectId>, ObjectReadError> {
+        let mut ids = Vec::new();
+        let text = prefix.map(|prefix| prefix.to_string());
         for store in &self.stores {
             let directory = store.directory.join(directory_name);
             let entries = match fs::read_dir(&directory) {
-                Ok(entries) => Some(entries),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(source) => {
                     return Err(ObjectReadError::Path {
                         path: directory,
@@ -51,33 +91,82 @@ impl Objects {
                     });
                 }
             };
-            if let Some(entries) = entries {
-                for entry in entries {
-                    let entry = entry.map_err(|source| ObjectReadError::Path {
-                        path: directory.clone(),
-                        source,
-                    })?;
-                    let name = entry.file_name();
-                    let Some(name) = name.to_str() else { continue };
-                    if name.len() != self.format.digest_len() * 2 - 2 || !name.starts_with(&text[2..]) {
-                        continue;
-                    }
-                    let Ok(id) =
-                        ObjectId::from_hex(self.format, &format!("{directory_name}{name}"))
-                    else {
-                        continue;
-                    };
-                    if prefix.matches(id) && entry.path().is_file() {
-                        ids.push(id);
+            for entry in entries {
+                let entry = entry.map_err(|source| ObjectReadError::Path {
+                    path: directory.clone(),
+                    source,
+                })?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue };
+                if name.len() != self.format.digest_len() * 2 - 2
+                    || text
+                        .as_ref()
+                        .is_some_and(|text| !name.starts_with(&text[2..]))
+                {
+                    continue;
+                }
+                let Ok(id) = ObjectId::from_hex(self.format, &format!("{directory_name}{name}"))
+                else {
+                    continue;
+                };
+                if prefix.is_some_and(|prefix| !prefix.matches(id)) {
+                    continue;
+                }
+                let kind = entry.file_type().map_err(|source| ObjectReadError::Path {
+                    path: entry.path(),
+                    source,
+                })?;
+                if kind.is_file() {
+                    ids.push(id);
+                } else if kind.is_symlink() {
+                    match fs::metadata(entry.path()) {
+                        Ok(metadata) if metadata.is_file() => ids.push(id),
+                        Ok(_) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(source) => {
+                            return Err(ObjectReadError::Path {
+                                path: entry.path(),
+                                source,
+                            });
+                        }
                     }
                 }
             }
-            for pack in &store.packs {
-                ids.extend(pack.prefix_matches(prefix)?);
-            }
         }
-        ids.sort_unstable();
-        ids.dedup();
+        Ok(ids)
+    }
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "a first digest byte indexes exactly 256 buckets"
+    )]
+    fn abbreviation_candidates(
+        &self,
+        prefix: ObjectIdPrefix,
+    ) -> Result<Vec<ObjectId>, ObjectReadError> {
+        let buckets = self
+            .abbreviations
+            .buckets
+            .get_or_init(|| Box::new(std::array::from_fn(|_| OnceLock::new())));
+        let bucket = &buckets[usize::from(prefix.lower().as_bytes()[0])];
+        let mut ids = if let Some(ids) = bucket.get() {
+            ids.iter()
+                .copied()
+                .filter(|id| prefix.matches(*id))
+                .collect()
+        } else {
+            let text = prefix.to_string();
+            let all = self.loose_prefix_matches(&text[..2], None)?;
+            let matches = all
+                .iter()
+                .copied()
+                .filter(|id| prefix.matches(*id))
+                .collect();
+            // A concurrent successful scan may win publication; either scan is a valid snapshot.
+            let _ = bucket.set(all);
+            matches
+        };
+        self.append_pack_matches(prefix, &mut ids)?;
         Ok(ids)
     }
 
@@ -113,7 +202,10 @@ impl Objects {
     ///
     /// Clamps `min_len` to four through the full format width. The ID need not exist (for example,
     /// a diff's null sentinel); uniqueness is relative to the current storage view. Retain this
-    /// reader across calls to reuse its pack snapshot. Concurrent writes can invalidate uniqueness.
+    /// reader across calls to reuse pack indexes and lazy loose-directory snapshots. Each loose
+    /// bucket is scanned on its first abbreviation and retained until [`Self::refresh`]; clones
+    /// share these snapshots. Prefix resolution remains live. Concurrent writes can invalidate
+    /// uniqueness, so refresh before abbreviating against newly written objects.
     ///
     /// # Errors
     ///
@@ -126,9 +218,8 @@ impl Objects {
         id.require_format(self.format).map_err(crate::Error::from)?;
         let hex = id.to_string();
         let mut length = min_len.clamp(4, hex.len());
-        let prefix = ObjectIdPrefix::from_hex(self.format, &hex[..length])
-            .map_err(|_| ObjectReadError::Corrupt("invalid abbreviation width"))?;
-        for other in self.prefix_matches(prefix)? {
+        let prefix = ObjectIdPrefix::from_id(id, length);
+        for other in self.abbreviation_candidates(prefix)? {
             if other == id {
                 continue;
             }
@@ -139,8 +230,7 @@ impl Objects {
                 .count();
             length = length.max(common + 1);
         }
-        ObjectIdPrefix::from_hex(self.format, &hex[..length])
-            .map_err(|_| ObjectReadError::Corrupt("invalid abbreviation width"))
+        Ok(ObjectIdPrefix::from_id(id, length))
     }
 
     fn require_prefix_format(&self, prefix: ObjectIdPrefix) -> Result<(), ObjectReadError> {
@@ -212,7 +302,10 @@ mod tests {
         }
         let objects = repo.objects(crate::PackLimits::default()).unwrap();
         let prefix = ObjectIdPrefix::from_hex(crate::ObjectFormat::Sha1, "abcd").unwrap();
-        match objects.resolve_prefix(prefix).unwrap_err() {
+        let error = objects.resolve_prefix(prefix).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(&a.to_string()) && message.contains(&b.to_string()));
+        match error {
             ResolvePrefixError::Ambiguous { candidates, .. } => assert_eq!(candidates, vec![a, b]),
             error => panic!("{error}"),
         }
@@ -227,5 +320,74 @@ mod tests {
                 .unwrap(),
             a
         );
+    }
+    #[test]
+    fn abbreviation_snapshot_refreshes_without_freezing_prefix_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = crate::Repository::init(
+            crate::ObjectFormat::Sha1,
+            dir.path().join("repo"),
+            crate::InitKind::Bare,
+        )
+        .unwrap();
+        let a: ObjectId = "abcd100000000000000000000000000000000000".parse().unwrap();
+        let b: ObjectId = "abcd200000000000000000000000000000000000".parse().unwrap();
+        let bucket = repo.object_dir().join("ab");
+        fs::create_dir(&bucket).unwrap();
+        fs::write(bucket.join(&a.to_string()[2..]), b"").unwrap();
+        let mut objects = repo.objects(crate::PackLimits::default()).unwrap();
+        assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 4);
+        let retained = objects.clone();
+        fs::write(bucket.join(&b.to_string()[2..]), b"").unwrap();
+        let prefix = ObjectIdPrefix::from_hex(crate::ObjectFormat::Sha1, "abcd").unwrap();
+        assert!(matches!(
+            objects.resolve_prefix(prefix),
+            Err(ResolvePrefixError::Ambiguous { .. })
+        ));
+        assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 4);
+        assert!(
+            objects
+                .refresh(
+                    crate::PackLimits::default(),
+                    crate::AlternateLimits::default().with_max_stores(0)
+                )
+                .is_err()
+        );
+        assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 4);
+        objects
+            .refresh(
+                crate::PackLimits::default(),
+                crate::AlternateLimits::default(),
+            )
+            .unwrap();
+        assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 5);
+        assert_eq!(retained.abbreviate(a, 4).unwrap().hex_len(), 4);
+    }
+    #[test]
+    fn failed_loose_scan_does_not_publish_partial_abbreviations() {
+        let dir = tempfile::tempdir().unwrap();
+        let format = crate::ObjectFormat::Sha1;
+        let repo = crate::Repository::init(format, dir.path().join("repo"), crate::InitKind::Bare)
+            .unwrap();
+        let alternate =
+            crate::Repository::init(format, dir.path().join("alternate"), crate::InitKind::Bare)
+                .unwrap();
+        fs::write(
+            repo.object_dir().join("info/alternates"),
+            format!("{}\n", alternate.object_dir().display()),
+        )
+        .unwrap();
+        let a: ObjectId = "abcd100000000000000000000000000000000000".parse().unwrap();
+        let b: ObjectId = "abcd200000000000000000000000000000000000".parse().unwrap();
+        fs::create_dir(repo.object_dir().join("ab")).unwrap();
+        fs::write(repo.object_dir().join("ab").join(&a.to_string()[2..]), b"").unwrap();
+        let broken = alternate.object_dir().join("ab");
+        fs::write(&broken, b"").unwrap();
+        let objects = repo.objects(crate::PackLimits::default()).unwrap();
+        assert!(objects.abbreviate(a, 4).is_err());
+        fs::remove_file(&broken).unwrap();
+        fs::create_dir(&broken).unwrap();
+        fs::write(broken.join(&b.to_string()[2..]), b"").unwrap();
+        assert_eq!(objects.abbreviate(a, 4).unwrap().hex_len(), 5);
     }
 }

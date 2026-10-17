@@ -482,9 +482,14 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
         };
         formatted.push((path, id, branch, state));
     }
-    let abbrev = formatted.iter().map(|(_,id,_,_)| id.len()).max().unwrap_or(0).max(abbrev);
+    let abbrev = formatted
+        .iter()
+        .map(|(_, id, _, _)| id.len())
+        .max()
+        .unwrap_or(0)
+        .max(abbrev);
     let mut out = stdout();
-    for (path,id,branch,state) in formatted {
+    for (path, id, branch, state) in formatted {
         if git {
             writeln!(
                 out,
