@@ -14,25 +14,27 @@
 //!
 //! # Quick start
 //!
-//! Add a remote to a repository's configuration, then fetch from it. In this example `origin` is a
-//! local repository path, so the example runs without a network; an `https://` or `ssh://` URL
-//! takes the same code path once the `http` or `ssh` feature is enabled.
+//! Create a repository, add a remote to its configuration, then fetch from it. In this example
+//! `origin` is a local repository path, so the example runs without a network; an `https://` or
+//! `ssh://` URL takes the same code path once the `http` or `ssh` feature is enabled.
 //!
 //! ```
-//! use girt::Repository;
 //! use girt::refs::{RefName, Target};
 //! use girt::remote::RemoteConfig;
 //! use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
-//! # let (directory, upstream, _, main, _) = include!("doctest/remote.rs");
-//! # let path = directory.path().join("quick-start");
-//! # Repository::init(girt::ObjectFormat::Sha1, &path, girt::InitKind::Worktree)?;
-//! # let url = upstream.git_dir().to_str().ok_or("temporary path is not UTF-8")?.as_bytes();
+//! use girt::{InitKind, ObjectFormat, Repository};
+//!
+//! // `directory` already holds `upstream.git`, a repository whose `main` branch points to the
+//! // commit `main` (setup hidden).
+//! # let (directory, _, _, main, _) = include!("doctest/remote.rs");
+//! let path = directory.path().join("project");
+//! Repository::init(ObjectFormat::Sha1, &path, InitKind::Worktree)?;
 //!
 //! // Record the remote in the repository's own config file, as `git remote add` would.
 //! let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
 //! RemoteConfig::new(edit.document_mut()).add(
 //!     b"origin",
-//!     url,
+//!     b"../upstream.git",
 //!     &[b"+refs/heads/*:refs/remotes/origin/*"],
 //! )?;
 //! edit.commit()?;
@@ -40,11 +42,14 @@
 //! // A `Repository` holds a configuration snapshot, so reopen it to see the new remote.
 //! let repo = Repository::open(&path)?;
 //! let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+//! // Applications usually pass `Environment::from_process()`. An empty environment keeps this
+//! // example independent of the caller's settings, and makes the relative URL resolve against
+//! // the working tree.
 //! let outcome = workflow::fetch(
 //!     &repo,
 //!     "origin",
 //!     &options,
-//!     &Environment::from_process(),
+//!     &Environment::default(),
 //!     &mut NoCallbacks,
 //! )?;
 //!
@@ -74,12 +79,14 @@
 //! Use the core APIs instead when the endpoint comes from somewhere other than configuration, when
 //! the peer is untrusted and transfers must be bounded, when the caller needs cancellation or a
 //! deadline, when downloads should be validated on a separate worker pool, or when a clone must
-//! create a new repository. The core APIs are also where to look for operations this module does
-//! not cover, such as retained installation and shallow-boundary publication.
+//! create a new repository. The core APIs also cover operations this module does not, such as
+//! retaining a fetched pack against repacking while the caller checks it before publishing
+//! references, or publishing shallow boundaries under caller control. Depth-limited fetches
+//! themselves are supported here through [`FetchOptions::depth`].
 //!
 //! # What a configured transfer does
 //!
-//! Every function follows the same sequence:
+//! All three functions find the remote, choose a transport and authenticate the same way:
 //!
 //! 1. **Resolve the remote.** The named remote's `url` (or, for [`push`], its first `pushurl`) is
 //!    read from [`Repository::config`] and rewritten by `url.<base>.insteadOf` and `pushInsteadOf`.
@@ -98,15 +105,38 @@
 //!    server accepts is reported to the helpers for storage; a rejected one is reported for
 //!    removal. SSH authentication is left to OpenSSH and the user's SSH configuration, agent and
 //!    `SSH_ASKPASS` program, all taken from the [`Environment`].
-//! 4. **Negotiate and transfer.** Fetch offers the tips of local references as history it already
-//!    has, so the server can leave out objects the repository holds. Push reads the remote's
-//!    advertisement first and omits history reachable from what the remote already has. HTTP and
-//!    SSH fetches ask for the upload-pack protocol named by `protocol.version` (v2 when unset, as
-//!    Git does) and accept a v0 or v1 answer.
-//! 5. **Validate, install and publish.** Received packs are checked in full (framing, object
-//!    identities, delta chains and the connectivity of every selected tip) before they are
-//!    installed. Only then are references updated, as one batch conditional on the values seen
-//!    before the transfer, so a concurrent writer is never silently overwritten.
+//!
+//! [`remote_head`] then reads the reference advertisement and stops. [`fetch`] continues:
+//!
+//! 4. **Negotiate.** Local reference tips are offered as history the repository already has, so the
+//!    server can leave those objects out. HTTP and SSH ask for the upload-pack protocol named by
+//!    `protocol.version` (v2 when unset, as Git does) and accept a v0 or v1 answer.
+//! 5. **Validate and install.** The received pack is checked in full (framing, object identities,
+//!    delta chains and the connectivity of every selected tip) before it is installed.
+//! 6. **Publish.** The references the fetch changes are checked as one batch: each must still have
+//!    the value seen before the transfer, and each move must be allowed by its refspec. If any
+//!    check fails, none is changed, so a reference another process moved meanwhile is never
+//!    overwritten. Publication itself is sequential: an I/O failure partway through can leave some
+//!    references updated, and the error reports which.
+//!
+//! [`push`] instead reads the remote's advertisement, sends a pack without the history the remote
+//! already has, and lets the remote check each command's expected value. Commands succeed or fail
+//! independently. Afterwards it updates the matching local remote-tracking references
+//! unconditionally, as a best effort that a later fetch corrects.
+//!
+//! # Concurrency
+//!
+//! Other processes may update references in either repository during a transfer: fetch publishes
+//! only if its destinations still have the values it started from, and the remote checks every
+//! push command the same way. Reference locks do not protect everything, though. From the start
+//! of a [`fetch`] until it returns, the caller must keep these from running in the local
+//! repository, and for a [`push`] to a local path, in the destination too:
+//!
+//! - garbage collection or pruning, which could delete objects the transfer depends on;
+//! - checkout, or changes to `HEAD` and which branch a worktree has checked out;
+//! - adding or removing linked worktrees.
+//!
+//! [`crate::fetch::FetchRequest`] and [`crate::push::send_local`] document the full contract.
 //!
 //! # Limits and trust
 //!
@@ -149,7 +179,7 @@
 //! | [`UnsupportedTransport`](TransferError::UnsupportedTransport) | none | Enable the feature or use another URL. |
 //! | [`Authentication`](TransferError::Authentication) | none | Ask for a different credential. |
 //! | [`Fetch`](TransferError::Fetch) | none | Inspect the cause; retrying is safe. |
-//! | [`FetchFinish`](TransferError::FetchFinish) | objects installed, some references maybe updated | Inspect the report; fetching again is safe. |
+//! | [`FetchFinish`](TransferError::FetchFinish) | objects, shallow boundaries or some references, depending on the phase | Inspect the report; fetching again is safe. |
 //! | [`Push`](TransferError::Push) | none locally | If [`Uncertain`](crate::push::PushError::Uncertain), read the remote's references before retrying. |
 //! | [`Local`](TransferError::Local) | none | Reading this repository failed. |
 //!
@@ -246,12 +276,7 @@ use crate::{ObjectId, Repository};
 /// # let (_directory, _, repo, main, _) = include!("doctest/remote.rs");
 ///
 /// // `repo` has a remote `origin` whose `HEAD` names `main`.
-/// let head = workflow::remote_head(
-///     &repo,
-///     "origin",
-///     &Environment::from_process(),
-///     &mut NoCallbacks,
-/// )?;
+/// let head = workflow::remote_head(&repo, "origin", &Environment::default(), &mut NoCallbacks)?;
 /// let default_branch = match head {
 ///     RemoteHead::Symbolic { branch, id } => {
 ///         assert_eq!(id, main);
@@ -299,8 +324,10 @@ pub fn remote_head(
 /// Destinations must be remote-tracking references (`refs/remotes/…`), tags (`refs/tags/…`), or
 /// references below a namespace allowed with [`FetchOptions::tag_namespace`]. Local branches are
 /// never fetch destinations, so a fetch cannot move the branch a working tree has checked out.
-/// Without a `+` prefix, a destination may only fast-forward and an existing tag may not change;
-/// either violation fails the fetch without updating any reference.
+/// Without a `+` prefix, a remote-tracking reference whose old and new values are both commits
+/// may only fast-forward, and an existing tag may not change; either violation fails the fetch
+/// without updating any reference. A remote-tracking reference pointing to another kind of object,
+/// such as a tree, can be replaced without `+`.
 ///
 /// Unlike `git fetch`, no `FETCH_HEAD` is written and tags pointing into fetched history are not
 /// followed automatically: name the tags you want with a refspec such as
@@ -327,7 +354,7 @@ pub fn remote_head(
 ///     &repo,
 ///     "origin",
 ///     &options,
-///     &Environment::from_process(),
+///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// )?;
 /// for update in &outcome.updated {
@@ -347,7 +374,7 @@ pub fn remote_head(
 ///     &repo,
 ///     "origin",
 ///     &options,
-///     &Environment::from_process(),
+///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// )?;
 /// assert!(again.updated.is_empty());
@@ -357,9 +384,11 @@ pub fn remote_head(
 /// # Errors
 ///
 /// Returns [`TransferError`]. Every variant except [`TransferError::FetchFinish`] means no local
-/// change was made. After `FetchFinish`, the new objects are installed but some references may
-/// not have been updated; the boxed [`FetchFinishError`](crate::fetch::FetchFinishError) reports
-/// which. Fetching again is safe in every case.
+/// change was made. `FetchFinish` means the pack was received and validated, but installing it or
+/// publishing the results failed partway. Its [`FetchFinishError`](crate::fetch::FetchFinishError)
+/// says how far it got: `report.installed` is set only if the pack was installed,
+/// `report.shallow_published` if `.git/shallow` changed, and the failure carries any partial
+/// reference effects. Fetching again is safe in every case.
 pub fn fetch(
     repository: &Repository,
     remote_name: &str,
@@ -408,7 +437,7 @@ pub fn fetch(
 /// use girt::refs::{RefName, Target};
 /// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks, PushOptions};
 /// # let (_directory, upstream, repo, main, person) = include!("doctest/remote.rs");
-/// let environment = Environment::from_process();
+/// let environment = Environment::default();
 ///
 /// // Fetch first, so the commit to publish exists locally.
 /// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
@@ -448,7 +477,7 @@ pub fn fetch(
 /// use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
 /// use girt::{ObjectFormat, ObjectId, ObjectKind};
 /// # let (_directory, upstream, repo, main, _) = include!("doctest/remote.rs");
-/// # let environment = Environment::from_process();
+/// # let environment = Environment::default();
 ///
 /// // Try to delete `main` on `origin`, believing it points to a commit it doesn't point to.
 /// let believed = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"an outdated view");
@@ -581,7 +610,7 @@ impl Environment {
     /// # let repo = girt::Repository::open(directory.path().join("local"))?;
     ///
     /// // `repo` has a remote `relative` whose URL is the relative path `upstream.git`.
-    /// let environment = Environment::from_process().with_current_dir(directory.path());
+    /// let environment = Environment::default().with_current_dir(directory.path());
     /// let head = workflow::remote_head(&repo, "relative", &environment, &mut NoCallbacks)?;
     /// assert!(matches!(head, girt::fetch::RemoteHead::Symbolic { id, .. } if id == main));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -668,23 +697,40 @@ pub enum CredentialPrompt {
 ///
 /// # Examples
 ///
-/// Collect remote messages and answer prompts with a token, as a non-interactive client might:
+/// Show the remote's progress the way a terminal would, and answer prompts with a token, as a
+/// non-interactive client might:
 ///
 /// ```
 /// use girt::workflow::{CredentialPrompt, TransferCallbacks};
 ///
-/// struct Quiet {
-///     messages: Vec<String>,
+/// #[derive(Default)]
+/// struct Display {
+///     /// Bytes of the line received so far.
+///     pending: Vec<u8>,
+///     /// The line currently being redrawn, if any.
+///     progress: Option<String>,
+///     /// Finished lines.
+///     lines: Vec<String>,
 ///     token: Option<String>,
 /// }
 ///
-/// impl TransferCallbacks for Quiet {
+/// impl TransferCallbacks for Display {
 ///     fn remote_message(&mut self, message: &[u8]) {
-///         // Progress lines end in `\r` to be overwritten; keep the final text only.
-///         let text = String::from_utf8_lossy(message);
-///         let text = text.trim_end_matches(['\r', '\n']);
-///         if !text.is_empty() {
-///             self.messages.push(text.to_owned());
+///         // A call can hold several lines or part of one, so buffer bytes until a terminator
+///         // before decoding: a split multi-byte character then stays intact.
+///         for &byte in message {
+///             if byte != b'\r' && byte != b'\n' {
+///                 self.pending.push(byte);
+///                 continue;
+///             }
+///             let line = String::from_utf8_lossy(&std::mem::take(&mut self.pending)).into_owned();
+///             if byte == b'\r' {
+///                 // `\r` asks for the line to be redrawn by the next one.
+///                 self.progress = Some(line);
+///             } else {
+///                 self.progress = None;
+///                 self.lines.push(line);
+///             }
 ///         }
 ///     }
 ///
@@ -698,14 +744,20 @@ pub enum CredentialPrompt {
 ///     }
 /// }
 ///
-/// let mut callbacks = Quiet {
-///     messages: Vec::new(),
+/// let mut display = Display {
 ///     token: Some("secret".into()),
+///     ..Display::default()
 /// };
-/// callbacks.remote_message(b"Counting objects: 100% (3/3), done.\n");
-/// assert_eq!(callbacks.messages, ["Counting objects: 100% (3/3), done."]);
+/// display.remote_message(b"Counting objects:  50% (1/2)\rCounting obj");
 /// assert_eq!(
-///     callbacks.credential("https://example.com/repo.git", CredentialPrompt::Password),
+///     display.progress.as_deref(),
+///     Some("Counting objects:  50% (1/2)")
+/// );
+/// display.remote_message(b"ects: 100% (2/2), done.\n");
+/// assert_eq!(display.lines, ["Counting objects: 100% (2/2), done."]);
+/// assert_eq!(display.progress, None);
+/// assert_eq!(
+///     display.credential("https://example.com/repo.git", CredentialPrompt::Password),
 ///     Some(b"secret".to_vec()),
 /// );
 /// ```
@@ -763,12 +815,7 @@ pub trait TransferCallbacks {
 /// use girt::workflow::{self, Environment, NoCallbacks};
 /// # let (_directory, _, repo, _, _) = include!("doctest/remote.rs");
 ///
-/// let head = workflow::remote_head(
-///     &repo,
-///     "origin",
-///     &Environment::from_process(),
-///     &mut NoCallbacks,
-/// )?;
+/// let head = workflow::remote_head(&repo, "origin", &Environment::default(), &mut NoCallbacks)?;
 /// # let _ = head;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -839,7 +886,7 @@ impl FetchOptions {
     ///     &repo,
     ///     "origin",
     ///     &options,
-    ///     &Environment::from_process(),
+    ///     &Environment::default(),
     ///     &mut NoCallbacks,
     /// );
     /// assert!(matches!(result, Err(TransferError::Configuration(_))));
@@ -902,7 +949,7 @@ impl FetchOptions {
     /// use girt::refs::{Expected, RefName};
     /// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
     /// # let (_directory, upstream, repo, _, _) = include!("doctest/remote.rs");
-    /// let environment = Environment::from_process();
+    /// let environment = Environment::default();
     /// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
     /// workflow::fetch(&repo, "origin", &options, &environment, &mut NoCallbacks)?;
     ///
@@ -996,7 +1043,7 @@ pub struct FetchedRef {
 ///     &repo,
 ///     "origin",
 ///     &options,
-///     &Environment::from_process(),
+///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// )?;
 /// for change in &outcome.updated {
@@ -1119,7 +1166,7 @@ pub type RemoteHeadState = RemoteHead;
 ///     &repo,
 ///     "upstream",
 ///     &options,
-///     &Environment::from_process(),
+///     &Environment::default(),
 ///     &mut NoCallbacks,
 /// ) {
 ///     Err(TransferError::NoSuchRemote(name)) => assert_eq!(name, "upstream"),
@@ -1165,11 +1212,14 @@ pub enum TransferError {
     /// ([`FetchWorkflowError::Transfer`]).
     #[error(transparent)]
     Fetch(Box<FetchWorkflowError>),
-    /// The fetch installed objects but did not finish updating references.
+    /// The fetch validated the pack but failed while installing it or publishing the results.
     ///
-    /// The boxed [`FetchFinishError`](crate::fetch::FetchFinishError) holds a report of what was
-    /// installed and published, and the failure. Installed objects are not rolled back; they are
-    /// harmless and a later maintenance run can remove them if nothing refers to them.
+    /// The boxed [`FetchFinishError`](crate::fetch::FetchFinishError) holds a report of the
+    /// completed phases and the failure. Check `report.installed` before assuming objects were
+    /// installed: a failed installation can leave an unindexed pack file behind. After
+    /// installation, `.git/shallow` may already have changed (`report.shallow_published`), and a
+    /// reference transaction failure carries the references it did publish. Nothing is rolled
+    /// back; installed objects that nothing refers to are removed by later maintenance.
     #[error(transparent)]
     FetchFinish(Box<crate::fetch::FetchFinishError>),
     /// The push failed; the boxed [`PushError`](crate::push::PushError) says whether the remote

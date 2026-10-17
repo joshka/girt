@@ -8,8 +8,12 @@
 // - `upstream`: a bare SHA-1 repository at `<directory>/upstream.git` whose `refs/heads/main`
 //   points to one commit with an empty tree. Its HEAD is the default symbolic `refs/heads/main`.
 // - `repo`: an ordinary repository at `<directory>/local` with no commits and a remote named
-//   `origin` whose URL is the upstream path and whose fetch refspec is
-//   `+refs/heads/*:refs/remotes/origin/*`.
+//   `origin` whose URL is the relative path `../upstream.git` and whose fetch refspec is
+//   `+refs/heads/*:refs/remotes/origin/*`. Without a current directory in the transfer's
+//   `Environment`, relative URLs resolve against the working tree, so examples should pass
+//   `Environment::default()`; that also keeps them independent of the caller's
+//   `GIT_ALLOW_PROTOCOL` and other settings. A relative URL is used because every remote parser
+//   accepts it on every platform, unlike a Windows drive path.
 // - `main`: the ID of upstream's `main` commit.
 // - `person`: the author, committer and reflog identity used throughout.
 {
@@ -45,11 +49,10 @@
         &local_path,
         girt::InitKind::Worktree,
     )?;
-    let url = upstream.git_dir().to_str().ok_or("temporary path is not UTF-8")?.to_owned();
     let mut edit = local.edit_config(1 << 20)?;
     girt::remote::RemoteConfig::new(edit.document_mut()).add(
         b"origin",
-        url.as_bytes(),
+        b"../upstream.git",
         &[b"+refs/heads/*:refs/remotes/origin/*"],
     )?;
     edit.commit()?;
