@@ -254,6 +254,14 @@ fn count_line(phase: &str, count: u64, total: Option<u64>) -> String {
     }
 }
 
+fn remote_line(bytes: &[u8]) -> String {
+    let text: String = String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    format!("remote: {text}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,12 +323,4 @@ mod tests {
         assert!(progress.phase.is_empty());
         assert!(progress.latest.is_empty());
     }
-}
-
-fn remote_line(bytes: &[u8]) -> String {
-    let text: String = String::from_utf8_lossy(bytes)
-        .chars()
-        .filter(|character| !character.is_control())
-        .collect();
-    format!("remote: {text}")
 }

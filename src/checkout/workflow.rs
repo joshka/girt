@@ -97,7 +97,7 @@ impl Repository {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let mut progress = progress;
-            return super::worktree::run_observed(
+            super::worktree::run_observed(
                 self,
                 baseline,
                 target,
@@ -105,7 +105,7 @@ impl Repository {
                 cancel,
                 &mut |_, _| Ok(()),
                 &mut progress,
-            );
+            )
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {

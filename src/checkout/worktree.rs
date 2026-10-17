@@ -31,10 +31,6 @@ pub(super) fn run(
     run_observed(repo, baseline, target, limits, cancel, hook, &mut |_, _| {})
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "test hook is separate from progress observation"
-)]
 pub(super) fn run_observed(
     repo: &Repository,
     baseline: Option<ObjectId>,
