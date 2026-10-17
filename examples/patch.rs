@@ -33,6 +33,9 @@ struct Args {
     /// Lift the default storage and content limits, for a large repository you trust.
     #[arg(long)]
     trusted: bool,
+    /// Disable indentation scoring while retaining change-group compaction.
+    #[arg(long)]
+    no_indent_heuristic: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         out.flush()?;
         return Ok(());
     };
-    if args.unified == 3 && !args.trusted {
+    if args.unified == 3 && !args.trusted && !args.no_indent_heuristic {
         Repo::discover(path)?.write_patch(&mut out, &args.old, &args.new)?;
         out.flush()?;
         return Ok(());
@@ -105,7 +108,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     objects.write_patch_with(
         &mut out,
         &comparison.entries,
-        Options::default().with_context_lines(args.unified),
+        Options::default()
+            .with_context_lines(args.unified)
+            .with_indent_heuristic(!args.no_indent_heuristic),
         limits,
         &cancel,
     )?;

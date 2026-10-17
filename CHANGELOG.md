@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Compact ambiguous content changes and enable indent-aware placement in content diffs, patches and
+  blame.
+  Add content and patch options to disable indent scoring while retaining compaction.
+
 ## [0.13.0](https://github.com/joshka/girt/compare/girt-v0.12.0...girt-v0.13.0) - 2026-10-17
 
 ### Other

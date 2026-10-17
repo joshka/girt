@@ -142,7 +142,11 @@ fn patches(
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",
-        "--no-indent-heuristic",
+        if options.indent_heuristic {
+            "--indent-heuristic"
+        } else {
+            "--no-indent-heuristic"
+        },
         pairing,
     ];
     args.extend(git_flags);
@@ -331,5 +335,25 @@ fn handle_matches_plain_git_diff() {
         .write_patch(&mut ours, old, new)
         .unwrap();
     let theirs = git(&git_dir, &["diff", &old.to_string(), &new.to_string()], b"");
+    assert_same(&ours, &theirs);
+}
+
+/// Shared boundary selection reaches patch output in both modes and object formats.
+#[rstest]
+fn indent_placement_matches_git(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(false, true)] indent: bool,
+) {
+    let (ours, theirs) = patches(
+        format,
+        &[blob(b"code", b"head\n\nhead\n  body\n}\n}\n\n\n}\n")],
+        &[blob(
+            b"code",
+            b"head\n\nhead\n  body\nhead\n  body\n}\n}\n\n\n}\n",
+        )],
+        Pairing::Exact,
+        Options::default().with_indent_heuristic(indent),
+        &[],
+    );
     assert_same(&ours, &theirs);
 }

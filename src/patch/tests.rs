@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use rstest::rstest;
 
 use super::*;
+use crate::content_diff::diff;
 use crate::tree::TreeEditor;
 use crate::{InitKind, ObjectFormat, Repository};
 
