@@ -55,8 +55,10 @@ its Git equivalent, and a parity test checks those pairs against `git` on every 
 
 ## Errors and logging
 
-Errors print as reports with the chain of causes. `-v`, `-vv` and `-vvv` (or `RUST_LOG`) log girt's
-operation spans to stderr; at debug level the active spans also appear in error reports.
+Errors print as reports with the chain of causes. `-v`, `-vv` and `-vvv` log girt's operation spans
+to stderr; at debug level the active spans also appear in error reports. `GIRT_LOG` takes tracing
+filter directives (for example `GIRT_LOG=girt=debug`) and overrides `-v`; an invalid value is an
+error. `RUST_LOG` is not read, so filters set for other tools don't affect girt.
 
 ## Current limits
 
