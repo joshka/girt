@@ -94,6 +94,30 @@ const CASES: &[Case] = &[
         &["rev-list", "--count", "main"],
     ),
     case(
+        &["history", "count", "first..main"],
+        &["rev-list", "--count", "first..main"],
+    ),
+    case(
+        &["history", "count", "main", "^v1~1"],
+        &["rev-list", "--count", "main", "^v1~1"],
+    ),
+    case(&["log", "first..HEAD"], &["log", "first..HEAD"]),
+    case(&["log", "HEAD...first"], &["log", "HEAD...first"]),
+    case(
+        &["object", "id", "v1^{}"],
+        &["rev-parse", "--verify", "v1^{}"],
+    ),
+    case(&["object", "id", "@~1"], &["rev-parse", "--verify", "@~1"]),
+    case(
+        &["object", "id", "first:dir/b.txt"],
+        &["rev-parse", "--verify", "first:dir/b.txt"],
+    ),
+    case(&["tree", "list", "HEAD~0:dir"], &["ls-tree", "HEAD~0:dir"]),
+    case(
+        &["object", "show", "main:dir/c.txt"],
+        &["cat-file", "-p", "main:dir/c.txt"],
+    ),
+    case(
         &["history", "merge-base", "first", "main"],
         &["merge-base", "first", "main"],
     ),

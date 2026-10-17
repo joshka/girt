@@ -6,9 +6,10 @@ use std::sync::atomic::AtomicBool;
 
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::refs::{RefName, References};
-use girt::{Commit, ObjectId, ObjectKind, Objects, PackLimits, PeelLimits, ReadLimits, Repository};
+use girt::revision::{Range, Resolver, Revision, Selection};
+use girt::{Commit, ObjectId, ObjectKind, Objects, PackLimits, ReadLimits, Repository};
 
-/// Maximum symbolic-ref hops followed while resolving a revision.
+/// Maximum symbolic-ref hops followed while resolving a reference.
 const MAX_SYMREF_DEPTH: usize = 5;
 
 /// Global options shared by every command.
@@ -59,28 +60,11 @@ pub fn read_limits() -> ReadLimits {
     ReadLimits::default().with_max_object_bytes(1 << 30)
 }
 
-/// Resolves a revision: a full or uniquely abbreviated object ID, `HEAD`, a full ref name, or a
-/// short ref name expanded the way Git does (`refs/<name>`, then tags, branches, remotes and
-/// `refs/remotes/<name>/HEAD`).
+/// Resolves a revision expression such as `main~2`, `v1.0^{tree}` or `HEAD:path`; see
+/// [`girt::revision`] for the syntax.
 pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
-    if let Ok(id) = ObjectId::from_hex(repository.object_format(), revision) {
-        return Ok(id);
-    }
-    let references = repository.references().wrap_err("opening references")?;
-    for candidate in candidates(revision) {
-        let Ok(name) = RefName::new(&candidate) else {
-            continue;
-        };
-        if let Some(id) = resolve_ref(&references, &name)? {
-            return Ok(id);
-        }
-    }
-    if let Ok(prefix) = girt::ObjectIdPrefix::from_hex(repository.object_format(), revision) {
-        return objects(repository)?
-            .resolve_prefix(prefix)
-            .map_err(Into::into);
-    }
-    bail!("unknown revision `{revision}`")
+    let objects = objects(repository)?;
+    resolve_with(repository, &objects, revision, None)
 }
 
 /// Resolves a full ref name through symbolic refs; `None` when absent or unborn.
@@ -91,37 +75,45 @@ pub fn resolve_ref(references: &References<'_>, name: &RefName) -> Result<Option
     Ok(resolution.id)
 }
 
-/// Full ref names tried for a short name, in Git's order.
-pub fn candidates(name: &str) -> Vec<String> {
-    if name == "HEAD" || name.starts_with("refs/") {
-        return vec![name.to_owned()];
-    }
-    vec![
-        format!("refs/{name}"),
-        format!("refs/tags/{name}"),
-        format!("refs/heads/{name}"),
-        format!("refs/remotes/{name}"),
-        format!("refs/remotes/{name}/HEAD"),
-    ]
-}
-
-/// Resolves a revision and peels tags until reaching an object of `kind`; commits peel to their
-/// tree when `kind` is [`ObjectKind::Tree`].
+/// Resolves a revision and peels it to an object of `kind`; commits peel to their tree when
+/// `kind` is [`ObjectKind::Tree`].
 pub fn resolve_kind(
     repository: &Repository,
     objects: &Objects,
     revision: &str,
     kind: ObjectKind,
 ) -> Result<ObjectId> {
-    let id = resolve(repository, revision)?;
-    let peeled = objects
-        .peel(id, PeelLimits::default(), not_cancelled())
-        .wrap_err_with(|| format!("peeling {revision}"))?;
-    match (peeled.kind, kind) {
-        (found, wanted) if found == wanted => Ok(peeled.target),
-        (ObjectKind::Commit, ObjectKind::Tree) => Ok(read_commit(objects, peeled.target)?.tree()),
-        (found, wanted) => bail!("{revision} is a {found:?}, not a {wanted:?}"),
-    }
+    resolve_with(repository, objects, revision, Some(kind))
+}
+
+fn resolve_with(
+    repository: &Repository,
+    objects: &Objects,
+    revision: &str,
+    kind: Option<ObjectKind>,
+) -> Result<ObjectId> {
+    let parsed: Revision = revision.parse()?;
+    let resolver = Resolver::new(repository, objects)?.with_read_limits(read_limits());
+    let id = match kind {
+        Some(kind) => resolver.resolve_to(&parsed, kind),
+        None => resolver.resolve(&parsed),
+    };
+    id.wrap_err_with(|| format!("resolving `{revision}`"))
+}
+
+/// Resolves revision and range arguments (`A..B`, `A...B`, `^A`) to the commits to walk;
+/// no arguments means `HEAD`.
+pub fn select(repository: &Repository, objects: &Objects, ranges: &[String]) -> Result<Selection> {
+    let parsed = if ranges.is_empty() {
+        vec![Range::Include(Revision::head())]
+    } else {
+        ranges
+            .iter()
+            .map(|range| range.parse())
+            .collect::<Result<Vec<Range>, _>>()?
+    };
+    let resolver = Resolver::new(repository, objects)?.with_read_limits(read_limits());
+    Ok(resolver.select(&parsed)?)
 }
 
 /// Resolves a revision to a commit.

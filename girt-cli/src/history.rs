@@ -5,6 +5,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use color_eyre::eyre::{Result, WrapErr as _, eyre};
+use girt::revision::Selection;
 use girt::{Commit, HistoryLimits, IdentityRef, ObjectId, Objects};
 
 use crate::Context;
@@ -13,10 +14,11 @@ use crate::common::{self, display_bytes};
 /// History queries.
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
-    /// Count commits reachable from a revision (like `git rev-list --count`).
+    /// Count commits reachable from revisions (like `git rev-list --count`).
     Count {
-        /// Starting revision.
-        rev: String,
+        /// Revisions and ranges: `A`, `^A`, `A..B` or `A...B`.
+        #[arg(required = true)]
+        revs: Vec<String>,
     },
     /// Print the best common ancestor of two commits (like `git merge-base`).
     ///
@@ -49,9 +51,8 @@ pub enum Command {
 /// and lengthen collisions across all stored object kinds.
 #[derive(Debug, clap::Args)]
 pub struct LogArgs {
-    /// Starting revision.
-    #[arg(default_value = "HEAD")]
-    rev: String,
+    /// Revisions and ranges: `A`, `^A`, `A..B` or `A...B`; `HEAD` when omitted.
+    revs: Vec<String>,
     /// Show at most this many commits.
     #[arg(short = 'n', long, value_name = "N")]
     limit: Option<usize>,
@@ -67,11 +68,14 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     let limits = HistoryLimits::trusted();
     let mut out = common::stdout();
     let code = match command {
-        Command::Count { rev } => {
+        Command::Count { revs } => {
+            let selection = common::select(&repository, &objects, &revs)?;
+            let hidden = hidden(&objects, &selection)?;
             let ids = objects
-                .walk(&[commit(&rev)?], limits)
+                .walk(&selection.include, limits)
                 .wrap_err("walking history")?;
-            writeln!(out, "{}", ids.len())?;
+            let count = ids.iter().filter(|id| !hidden.contains(id)).count();
+            writeln!(out, "{count}")?;
             ExitCode::SUCCESS
         }
         Command::MergeBase { a, b, all } => {
@@ -116,11 +120,12 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = common::objects(&repository)?;
-    let root = common::resolve_commit(&repository, &objects, &args.rev)?;
+    let selection = common::select(&repository, &objects, &args.revs)?;
+    let hidden = hidden(&objects, &selection)?;
     let width = common::abbrev_len(&repository, &objects)?;
     let short = |id: ObjectId| objects.abbreviate(id, width).map(|p| p.to_string());
     let mut out = common::stdout();
-    let mut walk = DateOrder::new(&objects, root)?;
+    let mut walk = DateOrder::new(&objects, &selection.include, hidden)?;
     let mut first = true;
     while let Some((id, commit)) = walk.next_commit()? {
         if args.limit.is_some_and(|limit| walk.emitted > limit) {
@@ -191,15 +196,18 @@ struct DateOrder<'a> {
 }
 
 impl<'a> DateOrder<'a> {
-    fn new(objects: &'a Objects, root: ObjectId) -> Result<Self> {
+    /// Starts at `roots`, never entering `hidden` commits.
+    fn new(objects: &'a Objects, roots: &[ObjectId], hidden: HashSet<ObjectId>) -> Result<Self> {
         let mut walk = Self {
             objects,
             heap: BinaryHeap::new(),
-            seen: HashSet::new(),
+            seen: hidden,
             pushed: 0,
             emitted: 0,
         };
-        walk.push(root)?;
+        for root in roots {
+            walk.push(*root)?;
+        }
         Ok(walk)
     }
 
@@ -232,6 +240,20 @@ impl<'a> DateOrder<'a> {
         self.emitted += 1;
         Ok(Some((id, commit)))
     }
+}
+
+/// Commits reachable from the selection's excluded side.
+///
+/// This walks the excluded history in full, unlike Git, which stops once the remaining queue is
+/// uninteresting; ranges near the root of a long history pay for the whole excluded side.
+fn hidden(objects: &Objects, selection: &Selection) -> Result<HashSet<ObjectId>> {
+    if selection.exclude.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let ids = objects
+        .walk(&selection.exclude, HistoryLimits::trusted())
+        .wrap_err("walking excluded history")?;
+    Ok(ids.into_iter().collect())
 }
 
 /// The first paragraph of a message joined onto one line, like Git's `%s`.
