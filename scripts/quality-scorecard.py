@@ -641,7 +641,9 @@ def ergonomics():
     regressions = []
     for task in tasks:
         for key, maximum in budget[task["task"]].items():
-            if maximum > baseline_tasks[task["task"]][key]:
+            baseline_task = baseline_tasks[task["task"]]
+            # A newly implemented capability has no caller-cost ceiling in the dated baseline.
+            if baseline_task["sources"] and maximum > baseline_task[key]:
                 raise ValueError(f"budget for {task['task']}: {key} exceeds dated baseline")
             if task[key] > maximum:
                 regressions.append(f"{task['task']}: {key} {task[key]} exceeds {maximum}")

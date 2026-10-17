@@ -246,8 +246,8 @@ fn cat(args: RevArgs, context: &Context) -> Result<ExitCode> {
 }
 
 fn id(args: RevArgs, context: &Context) -> Result<ExitCode> {
-    let handle = girt::trusted::Handle::new(context.repository()?)
-        .with_environment(context.environment.clone());
+    let handle =
+        girt::Repo::new(context.repository()?).with_environment(context.environment.clone());
     let id = handle.rev_parse(&args.rev)?;
     let mut out = stdout();
     writeln!(out, "{id}")?;

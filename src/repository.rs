@@ -7,6 +7,9 @@
 //! variables; supply inherited configuration explicitly through [`ConfigInputs`].
 //! [`Repository::discover_with_config`] with [`ConfigInputs::git_default`] sees the configuration
 //! `git` would.
+//! For trusted local use with Git defaults, lazy loading, and default limits, start with
+//! [`crate::Repo`] instead. `Repository` keeps limits, cancellation, and configuration under caller
+//! control when handling untrusted input or implementing a custom policy.
 //!
 //! # Layout and lifetime
 //!
@@ -685,6 +688,11 @@ impl RepositoryMetadata {
 }
 
 /// An opened repository's metadata paths, checkout location and resolved snapshots.
+///
+/// Use this interface for explicit configuration, limits, cancellation, and untrusted input.
+/// [`crate::Repo`] composes repository operations for trusted local use with Git defaults, lazy
+/// loading, and default limits. Wrap this value with [`crate::Repo::new`] to use those
+/// conveniences.
 ///
 /// # Common entry points
 ///

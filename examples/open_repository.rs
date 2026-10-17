@@ -3,8 +3,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use girt::Repository;
-use girt::trusted::Handle;
+use girt::{Repo, Repository};
 
 #[derive(Parser)]
 #[command(about, long_about = None)]
@@ -17,7 +16,7 @@ struct Args {
 
 fn main() -> girt::Result<()> {
     let args = Args::parse();
-    let git = Handle::new(Repository::open(args.path)?);
+    let git = Repo::new(Repository::open(args.path)?);
     let id = git.rev_parse(&args.revision)?;
     let bytes = git.repository().objects()?.read_blob(id)?;
     println!(

@@ -34,6 +34,14 @@ configured. Use them yourself for a remote the user chose, and when opening a la
 you trust. The defaults are sized for untrusted input and refuse very large stores: the default
 `PackLimits` admits 64 MiB of pack index, while a Linux kernel clone has about 300 MB.
 
+## Repo and explicit control
+
+[`Repo`](https://docs.rs/girt/latest/girt/struct.Repo.html) is the convenience interface for trusted
+local use. It loads objects lazily with the core default limits; its name does not select the larger
+`trusted()` bounds. Its configured transfers compose `workflow` and follow that module's trust
+contract. Choose [`Repository`](https://docs.rs/girt/latest/girt/struct.Repository.html) for
+explicit limits and cancellation, especially when processing untrusted input.
+
 ## Default: bounded for untrusted input
 
 `FetchLimits::default()` bounds the transfer and validation of one fetch:

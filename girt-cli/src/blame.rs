@@ -20,7 +20,7 @@ pub fn run(args: Args, context: &Context) -> Result<ExitCode> {
     if context.git {
         bail!("blame has structured range output; --git is unsupported");
     }
-    let handle = girt::trusted::Handle::new(context.repository()?);
+    let handle = girt::Repo::new(context.repository()?);
     let mut out = common::stdout();
     for hunk in handle.blame(args.revision, args.path.as_bytes())? {
         writeln!(

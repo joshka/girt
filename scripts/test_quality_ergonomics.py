@@ -25,11 +25,11 @@ let format = girt::ObjectFormat::Sha1;
             "boxed_errors": 0, "empty_vectors": 0,
         })
 
-    def test_unsupported_task_remains_a_gap_without_code(self):
+    def test_new_blame_capability_has_measured_code(self):
         tasks = scorecard.ergonomics_tasks()
         blame = next(t for t in tasks if t["task"] == "Blame-style queries")
-        self.assertTrue(blame["capability_gap"])
-        self.assertEqual(blame["lines"], 0)
+        self.assertFalse(blame["capability_gap"])
+        self.assertEqual(blame["lines"], 6)
         self.assertEqual(len(tasks), 15)
 
     def test_cost_increase_reduces_attainment(self):

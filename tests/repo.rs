@@ -2,9 +2,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use girt::trusted::Handle;
 use girt::workflow::Environment;
-use girt::{Commit, InitKind, ObjectFormat, ObjectId, Repository, Signature};
+use girt::{Commit, InitKind, ObjectFormat, ObjectId, Repo, Repository, Signature};
 use rstest::rstest;
 
 fn git(path: &Path, args: &[&str]) -> String {
@@ -37,20 +36,20 @@ fn environment() -> Environment {
         .with("GIT_AUTHOR_DATE", "@1700000000 +0000")
         .with("GIT_COMMITTER_DATE", "@1700000001 +0000")
 }
-fn handle(format: ObjectFormat) -> (tempfile::TempDir, Handle) {
+fn handle(format: ObjectFormat) -> (tempfile::TempDir, Repo) {
     handle_with_backend(format, girt::refs::Backend::Files)
 }
 fn handle_with_backend(
     format: ObjectFormat,
     backend: girt::refs::Backend,
-) -> (tempfile::TempDir, Handle) {
+) -> (tempfile::TempDir, Repo) {
     let directory = tempfile::tempdir().unwrap();
     let repo = Repository::init_with_backend(format, directory.path(), InitKind::Worktree, backend)
         .unwrap();
-    (directory, Handle::new(repo).with_environment(environment()))
+    (directory, Repo::new(repo).with_environment(environment()))
 }
 
-fn tree(git: &Handle, bytes: &[u8]) -> ObjectId {
+fn tree(git: &Repo, bytes: &[u8]) -> ObjectId {
     let blob = git.repository().loose_objects().write_blob(bytes).unwrap();
     let mut editor = git.tree_editor();
     editor.set(b"dir/file", blob).unwrap();
@@ -101,7 +100,7 @@ fn cached_reader_refreshes_after_git_packs_new_history(#[case] format: ObjectFor
     assert_eq!(handle.rev_parse("HEAD").unwrap(), first);
     let tree = tree_for_new_handle(dir.path(), b"new pack");
     let mut writer =
-        Handle::new(Repository::open(dir.path()).unwrap()).with_environment(environment());
+        Repo::new(Repository::open(dir.path()).unwrap()).with_environment(environment());
     let next = writer.commit(tree, "new").unwrap();
     git(dir.path(), &["repack", "-ad"]);
     git(dir.path(), &["prune-packed"]);
@@ -110,7 +109,7 @@ fn cached_reader_refreshes_after_git_packs_new_history(#[case] format: ObjectFor
     assert_eq!(handle.rev_parse(&next.to_string()[..12]).unwrap(), next);
 }
 fn tree_for_new_handle(path: &Path, bytes: &[u8]) -> ObjectId {
-    tree(&Handle::new(Repository::open(path).unwrap()), bytes)
+    tree(&Repo::new(Repository::open(path).unwrap()), bytes)
 }
 
 #[test]
@@ -285,7 +284,7 @@ fn named_remote_fetch_and_leased_push_compose_workflow(#[case] format: ObjectFor
         ],
     );
     let local =
-        Handle::new(Repository::open(local_dir.path()).unwrap()).with_environment(environment());
+        Repo::new(Repository::open(local_dir.path()).unwrap()).with_environment(environment());
 
     local.fetch("origin").unwrap();
     let branch = git(source_dir.path(), &["symbolic-ref", "--short", "HEAD"]);
@@ -344,13 +343,13 @@ fn commit_and_switch_refuse_in_progress_operations_without_mutation() {
         handle
             .commit(tree, "must refuse")
             .unwrap_err()
-            .is::<girt::trusted::Error>()
+            .is::<girt::repo::Error>()
     );
     assert!(
         handle
             .switch("topic")
             .unwrap_err()
-            .is::<girt::trusted::Error>()
+            .is::<girt::repo::Error>()
     );
     assert_eq!(git(dir.path(), &["rev-parse", "HEAD"]), root.to_string());
     assert_eq!(
@@ -366,7 +365,7 @@ fn commit_and_switch_refuse_in_progress_operations_without_mutation() {
 fn blob_paths_reject_invalid_components(#[case] path: &[u8]) {
     let (_dir, handle) = handle(ObjectFormat::Sha1);
     assert!(
-        matches!(handle.blob_at("HEAD", path).unwrap_err().downcast::<girt::trusted::Error>().unwrap(), girt::trusted::Error::InvalidPath { path: actual } if actual == path)
+        matches!(handle.blob_at("HEAD", path).unwrap_err().downcast::<girt::repo::Error>().unwrap(), girt::repo::Error::InvalidPath { path: actual } if actual == path)
     );
 }
 
@@ -381,10 +380,10 @@ fn blob_paths_preserve_absence_and_kind_context(#[case] path: &[u8], #[case] wro
     let error = handle
         .blob_at("HEAD", path)
         .unwrap_err()
-        .downcast::<girt::trusted::Error>()
+        .downcast::<girt::repo::Error>()
         .unwrap();
     assert_eq!(
-        matches!(error, girt::trusted::Error::PathKind { .. }),
+        matches!(error, girt::repo::Error::PathKind { .. }),
         wrong_kind
     );
 }
@@ -393,15 +392,15 @@ fn blob_paths_preserve_absence_and_kind_context(#[case] path: &[u8], #[case] wro
 fn fetch_refuses_missing_remote_and_url_only_remote() {
     let (dir, handle) = handle(ObjectFormat::Sha1);
     assert!(
-        matches!(handle.fetch("absent").unwrap_err().downcast::<girt::trusted::Error>().unwrap(), girt::trusted::Error::RemoteNotConfigured { name } if name == "absent")
+        matches!(handle.fetch("absent").unwrap_err().downcast::<girt::repo::Error>().unwrap(), girt::repo::Error::RemoteNotConfigured { name } if name == "absent")
     );
     git(
         dir.path(),
         &["config", "remote.urlonly.url", "not-contacted"],
     );
-    let handle = Handle::new(Repository::open(dir.path()).unwrap()).with_environment(environment());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap()).with_environment(environment());
     assert!(
-        matches!(handle.fetch("urlonly").unwrap_err().downcast::<girt::trusted::Error>().unwrap(), girt::trusted::Error::NoFetchRefspecs { name } if name == "urlonly")
+        matches!(handle.fetch("urlonly").unwrap_err().downcast::<girt::repo::Error>().unwrap(), girt::repo::Error::NoFetchRefspecs { name } if name == "urlonly")
     );
 }
 
@@ -455,7 +454,7 @@ fn log_honors_shallow_boundaries_and_skewed_dates() {
         format!("{child}\n"),
     )
     .unwrap();
-    let reopened = Handle::new(Repository::open(dir.path()).unwrap());
+    let reopened = Repo::new(Repository::open(dir.path()).unwrap());
     let shallow: Vec<_> = reopened
         .log(child)
         .unwrap()
@@ -498,9 +497,9 @@ fn blob_reads_symlink_bytes_and_refuses_gitlinks() {
         handle
             .blob_at("HEAD", b"submodule")
             .unwrap_err()
-            .downcast::<girt::trusted::Error>()
+            .downcast::<girt::repo::Error>()
             .unwrap(),
-        girt::trusted::Error::PathKind {
+        girt::repo::Error::PathKind {
             found: girt::ObjectKind::Commit,
             ..
         }
@@ -572,8 +571,8 @@ fn log_outlives_its_originating_handle() {
 #[test]
 fn handle_and_log_remain_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Handle>();
-    assert_send_sync::<girt::trusted::Log>();
+    assert_send_sync::<Repo>();
+    assert_send_sync::<girt::repo::Log>();
 }
 
 #[test]
@@ -581,7 +580,7 @@ fn shared_handles_support_parallel_content_reads() {
     let (_dir, mut handle) = handle(ObjectFormat::Sha1);
     let tree = tree(&handle, b"parallel");
     let root = handle.commit(tree, "root").unwrap();
-    let handle = Handle::new(handle.repository().clone());
+    let handle = Repo::new(handle.repository().clone());
     let repo = &handle;
 
     std::thread::scope(|scope| {
@@ -606,7 +605,7 @@ fn status_uses_captured_environment_ignores_and_collapsed_directories() {
     std::fs::write(directory.path().join("globally-ignored"), b"global").unwrap();
     std::fs::create_dir(directory.path().join("kept")).unwrap();
     std::fs::write(directory.path().join("kept/file"), b"visible").unwrap();
-    let handle = Handle::new(Repository::open(directory.path()).unwrap())
+    let handle = Repo::new(Repository::open(directory.path()).unwrap())
         .with_environment(environment().with("HOME", home.path()));
 
     let report = handle.status().unwrap();

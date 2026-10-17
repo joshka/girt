@@ -8,14 +8,16 @@ use crate::refs::{Dereference, Expected, RefEdit, RefName, Reflog, Target};
 use crate::workflow::{self, Environment, FetchOptions, NoCallbacks, PushOptions};
 use crate::{Commit, LooseObjects, ObjectId, ObjectKind, Repository, Signature};
 
-/// An owning, default-policy handle for a trusted repository.
+/// An owning convenience interface for trusted local repositories.
 ///
 /// Construct with [`Self::discover`] for Git-default configuration and process environment, or
-/// [`Self::new`] for an explicitly configured repository. Shared reads use immutable object
+/// [`Self::new`] for an explicitly configured repository. Objects load lazily with default limits.
+/// Use [`Repository`] for explicit limits, cancellation, and untrusted input; [`Self::repository`]
+/// exposes that interface for operations needing more control. Shared reads use immutable object
 /// snapshots and a synchronized lazy cache. This type is `Send + Sync`; `Log` owns its reader
 /// state and can outlive the handle. See the [module contract](super).
 #[derive(Debug)]
-pub struct Handle {
+pub struct Repo {
     pub(super) reader: Arc<ObjectView>,
     loose: LooseObjects,
     environment: Environment,
@@ -85,7 +87,7 @@ pub enum Error {
     },
 }
 
-impl Handle {
+impl Repo {
     /// Owns `repository`, capturing the process environment for identity and transfers.
     ///
     /// No object or reference store is opened. Compose [`Repository::open_with_config`] first to
@@ -523,7 +525,7 @@ mod tests {
             .with("GIT_AUTHOR_EMAIL", "a@example.com")
             .with("GIT_COMMITTER_NAME", "A")
             .with("GIT_COMMITTER_EMAIL", "a@example.com");
-        let mut handle = Handle::new(repository).with_environment(environment);
+        let mut handle = Repo::new(repository).with_environment(environment);
         let tree = handle.tree_editor().write().unwrap();
         let root = handle.commit(tree, "root").unwrap();
         handle

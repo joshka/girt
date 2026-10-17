@@ -18,6 +18,11 @@
 //! Configuration, resource limits, cancellation, and publication policy are explicit where the
 //! operation needs them. No application-wide runtime or tracing subscriber is installed.
 //!
+//! Use [`Repo`] for trusted local use with Git-default discovery, lazy loading, and default limits.
+//! Use [`Repository`] for explicit control over configuration, limits, cancellation, and untrusted
+//! input. [`Repo::repository`] exposes the underlying repository when an operation needs that
+//! control; [`repo`] describes the convenience layer's policies and limitations.
+//!
 //! # Quick start
 //!
 //! Add girt to a Rust project with `cargo add girt`. The minimum Rust version is 1.97.1.
@@ -80,7 +85,7 @@
 //! | Interpret named remotes and refspecs | [`remote`] |
 //! | Fetch, push, or clone with explicit publication | [`fetch`], [`push`], [`clone`] |
 //! | Use configured-remote convenience workflows | [`workflow`] |
-//! | Compose everyday operations on a trusted repository | [`trusted::Handle`] |
+//! | Compose everyday operations on a trusted local repository | [`Repo`], [`repo`] |
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
 //! | Write unified patches as `git diff` does | [`patch`], [`Objects::write_patch`] |
@@ -187,6 +192,7 @@ mod peel;
 pub mod push;
 pub mod refs;
 pub mod remote;
+pub mod repo;
 pub mod repository;
 pub mod retention;
 pub mod revision;
@@ -196,7 +202,6 @@ pub mod tag;
 pub mod transport;
 pub mod tree;
 mod tree_compare;
-pub mod trusted;
 pub mod workflow;
 
 pub mod tree_diff;
@@ -223,6 +228,7 @@ pub use pack::{
     PackWritten, write_pack, write_pack_with_compression,
 };
 pub use peel::{PeelError, PeelFailure, PeelLimits, PeeledObject};
+pub use repo::Repo;
 pub use repository::{
     ColocationEdit, ColocationError, CreateWorktreeError, InitError, InitKind, InitOptions,
     OpenError, OperationCleanupError, OperationError, OperationLimits, OperationState,

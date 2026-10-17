@@ -327,7 +327,7 @@ fn handle_matches_plain_git_diff() {
     );
     let git_dir = repo.git_dir().to_path_buf();
     let mut ours = Vec::new();
-    girt::trusted::Handle::new(repo)
+    girt::Repo::new(repo)
         .write_patch(&mut ours, old, new)
         .unwrap();
     let theirs = git(&git_dir, &["diff", &old.to_string(), &new.to_string()], b"");

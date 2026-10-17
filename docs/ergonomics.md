@@ -18,11 +18,11 @@ starts a Git process. Disposable end-to-end examples are linked where setup and 
 For incomplete tasks, the snippet implements only the supported portion described below. Linked
 runnable examples provide disposable setup and cleanup; their fixtures are excluded from caller-cost
 totals. Unsupported tasks have no code cost and remain visible in the capability-gap count. These
-counts measure caller burden, not correctness or performance. Current variants use `trusted::Handle`
-where it supplies the task policy; the dated baseline retains the direct-core costs. Each handle
-method links to the explicit APIs it composes. The handle also exposes an empty `TreeEditor` and a
-leased-command `push`; staging, push destination selection and the independent capability gaps
-remain explicit.
+counts measure caller burden, not correctness or performance. Current variants use crate-root `Repo`
+for trusted local use with Git defaults, lazy loading, and default limits; the dated baseline
+retains the direct-core costs. Each `Repo` method links to the explicit APIs it composes. The handle
+also exposes an empty `TreeEditor` and a leased-command `push`; staging, push destination selection
+and the independent capability gaps remain explicit.
 
 The scorecard counts nonblank, non-comment physical lines, explicitly imported names (including
 standard-library and example dependencies), default/trusted constructor calls, never-cancel
@@ -32,7 +32,9 @@ inferred Rust types. Counts include function wrappers and repeat shared setup pe
 tree IDs and identities are explicit inputs, not hidden application helpers; constructing them
 remains a documented gap. Changing formatting or moving setup can change counts without improving
 ergonomics; review the diff and the capability classification together. The per-task scorecard
-detail records all counts.
+detail records all counts. Tasks with no implementation in the dated baseline use the reviewed
+budget file as their ceiling; their budget changes remain explicit review decisions. Tasks with
+baseline implementations also keep their dated baseline caps.
 
 Run `nice -n 10 python3 scripts/quality-scorecard.py --ergonomics-only` for this axis without
 Clippy, Rustdoc, coverage or benchmark work. Run
@@ -48,13 +50,13 @@ alongside the guides. Linked examples compile with `nice -n 10 cargo check --loc
 Supported. Discovery already avoids hand-written parent traversal. The handle loads Git-default
 configuration; the core `Repository::discover` leaves configuration inputs explicit.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover(".")?;
+    let git = Repo::discover(".")?;
     println!("{}", git.repository().git_dir().display());
     Ok(())
 }
@@ -71,13 +73,13 @@ Supported for the revision grammar implemented by `revision`. Resolving to Blob 
 reading by ID alone does not; `read_blob` checks the kind and reports a missing object as an error.
 The handle composes revision resolution and typed reads, refreshing once on an object miss.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     let blob = git.blob_at("HEAD", b"src/lib.rs")?;
     println!("{} bytes", blob.len());
     Ok(())
@@ -97,13 +99,13 @@ provide exclusions or Git topological date order; timestamp-skewed ancestors can
 children. Those remaining walk capabilities belong to
 [416](https://github.com/joshka/girt/issues/416).
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     for entry in git.log("HEAD")?.take(20) {
         let (id, _) = entry?;
         println!("{id}");
@@ -127,15 +129,15 @@ textconv, diff configuration and binary patches are not applied. `Objects::write
 context lines, abbreviation, binary policy, limits and cancellation; `patch::write_hunks` renders a
 `content_diff` result alone.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
 use std::io::{self, Write as _};
 
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     let mut out = io::BufWriter::new(io::stdout().lock());
     git.write_patch(&mut out, "HEAD~1", "HEAD")?;
     out.flush()?;
@@ -159,19 +161,19 @@ Partial: status lists untracked files through the ignore rules Git reads, but co
 and working-tree content as literal bytes. Attributes, filters, EOL conversion and `core.filemode`
 need application policy; `raw_status` remains for consumers that own all of it.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
-fn status(git: &Handle) -> girt::Result<()> {
+fn status(git: &Repo) -> girt::Result<()> {
     println!("{:#?}", git.status()?);
     Ok(())
 }
 ```
 
-`Handle::discover` loads Git-default configuration, including a global `core.excludesFile`;
-`Handle::new` uses the caller-supplied repository configuration.
+`Repo::discover` loads Git-default configuration, including a global `core.excludesFile`;
+`Repo::new` uses the caller-supplied repository configuration.
 
 Disposable end-to-end evidence: [status](../examples/status.rs).
 
@@ -188,13 +190,13 @@ normalization still need application policy; this snippet commits an already sta
 leaves that index and the files unchanged. Supplying a tree built separately requires materializing
 its index/files before a later `switch`, whose baseline is HEAD.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 use girt::index::Index;
 
-fn commit_tree(git: &mut Handle, index: &Index) -> girt::Result<()> {
+fn commit_tree(git: &mut Repo, index: &Index) -> girt::Result<()> {
     let tree = index.write_tree(git.repository())?;
     git.commit(tree, "Snapshot\n")?;
     Ok(())
@@ -293,13 +295,13 @@ handle supplies default limits, no cancellation, the captured environment and no
 It requires the remote's configured fetch refspecs. Remote tag/prune configuration is not
 interpreted by this prototype; explicit workflow options remain available.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     println!("{:?}", git.fetch("origin")?);
     Ok(())
 }
@@ -317,14 +319,14 @@ requires the remote branch to be absent; an existing branch needs an observed ex
 HEAD is refused. Automatic upstream selection and push.default are not supplied by workflow::push.
 Inspect the report for rejected commands; errors retain partial effects.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 use girt::push::PushCommand;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     let head = git.repository().head()?;
     if !head.name.is_branch() {
         return Err("current HEAD is not a branch".into());
@@ -350,7 +352,7 @@ Desired sketch: `git.push_current_branch()?`. Gap closure:
 Supported: `workflow::clone(url, destination)` resolves Git-default configuration and transport
 policy, creates `origin` and branch tracking configuration, and checks out the remote's default
 branch. `workflow::clone_with` accepts explicit configuration inputs, environment, callbacks and
-`CloneOptions`; `trusted::Handle::clone` constructs the convenience handle.
+`CloneOptions`; `Repo::clone` constructs the convenience handle.
 
 ```rust,no_run
 fn clone_repository(url: &str, destination: &std::path::Path) -> girt::Result<()> {
@@ -378,13 +380,13 @@ Supported. Git-default config inputs were delivered by
 [390](https://github.com/joshka/girt/issues/390). The handle requests these inputs at discovery. The
 optional subsection is structural, not a resource limit default.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     let email = git.repository().config().string("user", None, "email");
     println!("{email:?}");
     Ok(())
@@ -401,13 +403,13 @@ Desired sketch: `git.config().string("user", None, "email")`. Gap closure: remai
 Supported within the documented revision grammar; unsupported expressions return errors. Verbose:
 the handle composes the resolver and object view.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
 fn main() -> girt::Result<()> {
-    let git = Handle::discover("repo")?;
+    let git = Repo::discover("repo")?;
     println!("{}", git.rev_parse("HEAD~1")?);
     Ok(())
 }
@@ -427,12 +429,12 @@ exclude other working-tree/reference writers, including linked-worktree activity
 filters and normalization remain caller policy. Dirty and obstructed checkouts are refused; errors
 preserve partial effects for recovery.
 
-With the trusted handle:
+With `Repo`:
 
 ```rust,no_run
-use girt::trusted::Handle;
+use girt::Repo;
 
-fn switch(git: &mut Handle) -> girt::Result<()> {
+fn switch(git: &mut Repo) -> girt::Result<()> {
     // Caller excludes other working-tree and reference writers across this call.
     println!("{:?}", git.switch("topic")?);
     Ok(())
@@ -455,3 +457,15 @@ surface exposes limits and cancellation. File renames and merge parents are foll
 files and reached shallow boundaries are explicitly refused. Copy/move detection, ignore-revs,
 attributes and incremental output are unsupported. Repetitive content can align differently from
 Git; see [440](https://github.com/joshka/girt/issues/440).
+
+With `Repo`:
+
+```rust,no_run
+use girt::Repo;
+
+fn blame(git: &Repo) -> girt::Result<()> {
+    let hunks = git.blame("HEAD", "src/lib.rs")?;
+    println!("{hunks:?}");
+    Ok(())
+}
+```

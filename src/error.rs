@@ -212,7 +212,7 @@ from_domain_errors! {
     crate::TreeCompareError,
     crate::workflow::TransferError,
     crate::workflow::CloneError,
-    crate::trusted::Error,
+    crate::repo::Error,
 }
 
 #[cfg(test)]

@@ -3,9 +3,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
-use girt::Repository;
 use girt::blame::{Error, Limits};
-use girt::trusted::Handle;
+use girt::{Repo, Repository};
 use rstest::rstest;
 
 fn git(path: &Path, args: &[&str]) -> String {
@@ -60,7 +59,7 @@ fn fixture(format: &str) -> tempfile::TempDir {
     commit(directory.path(), b"alpha\nbeta\ngamma\ndelta\n", "old");
     directory
 }
-fn actual(handle: &Handle, path: &str) -> Vec<(String, usize, String)> {
+fn actual(handle: &Repo, path: &str) -> Vec<(String, usize, String)> {
     handle
         .blame("HEAD", path.as_bytes())
         .unwrap()
@@ -106,7 +105,7 @@ fn edited_rename_and_unterminated_lines_match_git(#[case] format: &str) {
     git(dir.path(), &["mv", "old", "new"]);
     commit(dir.path(), b"alpha\ninserted\nbeta\ngamma\ndelta\n", "new");
     commit(dir.path(), b"alpha\ninserted\nbeta\nDELTA", "new");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "new"), oracle(dir.path(), "new"));
 }
 fn merge_fixture(both: bool) -> tempfile::TempDir {
@@ -143,13 +142,13 @@ fn merge_fixture(both: bool) -> tempfile::TempDir {
 #[case::both_parents(true)]
 fn merges_attribute_edits_from_both_parents(#[case] both: bool) {
     let dir = merge_fixture(both);
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "old"), oracle(dir.path(), "old"));
 }
 #[test]
 fn limits_cancellation_binary_and_shallow_are_explicit() {
     let dir = fixture("sha1");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     let objects = handle.repository().objects().unwrap();
     let id = handle.rev_parse("HEAD").unwrap();
     let mut limits = Limits::default();
@@ -168,7 +167,7 @@ fn limits_cancellation_binary_and_shallow_are_explicit() {
     ));
     assert!(matches!(objects.blame(id, b"absent"), Err(Error::Absent)));
     commit(dir.path(), b"binary\0content", "binary");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert!(matches!(
         handle
             .blame("HEAD", b"binary")
@@ -208,7 +207,7 @@ fn merge_matching_second_parent_preserves_its_origins() {
         dir.path(),
         &["-c", "commit.gpgsign=false", "commit", "-qm", "take side"],
     );
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "old"), oracle(dir.path(), "old"));
 }
 
@@ -217,7 +216,7 @@ fn merge_matching_second_parent_preserves_its_origins() {
 #[case::bytes(Limits::default().with_max_bytes(1), "bytes")]
 fn whole_walk_limits_refuse_partial_results(#[case] limits: Limits, #[case] name: &'static str) {
     let dir = fixture("sha1");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     let id = handle.rev_parse("HEAD").unwrap();
     assert!(
         matches!(handle.repository().objects().unwrap().blame_with(id, b"old", limits, &AtomicBool::new(false)), Err(Error::Limit(found)) if found == name)
@@ -228,7 +227,7 @@ fn whole_walk_limits_refuse_partial_results(#[case] limits: Limits, #[case] name
 fn empty_file_has_no_attribution_ranges() {
     let dir = fixture("sha1");
     commit(dir.path(), b"", "empty");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert!(handle.blame("HEAD", b"empty").unwrap().is_empty());
 }
 
@@ -289,7 +288,7 @@ fn merge_with_independently_identical_edits_matches_git() {
         dir.path(),
         &["-c", "commit.gpgsign=false", "commit", "-qm", "take side"],
     );
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "old"), oracle(dir.path(), "old"));
 }
 
@@ -314,7 +313,7 @@ fn merge_follows_rename_and_edits_from_both_parents() {
             "rename merge",
         ],
     );
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "new"), oracle(dir.path(), "new"));
 }
 
@@ -330,7 +329,7 @@ fn missing_parent_is_an_error_instead_of_a_root() {
             .join(&parent[2..]),
     )
     .unwrap();
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert!(matches!(
         handle
             .blame("HEAD", b"old")
@@ -354,7 +353,7 @@ fn unchanged_history_reuses_verified_blob_under_byte_budget() {
             "unchanged",
         ],
     );
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     let limits = Limits::default().with_max_bytes(b"alpha\nbeta\ngamma\ndelta\n".len());
     let result = handle
         .blame_with("HEAD", b"old", limits, &AtomicBool::new(false))
@@ -373,7 +372,7 @@ fn directory_replaced_by_regular_file_starts_new_history() {
     commit(dir.path(), b"keep\n", "d/f");
     std::fs::remove_dir_all(dir.path().join("d")).unwrap();
     commit(dir.path(), b"keep\nnew file\n", "d");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "d"), oracle(dir.path(), "d"));
 }
 
@@ -382,7 +381,7 @@ fn text_after_nul_containing_history_matches_git() {
     let dir = fixture("sha1");
     commit(dir.path(), b"retained\nold\0value\n", "f");
     commit(dir.path(), b"retained\nnew value\n", "f");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "f"), oracle(dir.path(), "f"));
 }
 
@@ -392,7 +391,7 @@ fn empty_file_at_shallow_boundary_has_no_origins() {
     commit(dir.path(), b"", "empty");
     let id = git(dir.path(), &["rev-parse", "HEAD"]);
     std::fs::write(dir.path().join(".git/shallow"), id).unwrap();
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert!(handle.blame("HEAD", b"empty").unwrap().is_empty());
 }
 
@@ -415,7 +414,7 @@ fn symlink_replaced_by_regular_file_starts_new_history() {
         &["-c", "commit.gpgsign=false", "commit", "-qm", "symlink"],
     );
     commit(dir.path(), b"target\nnew file\n", "link");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "link"), oracle(dir.path(), "link"));
 }
 
@@ -424,7 +423,7 @@ fn rename_budget_exhaustion_never_silently_creates_an_origin() {
     let dir = fixture("sha1");
     git(dir.path(), &["mv", "old", "new"]);
     commit(dir.path(), b"alpha\nbeta\ngamma\nchanged\n", "new");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     let limits =
         Limits::default().with_rewrites(girt::rewrites::Limits::default().with_max_pairs(0));
     let error = handle
@@ -497,7 +496,7 @@ fn converging_fixture(unequal: bool) -> tempfile::TempDir {
 #[case::unequal(true, 10)]
 fn converging_merge_groups_share_pending_history_work(#[case] unequal: bool, #[case] steps: usize) {
     let dir = converging_fixture(unequal);
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     let result = handle
         .blame_with(
             "HEAD",
@@ -528,6 +527,6 @@ fn gitlink_replaced_by_regular_file_starts_new_history() {
         &["-c", "commit.gpgsign=false", "commit", "-qm", "gitlink"],
     );
     commit(dir.path(), b"new file\n", "sub");
-    let handle = Handle::new(Repository::open(dir.path()).unwrap());
+    let handle = Repo::new(Repository::open(dir.path()).unwrap());
     assert_eq!(actual(&handle, "sub"), oracle(dir.path(), "sub"));
 }
