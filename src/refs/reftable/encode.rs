@@ -16,6 +16,29 @@ impl Table {
     /// Reports invalid ordering, update ranges, mixed identities, invalid peeled values,
     /// timezone offsets outside the signed `HHMM` representation, and exhausted limits. No
     /// filesystem mutation is performed.
+    ///
+    /// ```
+    /// use girt::refs::Target;
+    /// use girt::refs::reftable::{Limits, RecordName, RefRecord, Table};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let table = Table {
+    ///     format: ObjectFormat::Sha1,
+    ///     min_update_index: 1,
+    ///     max_update_index: 1,
+    ///     references: vec![RefRecord {
+    ///         name: RecordName::new("refs/tags/one")?,
+    ///         update_index: 1,
+    ///         target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
+    ///         peeled: None,
+    ///     }],
+    ///     logs: vec![],
+    /// };
+    /// let bytes = table.encode(Limits::default())?;
+    /// let decoded = Table::decode(&bytes, Limits::default())?;
+    /// assert_eq!(decoded.references, table.references);
+    /// assert_eq!(decoded.format, ObjectFormat::Sha1);
+    /// # Ok::<(), girt::refs::reftable::Error>(())
+    /// ```
     pub fn encode(&self, limits: Limits) -> Result<Vec<u8>, Error> {
         self.check_limits(limits)?;
         let header = self.header();

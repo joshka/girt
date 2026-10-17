@@ -16,6 +16,29 @@ use super::store::{check_path, io_error, malformed, parse_loose};
 use super::{RefName, ReferenceError, ReferenceObservation, References, Target};
 
 /// A full reference name and its stored target, without symbolic resolution or tag peeling.
+///
+/// Use this owned result for display or subsequent conditional operations. Enumeration order is
+/// stable in the returned vector, but filesystem traversal is not one repository-wide instant;
+/// preserve an expected value when acting on it.
+///
+/// ```
+/// use girt::refs::{Expected, RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+/// let refs = repo.references()?;
+/// let name = RefName::new("refs/tags/one")?;
+/// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+/// let listed = refs.list()?;
+/// assert_eq!(listed[0].name, name);
+/// assert_eq!(listed[0].target, Target::Direct(id));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reference {
     /// Exact reference-name bytes; enumeration excludes pseudorefs such as HEAD.
@@ -136,6 +159,28 @@ impl References<'_> {
     ///
     /// Returns [`ReferenceError::Limit`] or [`ReferenceError::Cancelled`] at those boundaries,
     /// alongside the malformed, unsupported and I/O failures of [`Self::list`].
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/one")?;
+    /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    /// let cancel = std::sync::atomic::AtomicBool::new(false);
+    /// assert!(matches!(
+    ///     refs.list_controlled(0, 4096, &cancel),
+    ///     Err(girt::refs::ReferenceError::Limit(_))
+    /// ));
+    /// assert_eq!(refs.list_controlled(100, 4096, &cancel)?.len(), 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn list_controlled(
         &self,
         max_entries: usize,
@@ -241,6 +286,25 @@ impl References<'_> {
     /// # Errors
     ///
     /// Returns the errors of [`Self::list_namespace`].
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/one")?;
+    /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    /// let tags = refs.list_namespace_observations(&RefName::new("refs/tags")?)?;
+    /// assert_eq!(tags.len(), 1);
+    /// assert_eq!(tags[0].name, name);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn list_namespace_observations(
         &self,
         namespace: &RefName,

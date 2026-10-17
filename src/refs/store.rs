@@ -93,6 +93,30 @@ pub struct References<'a> {
 /// A peeled hint is storage metadata, not proof of an object's existence or type. It may be used
 /// to recognize an already-known commit; otherwise callers must validate the object themselves.
 /// Symbolic and loose references have no hint. Separate observations need not share a generation.
+///
+/// Use an observation when callers need the stored target and its associated peeled hint from the
+/// same effective record. A hint can save a lookup only under a policy that already trusts or
+/// verifies that identity; it is not a replacement for object verification.
+///
+/// ```
+/// use girt::refs::{Expected, RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+/// let refs = repo.references()?;
+/// let name = RefName::new("refs/tags/one")?;
+/// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+/// let seen = refs.read_observation(&name)?.ok_or("reference absent")?;
+/// assert_eq!(seen.target, Target::Direct(id));
+/// assert!(seen.peeled_hint.is_none()); // Loose direct reference has no stored peeled hint.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ReferenceObservation {
@@ -105,6 +129,24 @@ pub struct ReferenceObservation {
 }
 
 /// On-disk reference storage selected by repository configuration.
+///
+/// Choose a backend when initializing a new repository; opening an existing repository derives it
+/// from direct configuration. Ordinary reference APIs work across both, but stack snapshots and
+/// publication atomicity differ.
+///
+/// ```
+/// use girt::refs::Backend;
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init_with_backend(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+///     Backend::Reftable,
+/// )?;
+/// assert_eq!(repo.reference_backend(), Backend::Reftable);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
@@ -266,15 +308,20 @@ pub struct Resolution {
 #[non_exhaustive]
 pub enum ReferenceError {
     /// Reftable codec or resource failure.
+    /// Inspect the codec source and selected stack budgets or unsupported representation.
     #[error(transparent)]
     Reftable(#[from] super::reftable::Error),
     /// Cooperative cancellation before the next publication boundary.
+    /// Retry only after a fresh cancellation decision; inspect transaction outcomes if publication
+    /// was involved.
     #[error("reference operation cancelled")]
     Cancelled,
     /// A supplied identity differs from the repository format.
+    /// Use IDs in the repository format for replacements and expectations.
     #[error(transparent)]
     ObjectFormat(#[from] crate::ObjectFormatError),
     /// Filesystem failure, with its original cause and path.
+    /// Inspect the path and original filesystem source, then reread before a new mutation attempt.
     #[error("reference I/O at {path}")]
     Io {
         /// Affected file or directory.
@@ -285,6 +332,8 @@ pub enum ReferenceError {
     },
     /// Packed deletion succeeded, but removing the loose file failed. Packed bytes are not
     /// restored.
+    /// Packed removal already happened. Inspect the retained loose value and current state before
+    /// retrying deletion.
     #[error("packed reference removed, but loose deletion failed at {path}")]
     PackedDeleted {
         /// Loose reference that could not be removed.
@@ -294,6 +343,8 @@ pub enum ReferenceError {
         source: io::Error,
     },
     /// Invalid on-disk data; a broken loose ref never falls back to a packed value.
+    /// Inspect the named storage; a malformed loose value must not be silently replaced with packed
+    /// fallback.
     #[error("malformed reference at {path}: {reason}")]
     Malformed {
         /// File containing invalid data.
@@ -302,35 +353,47 @@ pub enum ReferenceError {
         reason: &'static str,
     },
     /// Recognized feature outside this implementation's supported boundary.
+    /// Select a supported namespace/backend/path operation; retrying unchanged inputs will not add
+    /// support.
     #[error("unsupported reference feature: {0}")]
     Unsupported(&'static str),
     /// A caller-supplied bound stopped a reference or history inventory.
+    /// Select a justified inventory or decoding budget; partial inventory must not authorize
+    /// deletion.
     #[error("reference resource limit: {0}")]
     Limit(&'static str),
     /// Another writer owns a lock after this entry point's acquisition policy is exhausted.
     /// [`Self::Locked`] does not imply the lock is stale. Files transactions use default or
     /// explicit waits for reference/packed locks; reflog locks fail immediately. No lock is stolen.
+    /// Distinguish contention from a proven stale lock and apply the entry point lock-wait policy.
     #[error("reference lock already exists: {0}")]
     Locked(PathBuf),
     /// The destination did not satisfy the caller's precondition.
+    /// Read the actual current value and reconsider the update; replacing the expectation with Any
+    /// loses conflict protection.
     #[error("reference value did not match the expected value (found {})", DisplayTarget(actual.as_ref()))]
     Mismatch {
         /// Actual stored value under the lock, or absence.
         actual: Option<Target>,
     },
     /// A symbolic chain revisited a name.
+    /// Inspect and explicitly repair the symbolic chain; increasing depth cannot resolve a cycle.
     #[error("symbolic reference cycle at {0:?}")]
     Cycle(RefName),
     /// Resolution would follow more symbolic links than allowed.
+    /// Inspect the chain, then choose a justified symbolic-hop bound for a fresh read.
     #[error("symbolic reference depth exceeds {0}")]
     Depth(usize),
     /// A reference occupies an ancestor or descendant of the requested name.
+    /// Choose a nonconflicting name or perform a separately coordinated namespace change.
     #[error("reference namespace conflict at {0}")]
     Conflict(PathBuf),
     /// Symbolic HEAD must point into `refs/`, not back to the pseudoref HEAD.
+    /// Use a refs/ name as symbolic HEAD target, rather than HEAD itself.
     #[error("symbolic HEAD must point into refs/")]
     InvalidHeadTarget,
     /// Zero IDs cannot be stored; use an explicit deletion method instead.
+    /// Use deletion explicitly instead of storing the all-zero sentinel.
     #[error("zero reference IDs are not supported")]
     ZeroId,
 }
@@ -524,7 +587,8 @@ impl<'a> References<'a> {
     /// It ignores `core.logAllRefUpdates`, leaves existing reflogs unchanged, and runs no hooks.
     /// Prior tips gain no new reflog retention or recovery entry; reflog selectors may be stale,
     /// and old objects can become eligible for pruning. Callers must deliberately accept that
-    /// behavior. See [`Self::transaction`] for conditional batches with explicit reflog policy.
+    /// behavior. Choose this for one stored-name edit when name history is deliberately omitted;
+    /// choose [`Self::transaction`] for a batch or explicit reflog actions and per-edit receipts.
     ///
     /// Locks `packed-refs.lock`, then `<name>.lock`, using exclusive creation. Checks the
     /// precondition and packed namespace while locked, writes an owned temporary file, and
@@ -540,6 +604,25 @@ impl<'a> References<'a> {
     /// Reports lock contention, expectation mismatch, namespace conflict (including empty
     /// directories), malformed existing data, unsupported paths, zero IDs, and I/O failures.
     /// No retry is performed. See [`References`] for filesystem/concurrent-writer assumptions.
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/one")?;
+    /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    /// assert_eq!(refs.read(&name)?, Some(Target::Direct(id)));
+    /// assert!(!refs.has_reflog(&name)?); // Deliberately bypasses name-history recording.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn update_without_reflog(
         &self,
         name: &RefName,
@@ -587,6 +670,28 @@ impl<'a> References<'a> {
     ///
     /// Reports cycle/depth failures or any error from [`Self::update_without_reflog`]. Acquired
     /// locks are released on failure; no reference is published until the whole chain is locked.
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/one")?;
+    /// let alias = RefName::new("refs/meta/current")?;
+    /// refs.update_without_reflog(&alias, Target::Symbolic(name.clone()), Expected::Absent)?;
+    /// assert_eq!(
+    ///     refs.update_resolved_without_reflog(&alias, id, Expected::Absent)?,
+    ///     name
+    /// );
+    /// assert_eq!(refs.read(&alias)?, Some(Target::Symbolic(name)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn update_resolved_without_reflog(
         &self,
         name: &RefName,
@@ -646,6 +751,29 @@ impl<'a> References<'a> {
     /// storage. Other I/O failures use [`ReferenceError::Io`]. Lock/temporary cleanup is best
     /// effort, including after success; cleanup failure or termination can leave stale files.
     /// No fsync, retries, reflog cleanup, or object deletion is performed.
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged manifest")?;
+    /// let refs = repo.references()?;
+    /// let name = RefName::new("refs/tags/one")?;
+    /// refs.update_without_reflog(&name, Target::Direct(id), Expected::Absent)?;
+    /// refs.delete_without_reflog(&name, Expected::Value(Target::Direct(id)))?;
+    /// assert!(refs.read(&name)?.is_none());
+    /// assert!(
+    ///     repo.objects(girt::PackLimits::default())?
+    ///         .read(id, girt::ReadLimits::default())?
+    ///         .is_some()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn delete_without_reflog(
         &self,
         name: &RefName,

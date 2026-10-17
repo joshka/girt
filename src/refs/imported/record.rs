@@ -14,6 +14,34 @@ use crate::{IdentityRef, ObjectFormat, ObjectId};
 /// Files records retain their newline when present, including incomplete prefixes on stopped reads.
 /// Reftable records retain decoded binary fields and their update index; compressed table bytes
 /// belong to the reftable codec. No message normalization or construction validation occurs.
+///
+/// Retain this representation when exact storage bytes or wider binary fields matter. Field
+/// interpretation can fail while independent fixed-position IDs remain inspectable; recovered IDs
+/// are only conservative candidates.
+///
+/// ```
+/// use girt::refs::{ImportedReflog, ReflogLimits};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let id = ObjectId::Sha1([1; 20]);
+/// let bytes = format!(
+///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
+///     ObjectId::null(format)
+/// );
+/// let broken = bytes.replace("60 +0130", "invalid date");
+/// let log = ImportedReflog::read(
+///     format,
+///     broken.as_bytes(),
+///     ReflogLimits::default(),
+///     &std::sync::atomic::AtomicBool::new(false),
+/// );
+/// assert!(log.records()[0].fields().is_err());
+/// assert_eq!(
+///     log.records()[0].recoverable_roots().collect::<Vec<_>>(),
+///     [id]
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ImportedRecord {
@@ -34,6 +62,31 @@ pub enum ImportedRecord {
 }
 
 /// Borrowed interpreted fields without canonical write validation or Git display fallbacks.
+///
+/// Use interpreted fields for display or analysis while retaining the ImportedRecord for exact
+/// export. Numeric interpretation and byte preservation are separate; converting to a construction
+/// Signature can impose narrower rules.
+///
+/// ```
+/// use girt::refs::{ImportedReflog, ReflogLimits};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let id = ObjectId::Sha1([1; 20]);
+/// let bytes = format!(
+///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
+///     ObjectId::null(format)
+/// );
+/// let log = ImportedReflog::read(
+///     format,
+///     bytes.as_bytes(),
+///     ReflogLimits::default(),
+///     &std::sync::atomic::AtomicBool::new(false),
+/// );
+/// let fields = log.records()[0].fields()?;
+/// assert_eq!((fields.seconds, fields.offset_minutes), (60, 90));
+/// assert_eq!(fields.message, b"note");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReflogFields<'a> {
     /// Previous identity, including zero for creation.
@@ -57,15 +110,23 @@ pub struct ReflogFields<'a> {
 #[non_exhaustive]
 pub enum ReflogInterpretationError {
     /// File record lacks its final newline, including a bounded partial read.
+    /// Inspect whether scanning stopped or storage has an unterminated record; retain the prefix
+    /// and never assume complete history.
     #[error("incomplete reflog record")]
     Incomplete,
     /// One or both fixed-width IDs or their separating spaces are invalid.
+    /// Inspect the original fixed-position IDs and selected hash format; recoverable candidates may
+    /// be incomplete.
     #[error("malformed reflog object IDs")]
     ObjectIds,
     /// Identity brackets or decimal date framing cannot be interpreted.
+    /// Retain the record bytes and report the uninterpretable identity or date without inventing a
+    /// fallback.
     #[error("malformed reflog identity or date")]
     Identity,
     /// Decimal seconds exceed i128.
+    /// Preserve raw decimal bytes or report the supported range; truncating the timestamp changes
+    /// meaning.
     #[error("reflog date exceeds interpretation range")]
     DateRange,
 }
