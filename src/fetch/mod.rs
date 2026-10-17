@@ -1,22 +1,73 @@
-//! Native local and upload-pack object discovery, plus v0/v1/v2 object transfer.
+//! Download objects from another repository and publish remote-tracking references.
 //!
-//! # Discovery, transfer, and publication
+//! A fetch has three phases, and this module exposes each of them:
 //!
-//! - [`discover_local`] inspects an endpoint's advertised refs, object format, and HEAD without
-//!   transferring objects. Discovery is a preview, not permission for a later ref update.
-//! - [`receive_local`] or [`receive`] transfers selected advertised IDs and returns
-//!   [`ReceivedFetch`]. Install the result and update refs separately when the caller owns policy.
-//!   [`ReceivedFetch::install_retained`] protects a new complete pack with an owned Git `.keep`
-//!   marker through caller-controlled reference publication.
-//! - [`FetchRequest`] captures a destination snapshot, refspecs, force authorization, and reflog
-//!   policy. Its adapters return [`FetchReady`]; [`FetchReady::finish`] installs objects and
-//!   conditionally publishes selected refs. [`FetchReady::install_retained`] instead holds a
-//!   shallow lock and pack retention while the caller checks installed objects, before
-//!   [`RetainedFetchReady::finish`] publishes boundaries and refs. This supports self-contained
-//!   complete or depth-limited transfers, including refresh with an existing shallow boundary.
+//! 1. **Transfer and validate.** Agree with the source on which objects to send, receive them,
+//!    check every received object's framing, delta chain and identity, and walk the new history of
+//!    each selected tip, down to shallow boundaries and history the destination already has, to
+//!    check that it is complete and well-formed. Nothing is written to the destination. See [Limits
+//!    and trust](crate::transport#limits-and-trust) for exactly what is checked.
+//! 2. **Install.** Publish the validated pack, then its index, in the destination's object storage.
+//!    An interruption between the two leaves a pack that readers ignore.
+//! 3. **Publish.** Update remote-tracking references and tags, each conditional on the value it had
+//!    when the fetch began.
 //!
-//! HTTP and SSH downloads keep network I/O separate from synchronous pack validation. Callers
-//! bound worker concurrency and join validation work before dropping its owned result.
+//! [`crate::workflow::fetch`] runs all three for a remote named in the repository's
+//! configuration. Use this module when the application chooses the endpoint, the limits, the
+//! worker threads or the publication policy itself.
+//!
+//! # Choosing an entry point
+//!
+//! | Goal | Start with |
+//! | --- | --- |
+//! | Fetch a configured remote as `git fetch` does | [`crate::workflow::fetch`] |
+//! | Update remote-tracking references and tags from an explicit endpoint | [`FetchRequest`], then [`FetchReady::finish`] |
+//! | Get objects only, and name or publish them yourself | [`receive_local`], [`receive`] or a network `receive_*` function, then [`ReceivedFetch::install`] |
+//! | List a remote's references and `HEAD` without transferring objects | [`discover_local`], `discover_http`, `discover_ssh` or [`discover_session`] |
+//! | Keep a fetched pack safe from repacking while you check it | [`FetchReady::install_retained`] or [`ReceivedFetch::install_retained`] |
+//!
+//! # The `FetchRequest` lifecycle
+//!
+//! [`FetchRequest::prepare`] captures the destination's references, the refspecs, which forced
+//! destinations the caller authorizes, and the reflog policy. Builder methods add pruning
+//! ([`FetchRequest::with_prune`]), a depth limit ([`FetchRequest::with_depth`]), tag namespaces
+//! and per-namespace reflog policy.
+//!
+//! A receive adapter then reads the source's advertisement, maps the refspecs over it, transfers
+//! and validates. [`FetchRequest::receive_local`] returns a [`FetchReady`] directly.
+//! [`FetchRequest::receive_session`] does the same over a caller-owned stream. The `http` and
+//! `ssh` features add async `receive_http` and `receive_ssh` adapters, which return a
+//! [`FetchDownload`] to validate synchronously into a `FetchReady`.
+//!
+//! [`FetchReady::finish`] installs the objects, publishes any new shallow boundaries, checks every
+//! planned update against its rules, then prunes in one reference transaction and updates in a
+//! second. It returns a [`FetchReport`].
+//!
+//! Destinations must be remote-tracking references, tags, or a tag namespace the caller adds with
+//! [`FetchRequest::with_tag_destination_namespace`]. Branches are never fetch destinations, which
+//! protects every worktree's checked-out branch. A `+` refspec records force intent, but a
+//! non-fast-forward update or a tag replacement also needs the destination named in the
+//! request's authorized set. `FETCH_HEAD` and following tags automatically remain caller policy.
+//!
+//! # Negotiation and known history
+//!
+//! A [`KnownHistory`] describes what the destination already has, so the source can leave it
+//! out. [`KnownHistory::default`] knows nothing and requests full history.
+//! [`KnownHistory::from_store`] offers commits reachable from the given tips as haves, up to
+//! [`FetchLimits::max_haves`]. Its tips must be values of the destination's references, because
+//! their existing history is trusted as complete: validation stops there rather than re-checking
+//! it. [`KnownHistory::new`] instead reads and verifies a bounded local graph. Objects the
+//! received pack depends on, such as external delta bases in a thin pack, are checked against
+//! this history, and installation checks them again. Known history describes the
+//! destination at one moment: keep garbage collection away from it until the fetch publishes.
+//!
+//! # Network downloads and worker threads
+//!
+//! The HTTP and SSH adapters download asynchronously and return owned bytes without validating
+//! them. Validation inflates and hashes every object, so move the download to a blocking worker
+//! and validate it there. The caller bounds how many downloads wait and how many validations run,
+//! and joins each worker even after cancelling it. Downloads can hold shared
+//! `Arc<KnownHistory>` ownership so they outlive the scope that started them.
 //!
 //! Native local receive and pack validation each use up to [`FetchLimits::max_threads`] scoped
 //! worker threads, joined before the call returns; one runs everything on the calling thread.
@@ -24,37 +75,56 @@
 //! at most 64 MiB of payloads and parsed tree edges waiting. Native local receive reads queued
 //! source objects ahead of its walk, which still applies every check in queue order.
 //!
-//! Only remote-tracking and tag destinations are supported by default, with explicit caller-owned
-//! tag namespaces available; see [`FetchRequest`] for worktree safety and caller coordination.
-//! `FETCH_HEAD` and implicit tags remain caller policy.
+//! # Depth and shallow history
 //!
-//! The lower-level receive APIs do not write refs or reflogs. Install their result explicitly
-//! and choose reference policy yourself, or use [`FetchRequest`] for the supported workflow.
+//! [`FetchRequest::with_depth`] fetches a limited number of commits from each tip, like `git fetch
+//! --depth`, and publishes the resulting shallow boundaries together with the references. Native
+//! local sources support a depth of one for a single branch. The lower-level
+//! [`receive_with_known_depth`] and network depth functions report boundaries, but
+//! [`ReceivedFetch::install`] refuses a shallow result: only the request workflow publishes them.
 //!
-//! Wants must be advertised IDs. Native local receive reads girt storage directly. [`receive`]
-//! requests full histories over a caller-owned stream; [`receive_with_known`] uses
-//! bounded [`KnownHistory`] to negotiate incremental transfers. Verified external delta bases in a
-//! thin pack are resolved and rewritten as a self-contained pack before installation. Selected-tip
-//! connectivity can depend on verified local objects; installation rechecks those dependencies.
-//! [`receive_with_known_depth`] and the owned network depth variants report shallow boundaries;
-//! [`FetchRequest::with_depth`] coordinates their publication. Direct installation still refuses
-//! shallow results. Transfer requests `side-band-64k` and available `ofs-delta`, `thin-pack`,
-//! `multi_ack`, `shallow`, and SHA-256 object-format capabilities as needed; caller-owned v2
-//! streams use one `ls-refs` and one `fetch` command instead. Filtering and automatic tags remain
-//! outside this boundary.
-//! [`discover_local`], feature-gated `discover_http`/`discover_ssh`, and caller-owned
-//! [`discover_session`] report references, object format and deterministic HEAD interpretation
-//! without transferring objects. The owned network endpoints request v0 unless given another
-//! [`crate::transport::RequestedProtocol`]; `Repository` workflows follow `protocol.version`, v2 by
-//! default. Every adapter accepts v0, v1 and v2 answers. Wire transfer supports both object
-//! formats. A preview can become stale and never authorizes a later mutation.
-//! The `http` and `ssh` features add owned async network downloads with separate synchronous
-//! validation. They accept optional shared [`KnownHistory`] ownership so a download can move to
-//! a caller-managed blocking worker without borrowing its initiating scope.
-//! SSH requires macOS/Linux and a caller-selected OpenSSH configuration. Peeling hints are exposed
-//! separately from selectable reference tips.
+//! # Progress
 //!
-//! # Example
+//! [`LocalFetchObserver`] receives a local fetch's source messages, [`LocalFetchProgress`] while
+//! the source's objects are read and packed, and [`ValidationProgress`] while they are checked.
+//! Network adapters' `*_with_progress` variants deliver the server's progress messages as they
+//! arrive; `validate_with_progress` reports validation of a download. Observers run on the
+//! transferring thread and must return promptly; progress never implies installation or
+//! publication.
+//!
+//! # Errors
+//!
+//! | Error | Returned by | Repository state |
+//! | --- | --- | --- |
+//! | [`FetchWorkflowError`] | `FetchRequest` receive adapters and download validation | unchanged |
+//! | [`FetchFinishError`] | [`FetchReady::finish`] | possibly installed objects, shallow boundaries or some references; see its report |
+//! | [`FetchError`] | lower-level receive, discovery and install functions | unchanged, except a failed install can leave an unindexed pack |
+//! | [`RetainedFetchError`], [`RetainedFetchFinishError`] | retained installation | see each type |
+//!
+//! [`FetchError`] is the common cause: transport and protocol failures, limits
+//! ([`FetchError::Limit`]), cancellation, deadlines, and invalid or disconnected objects.
+//!
+//! # Protocol support
+//!
+//! Wants must be advertised reference tips. Transfer requests `side-band-64k` and, when
+//! available, `ofs-delta`, `thin-pack`, `multi_ack`, `shallow` and the SHA-256 object-format
+//! capability. Thin packs are completed with verified local delta bases and rewritten as
+//! self-contained packs before installation. Every adapter accepts protocol v0, v1 and v2 answers;
+//! the network endpoints request v0 unless given another
+//! [`RequestedProtocol`](crate::transport::RequestedProtocol), and a v2 stream uses one `ls-refs`
+//! and one `fetch` command. Both SHA-1 and SHA-256 repositories are supported. Partial-clone
+//! filters are not. Discovery reports peeled tag hints separately from selectable tips, and
+//! never authorizes a later update.
+//!
+//! # Concurrency
+//!
+//! Other writers may update the destination's references during a fetch; publication never
+//! overwrites a reference that changed. From [`FetchRequest::prepare`] until publication, the
+//! caller must exclude garbage collection or pruning, checkout, changes to `HEAD` or checked-out
+//! branches, and worktree registration changes, which reference locks do not prevent. See
+//! [`FetchRequest`] for the full contract.
+//!
+//! # Example: fetching from a local repository
 //!
 //! Fetch `main` from a local source repository (setup hidden) into `refs/remotes/origin/main`.
 //! Objects are installed before the conditional reference update:
@@ -590,6 +660,32 @@ impl FetchLimits {
 }
 
 /// Transfer, validation, or installation failed. No references have been changed.
+///
+/// Inside [`FetchWorkflowError::Transfer`] these errors also mean nothing was installed. From
+/// [`ReceivedFetch::install`], or inside a [`FetchFinishError`], installation may have been
+/// partial; see those types.
+///
+/// # Examples
+///
+/// A local source path that is not a repository is reported as [`FetchError::Source`], which jj
+/// shows as "no such repository":
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchError, FetchLimits, discover_local};
+/// use girt::transport::TransportControl;
+///
+/// let directory = tempfile::tempdir()?;
+/// let cancel = AtomicBool::new(false);
+/// let result = discover_local(
+///     directory.path().join("missing.git"),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+/// );
+/// assert!(matches!(result, Err(FetchError::Source(_))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FetchError {

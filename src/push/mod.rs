@@ -1,40 +1,75 @@
-//! Conditional reference publication over receive-pack protocol v0.
+//! Send objects to another repository and conditionally update its references.
 //!
-//! # Push lifecycle
+//! A push has two phases:
 //!
-//! Build [`PushCommand`] values with exact expected old targets, then use [`PreparedPush::new`]
-//! to select objects and spool the pack. Choose [`send_local`]
-//! for a native local destination or [`send`] for caller-owned protocol streams. A successful
-//! exchange can contain rejected refs: inspect [`PushReport`] per command. [`PushError`] retains
-//! known acknowledgements when the final outcome is uncertain; read destination refs before
-//! retrying.
+//! 1. **Prepare.** [`PreparedPush::new`] takes the commands, verifies the history they publish,
+//!    proves each branch update fast-forwards unless force is allowed, and writes the outgoing pack
+//!    to a temporary file. Neither repository changes, and nothing is sent.
+//! 2. **Send.** A transport sends the commands and the pack. The receiver checks each command's
+//!    expected old value and applies or rejects it independently, then reports per reference.
 //!
-//! Preparation validates structured objects, locates blobs and spools a pack (possibly thin against
-//! advertised history) before any commands can reach a server. Reused compressed entries are
-//! CRC-checked; the receiver derives their identities and checks connectivity before publishing
-//! refs. With receiver roots, it reads only the history they do not cover plus a boundary; see
-//! [`PreparedPush::new`]. Preparation leaves local refs and reflogs untouched. These
-//! functions take an already prepared push, so its roots come from the caller's knowledge.
-//! [`crate::workflow::push`] instead prepares after reading the advertisement and excludes
-//! [`PushAdvertisement::receiver_roots`], as `git send-pack` does.
+//! [`crate::workflow::push`] does both for a remote named in configuration, preparing after it has
+//! read the receiver's advertisement. Use this module when the application chooses the endpoint,
+//! limits or receiver history itself.
 //!
-//! Wire and native local push support SHA-1 and SHA-256. `report-status` is required by wire push;
-//! deletion requires the advertised `delete-refs` capability, and supplied push options require
-//! `push-options`. Report-status-v2 is preferred when advertised; optional sideband progress is
-//! retained as bounded, untrusted bytes. Atomic and signed pushes are unsupported. Multiple
-//! commands can partially succeed. The `http` feature adds async smart-HTTP sending with
-//! explicit caller-supplied authorization headers; `ssh` adds system OpenSSH on macOS/Linux.
-//! Both require a caller-owned Tokio runtime. [`crate::remote`] maps configured refspecs
-//! separately; callers must authorize force and supply exact expected values. Pruning and
-//! automatic force are deferred. [`crate::remote::CredentialSession`] is a separate
-//! application-approved helper lifecycle; callers attach resulting credentials to their chosen
-//! transport and keep authentication approval or rejection under application control.
-//! `send_http_checked` lets an HTTP caller inspect validated receive-pack tips and decline a
-//! whole batch before POST. A decision does not reserve those tips; the receiver still checks each
-//! command's expected old value. `send_ssh_checked_with_progress` provides the same inspection
-//! boundary in one SSH session, closing a declined session with only a protocol flush.
+//! # Commands and force
 //!
-//! # Example
+//! A [`PushCommand`] says "if `name` is `expected`, make it `new`": `expected: None` creates a
+//! reference that must not exist, and the null ID deletes one. There is no unconditional push.
+//! A command whose reference already has the value `new` succeeds without comparing `expected`,
+//! since nothing changes.
+//! [`ForcePolicy::FastForwardOnly`] (the default) refuses at preparation to move a branch to a
+//! commit that doesn't descend from its old value, or to replace a tag; [`ForcePolicy::Allow`]
+//! permits it, still conditional on `expected`, like Git's `--force-with-lease`. Get `expected`
+//! from what you last saw on the remote, such as a remote-tracking reference.
+//!
+//! # Receiver history
+//!
+//! Pass the object IDs the receiver already has as receiver roots (`&[]` for a full transfer).
+//! Preparation then sends only history the receiver lacks, and may use the receiver's objects as
+//! delta bases, producing a thin pack. Roots usually come from the receiver's advertisement:
+//! [`PushAdvertisement::receiver_roots`] after reading it, which is what
+//! [`crate::workflow::push`] does, as `git send-pack` does. A root missing from the live
+//! advertisement when sending fails the push with [`PushFailure::KnowledgeChanged`] before any
+//! command is sent.
+//!
+//! # Transports
+//!
+//! - [`send_local`] writes into a local repository directly, without starting Git. It honors the
+//!   receiver's `receive.*` configuration and runs its receive hooks on macOS and Linux.
+//!   [`LocalPushRequest`] adds inherited configuration and a reflog identity.
+//! - [`send`] speaks receive-pack over caller-owned blocking streams.
+//! - With the `http` and `ssh` features, async `send_http` and `send_ssh` run on the caller's Tokio
+//!   runtime. `send_http_checked` and `send_ssh_checked_with_progress` let the caller inspect the
+//!   live advertisement and decline the whole batch before anything is sent.
+//!
+//! Wire push requires the `report-status` capability; deletion requires `delete-refs`, and push
+//! options require `push-options`. `report-status-v2` is used when advertised. Atomic and signed
+//! pushes are unsupported. Both SHA-1 and SHA-256 are supported.
+//!
+//! # Results and errors
+//!
+//! A push that reached the receiver returns a [`PushReport`], even when references were rejected:
+//! check [`PushReport::all_succeeded`] or each [`RefStatus`]. A [`PushError`] says how far a failed
+//! push got:
+//!
+//! - [`PushError::NotSent`]: no reference updates were attempted on the receiver. Fix the cause and
+//!   retry. A native local push may already have stored objects or run hooks.
+//! - [`PushError::Uncertain`]: sending began, so some updates may have been applied. Its partial
+//!   report holds the acknowledgements received; read the receiver's references before retrying.
+//!
+//! [`PushFailure`] names the cause in both cases. Optional sideband progress is kept as bounded,
+//! untrusted bytes in [`PushReport::progress`].
+//!
+//! # Concurrency
+//!
+//! For [`send_local`], the caller must exclude garbage collection, checkout, changes to `HEAD` or
+//! checked-out branches, and worktree registration changes in the destination from preparation
+//! through publication; reference locks only protect the references themselves. Preparation,
+//! hashing and compression are synchronous CPU and disk work: from async code, prepare on a
+//! blocking thread.
+//!
+//! # Example: pushing to a local repository
 //!
 //! Push a commit (setup hidden) to create `main` in an empty local destination. `expected: None`
 //! requires the destination reference to be absent:

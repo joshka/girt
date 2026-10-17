@@ -47,6 +47,46 @@ use crate::transport::TransportControl;
 ///
 /// Returns path, reference, object, graph, limit and interruption failures. No destination is
 /// touched.
+///
+/// # Examples
+///
+/// Copy the objects of one advertised tip into a repository without creating any reference, for
+/// example to make a commit available before deciding what to name it:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::fetch::{FetchLimits, LocalFetchObserver, LocalFetchRequest, receive_local};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let received = receive_local(
+///     upstream.git_dir(),
+///     // Choose the wants from the advertisement; here, the tip of `main`.
+///     |advertisement| {
+///         advertisement
+///             .refs
+///             .iter()
+///             .filter(|reference| reference.name.as_bytes() == b"refs/heads/main")
+///             .map(|reference| reference.id)
+///             .collect()
+///     },
+///     LocalFetchRequest::new(FetchLimits::default()),
+///     TransportControl::new(&cancel),
+///     LocalFetchObserver::default(),
+/// )?;
+/// assert_eq!(received.wants(), [main]);
+///
+/// let installed = received.install(&repo, PackLimits::default(), &cancel)?;
+/// assert_eq!(installed.objects, 2);
+/// // The objects are readable, but no reference was created.
+/// let objects = repo.objects(PackLimits::default())?;
+/// assert!(objects.read(main, girt::ReadLimits::default())?.is_some());
+/// assert!(repo.references()?.list()?.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn receive_local(
     source: impl AsRef<Path>,
     select: impl FnOnce(&Advertisement) -> Vec<ObjectId>,

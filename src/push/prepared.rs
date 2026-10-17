@@ -21,6 +21,33 @@ use crate::{ObjectId, Objects};
 /// history after validating its selected closure. The source object reader can
 /// be dropped after preparation. Reuse is permitted but each session rechecks the same
 /// expectations.
+///
+/// # Examples
+///
+/// Receiver roots, the tips the receiver already has, keep their history out of the pack:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{PreparedPush, PushCommand, PushLimits};
+/// use girt::refs::RefName;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
+/// let next = commit(&repo, &[main], "Next commit")?;
+/// let command = PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next);
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+///
+/// // With no roots the whole history is sent.
+/// let full = PreparedPush::new(&objects, vec![command.clone()], &[], PushLimits::default(), &cancel)?;
+/// // The receiver has `main`, so only the new commit is needed.
+/// let incremental = PreparedPush::new(&objects, vec![command], &[main], PushLimits::default(), &cancel)?;
+/// assert!(incremental.object_count() < full.object_count());
+/// assert_eq!(incremental.object_count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct PreparedPush {
     pub(super) format: crate::ObjectFormat,

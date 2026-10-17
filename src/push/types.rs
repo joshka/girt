@@ -2,6 +2,38 @@ use crate::refs::RefName;
 use crate::{ObjectId, PackCompression, PackWriteLimits, ReadLimits};
 
 /// Policy for replacing an existing destination. Server restrictions still apply.
+///
+/// Force is checked twice: [`PreparedPush::new`](super::PreparedPush::new) refuses a
+/// non-fast-forward branch update under [`FastForwardOnly`](Self::FastForwardOnly) before anything
+/// is sent, and the receiver applies its own policy, such as `receive.denyNonFastForwards`. Even
+/// [`Allow`](Self::Allow) keeps the exact expected-value condition, so it is a
+/// `--force-with-lease`, never a blind `--force`.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{ForcePolicy, PreparedPush, PushCommand, PushFailure, PushLimits};
+/// use girt::refs::RefName;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
+/// // `repo` has fetched `main`; `rewritten` does not descend from it.
+/// let rewritten = commit(&repo, &[], "Rewritten history")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let name = RefName::new("refs/heads/main")?;
+///
+/// let rewind = PushCommand::new(name.clone(), Some(main), rewritten);
+/// let refused = PreparedPush::new(&objects, vec![rewind.clone()], &[], PushLimits::default(), &cancel);
+/// assert!(matches!(refused, Err(PushFailure::WouldForce(_))));
+///
+/// let forced = rewind.with_force(ForcePolicy::Allow);
+/// assert!(PreparedPush::new(&objects, vec![forced], &[], PushLimits::default(), &cancel).is_ok());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ForcePolicy {
@@ -16,6 +48,39 @@ pub enum ForcePolicy {
 }
 
 /// One full destination name and an exact compare-and-swap expectation.
+///
+/// A command says "if `name` is `expected`, make it `new`". Use `expected: None` to create a
+/// reference that must not exist yet, and the null ID as `new` to delete one. Get `expected` from
+/// the value you last saw on the remote, such as your remote-tracking reference; never guess it.
+///
+/// The condition guards changes. If the reference already has the value `new`, nothing needs to
+/// change and the receiver reports `Ok` without comparing `expected`, so an `Ok` does not prove
+/// that the expectation matched.
+///
+/// # Examples
+///
+/// ```
+/// use girt::push::{ForcePolicy, PushCommand};
+/// use girt::refs::RefName;
+/// use girt::{ObjectFormat, ObjectId, ObjectKind};
+///
+/// let old = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"old");
+/// let new = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"new");
+///
+/// // Create `topic`; rejected if it already exists with a different value.
+/// let create = PushCommand::new(RefName::new("refs/heads/topic")?, None, new);
+/// // Fast-forward `main` from `old` to `new`.
+/// let update = PushCommand::new(RefName::new("refs/heads/main")?, Some(old), new);
+/// // Delete `stale`, but only if it is still at `old`.
+/// let delete = PushCommand::new(
+///     RefName::new("refs/heads/stale")?,
+///     Some(old),
+///     ObjectId::null(ObjectFormat::Sha1),
+/// )
+/// .with_force(ForcePolicy::Allow);
+/// assert!(delete.deletes() && !create.deletes() && !update.deletes());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PushCommand {
@@ -301,6 +366,14 @@ pub enum RejectionOrigin {
 }
 
 /// Evidence for one submitted command, in caller command order.
+///
+/// Read `status` first: `Some(Status::Ok)` is an acknowledgement, `Some(Status::Rejected(_))` a
+/// refusal with the server's reason, and `None` an unknown outcome, never a refusal. When it is
+/// `None` and `attempted` is true, the update may have happened; inspect the remote.
+///
+/// # Examples
+///
+/// See [`PushReport`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RefStatus {
@@ -342,6 +415,48 @@ pub struct RefRewrite {
 }
 
 /// Server evidence, including individual results for a non-atomic multi-ref push.
+///
+/// # Examples
+///
+/// One command succeeds and one is rejected because the remote value changed:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{
+///     ForcePolicy, LocalPushRequest, PreparedPush, PushCommand, PushLimits, RejectionOrigin,
+///     Status, send_local,
+/// };
+/// use girt::refs::RefName;
+/// use girt::transport::TransportControl;
+/// use girt::{ObjectFormat, ObjectKind};
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
+/// let next = commit(&repo, &[main], "Next commit")?;
+/// let outdated = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"an outdated view");
+/// let commands = vec![
+///     PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next),
+///     // Preparation cannot prove ancestry from an old value it doesn't have, so allow force;
+///     // the receiver still checks the expected value.
+///     PushCommand::new(RefName::new("refs/heads/release")?, Some(outdated), next)
+///         .with_force(ForcePolicy::Allow),
+/// ];
+///
+/// let cancel = AtomicBool::new(false);
+/// let objects = repo.objects(PackLimits::default())?;
+/// let prepared = PreparedPush::new(&objects, commands, &[main], PushLimits::default(), &cancel)?;
+/// let request = LocalPushRequest::new(&prepared);
+/// let report = send_local(upstream.git_dir(), request, TransportControl::new(&cancel), |_| {})?;
+///
+/// assert!(!report.all_succeeded());
+/// assert_eq!(report.unpack, Some(Status::Ok));
+/// assert_eq!(report.refs[0].status, Some(Status::Ok));
+/// assert!(matches!(report.refs[1].status, Some(Status::Rejected(_))));
+/// assert_eq!(report.refs[1].rejection_origin, Some(RejectionOrigin::ExpectedValue));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// A successful `send` returns a complete report even when unpacking or every reference failed.
 /// An uncertain error retains whatever valid status prefix was received. An `ok` is the server's
@@ -407,6 +522,42 @@ impl PushReport {
 }
 
 /// Session failure classified by whether commands might have reached the server.
+///
+/// This classification decides recovery. After [`NotSent`](Self::NotSent), the push attempted no
+/// reference updates on the receiver, so retrying it is safe once the cause is fixed. A native
+/// local push may still have stored objects, or run receive hooks, in the destination. After
+/// [`Uncertain`](Self::Uncertain), some updates may have been applied: use its partial `report`,
+/// then read the remote's references before deciding what to send again. Per-reference
+/// rejections are not errors; they are reported in [`PushReport`].
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{
+///     LocalPushRequest, PreparedPush, PushError, PushFailure, PushLimits, send_local,
+/// };
+/// use girt::transport::TransportControl;
+/// # let (directory, _, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// let cancel = AtomicBool::new(false);
+/// let objects = repo.objects(PackLimits::default())?;
+/// let prepared = PreparedPush::new(&objects, Vec::new(), &[], PushLimits::default(), &cancel)?;
+/// let missing = directory.path().join("missing.git");
+/// let result = send_local(
+///     &missing,
+///     LocalPushRequest::new(&prepared),
+///     TransportControl::new(&cancel),
+///     |_| {},
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(PushError::NotSent(PushFailure::Destination(_)))
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PushError {

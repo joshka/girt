@@ -31,8 +31,8 @@ use crate::{InitKind, ObjectKind, Repository};
 /// checkout, shallow/filter, alternates, hardlinks, mirror or submodule behavior is supported.
 /// Finish requires the existing reference backend. Native local clone reads girt storage directly
 /// and needs no Git executable. The optional SSH adapter requires macOS/Linux; HTTP is
-/// feature-gated and uses the caller's runtime. See the [module example](crate::clone#example) for
-/// a runnable local clone.
+/// feature-gated and uses the caller's runtime. See the [module
+/// example](crate::clone#example-cloning-a-local-repository) for a runnable local clone.
 pub struct CloneRequest {
     pub(super) destination: PathBuf,
     pub(super) kind: InitKind,
@@ -149,6 +149,62 @@ pub(super) fn selected<T>(
 /// This workflow has not created the destination. Move to a caller-managed worker if needed;
 /// dropping it only releases
 /// memory. The destination/selection/transfer cannot be replaced through this value.
+///
+/// # Examples
+///
+/// Check what the clone will check out before creating anything:
+///
+/// ```
+/// use std::ops::ControlFlow;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneHead, CloneRequest};
+/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
+/// use girt::refs::{RefName, Reflog};
+/// use girt::transport::TransportControl;
+/// # let (directory, upstream, _, main, _) = include!("../doctest/remote.rs");
+///
+/// let destination = directory.path().join("clone.git");
+/// let request = CloneRequest::prepare_tracking(
+///     &destination,
+///     InitKind::Bare,
+///     b"../upstream.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let ready = request.receive_local(
+///     upstream.git_dir(),
+///     FetchLimits::default(),
+///     TransportControl::new(&cancel),
+///     |_| ControlFlow::Continue(()),
+/// )?;
+/// assert_eq!(
+///     ready.head(),
+///     &CloneHead::Branch {
+///         name: RefName::new("refs/heads/main")?,
+///         id: main
+///     }
+/// );
+///
+/// let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
+/// let clone = report.repository.expect("finish succeeded");
+/// // Every remote branch is tracked; only the selected one becomes local.
+/// assert!(
+///     clone
+///         .references()?
+///         .read(&RefName::new("refs/remotes/origin/main")?)?
+///         .is_some()
+/// );
+/// assert!(
+///     clone
+///         .references()?
+///         .read(&RefName::new("refs/heads/main")?)?
+///         .is_some()
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct CloneReady {
     pub(super) request: CloneRequest,
@@ -382,6 +438,14 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), CloneFailure> {
 }
 
 /// Completed phases, including on failure. No field implies rollback or crash durability.
+///
+/// On success every phase is complete and [`repository`](Self::repository) holds the new
+/// repository. After a failure, inspect the fields in order: whether the destination was
+/// reserved, initialized, fetched into, configured, and given its local branch and `HEAD`.
+///
+/// # Examples
+///
+/// See [`CloneReady`] for a complete clone, and [`CloneError`] for the failure contract.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CloneReport {
@@ -419,6 +483,12 @@ pub enum CloneTransferError {
 }
 
 /// Finish failure preserving completed phases and precise nested publication effects.
+///
+/// girt never deletes a destination it did not finish. `report.reserved` says whether this
+/// operation created the destination directory, and the other report fields say which phases
+/// completed, so the caller can decide whether to remove it or leave it for inspection. Fetching
+/// into it does not finish it: the configuration, local branch and `HEAD` are published last, and
+/// a partially initialized repository needs repair first.
 #[derive(Debug, thiserror::Error)]
 #[error("clone failed")]
 #[non_exhaustive]
@@ -431,6 +501,30 @@ pub struct CloneError {
 }
 
 /// Preparation or finish phase failure; URL contents are omitted from diagnostics.
+///
+/// [`CloneRequest::prepare_tracking`] returns these directly; [`CloneReady::finish`] wraps them in
+/// a [`CloneError`] with a report of the completed phases.
+///
+/// # Examples
+///
+/// An existing destination is refused before anything is written:
+///
+/// ```
+/// use girt::InitKind;
+/// use girt::clone::{BranchSelection, CloneFailure, CloneRequest};
+/// use girt::refs::Reflog;
+///
+/// let directory = tempfile::tempdir()?;
+/// let result = CloneRequest::prepare_tracking(
+///     directory.path(),
+///     InitKind::Worktree,
+///     b"https://example.com/project.git",
+///     BranchSelection::Default,
+///     Reflog::Preserve,
+/// );
+/// assert!(matches!(result, Err(CloneFailure::Exists(_))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CloneFailure {

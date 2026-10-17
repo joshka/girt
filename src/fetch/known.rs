@@ -19,6 +19,56 @@ use crate::{IdMap, IdSet, Object, ObjectId, ObjectKind, Objects};
 /// No local references are inferred by these constructors. Callers must coordinate with GC until
 /// installation and any subsequent reference publication. The reader's implicit empty tree is
 /// not physical availability: fetch must materialize it before relying on it for publication.
+///
+/// # Examples
+///
+/// Describe what the destination already has, so a second fetch transfers only new objects:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::fetch::{FetchLimits, FetchRequest, KnownHistory, LocalFetchObserver};
+/// use girt::fetch::FetchUpdateLimits;
+/// use girt::refs::{Expected, RefName, Reflog, Target};
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, _) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// let cancel = AtomicBool::new(false);
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let fetch = |known: &KnownHistory| -> Result<_, Box<dyn std::error::Error>> {
+///     let request = FetchRequest::prepare(
+///         repo.clone(),
+///         origin.fetch_refspecs().clone(),
+///         BTreeSet::new(),
+///         Reflog::Preserve,
+///     )?;
+///     Ok(request.receive_local(
+///         upstream.git_dir(),
+///         known,
+///         FetchLimits::default(),
+///         TransportControl::new(&cancel),
+///         LocalFetchObserver::default(),
+///     )?)
+/// };
+/// fetch(&KnownHistory::default())?.finish(FetchUpdateLimits::default(), &cancel)?;
+///
+/// // Upstream adds a commit on top of `main`.
+/// let second = commit(&upstream, &[main], "Second commit")?;
+/// # upstream.references()?.update_without_reflog(&RefName::new("refs/heads/main")?, Target::Direct(second), Expected::Value(Target::Direct(main)))?;
+///
+/// // Without known history, the whole history is sent again.
+/// let full = fetch(&KnownHistory::default())?.received().object_count();
+///
+/// // Offer the local tip as history the destination already has.
+/// let objects = repo.objects(PackLimits::default())?;
+/// let known = KnownHistory::from_store(objects, &[main], FetchLimits::default(), &cancel)?;
+/// let incremental = fetch(&known)?.received().object_count();
+/// assert!(incremental < full, "{incremental} objects instead of {full}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Default)]
 pub struct KnownHistory {
     pub(super) objects: IdMap<Object>,

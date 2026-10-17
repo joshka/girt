@@ -1,22 +1,40 @@
 //! Clone into a new bare repository or an ordinary repository without checkout.
 //!
-//! Start with [`CloneRequest::prepare_tracking`] to choose the destination, layout, origin URL,
-//! branch policy, and reflog policy. Transfer from an explicit endpoint, then call
-//! [`CloneReady::finish`] to create the repository and publish its initial refs. [`ClonePlan`]
-//! describes the selected advertisement; [`CloneReport`] and [`CloneError`] identify completed
-//! phases when publication is incomplete.
+//! A clone is a fetch into a repository that doesn't exist yet, in three steps:
 //!
-//! Preparation selects all branches and tags from the actual transfer advertisement. Both layouts
-//! use `refs/remotes/origin/*`; bare clone does not copy every branch into `refs/heads/*`.
-//! No index or worktree files are created. An ordinary clone therefore has an absent index,
-//! and Git status can show tracked files as deleted until the caller performs a checkout.
+//! 1. [`CloneRequest::prepare_tracking`] chooses the destination path, the layout
+//!    ([`InitKind`](crate::InitKind)), the origin URL to record, which branch becomes local
+//!    ([`BranchSelection`]), and the reflog policy. It checks that the destination doesn't exist,
+//!    and creates nothing.
+//! 2. A receive adapter reads the source's advertisement, plans the clone, transfers and validates.
+//!    [`CloneRequest::receive_local`] returns a [`CloneReady`]; with the `http` or `ssh` feature,
+//!    `receive_http` and `receive_ssh` return a [`CloneDownload`] to validate on a blocking worker,
+//!    as the fetch adapters do. Nothing is written yet.
+//! 3. [`CloneReady::finish`] creates the repository, installs the pack, publishes
+//!    `refs/remotes/origin/*` and tags, writes the `origin` remote and branch configuration, and
+//!    sets the local branch and `HEAD`. It returns a [`CloneReport`].
 //!
-//! Transfer and validation have no destination effects. Finish reports completed phases and
-//! preserves residual state on failure; it never rolls back or deletes the destination. See
-//! `examples/clone_repository.rs` for a disposable local workflow. HTTP/SSH return owned downloads
-//! for validation on caller-managed bounded workers, exactly as the fetch adapters do.
+//! # How the result differs from `git clone`
 //!
-//! # Example
+//! Every remote branch lands in `refs/remotes/origin/*`, with at most one local branch, in both
+//! layouts: a bare clone does not copy every branch into `refs/heads/*` as `git clone --bare`
+//! does. No index or working files are written, which is Git's `--no-checkout` state; until the
+//! caller runs [`Repository::checkout_tree`](crate::Repository::checkout_tree), `git status`
+//! shows the tracked files as deleted. Use [`ClonePlan`] (from [`CloneRequest::plan`]) to preview
+//! the branches and `HEAD` a clone would produce.
+//!
+//! # Failures
+//!
+//! [`CloneFailure`] from preparation and [`CloneTransferError`] from receiving mean nothing was
+//! created. [`CloneError`] from [`CloneReady::finish`] carries a [`CloneReport`] saying which
+//! phases completed. girt never rolls back or deletes the destination: the caller decides whether
+//! to remove it or keep it for inspection. A fetch cannot resume a failed clone: it neither repairs
+//! partial initialization nor writes the origin configuration, local branch and `HEAD` that
+//! `finish` publishes last. Removing the destination and cloning again is the simple recovery.
+//! See
+//! `examples/clone_repository.rs` for a disposable local workflow.
+//!
+//! # Example: cloning a local repository
 //!
 //! Clone a local source repository (setup hidden) into a new ordinary repository without checkout:
 //!

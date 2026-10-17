@@ -16,6 +16,49 @@ use crate::transport::Server;
 use crate::transport::TransportControl;
 
 /// Prepared native push and receiver configuration/identity policy.
+///
+/// A native local push acts as the receiving repository's `git receive-pack` would. That
+/// includes its configuration, such as `receive.denyCurrentBranch`, and, when the receiver's
+/// reflog policy asks for them, reflog entries for the references it updates, written with the
+/// identity supplied here. A bare receiver keeps reflogs only for references that already have one,
+/// unless `core.logAllRefUpdates` is set.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{LocalPushRequest, PreparedPush, PushCommand, PushLimits, send_local};
+/// use girt::refs::{RefName, Target};
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, person) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
+/// // Ask the receiver to keep reflogs for every reference, as a non-bare repository does.
+/// let mut edit = upstream.edit_config(1 << 20)?;
+/// edit.document_mut().append("core", None, "logAllRefUpdates", b"true")?;
+/// edit.commit()?;
+///
+/// let topic = RefName::new("refs/heads/topic")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let prepared = PreparedPush::new(
+///     &objects,
+///     vec![PushCommand::new(topic.clone(), None, main)],
+///     &[main],
+///     PushLimits::default(),
+///     &cancel,
+/// )?;
+///
+/// let request = LocalPushRequest::new(&prepared).with_identity(Some(&person));
+/// let report = send_local(upstream.git_dir(), request, TransportControl::new(&cancel), |_| {})?;
+/// assert!(report.all_succeeded());
+/// assert_eq!(upstream.references()?.read(&topic)?, Some(Target::Direct(main)));
+/// let reflog = upstream.references()?.reflog(&topic)?.expect("a reflog was created");
+/// assert_eq!(reflog[0].committer.name, person.name);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct LocalPushRequest<'a> {
     prepared: &'a PreparedPush,
     config_inputs: Option<&'a ConfigInputs>,

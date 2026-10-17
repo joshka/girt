@@ -27,6 +27,45 @@ pub enum ProtocolVersion {
 }
 
 /// The remote's advertised HEAD, with no branch guessed when the wire is ambiguous.
+///
+/// Modern servers send a `symref=HEAD:<branch>` hint, which gives [`Symbolic`](Self::Symbolic).
+/// Without one, only HEAD's object ID is known: girt names a branch only when exactly one has that
+/// ID ([`Inferred`](Self::Inferred)) and otherwise reports the ambiguity instead of guessing.
+///
+/// # Examples
+///
+/// ```
+/// use girt::fetch::{AdvertisedRef, Advertisement, AdvertisementKind, RemoteDiscovery, RemoteHead};
+/// use girt::refs::RefName;
+/// use girt::{ObjectFormat, ObjectKind};
+///
+/// let id = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"tip");
+/// let tip = |name: &str| -> Result<AdvertisedRef, Box<dyn std::error::Error>> {
+///     Ok(AdvertisedRef::new(RefName::new(name)?, id, AdvertisementKind::Tip))
+/// };
+///
+/// // No symref hint, one branch with HEAD's ID: inferred.
+/// let one = Advertisement::new(vec![tip("HEAD")?, tip("refs/heads/main")?], Vec::new());
+/// let head = RemoteDiscovery::from_advertisement(one)?.head;
+/// assert!(matches!(head, RemoteHead::Inferred { ref branch, .. } if branch.as_bytes() == b"refs/heads/main"));
+///
+/// // Two branches share HEAD's ID: girt does not pick one.
+/// let two = Advertisement::new(
+///     vec![tip("HEAD")?, tip("refs/heads/main")?, tip("refs/heads/release")?],
+///     Vec::new(),
+/// );
+/// let head = RemoteDiscovery::from_advertisement(two)?.head;
+/// assert!(matches!(head, RemoteHead::Ambiguous { ref branches, .. } if branches.len() == 2));
+///
+/// // A symref hint settles it.
+/// let hinted = Advertisement::new(
+///     vec![tip("HEAD")?, tip("refs/heads/main")?, tip("refs/heads/release")?],
+///     vec![b"symref=HEAD:refs/heads/release".to_vec()],
+/// );
+/// let head = RemoteDiscovery::from_advertisement(hinted)?.head;
+/// assert!(matches!(head, RemoteHead::Symbolic { ref branch, .. } if branch.as_bytes() == b"refs/heads/release"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RemoteHead {
