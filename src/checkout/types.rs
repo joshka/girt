@@ -47,7 +47,7 @@ use crate::{ObjectId, index};
 ///     .unwrap_err();
 /// assert!(matches!(
 ///     failure.cause.as_ref(),
-///     Error::Object(girt::ObjectReadError::Limit(_))
+///     Error::Object(girt::ObjectReadError::Loose(girt::Error::TooLarge))
 /// ));
 /// assert_eq!(failure.report.stage, girt::checkout::Stage::Preparation);
 /// assert!(failure.report.applied.is_empty());
