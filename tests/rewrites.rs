@@ -690,3 +690,240 @@ fn invalid_similarity(#[case] similarity: u8) {
         matches!(f.objects().detect_rewrites(None, None, Options::default().with_similarity(similarity), Limits::default(), None, &AtomicBool::new(false)), Err(Error::Similarity(value)) if value == similarity)
     );
 }
+
+/// Original equal-length lines expose the stricter basename threshold and its half-percent edge.
+#[rstest]
+#[case::default_below(50, 149, Copies::Disabled, 1, 1, false)]
+#[case::default_boundary(50, 150, Copies::Disabled, 1, 1, true)]
+#[case::custom_below(75, 174, Copies::Disabled, 1, 1, false)]
+#[case::custom_half_percent(75, 175, Copies::Disabled, 1, 1, true)]
+#[case::lower_threshold(20, 120, Copies::Disabled, 1, 1, true)]
+#[case::ambiguous_source(50, 150, Copies::Disabled, 2, 1, false)]
+#[case::ambiguous_target(50, 150, Copies::Disabled, 1, 2, false)]
+#[case::copies(50, 150, Copies::Modified, 1, 1, false)]
+fn basename_pairing_precedes_candidate_limit(
+    #[values("sha1", "sha256")] format: &str,
+    #[case] minimum: u8,
+    #[case] retained: usize,
+    #[case] copies: Copies,
+    #[case] source_count: usize,
+    #[case] target_count: usize,
+    #[case] paired: bool,
+) {
+    let f = Fixture::new(format);
+    let before: String = (0..200).map(|n| format!("{n:03}\n")).collect();
+    let after: String = (0..200)
+        .map(|n| {
+            if n < retained {
+                format!("{n:03}\n")
+            } else {
+                format!("x{:02}\n", n % 100)
+            }
+        })
+        .collect();
+    let original = f.blob(before.as_bytes());
+    let edited = f.blob(after.as_bytes());
+    let source = f.tree(&[("100644", original, b"same")]);
+    let old = if source_count == 1 {
+        source
+    } else {
+        f.tree(&[("040000", source, b"a"), ("040000", source, b"b")])
+    };
+    let destination = f.tree(&[("100644", edited, b"same")]);
+    let unrelated = f.blob(b"unrelated\n");
+    let mut entries = vec![
+        ("040000", destination, &b"dir"[..]),
+        ("100644", unrelated, &b"new1"[..]),
+        ("100644", unrelated, &b"new2"[..]),
+        ("100644", unrelated, &b"new3"[..]),
+    ];
+    if target_count == 2 {
+        entries.push(("040000", destination, b"other"));
+    }
+    let new = f.tree(&entries);
+    let options = Options::default()
+        .with_similarity(minimum)
+        .with_copies(copies)
+        .with_candidate_limit(1);
+    let detection = f
+        .objects()
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            options,
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let flag = format!(
+        "-{}{}%",
+        if copies == Copies::Disabled { "M" } else { "C" },
+        minimum
+    );
+    let observed = git_output(
+        f.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "--name-status",
+            &flag,
+            "-l1",
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    let score = retained / 2;
+    let rename = format!("R{score:03}\tsame\tdir/same\n");
+    assert_eq!(
+        String::from_utf8_lossy(&observed.stdout).contains(&rename),
+        paired
+    );
+    assert_eq!(observed.stderr.is_empty(), paired);
+    assert_eq!(detection.inexact_skipped.is_none(), paired);
+    if paired {
+        assert_eq!(detection.rewrites.len(), 1);
+        let record = &detection.rewrites[0];
+        assert_eq!(
+            (&record.source[..], &record.target[..], record.similarity),
+            (&b"same"[..], &b"dir/same"[..], score as u8)
+        );
+    } else {
+        assert!(detection.rewrites.is_empty());
+    }
+}
+
+#[rstest]
+fn basename_pairing_prefers_its_match_before_exhaustive_scoring(
+    #[values("sha1", "sha256")] format: &str,
+    #[values(false, true)] remaining_source: bool,
+) {
+    let f = Fixture::new(format);
+    let original = f.blob(b"a\nb\nc\nd\n");
+    let edited = f.blob(b"a\nb\nc\nx\n");
+    let exact = f.blob(b"unique exact contents\n");
+    let same = f.tree(&[("100644", exact, b"same")]);
+    let mut old_entries = vec![
+        ("100644", original, &b"same"[..]),
+        ("040000", same, &b"old"[..]),
+    ];
+    if remaining_source {
+        old_entries.push(("100644", f.blob(b"unmatched source\n"), b"remaining"));
+    }
+    let old = f.tree(&old_entries);
+    let destination = f.tree(&[("100644", edited, b"same")]);
+    let new = f.tree(&[
+        ("040000", destination, b"dir"),
+        ("100644", exact, b"exact"),
+        ("100644", f.blob(b"a\nb\nc\nd\nz\n"), b"better"),
+        ("100644", f.blob(b"unrelated one\n"), b"new1"),
+        ("100644", f.blob(b"unrelated two\n"), b"new2"),
+    ]);
+    let observed = git_output(
+        f.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "--name-status",
+            "-M",
+            "-l1",
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    let detection = f
+        .objects()
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default().with_candidate_limit(1),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    assert_eq!(detection.rewrites.len(), 2);
+    assert_eq!(
+        (
+            &detection.rewrites[0].source[..],
+            &detection.rewrites[0].target[..],
+            detection.rewrites[0].similarity
+        ),
+        (&b"same"[..], &b"dir/same"[..], 75)
+    );
+    assert_eq!(detection.rewrites[1].similarity, 100);
+    assert!(String::from_utf8_lossy(&observed.stdout).contains("R075\tsame\tdir/same\n"));
+    assert_eq!(!observed.stderr.is_empty(), remaining_source);
+    assert_eq!(
+        detection.inexact_skipped.map(|s| (s.sources, s.targets)),
+        remaining_source.then_some((1, 3))
+    );
+}
+
+#[rstest]
+fn empty_basename_collisions_follow_git_rename_empty_policy(
+    #[values("sha1", "sha256")] format: &str,
+    #[values(false, true)] empty_source: bool,
+    #[values(false, true)] track_empty: bool,
+) {
+    let f = Fixture::new(format);
+    let empty = f.tree(&[("100644", f.blob(b""), b"same")]);
+    let mut old_entries = vec![("100644", f.blob(b"a\nb\nc\nd\n"), &b"same"[..])];
+    if empty_source {
+        old_entries.push(("040000", empty, b"z"));
+    }
+    let old = f.tree(&old_entries);
+    let destination = f.tree(&[("100644", f.blob(b"a\nb\nc\nx\n"), b"same")]);
+    let unrelated = f.blob(b"unrelated\n");
+    let mut new_entries = vec![
+        ("040000", destination, &b"dir"[..]),
+        ("100644", unrelated, &b"n1"[..]),
+        ("100644", unrelated, &b"n2"[..]),
+        ("100644", unrelated, &b"n3"[..]),
+    ];
+    if !empty_source {
+        new_entries.push(("040000", empty, b"z"));
+    }
+    let new = f.tree(&new_entries);
+    let observed = git_output(
+        f.root.path(),
+        &[
+            "diff-tree",
+            "-r",
+            "--name-status",
+            "-M",
+            "-l1",
+            if track_empty {
+                "--rename-empty"
+            } else {
+                "--no-rename-empty"
+            },
+            &old.to_string(),
+            &new.to_string(),
+        ],
+        b"",
+    );
+    let detection = f
+        .objects()
+        .detect_rewrites_or_exact(
+            Some(old),
+            Some(new),
+            Options::default()
+                .with_candidate_limit(1)
+                .with_track_empty(track_empty),
+            Limits::default(),
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let paired = !track_empty;
+    assert_eq!(
+        String::from_utf8_lossy(&observed.stdout).contains("R075\tsame\tdir/same\n"),
+        paired
+    );
+    assert_eq!(observed.stderr.is_empty(), paired);
+    assert_eq!(detection.inexact_skipped.is_none(), paired);
+    assert_eq!(detection.rewrites.len(), usize::from(paired));
+}

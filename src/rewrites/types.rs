@@ -88,21 +88,20 @@ pub struct Options {
     pub track_empty: bool,
     /// Bound on edited-content detection, as in Git's `diff.renameLimit` (default 1000).
     ///
-    /// Exact matches are attempted first. Edited-content detection is skipped when the remaining
-    /// sources multiplied by the remaining destinations exceeds the square of this limit, as Git
-    /// does. [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact)
-    /// then returns the exact matches with an [`InexactSkipped`] report;
+    /// Exact matches are attempted first. Without copies, unique unmatched basenames are then
+    /// paired at a stricter similarity threshold: halfway from [`Self::similarity`] to 100%.
+    /// Exhaustive edited-content detection is skipped when the remaining sources multiplied by
+    /// the remaining destinations exceeds the square of this limit, as Git does.
+    /// [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact) returns
+    /// the pairs already found with an [`InexactSkipped`] report;
     /// [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns
     /// [`Error::Candidates`]. Neither reports an incomplete inference as complete.
     ///
-    /// The counts are the sources still available after exact matching (including exact-paired
-    /// sources reused for copies) and the unmatched destinations, as Git counts them: binary files
-    /// count even when [`Self::approximate_binary`] is false, and empty files count when
-    /// [`Self::track_empty`] is true, as with Git's default of detecting empty renames. Git pairs
-    /// some files before this check, such as an edited file moved to a path with the same
-    /// basename; girt leaves those to edited detection, so near the limit a skip can still differ.
-    /// Zero skips edited detection whenever a counted pair remains; Git's configuration value 0
-    /// means unlimited, which is `usize::MAX`.
+    /// Counts include available sources (including sources reused for copies) and unmatched
+    /// destinations: binary files count even when [`Self::approximate_binary`] is false, and
+    /// empty files count when [`Self::track_empty`] is true. Zero skips exhaustive detection
+    /// whenever a counted pair remains; Git's configuration value 0 means unlimited, which is
+    /// `usize::MAX`.
     pub candidate_limit: usize,
     /// Permit approximate matching when either blob contains NUL in its first 8000 bytes.
     /// Exact object-ID matches are still considered (default true).
@@ -474,7 +473,7 @@ pub struct Rewrite {
 /// Returned by [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact).
 ///
 /// Always inspect `inexact_skipped` before presenting the result as complete. A UI can retain
-/// exact pairs, leave all other additions/deletions unpaired, and offer a retry using
+/// discovered pairs, leave all other additions/deletions unpaired, and offer a retry using
 /// [`InexactSkipped::suggested_limit`]. The [fallback
 /// example](crate::Objects::detect_rewrites_or_exact) shows the full lifecycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -482,24 +481,25 @@ pub struct Rewrite {
 pub struct Detection {
     /// Inferred relationships, ordered by destination raw path bytes.
     ///
-    /// When [`Self::inexact_skipped`] is set, these are the exact matches only.
+    /// When [`Self::inexact_skipped`] is set, these include exact and unique-basename matches.
     pub rewrites: Vec<Rewrite>,
-    /// Set when [`Options::candidate_limit`] prevented edited-content detection.
+    /// Set when [`Options::candidate_limit`] prevented exhaustive edited-content detection.
     ///
     /// `None` means detection ran to completion under the requested options.
     pub inexact_skipped: Option<InexactSkipped>,
 }
 
-/// Edited-content detection was skipped because too many candidates remained after exact matching.
+/// Edited-content detection was skipped because too many candidates remained after exact and
+/// unique-basename matching.
 ///
-/// Destinations without an exact match stay unpaired, even where an edited source would match.
+/// Remaining destinations stay unpaired, even where an edited source would match.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct InexactSkipped {
-    /// Sources still available after exact matching, counted as
+    /// Sources still available after exact and unique-basename matching, counted as
     /// [`Options::candidate_limit`] describes.
     pub sources: usize,
-    /// Destinations remaining after exact matching, counted the same way.
+    /// Destinations remaining after exact and unique-basename matching, counted the same way.
     pub targets: usize,
     /// Caller-specified [`Options::candidate_limit`].
     pub limit: usize,
@@ -580,7 +580,8 @@ pub enum Error {
         /// Verified object kind.
         actual: ObjectKind,
     },
-    /// Edited detection would exceed the requested candidate limit after exact matching.
+    /// Edited detection would exceed the requested candidate limit after exact and unique-basename
+    /// matching.
     ///
     /// Only [`Objects::detect_rewrites`](crate::Objects::detect_rewrites) returns this; see
     /// [`InexactSkipped`] for the fields.

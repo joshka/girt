@@ -84,8 +84,18 @@ impl Content {
         minimum: u8,
         budget: &mut Budget<'_>,
     ) -> Result<Option<u8>, Error> {
+        self.score_half_percent(other, u16::from(minimum) * 2, budget)
+    }
+
+    /// Scores with half-percent precision for the stricter basename pre-pass.
+    pub fn score_half_percent(
+        &self,
+        other: &Self,
+        minimum: u16,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<u8>, Error> {
         let total = self.length.max(other.length) as u128;
-        if total == 0 || self.length.min(other.length) as u128 * 100 < total * u128::from(minimum) {
+        if total == 0 || self.length.min(other.length) as u128 * 200 < total * u128::from(minimum) {
             return Ok(None);
         }
         let mut retained = 0u128;
@@ -95,7 +105,7 @@ impl Content {
                 retained += (*count).min(*other_count) as u128;
             }
         }
-        Ok((retained * 100 >= total * u128::from(minimum))
+        Ok((retained * 200 >= total * u128::from(minimum))
             .then_some((retained * 100 / total) as u8))
     }
 }

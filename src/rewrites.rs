@@ -4,9 +4,9 @@
 //! candidate comparison policy and [`Limits`] to bound work. The returned [`Rewrite`] values carry
 //! inferred kind and score; [`Copies`] controls copy inference. A match describes stored content,
 //! not recorded history or a working-tree operation.
-//! [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact) keeps exact
-//! matches when [`Options::candidate_limit`] skips edited-content detection, and returns a
-//! [`Detection`] that reports the skip.
+//! [`Objects::detect_rewrites_or_exact`](crate::Objects::detect_rewrites_or_exact) keeps exact and
+//! unique-basename matches when [`Options::candidate_limit`] skips exhaustive edited-content
+//! detection, and returns a [`Detection`] that reports the skip.
 //!
 //! Inference is a heuristic, not recorded history: callers retain merge and copy-history policy.
 //! Paths and payloads remain bytes. Attributes, worktree conversion and external diff/filter
