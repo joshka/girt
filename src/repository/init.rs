@@ -10,6 +10,32 @@ use super::{OpenError, Repository};
 use crate::refs::RefName;
 
 /// Layout to create with [`Repository::init`].
+///
+/// Choose a working-tree layout for a project directory and bare storage for a server, archive, or
+/// object-only tool. Bare initialization requires a new destination, while a working-tree
+/// destination can contain unrelated files.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let bare = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("archive.git"),
+///     InitKind::Bare,
+/// )?;
+/// let project = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("project"),
+///     InitKind::Worktree,
+/// )?;
+/// assert!(bare.worktree().is_none());
+/// assert!(project.worktree().is_some());
+/// assert_ne!(
+///     project.git_dir(),
+///     project.worktree().ok_or("worktree absent")?
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum InitKind {
@@ -22,7 +48,27 @@ pub enum InitKind {
 /// Choices for [`Repository::init_with_options`].
 ///
 /// Defaults follow `git init` without configuration: SHA-1, the files reference backend and an
-/// unborn `master` branch.
+/// unborn `master` branch. In contrast, [`Repository::init`] and [`Repository::init_with_backend`]
+/// use `main`.
+///
+/// Use options when branch naming, hash format, or reference backend are application policy.
+/// Defaults do not read user configuration; apply a chosen Config explicitly when that is desired.
+///
+/// ```
+/// use girt::{InitKind, InitOptions, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let options = InitOptions::new(InitKind::Bare)
+///     .object_format(ObjectFormat::Sha256)
+///     .initial_branch("trunk")?;
+/// let repo = Repository::init_with_options(directory.path().join("new.git"), &options)?;
+/// let head = repo
+///     .references()?
+///     .resolve(&girt::refs::RefName::new("HEAD")?, 5)?;
+/// assert_eq!(head.name.as_bytes(), b"refs/heads/trunk");
+/// assert!(head.id.is_none());
+/// assert_eq!(repo.object_format(), ObjectFormat::Sha256);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct InitOptions {
     kind: InitKind,
@@ -33,6 +79,23 @@ pub struct InitOptions {
 
 impl InitOptions {
     /// Options for a repository of the given layout.
+    ///
+    /// ```
+    /// use girt::{InitKind, InitOptions, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init_with_options(
+    ///     directory.path().join("default.git"),
+    ///     &InitOptions::new(InitKind::Bare),
+    /// )?;
+    /// assert_eq!(
+    ///     repo.references()?
+    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
+    ///         .name
+    ///         .as_bytes(),
+    ///     b"refs/heads/master"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(kind: InitKind) -> Self {
         Self {
             kind,
@@ -60,6 +123,20 @@ impl InitOptions {
     ///
     /// Returns [`InitError::InvalidBranch`] unless `name` is a valid branch name without the
     /// `refs/heads/` prefix.
+    ///
+    /// ```
+    /// use girt::{InitKind, InitOptions};
+    /// assert!(
+    ///     InitOptions::new(InitKind::Bare)
+    ///         .initial_branch("../invalid")
+    ///         .is_err()
+    /// );
+    /// assert!(
+    ///     InitOptions::new(InitKind::Bare)
+    ///         .initial_branch("topic/nested")
+    ///         .is_ok()
+    /// );
+    /// ```
     pub fn initial_branch(mut self, name: &str) -> Result<Self, InitError> {
         self.initial_branch = RefName::new(format!("refs/heads/{name}"))
             .map_err(|_| InitError::InvalidBranch(name.to_owned()))?;
@@ -75,6 +152,22 @@ impl InitOptions {
     ///
     /// Returns [`InitError::InvalidBranch`] when `init.defaultBranch` is empty, not UTF-8, or not
     /// a valid branch name. Git refuses to initialize in the same cases.
+    ///
+    /// ```
+    /// use girt::{InitKind, InitOptions, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let user = girt::Config::parse(b"[init]\ndefaultBranch = trunk\n")?;
+    /// let options = InitOptions::new(InitKind::Bare).defaults_from(&user)?;
+    /// let repo = Repository::init_with_options(directory.path().join("configured.git"), &options)?;
+    /// assert_eq!(
+    ///     repo.references()?
+    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
+    ///         .name
+    ///         .as_bytes(),
+    ///     b"refs/heads/trunk"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn defaults_from(self, config: &crate::Config) -> Result<Self, InitError> {
         let Some(name) = config.value("init", None, "defaultbranch") else {
             return Ok(self);
@@ -94,12 +187,18 @@ impl InitOptions {
 #[non_exhaustive]
 pub enum InitError {
     /// A destination or repository marker already exists; it was not modified.
+    /// Open the existing repository or choose a new destination; do not retry initialization as
+    /// repair.
     #[error("initialization destination already exists: {0}")]
     AlreadyExists(PathBuf),
     /// The initial branch name is not a valid branch name.
+    /// Supply a valid short branch name without the refs/heads/ prefix.
     #[error("invalid initial branch name: {0}")]
     InvalidBranch(String),
     /// A filesystem operation failed. Newly created files may remain; see [`Repository::init`].
+    /// Inspect the path and source and retain partial new metadata for diagnosis; exclude other
+    /// writers before inspecting or cleaning up only the metadata created by this attempt.
+    /// Reinitializing a remaining partial destination will be refused as already existing.
     #[error("cannot initialize {path}")]
     Io {
         /// Path being accessed or created.
@@ -109,9 +208,12 @@ pub enum InitError {
         source: io::Error,
     },
     /// Reftable initial-record encoding failed; newly created metadata may remain.
+    /// Inspect the codec source and any partial newly created metadata before retrying.
     #[error(transparent)]
     Reftable(#[from] crate::refs::reftable::Error),
     /// Inspecting existing metadata or opening the newly created repository failed.
+    /// Inspect the opening source; existing metadata is untouched, while newly created partial
+    /// metadata can remain.
     #[error(transparent)]
     Open(#[from] OpenError),
 }
@@ -140,7 +242,9 @@ impl Repository {
     ///
     /// Creates version-0 configuration for SHA-1 or version-1 with `extensions.objectFormat` for
     /// SHA-256, files-backend reference directories and an object directory. No Git process,
-    /// templates, hooks, ambient configuration, index, or initial commit are used. The
+    /// templates, hook programs, ambient configuration, index, or initial commit are used. An empty
+    /// `hooks` directory and `info/exclude` are created. Use [`Self::init_with_options`] to choose
+    /// another initial branch; its default is `master`, so select the branch explicitly. The
     /// destination's parent must exist. Ordinary worktrees may use an existing directory
     /// containing unrelated files; a `.git`, `HEAD`, or `objects` entry refuses initialization.
     /// Bare destinations must not exist, even as empty directories. Separate Git directories
@@ -191,6 +295,21 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`InitError`] as for [`Self::init_with_backend`].
+    ///
+    /// ```
+    /// use girt::{InitKind, InitOptions, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let options = InitOptions::new(InitKind::Bare).initial_branch("main")?;
+    /// let path = directory.path().join("new.git");
+    /// Repository::init_with_options(&path, &options)?;
+    /// // Opening is separate from creation; initialization never repairs existing metadata.
+    /// assert!(matches!(
+    ///     Repository::init_with_options(&path, &options),
+    ///     Err(girt::InitError::AlreadyExists(_))
+    /// ));
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn init_with_options(
         path: impl AsRef<Path>,
         options: &InitOptions,
@@ -208,6 +327,25 @@ impl Repository {
     ///
     /// Inherits [`Self::init`]'s exclusive creation, retained partial metadata and durability
     /// contracts. Reftable encoding errors retain any newly created metadata for inspection.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init_with_backend(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("table.git"),
+    ///     InitKind::Bare,
+    ///     girt::refs::Backend::Reftable,
+    /// )?;
+    /// assert_eq!(repo.reference_backend(), girt::refs::Backend::Reftable);
+    /// assert!(
+    ///     repo.references()?
+    ///         .resolve(&girt::refs::RefName::new("HEAD")?, 5)?
+    ///         .id
+    ///         .is_none()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn init_with_backend(
         format: crate::ObjectFormat,
         path: impl AsRef<Path>,

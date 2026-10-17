@@ -115,6 +115,22 @@ use crate::{Config, ConfigError, LooseObjects, ObjectFormat};
 /// Location resolves filesystem indirections only. It does not establish that the repository is
 /// trusted or usable, and does not freeze filesystem identity against concurrent replacement.
 /// Opening later reads current metadata at these paths, without selecting another repository.
+///
+/// Choose this phase when a caller must approve a selected filesystem location before configuration
+/// is read. Resolving a location does not approve its owner or freeze path identity against
+/// replacement.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r.git");
+/// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+/// let location = girt::RepositoryLocation::at_git_dir(repo.git_dir())?;
+/// let metadata = location.read_metadata_with_config(&girt::config::ConfigInputs::default())?;
+/// assert_eq!(metadata.git_dir(), location.git_dir());
+/// assert!(metadata.is_bare());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositoryLocation {
     git_dir: PathBuf,
@@ -138,6 +154,17 @@ impl RepositoryLocation {
     ///
     /// Returns [`OpenError`] for missing paths, malformed indirections, non-directory targets or
     /// I/O failures. Reads are synchronous and metadata path files have no caller-supplied bound.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r.git");
+    /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    /// let selected = girt::RepositoryLocation::at_git_dir(repo.git_dir())?;
+    /// let opened = selected.open_with_config(&girt::config::ConfigInputs::default())?;
+    /// assert_eq!(opened.common_dir(), selected.common_dir());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn at_git_dir(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         Self::resolve(path.as_ref(), true)
     }
@@ -375,6 +402,23 @@ impl RepositoryLocation {
 /// bootstrap; it does not establish trust, validate every Git runtime setting or freeze filesystem
 /// identity. [`Self::open_storage`] reuses this snapshot and separately observes current shallow
 /// roots.
+///
+/// Retain this value when layout/configuration inspection should precede storage work. Opening
+/// storage reuses these decisions and separately reads shallow metadata; it does not re-resolve
+/// configuration or lock the repository.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r.git");
+/// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+/// let location = girt::RepositoryLocation::at_git_dir(repo.git_dir())?;
+/// let metadata = location.read_metadata_with_config(&girt::config::ConfigInputs::default())?;
+/// let opened = metadata.open_storage()?;
+/// assert_eq!(opened.object_format(), metadata.object_format());
+/// assert_eq!(opened.object_dir(), metadata.object_dir());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct RepositoryMetadata {
     git_dir: PathBuf,
@@ -727,18 +771,24 @@ impl std::fmt::Debug for Repository {
 #[non_exhaustive]
 pub enum OpenError {
     /// Reftable HEAD metadata could not be read for branch-conditional configuration.
+    /// Inspect the reftable HEAD-reading source and selected stack budgets.
     #[error(transparent)]
     References(#[from] crate::refs::ReferenceError),
     /// The opened checkout belongs to a different common repository.
+    /// Select a checkout belonging to the intended common repository.
     #[error("unrelated common repository: {0}")]
     Unrelated(PathBuf),
     /// Shallow-root metadata could not be read.
+    /// Inspect the shallow metadata source and preserve the existing handle if a refresh failed.
     #[error(transparent)]
     Shallow(#[from] ShallowError),
     /// The explicit path does not identify a repository.
+    /// Check the selected path or discovery ceiling; initialization is a separate operation.
     #[error("no repository at {0}")]
     NotFound(PathBuf),
     /// Filesystem access failed; the path and original cause are retained.
+    /// Inspect the original filesystem failure and path, then correct access or storage before
+    /// retrying.
     #[error("cannot read {path}")]
     Io {
         /// Failed path.
@@ -748,6 +798,8 @@ pub enum OpenError {
         source: io::Error,
     },
     /// Repository metadata contradicts the supported layout or has invalid content.
+    /// Inspect the reported metadata and reason; do not bypass it by opening an enclosing
+    /// repository.
     #[error("malformed repository metadata at {path}: {reason}")]
     Malformed {
         /// Metadata path.
@@ -756,6 +808,7 @@ pub enum OpenError {
         reason: String,
     },
     /// Configuration syntax is invalid or unsupported.
+    /// Correct syntax at the retained configuration source and line.
     #[error("invalid configuration at {path}")]
     Config {
         /// Configuration source path.
@@ -765,9 +818,13 @@ pub enum OpenError {
         source: ConfigError,
     },
     /// Effective configuration could not be resolved.
+    /// Correct source selection, include context, topology or budgets identified by the nested
+    /// resolution error.
     #[error(transparent)]
     Resolve(#[from] ResolveError),
     /// A recognized feature cannot be interpreted by this implementation.
+    /// Choose a supported representation or extend support; silently treating it as a default
+    /// repository is unsafe.
     #[error("unsupported repository feature at {path}: {feature}")]
     Unsupported {
         /// Source of the unsupported feature.
@@ -896,6 +953,35 @@ impl Repository {
     ///
     /// Returns [`Self::open_with_config`]'s errors, including bounded reftable decoding failures.
     /// The operation does not mutate the repository or retry a raced stack read.
+    ///
+    /// ```
+    /// use girt::config::ConfigInputs;
+    /// use girt::refs::Backend;
+    /// use girt::refs::reftable::StackLimits;
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init_with_backend(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    ///     Backend::Reftable,
+    /// )?;
+    /// let opened = Repository::open_with_config_and_reference_limits(
+    ///     repo.git_dir(),
+    ///     &ConfigInputs::default(),
+    ///     StackLimits::default().with_tables(8),
+    /// )?;
+    /// assert_eq!(opened.reference_backend(), Backend::Reftable);
+    /// assert!(matches!(
+    ///     Repository::open_with_config_and_reference_limits(
+    ///         repo.git_dir(),
+    ///         &ConfigInputs::default(),
+    ///         StackLimits::default().with_tables(0),
+    ///     ),
+    ///     Err(girt::OpenError::References(_))
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn open_with_config_and_reference_limits(
         path: impl AsRef<Path>,
         inputs: &ConfigInputs,
@@ -934,6 +1020,21 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`ShallowError`] for malformed metadata, I/O, cancellation or the byte limit.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r.git");
+    /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    /// let mut repo = repo;
+    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// let boundary = girt::ObjectId::Sha1([1; 20]); // Declaration only; not checked against objects here.
+    /// std::fs::write(repo.common_dir().join("shallow"), format!("{boundary}\n"))?;
+    /// repo.refresh_shallow(4096, &std::sync::atomic::AtomicBool::new(false))?;
+    /// assert!(repo.shallow_roots().contains(boundary));
+    /// assert!(objects.shallow_roots().is_empty()); // Existing reader retains the old snapshot.
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn refresh_shallow(
         &mut self,
         max_bytes: usize,
@@ -997,8 +1098,23 @@ impl Repository {
     /// # Errors
     ///
     /// Returns [`crate::ObjectReadError`] for malformed or unsupported packed storage, I/O
-    /// failures, or exhausted snapshot limits. Supported SHA-1 and SHA-256 packs and indexes use
-    /// Reopen after a concurrent repack failure.
+    /// failures, or exhausted snapshot limits. If a concurrent publisher left an incomplete pair,
+    /// retry opening after publication finishes; retained readers keep their earlier pinned packs.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r.git");
+    /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    /// let id = repo.loose_objects().write_blob(b"retained reader")?;
+    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// let limits = girt::ReadLimits::default();
+    /// assert_eq!(
+    ///     objects.read(id, limits)?.ok_or("blob absent")?.data(),
+    ///     b"retained reader"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn objects(
         &self,
         limits: crate::PackLimits,
@@ -1044,6 +1160,23 @@ impl Repository {
     ///
     /// Returns the errors from [`Self::objects_with_alternates`] or
     /// [`crate::ObjectReadError::Cancelled`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r.git");
+    /// let repo = Repository::init(ObjectFormat::Sha1, &path, InitKind::Bare)?;
+    /// let cancelled = std::sync::atomic::AtomicBool::new(true);
+    /// assert!(matches!(
+    ///     repo.objects_controlled(
+    ///         girt::PackLimits::default(),
+    ///         girt::AlternateLimits::default(),
+    ///         &cancelled
+    ///     ),
+    ///     Err(girt::ObjectReadError::Cancelled)
+    /// ));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn objects_controlled(
         &self,
         packs: crate::PackLimits,
