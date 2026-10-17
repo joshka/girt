@@ -5,8 +5,8 @@ description: Construct a snapshot and inspect a branch point with verified objec
 
 A commit connects a directory snapshot to its parents. To build one, store file bytes as blobs,
 store the root tree with entries pointing to those blobs, then store a commit pointing to that tree.
-Objects are immutable; the branch name is a separate reference. This guide builds a small snapshot
-and traces its ancestry.
+Objects are immutable, so a branch name lives in a separate reference that can move between
+commits. The program below builds a small snapshot and traces its ancestry.
 
 ## Construct a branch point
 
@@ -87,47 +87,49 @@ snapshots match. The temporary repository is removed when the program exits.
 
 To add a file, call `loose.write_blob`, put its ID in a `TreeEntry` with `EntryMode::Blob`, then
 pass those entries to `Tree::new`. A tree represents one directory; subdirectories need their own
-trees. Construction alone does not check that referenced objects exist. Write the child objects
-before publishing the commit's reference.
+trees. Constructing a tree or commit doesn't check that the objects it references exist, so write
+the child objects before you publish a reference to the commit.
 
 ## Read a stored snapshot
 
-Obtain an `Objects` reader once and retain it across related reads. For each ID, call `read` with a
-payload budget, handle `None` as absence, then check the returned kind before choosing a parser. A
-commit parser reveals its tree and parent IDs. Read its tree separately to get entry names, modes,
-and child IDs. Read a blob to obtain file bytes; decoding those bytes as text is application policy.
-Preserve raw names when displaying or exporting non-UTF-8 repositories.
+Open an `Objects` reader once and reuse it for related reads. For each ID, call `read` with a
+payload budget; `None` means the object is absent. Check the returned kind before choosing a parser.
+Parsing a commit gives its tree and parent IDs. Read its tree separately to get entry names, modes,
+and child IDs. Read a blob to obtain file bytes; your application decides whether to decode them as
+text. Preserve raw names when displaying or exporting non-UTF-8 repositories.
 
 [Objects::read](https://docs.rs/girt/latest/girt/struct.Objects.html#method.read) verifies framing
 and identity. Tree and commit parsing decodes payloads while retaining accepted original bytes.
-Validation can impose additional rules; rebuilding parsed fields may normalize spelling and change
-identity. Inspectors should report malformed data without silently rewriting it.
+Validation can impose additional rules. Rebuilding an object from its parsed fields may normalize
+its spelling and so change its ID, which is why a tool that inspects objects should report malformed
+data instead of rewriting it.
 
 ## Choose the history query
 
 `walk` collects reachable commit IDs in breadth-first order, using supplied root and stored parent
-order. It does not sort by date or promise topological order. `is_ancestor` answers reachability,
-and `merge_bases` returns every best common ancestor. Criss-cross history can have several bases; a
-caller needing one must define how it combines them.
+order. It doesn't sort by date or guarantee topological order. `is_ancestor` answers reachability,
+and `merge_bases` returns every best common ancestor. Criss-cross history can have several bases, so
+a caller that needs one base must decide how to combine them.
 
-These queries collect and validate complete ancestries under their limits, including an ancestry
-test with equal endpoints. They do not read trees or blobs. Pick graph budgets for the repository
-size rather than the expected distance between tips. See the
+These queries collect and validate the complete ancestry within their limits, even for an ancestry
+test whose two endpoints are the same commit. They don't read trees or blobs. Because the whole
+ancestry is walked, size graph budgets for the repository, not for the expected distance between
+tips. See the
 [history query contracts](https://docs.rs/girt/latest/girt/struct.Objects.html#method.walk) for
 ordering, complexity, shallow-boundary, and error contracts.
 
 ## Diagnose missing history and refresh storage
 
 A missing object can mean incomplete storage, an incorrect ID, or a reader that predates a newly
-published pack. Reopen or refresh the object reader for new packs; it already reads loose files
-live. A loose-only reader cannot find packed objects. For a partial clone, retrieval of missing
-objects belongs to the application.
+published pack. To see new packs, reopen or refresh the object reader; it sees new loose files
+without either. A loose-only reader can't find packed objects. In a partial clone, your application
+fetches missing objects itself.
 
-Shallow boundaries deliberately stop ancestry at declared commits even when parent objects exist.
-After deepening, call `Repository::refresh_shallow` and create a new reader. Increasing history
-limits does not supply missing parents. A corrupt object needs investigation or replacement from a
-trusted source; it must not become a successful partial history result.
+A shallow boundary stops ancestry at the listed commits even when their parent objects exist. After
+deepening, call `Repository::refresh_shallow` and create a new reader. Raising history limits
+doesn't supply missing parents. Investigate a corrupt object or replace it from a trusted source;
+don't treat the history that stops at it as a successful partial result.
 
-Continue with [references guide](/girt/guides/refs/) to give stored commits a durable name. The
+Continue with the [references guide](/girt/guides/refs/) to give stored commits a durable name. The
 [object reader](https://docs.rs/girt/latest/girt/struct.Objects.html) covers reader snapshots and
 budgets; [pack APIs](https://docs.rs/girt/latest/girt/pack/index.html) cover artifact production.
