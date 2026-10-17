@@ -89,6 +89,7 @@ mod records;
 mod stack;
 mod timezone;
 pub use records::{Error, Limits, LogRecord, LogValue, RecordName, RefRecord, Table};
+pub(crate) use stack::table_name;
 pub use stack::{Compaction, Snapshot, StackLimits, compact};
 #[cfg(unix)]
 pub(crate) use stack::{ExpireStackError, expire_logs};

@@ -608,8 +608,9 @@ fn create_orphan_worktree(
                 .shared_permissions
                 .apply_directory(&tables)
                 .map_err(|source| io_error(&tables, Some(&registration), source))?;
+            let name = crate::refs::reftable::table_name(1, 1);
             write_shared_file(
-                &registration.join("reftable/initial.ref"),
+                &tables.join(&name),
                 &table,
                 &registration,
                 options.shared_permissions,
@@ -617,7 +618,7 @@ fn create_orphan_worktree(
             )?;
             write_shared_file(
                 &registration.join("reftable/tables.list"),
-                b"initial.ref\n",
+                format!("{name}\n").as_bytes(),
                 &registration,
                 options.shared_permissions,
                 reference_sync,

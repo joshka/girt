@@ -489,3 +489,155 @@ fn reflog_timezones_interoperate_in_both_directions(
         format!("refs/heads/from-girt@{{1700000123 {offset}}}\n").as_bytes(),
     );
 }
+
+fn table_names(directory: &Path) -> Vec<String> {
+    std::fs::read_to_string(directory.join("tables.list"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `name` has the form Git writes: `0x{min:012x}-0x{max:012x}-{suffix:08x}.ref`.
+fn is_git_table_name(name: &str) -> bool {
+    let hex = |part: &str, len: usize| {
+        part.len() == len && part.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    let Some(stem) = name.strip_suffix(".ref") else {
+        return false;
+    };
+    let parts: Vec<_> = stem.split('-').collect();
+    matches!(
+        parts.as_slice(),
+        [min, max, suffix]
+            if min.strip_prefix("0x").is_some_and(|min| hex(min, 12))
+                && max.strip_prefix("0x").is_some_and(|max| hex(max, 12))
+                && hex(suffix, 8)
+    )
+}
+
+fn empty_commit(root: &Path, format: ObjectFormat) -> ObjectId {
+    let tree = git(root, &["write-tree"]);
+    let tree = String::from_utf8(tree).unwrap();
+    let commit = git(root, &["commit-tree", tree.trim(), "-m", "girt tables"]);
+    ObjectId::from_hex(format, String::from_utf8(commit).unwrap().trim()).unwrap()
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn strict_fsck_accepts_girt_table_names(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init_with_backend(
+        format,
+        root.path().join("new"),
+        girt::InitKind::Worktree,
+        Backend::Reftable,
+    )
+    .unwrap();
+    let worktree = repo.worktree().unwrap().to_owned();
+    let directory = repo.git_dir().join("reftable");
+    let id = empty_commit(&worktree, format);
+    let refs = repo.references().unwrap();
+    for branch in [&b"refs/heads/main"[..], b"refs/heads/other"] {
+        refs.transaction(&[RefEdit::new(
+            name(branch),
+            Some(Target::Direct(id)),
+            Expected::Absent,
+            log(),
+        )])
+        .unwrap();
+    }
+    let linked = repo
+        .create_orphan_worktree(root.path().join("linked"), &name(b"refs/heads/linked"), 4)
+        .unwrap();
+    let linked_names = table_names(&linked.git_dir().join("reftable"));
+    assert_eq!(linked_names.len(), 1);
+    assert!(is_git_table_name(&linked_names[0]), "{linked_names:?}");
+    let names = table_names(&directory);
+    assert_eq!(names.len(), 3);
+    assert!(
+        names.iter().all(|name| is_git_table_name(name)),
+        "{names:?}"
+    );
+    assert!(names[0].starts_with("0x000000000001-0x000000000001-"));
+    git(&worktree, &["fsck", "--strict", "--no-dangling"]);
+
+    girt::refs::reftable::compact(
+        &directory,
+        format,
+        girt::refs::reftable::StackLimits::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    let names = table_names(&directory);
+    assert_eq!(names.len(), 1);
+    assert!(names[0].starts_with("0x000000000001-0x000000000003-"));
+    assert!(is_git_table_name(&names[0]), "{names:?}");
+    git(&worktree, &["fsck", "--strict", "--no-dangling"]);
+}
+
+/// Earlier girt versions named the initial table `initial.ref` and later tables with tempfile's
+/// alphanumeric suffixes. Git reads those stacks, and girt keeps reading and extending them.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn reads_and_extends_tables_with_earlier_girt_names(#[case] format: ObjectFormat) {
+    let root = tempfile::tempdir().unwrap();
+    let repo = Repository::init_with_backend(
+        format,
+        root.path().join("new"),
+        girt::InitKind::Worktree,
+        Backend::Reftable,
+    )
+    .unwrap();
+    let worktree = repo.worktree().unwrap().to_owned();
+    let directory = repo.git_dir().join("reftable");
+    let id = empty_commit(&worktree, format);
+    repo.references()
+        .unwrap()
+        .transaction(&[RefEdit::new(
+            name(b"refs/heads/main"),
+            Some(Target::Direct(id)),
+            Expected::Absent,
+            log(),
+        )])
+        .unwrap();
+    let legacy = ["initial.ref", "0x000000000002-0x000000000002-5TMi7y.ref"];
+    for (current, earlier) in table_names(&directory).iter().zip(legacy) {
+        std::fs::rename(directory.join(current), directory.join(earlier)).unwrap();
+    }
+    std::fs::write(directory.join("tables.list"), legacy.join("\n") + "\n").unwrap();
+
+    let repo = Repository::open(&worktree).unwrap();
+    let refs = repo.references().unwrap();
+    assert_eq!(refs.resolve_with(&name(b"HEAD"), 32).unwrap().id, Some(id));
+    assert_eq!(
+        refs.reflog(&name(b"refs/heads/main")).unwrap().unwrap()[0].new,
+        id
+    );
+    refs.transaction(&[RefEdit::new(
+        name(b"refs/tags/extended"),
+        Some(Target::Direct(id)),
+        Expected::Absent,
+        log(),
+    )])
+    .unwrap();
+    let names = table_names(&directory);
+    assert_eq!(names[..2], legacy);
+    assert!(is_git_table_name(&names[2]), "{names:?}");
+    assert_eq!(
+        git(&worktree, &["rev-parse", "refs/tags/extended"]),
+        format!("{id}\n").as_bytes()
+    );
+
+    girt::refs::reftable::compact(
+        &directory,
+        format,
+        girt::refs::reftable::StackLimits::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(!directory.join(legacy[0]).exists());
+    git(&worktree, &["fsck", "--strict", "--no-dangling"]);
+}

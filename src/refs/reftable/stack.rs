@@ -417,15 +417,12 @@ pub(super) fn expire_logs_with_sync(
         .encode(limits.records)
         .map_err(|error| fail(error.into()))?;
     cancelled(cancel).map_err(fail)?;
-    let prefix = format!(
-        "0x{:012x}-0x{:012x}-",
-        snapshot.table.min_update_index, snapshot.table.max_update_index
-    );
-    let mut temporary = tempfile::Builder::new()
-        .prefix(&prefix)
-        .suffix(".ref")
-        .tempfile_in(&directory)
-        .map_err(|error| fail(io_error(&directory, error)))?;
+    let mut temporary = create_table_file(
+        &directory,
+        snapshot.table.min_update_index,
+        snapshot.table.max_update_index,
+    )
+    .map_err(|error| fail(io_error(&directory, error)))?;
     let permissions = fs::metadata(directory.join("tables.list"))
         .map_err(|error| fail(io_error(&directory, error)))?
         .permissions();
@@ -439,8 +436,8 @@ pub(super) fn expire_logs_with_sync(
         .map_err(|error| fail(io_error(temporary.path(), error)))?;
     #[expect(
         clippy::unwrap_used,
-        reason = "a named temporary file has a basename, and it is ASCII: the numeric prefix, \
-                  tempfile's random portion and the suffix are all ASCII, whatever the ancestors"
+        reason = "a table file has a basename, and table_name produces ASCII, whatever the \
+                  ancestors"
     )]
     let name = temporary
         .path()
@@ -669,22 +666,16 @@ pub(super) fn publish_with(
         reason = "tables.list lies inside the reftable directory"
     )]
     let directory = lock.destination.parent().unwrap();
-    let prefix = format!(
-        "0x{:012x}-0x{:012x}-",
-        table.min_update_index, table.max_update_index
-    );
-    let mut temporary = tempfile::Builder::new()
-        .prefix(&prefix)
-        .suffix(".ref")
-        .tempfile_in(directory)
-        .map_err(|error| io_error(directory, error))?;
+    let mut temporary =
+        create_table_file(directory, table.min_update_index, table.max_update_index)
+            .map_err(|error| io_error(directory, error))?;
     temporary
         .write_all(bytes)
         .map_err(|error| io_error(temporary.path(), error))?;
     #[expect(
         clippy::unwrap_used,
-        reason = "a named temporary file has a basename, and it is ASCII: the numeric prefix, \
-                  tempfile's random portion and the suffix are all ASCII, whatever the ancestors"
+        reason = "a table file has a basename, and table_name produces ASCII, whatever the \
+                  ancestors"
     )]
     let name = temporary
         .path()
@@ -708,6 +699,62 @@ pub(super) fn publish_with(
         .map_err(|error| io_error(directory, error.error))?;
     before_list().map_err(|error| io_error(&lock.destination, error))?;
     lock.publish_retaining_lock(&list)
+}
+
+/// Returns a table filename in the form Git's `fsck --strict` accepts.
+///
+/// Git names each table after its update-index range and a random suffix, as
+/// `0x{min:012x}-0x{max:012x}-{suffix:08x}.ref`, and its strict fsck rejects other names. Readers
+/// still accept any safe single-component name, so stacks written by older girt versions, which
+/// used `initial.ref` and alphanumeric suffixes, stay readable.
+pub(crate) fn table_name(min_update_index: u64, max_update_index: u64) -> String {
+    use std::hash::{BuildHasher, Hasher};
+
+    // Each `RandomState` carries fresh keys, so hashing nothing yields an unpredictable value
+    // without another dependency. Collisions are handled by `create_table_file`.
+    let suffix = std::hash::RandomState::new().build_hasher().finish() as u32;
+    format!("0x{min_update_index:012x}-0x{max_update_index:012x}-{suffix:08x}.ref")
+}
+
+/// Creates a new, uniquely named table file that is deleted on drop unless kept.
+fn create_table_file(
+    directory: &Path,
+    min_update_index: u64,
+    max_update_index: u64,
+) -> std::io::Result<tempfile::NamedTempFile> {
+    create_unique_file(directory, 16, || {
+        table_name(min_update_index, max_update_index)
+    })
+}
+
+/// Creates the first of up to `attempts` generated names that does not exist yet.
+pub(super) fn create_unique_file(
+    directory: &Path,
+    attempts: usize,
+    mut next_name: impl FnMut() -> String,
+) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut attempt = 1;
+    loop {
+        let path = directory.join(next_name());
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                let path = tempfile::TempPath::try_from_path(&path).inspect_err(|_| {
+                    let _ = fs::remove_file(&path);
+                })?;
+                return Ok(tempfile::NamedTempFile::from_parts(file, path));
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < attempts =>
+            {
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn list(bytes: &[u8], limits: StackLimits, path: &Path) -> Result<Vec<String>, ReferenceError> {

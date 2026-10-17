@@ -8,9 +8,10 @@ use std::sync::atomic::AtomicBool;
 use rstest::rstest;
 
 use super::decode_tests::{fixture, git};
+use super::stack::create_unique_file;
 #[cfg(unix)]
 use super::stack::{ExpireStackError, expire_logs, expire_logs_with_sync};
-use super::{Snapshot, StackLimits, compact};
+use super::{Snapshot, StackLimits, compact, table_name};
 use crate::ObjectFormat;
 use crate::refs::ReferenceError;
 
@@ -340,4 +341,50 @@ fn compaction_rejects_damaged_table_and_preserves_stack(
     }
     let entries = fs::read_dir(&directory).unwrap().count();
     assert_eq!(entries, names.len() + 1, "no new or lock files remain");
+}
+
+#[test]
+fn table_names_have_gits_form() {
+    let name = table_name(1, 0x1_0000_0002);
+    let suffix = name
+        .strip_prefix("0x000000000001-0x000100000002-")
+        .and_then(|rest| rest.strip_suffix(".ref"))
+        .unwrap();
+    assert_eq!(suffix.len(), 8);
+    assert!(
+        suffix
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    assert_ne!(table_name(1, 1), table_name(1, 1));
+}
+
+#[test]
+fn unique_file_skips_existing_names_and_removes_unkept_files() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("taken.ref"), b"kept").unwrap();
+    let mut names = ["taken.ref", "fresh.ref"].into_iter();
+    let file =
+        create_unique_file(directory.path(), 2, || names.next().unwrap().to_owned()).unwrap();
+    assert_eq!(file.path(), directory.path().join("fresh.ref"));
+    assert_eq!(
+        fs::read(directory.path().join("taken.ref")).unwrap(),
+        b"kept"
+    );
+    drop(file);
+    assert!(!directory.path().join("fresh.ref").exists());
+}
+
+#[test]
+fn unique_file_stops_after_its_attempts() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("taken.ref"), b"kept").unwrap();
+    let mut calls = 0;
+    let error = create_unique_file(directory.path(), 3, || {
+        calls += 1;
+        "taken.ref".to_owned()
+    })
+    .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(calls, 3);
 }
