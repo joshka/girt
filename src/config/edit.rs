@@ -62,10 +62,12 @@ pub struct ConfigEdit {
 #[non_exhaustive]
 pub enum EditError {
     /// Input or edited output exceeds the caller byte budget.
+    /// Choose a justified source/output budget before opening a fresh draft.
     #[error("configuration byte limit exceeded")]
     Limit,
     /// The operation failed and its owned lock could not be removed. Both causes are retained;
     /// the cleanup cause identifies the lock requiring manual recovery.
+    /// Preserve both causes and inspect the residual owned lock before explicit recovery.
     #[error("operation failed and lock cleanup also failed: {cleanup}")]
     Cleanup {
         /// Primary failure.
@@ -76,6 +78,8 @@ pub enum EditError {
     },
     /// Read, lock write, metadata update or rename failed. Original config bytes are unchanged
     /// by a failed publication; a concurrent writer's changes are never rolled back.
+    /// Inspect whether publication was attempted and the nested filesystem cause; reacquire and
+    /// reread before retrying.
     #[error("cannot {operation} {path}")]
     Io {
         /// Operation that failed.
@@ -87,15 +91,21 @@ pub enum EditError {
         source: io::Error,
     },
     /// An existing lock belongs to another writer or requires explicit stale-lock recovery.
+    /// Wait under caller policy or inspect stale-lock evidence; never remove an active writer lock.
     #[error("config lock already exists: {0}")]
     Locked(PathBuf),
     /// Original config bytes or presence changed despite the held lock.
+    /// Reacquire and reread sources, then reconsider the intended edit against the new bytes.
     #[error("config changed while locked: {0}")]
     Changed(PathBuf),
     /// The destination is a symlink, directory or other non-regular file.
+    /// Select a supported direct regular-file source; following symlinks would change the mutation
+    /// boundary.
     #[error("config is not a regular file: {0}")]
     NotRegular(PathBuf),
     /// Format or limit validation failed before publication.
+    /// Correct the draft or source according to the retained parser error before a fresh
+    /// publication attempt.
     #[error("invalid config at {path}")]
     Format {
         /// Configuration destination path.
@@ -115,6 +125,27 @@ impl Repository {
     /// # Errors
     ///
     /// Returns the lock, read, syntax and cleanup errors of [`ConfigEdit::open`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let mut edit = repo.edit_config(4096)?;
+    /// edit.document_mut()
+    ///     .append("core", None, "editor", b"chosen")?;
+    /// edit.commit()?;
+    /// assert!(repo.config().string("core", None, "editor").is_none());
+    /// let reopened = Repository::open(repo.git_dir())?;
+    /// assert_eq!(
+    ///     reopened.config().string("core", None, "editor"),
+    ///     Some(&b"chosen"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn edit_config(&self, max_bytes: usize) -> Result<ConfigEdit, EditError> {
         ConfigEdit::open(self.common_dir().join("config"), max_bytes)
     }
@@ -247,6 +278,27 @@ impl ConfigEdit {
     /// # Errors
     ///
     /// Returns `Changed` for a stale snapshot; the draft and held lock remain available.
+    ///
+    /// ```
+    /// use girt::config::{ConfigEdit, EditError};
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("config");
+    /// std::fs::write(&path, b"[core]\neditor = current\n")?;
+    /// let edit = ConfigEdit::open(&path, 4096)?;
+    /// assert!(matches!(
+    ///     edit.require_source(Some(b"old observation")),
+    ///     Err(EditError::Changed(_))
+    /// ));
+    /// edit.abort()?; // Start a fresh decision instead of publishing from stale expectations.
+    /// let observed = std::fs::read(&path)?;
+    /// let mut fresh = ConfigEdit::open(&path, 4096)?;
+    /// fresh.require_source(Some(&observed))?;
+    /// fresh.document_mut().set_value(0, b"replacement")?;
+    /// fresh.commit()?;
+    /// assert!(std::fs::read(&path)?.ends_with(b"replacement\n"));
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn require_source(&self, expected: Option<&[u8]>) -> Result<(), EditError> {
         if self.original.as_deref() != expected {
             return Err(EditError::Changed(self.destination.clone()));

@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use super::Config;
 
 /// Precedence class, ordered from lowest to highest.
+///
+/// Use scope to model precedence among explicitly selected sources, not to grant permissions.
+/// Within a scope caller order still matters; user configuration requires XDG before home sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum ConfigScope {
@@ -79,6 +82,24 @@ impl ConfigFile {
 }
 
 /// A physical variable location. Paths and values are never emitted through tracing.
+///
+/// Use the path and line in diagnostics or a source editor. Runtime assignments have no file path;
+/// source locations do not authorize writing the effective snapshot back to disk.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{ConfigInputs, ConfigScope};
+/// let command = Config::parse(b"[core]\neditor = command-editor\n")?;
+/// let resolved = Config::resolve(&ConfigInputs::default().with_command(Some(command)))?;
+/// let origin = resolved.entries()[0]
+///     .origin
+///     .as_ref()
+///     .ok_or("origin absent")?;
+/// assert_eq!(origin.scope, ConfigScope::Command);
+/// assert!(origin.location.path.is_none()); // Supplied bytes have no physical file.
+/// assert_eq!(origin.location.line, 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceLocation {
     /// `None` denotes supplied runtime bytes rather than a file.
@@ -88,6 +109,38 @@ pub struct SourceLocation {
 }
 
 /// Provenance of one effective occurrence, including its outermost-first include ancestry.
+///
+/// Use provenance when explaining why a setting applies, or deciding which direct file a user may
+/// edit. Scope is precedence, not trust; a Global source is not automatically safe to execute as a
+/// program.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{ConfigFile, ConfigInputs, ConfigScope};
+/// let directory = tempfile::tempdir()?;
+/// let root = directory.path().join("config");
+/// let included = directory.path().join("editor");
+/// std::fs::write(&root, b"[include]\npath = editor\n")?;
+/// std::fs::write(&included, b"[core]\neditor = chosen\n")?;
+/// let inputs = ConfigInputs::default()
+///     .with_files(vec![ConfigFile::new(root.clone(), ConfigScope::Global)]);
+/// let config = Config::resolve(&inputs)?;
+/// let entry = config
+///     .entries()
+///     .iter()
+///     .find(|entry| entry.name == b"editor")
+///     .ok_or("absent")?;
+/// let origin = entry.origin.as_ref().ok_or("origin absent")?;
+/// assert_eq!(origin.scope, ConfigScope::Global); // Includes inherit their root's scope.
+/// assert_eq!(origin.location.path.as_deref(), Some(included.as_path()));
+/// assert_eq!(
+///     origin.included_from[0].path.as_deref(),
+///     Some(root.as_path())
+/// );
+/// assert_eq!(origin.included_from[0].line, 2); // The physical include directive.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Origin {
@@ -100,6 +153,31 @@ pub struct Origin {
 }
 
 /// Explicit context for path expansion and conditional includes; no ambient environment lookup.
+///
+/// Supply matching and expansion facts explicitly when configuration depends on branch,
+/// Git-directory aliases, home directories, or an installation prefix. These facts are matching
+/// inputs, not repository discovery or a trust check.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{ConfigFile, ConfigInputs, ConfigScope, IncludeContext};
+/// let directory = tempfile::tempdir()?;
+/// let root = directory.path().join("root");
+/// std::fs::write(&root, b"[includeIf \"onbranch:topic/**\"]\npath = topic\n")?;
+/// std::fs::write(
+///     directory.path().join("topic"),
+///     b"[core]\neditor = topic-editor\n",
+/// )?;
+/// let inputs = ConfigInputs::default()
+///     .with_files(vec![ConfigFile::new(root, ConfigScope::Global)])
+///     .with_context(IncludeContext::default().with_branch(Some(b"topic/work".to_vec())));
+/// let effective = Config::resolve(&inputs)?;
+/// assert_eq!(
+///     effective.string("core", None, "editor"),
+///     Some(&b"topic-editor"[..])
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct IncludeContext {
@@ -315,6 +393,24 @@ impl ConfigInputs {
     ///
     /// Returns invalid runtime-pair or NOSYSTEM boolean errors. On non-Unix platforms, runtime
     /// pairs must be Unicode; file-selection paths remain OS-native.
+    ///
+    /// ```
+    /// use girt::config::ConfigInputs;
+    /// let directory = tempfile::tempdir()?;
+    /// let selected = directory.path().join("global");
+    /// std::fs::write(&selected, b"[core]\neditor = explicit\n")?;
+    /// let inputs = ConfigInputs::from_environment(
+    ///     None,
+    ///     |name| (name == "GIT_CONFIG_GLOBAL").then(|| selected.clone().into_os_string()),
+    ///     4,
+    /// )?;
+    /// let config = girt::Config::resolve(&inputs)?;
+    /// assert_eq!(
+    ///     config.string("core", None, "editor"),
+    ///     Some(&b"explicit"[..])
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_environment(
         system: Option<PathBuf>,
         mut get: impl FnMut(&str) -> Option<std::ffi::OsString>,

@@ -4,6 +4,23 @@ use super::parse::{SectionName, SectionOccurrence};
 use super::{Config, ConfigError, Entry, ResolveLimits};
 
 /// One already decoded variable occurrence.
+///
+/// Choose None for an implicit assignment and Some(empty) for an explicit empty value. This input
+/// can retain bytes that a config-file parser would refuse; suitability for a particular consumer
+/// remains separate.
+///
+/// ```
+/// use girt::config::DecodedEntry;
+/// let implicit = DecodedEntry {
+///     name: b"quiet".to_vec(),
+///     value: None,
+/// };
+/// let empty = DecodedEntry {
+///     name: b"quiet".to_vec(),
+///     value: Some(vec![]),
+/// };
+/// assert_ne!(implicit, empty);
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DecodedEntry {
     /// ASCII variable name: starts with a letter, followed by letters, digits or `-`.
@@ -14,6 +31,33 @@ pub struct DecodedEntry {
 }
 
 /// One already decoded section, retaining its position and variable order.
+///
+/// Use this input when another component already decoded configuration and source-file escape
+/// parsing would change its meaning. Section order and empty headers remain explicit; construction
+/// does not read includes.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{DecodedEntry, DecodedSection, ResolveLimits};
+/// let section = DecodedSection {
+///     name: b"core".to_vec(),
+///     subsection: None,
+///     entries: vec![
+///         DecodedEntry {
+///             name: b"quiet".to_vec(),
+///             value: None,
+///         },
+///         DecodedEntry {
+///             name: b"empty".to_vec(),
+///             value: Some(vec![]),
+///         },
+///     ],
+/// };
+/// let config = Config::from_decoded_sections(vec![section], ResolveLimits::default())?;
+/// assert_eq!(config.value("core", None, "quiet"), Some(None));
+/// assert_eq!(config.value("core", None, "empty"), Some(Some(&b""[..])));
+/// # Ok::<(), girt::ConfigError>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DecodedSection {
     /// Nonempty ASCII section name containing only letters, digits or `-`.

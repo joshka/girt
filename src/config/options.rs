@@ -4,6 +4,23 @@ use super::IncludePlacement;
 ///
 /// Defaults preserve [`super::Config::resolve`]. These choices never discover paths or read the
 /// process environment; interpolation uses the caller's [`super::IncludeContext`].
+///
+/// Choose nondefault evaluation only to meet an explicit consumer contract. Placement controls
+/// effective output order; it does not change source validation order or establish the
+/// trustworthiness of included files.
+///
+/// ```
+/// use girt::Config;
+/// use girt::config::{ConfigInputs, ResolveOptions, UnresolvedIncludePath};
+/// let inputs = ConfigInputs::default()
+///     .with_command(Some(Config::parse(b"[include]\npath = ~/unmapped\n")?));
+/// assert!(Config::resolve(&inputs).is_err());
+/// let options =
+///     ResolveOptions::default().with_unresolved_paths(UnresolvedIncludePath::Skip);
+/// let resolved = Config::resolve_with_options(&inputs, options)?;
+/// assert!(resolved.value("include", None, "path").is_some()); // Directive retained, expansion skipped.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct ResolveOptions {
@@ -48,6 +65,13 @@ impl ResolveOptions {
 }
 
 /// Remote URL visibility while evaluating `hasconfig:remote.*.url:` conditions.
+///
+/// Keep [`Self::AllInputs`] for ordinary Git-style resolution. [`Self::RootSnapshot`] serves
+/// consumers requiring root-local frozen URL visibility; it can select different include subtrees,
+/// so choose it as an explicit compatibility policy. Choose it when each source must be evaluated
+/// independently of remote URLs supplied by other scopes, rather than allowing a later command
+/// override to select an earlier file's conditional include. It also permits selected conditional
+/// children to add URLs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IncludeConditionVisibility {
@@ -64,6 +88,13 @@ pub enum IncludeConditionVisibility {
 }
 
 /// Case matching for include directive section names; `path` keys always ignore ASCII case.
+///
+/// Keep [`Self::Insensitive`] matching for ordinary resolution. [`Self::Canonical`] is an explicit
+/// consumer policy that can leave differently cased include sections inert; it does not change
+/// ordinary variable-name matching. Choose it only when adapting a consumer whose decoded directive
+/// vocabulary distinguishes exact `include`/`includeIf` spellings; differently cased sections
+/// then remain ordinary data. Use [`Self::Insensitive`] for files shared with ordinary Git
+/// resolution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IncludeDirectiveCase {
@@ -75,6 +106,10 @@ pub enum IncludeDirectiveCase {
 }
 
 /// Treatment of include paths whose requested interpolation context was not supplied.
+///
+/// Use [`Self::Error`] when configuration must be complete. [`Self::Skip`] permits deliberate
+/// partial interpretation without home/prefix context; retained directives still do not become
+/// resolved sources.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UnresolvedIncludePath {

@@ -40,6 +40,19 @@ pub(super) struct SectionName {
 /// can be noncontiguous because an include inserts entries before the outer section resumes.
 /// These borrowed views identify snapshot membership, not writable source sections; use
 /// [`super::Document::sections`] to edit a direct file.
+///
+/// Use this view to inspect occurrence membership in an effective snapshot. It is not a writable
+/// source section: included entries can make membership noncontiguous, and ordinals become stale
+/// when the snapshot changes.
+///
+/// ```
+/// use girt::Config;
+/// let config = Config::parse(b"[core]\neditor = first\n[core]\neditor = second\n")?;
+/// let sections: Vec<_> = config.section_occurrences().collect();
+/// assert_eq!(sections.len(), 2);
+/// assert_eq!(sections[1].entry_indices(), [1]);
+/// # Ok::<(), girt::ConfigError>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigSection<'a> {
     ordinal: usize,
@@ -80,6 +93,20 @@ pub(super) struct SectionOccurrence {
 }
 
 /// One variable occurrence, retaining spelling, bytes and source location.
+///
+/// Inspect occurrences to retain order, spelling, and provenance rather than only the winning
+/// scalar. Interpret value bytes according to the consuming variable; a parsed entry is not a
+/// validated command, URL, or filesystem policy.
+///
+/// ```
+/// use girt::Config;
+/// let config = Config::parse(b"[core]\neditor = first\neditor = last\n")?;
+/// let occurrences = config.entries();
+/// assert_eq!(occurrences.len(), 2);
+/// assert_eq!(occurrences[0].value.as_deref(), Some(&b"first"[..]));
+/// assert!(occurrences[0].origin.is_none()); // Parsing one byte source does not invent a file path.
+/// # Ok::<(), girt::ConfigError>(())
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Entry {

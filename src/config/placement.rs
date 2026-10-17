@@ -7,6 +7,13 @@ use super::parse::SectionOccurrence;
 ///
 /// Both modes validate sources in forward, depth-first directive order and retain the same source
 /// provenance and resource limits. This selects output placement, not parsing or trust policy.
+///
+/// Use [`Self::InPlace`] for ordinary precedence. Alternate placement serves consumers with a
+/// different include-output contract: parent sections must precede their children, and later
+/// include directives must contribute before earlier ones. This can be needed when adapting a
+/// consumer with that precedence contract. See [`super::Config::resolve_with_include_placement`]
+/// for two conflicting include files whose winning value changes; ordinary Git tools should use
+/// [`Self::InPlace`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum IncludePlacement {
