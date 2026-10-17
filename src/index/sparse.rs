@@ -85,9 +85,11 @@ impl Default for SparseLimits {
 /// Sparse expansion failure; the original index remains unchanged.
 ///
 /// A failed expansion leaves the draft intact, including its collapsed directories. Resolve a
-/// missing/wrong-kind tree or its storage source before retrying; increasing a budget cannot repair
-/// it. Both index-output and tree-traversal budgets report
-/// `SparseError::Index(Error::Limit(label))`; retain the label to distinguish the exhausted bound.
+/// missing or wrong-kind tree before retrying; increasing a budget cannot repair missing data.
+/// Traversal and output accounting use `SparseError::Index(Error::Limit(label))`. Tree decoding
+/// is also capped by the remaining tree-byte budget and per-object read limits; these failures
+/// arrive through `SparseError::Read` with an `ObjectReadError::Limit` source. Inspect the label
+/// and source chain before selecting a larger budget.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
@@ -116,7 +118,10 @@ impl Default for SparseLimits {
 ///         &AtomicBool::new(false),
 ///     )
 ///     .unwrap_err();
-/// assert!(matches!(error, SparseError::Index(Error::Limit(_))));
+/// assert!(matches!(
+///     error,
+///     SparseError::Index(Error::Limit("sparse tree reads"))
+/// ));
 /// assert_eq!(index, original);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

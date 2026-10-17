@@ -58,9 +58,6 @@ impl IndexCommitOptions {
 /// Defaults retain standalone, regular-file-only admission. These options do not select an index
 /// from environment or configuration, authorize directory replacement, or bypass snapshot checks.
 ///
-/// Opt in only when the selected storage layout requires it. These options describe admission,
-/// not permission to ignore changed snapshots or replace an arbitrary directory.
-///
 /// ```
 /// # #[cfg(unix)]
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1018,26 +1015,18 @@ impl IndexEdit {
     ///     InitKind::Worktree,
     /// )?;
     ///
-    /// use girt::index::{IndexCommitOptions, Version};
-    /// let mut edit = repo.edit_index(Default::default())?;
-    /// edit.set_version(Version::V4)?;
+    /// use girt::index::IndexCommitOptions;
+    /// let edit = repo.edit_index(Default::default())?;
     /// edit.commit_with_options(
     ///     IndexCommitOptions::default()
     ///         .with_shared_permissions(girt::SharedPermissions::Group)
     ///         .with_sync(true),
     /// )?;
-    /// assert_eq!(
-    ///     repo.read_index(Default::default())?.unwrap().version(),
-    ///     Version::V4
-    /// );
-    /// #[cfg(unix)]
-    /// {
-    ///     use std::os::unix::fs::PermissionsExt;
-    ///     let mode = std::fs::metadata(repo.git_dir().join("index"))?
-    ///         .permissions()
-    ///         .mode();
-    ///     assert_eq!(mode & 0o660, 0o660);
-    /// }
+    /// use std::os::unix::fs::PermissionsExt;
+    /// let mode = std::fs::metadata(repo.git_dir().join("index"))?
+    ///     .permissions()
+    ///     .mode();
+    /// assert_eq!(mode & 0o660, 0o660);
     /// // The lock file was flushed; the parent directory was not synchronized.
     /// # Ok(())
     /// # }

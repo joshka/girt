@@ -316,8 +316,8 @@ impl Index {
     /// consumed even on failure.
     ///
     /// Construction sorts drafts, which is useful when accumulating paths from multiple sources.
-    /// A null object identity is retained as data; publishing its object is a separate
-    /// operation.
+    /// Null object identities are retained as index data. Non-null identities are not checked
+    /// against object storage; write or verify their objects separately.
     ///
     /// # Examples
     ///

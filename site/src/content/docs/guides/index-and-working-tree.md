@@ -159,9 +159,10 @@ combining them; one successful cache removal does not authorize every subsequent
 `replace_entries_reusing_stat` preserves old stat words only for entries with the same path, stage,
 mode, identity and flags. It helps applications that reconstruct a whole entry list avoid throwing
 away useful cache data. Changed entries retain the supplied stat words. The operation never checks
-the working file, and cached equality is not proof that its content is unchanged. When a timestamp
-could make changed content appear clean to a stat-cache consumer, commit clears the cached size to
-force content verification.
+the working file, and cached equality is not proof that its content is unchanged. Commit clears
+cached size for entries modified at or after the earlier of the previous index modification time and
+the current write time. Stat-cache consumers must then verify content, even when rewriting the index
+would otherwise hide a racily clean entry.
 
 Framing is independent of content selection: v4 compresses repeated path prefixes, while v2 is
 useful for older consumers. Extended flags require v3 or v4; requesting v2 does not remove them.
