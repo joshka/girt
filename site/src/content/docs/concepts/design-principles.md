@@ -28,16 +28,23 @@ does something close. A refusal is a known limitation. A silent approximation co
 
 ## Make effects explicit
 
-Each step that changes a repository is a separate call. Writing an object doesn't make it reachable.
-Fetching doesn't move a branch. Updating a reference doesn't touch the working tree. The caller
-decides when each effect happens and which preconditions it checks first, using conditional
-reference updates.
+In the core API, each step that changes a repository is a separate call. Writing an object doesn't
+make it reachable. Receiving a pack installs objects without moving any reference. Updating a
+reference doesn't touch the working tree. The caller decides when each effect happens and which
+preconditions it checks first, using conditional reference updates.
+
+The [`workflow`](https://docs.rs/girt/latest/girt/workflow/index.html) module is a deliberate
+convenience layer for configured remotes. Its `fetch` installs objects and then updates
+remote-tracking references and tags in one call, as `git fetch` does. Its documentation says which
+references it may change and what a partial failure leaves behind.
 
 ## Bound resources
 
-Operations that read untrusted or unbounded data take explicit limits: object size, delta depth,
-history length, pack count, reference count. The defaults suit ordinary repositories. A hostile or
-enormous repository produces an error rather than exhausting memory or time.
+Operations that read untrusted or unbounded data take explicit budgets: object size, delta depth,
+history length, pack count, reference count. Input over the selected budget is refused with an
+error. Budgets apply to one operation's inputs. They don't cap total process memory, concurrent
+operations or elapsed time, which remain the application's responsibility. The defaults suit
+ordinary repositories. Raising them is a decision about trust and cost.
 
 ## Never lose the last copy
 

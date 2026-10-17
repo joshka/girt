@@ -86,6 +86,9 @@ const blameTitle = {
                     {row.ratio_vs_stock != null && <> · {formatRatio(row.ratio_vs_stock)}</>}
                   </span>
                   {git && <span class="perf-detail perf-git">{git}</span>}
+                  {cell.workload.length > 0 && (
+                    <span class="perf-detail perf-git">{cell.workload.join('; ')}</span>
+                  )}
                   {(cell.blame.length > 0 || issues.length > 0) && (
                     <span class="perf-tags">
                       {cell.blame.map((blame) => (

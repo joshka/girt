@@ -146,6 +146,8 @@ export interface Cell {
   stockBand: number | null;
   /** Reasons a slow cell is slow: girt (≥20% over stock jj) and/or jj (stock jj is slow too). */
   blame: ('girt' | 'jj' | 'boundary')[];
+  /** Workload details specific to this repository size; shared details are on the operation. */
+  workload: string[];
 }
 
 function outcomeOf(row: Row): Outcome {
@@ -167,19 +169,20 @@ function cellOf(row: Row, group: FrequencyGroup): Cell {
     // Neither: stock jj is just inside a bound and girt is less than 20% slower.
     if (blame.length === 0) blame.push('boundary');
   }
-  return { row, outcome, girtBand, stockBand, blame };
+  return { row, outcome, girtBand, stockBand, blame, workload: workloadOf(row.notes) };
 }
 
 export interface Operation {
   key: string;
   op: string;
   variant: string;
+  /** Workload details shared by every measured size. */
   workload: string;
   cells: Partial<Record<Size, Cell>>;
 }
 
-/** Workload description without the per-tool sample ranges or failure details. */
-function workloadOf(notes: string): string {
+/** Workload description parts, without the per-tool sample ranges or failure details. */
+function workloadOf(notes: string): string[] {
   return notes
     .split(';')
     .map((part) => part.trim())
@@ -189,8 +192,7 @@ function workloadOf(notes: string): string {
         !/^(girt|stock|git) n=/.test(part) &&
         !/^girt unsupported:/.test(part) &&
         !/^(failed attempts|no successful timing|timeout:)/.test(part),
-    )
-    .join('; ');
+    );
 }
 
 export function operationsFor(group: FrequencyGroup): Operation[] {
@@ -204,9 +206,17 @@ export function operationsFor(group: FrequencyGroup): Operation[] {
       byKey.set(key, operation);
     }
     operation.cells[row.size] = cellOf(row, group);
-    // Prefer the medium row's description; workloads match across sizes.
-    if (!operation.workload || row.size === 'medium') {
-      operation.workload = workloadOf(row.notes);
+  }
+  // Workloads can differ by size (a different commit or file count). Show the parts every size
+  // shares once on the row, and leave each cell only its own details.
+  for (const operation of byKey.values()) {
+    const cells = Object.values(operation.cells);
+    const shared = cells[0].workload.filter((part) =>
+      cells.every((cell) => cell.workload.includes(part)),
+    );
+    operation.workload = shared.join('; ');
+    for (const cell of cells) {
+      cell.workload = cell.workload.filter((part) => !shared.includes(part));
     }
   }
   return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
