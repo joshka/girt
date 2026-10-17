@@ -586,6 +586,11 @@ fn sparse_index_is_preserved_then_expanded_without_materializing(
     let before = fs::read(repo.git_dir().join("index")).unwrap();
     let edit = repo.edit_index(Limits::default()).unwrap();
     assert_eq!(edit.index().entries()[1].mode, Mode::SparseDirectory);
+    let expected_tree = git(root, &["rev-parse", "HEAD^{tree}"]);
+    assert_eq!(
+        format!("{}\n", edit.index().tree_id().unwrap()).as_bytes(),
+        expected_tree
+    );
     edit.commit().unwrap();
     assert_eq!(fs::read(repo.git_dir().join("index")).unwrap(), before);
     let objects = repo.objects(girt::PackLimits::default()).unwrap();
@@ -1505,4 +1510,84 @@ fn truncated_tree_extension_is_rejected_where_git_ignores_it(#[case] format: gir
             ..
         })
     ));
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn tree_identity_matches_git_without_reading_objects(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    let root = repo.worktree().unwrap();
+    let blob = repo.loose_objects().write_blob(b"payload").unwrap();
+    let records = format!(
+        "100644 {blob}\ta.c\n100755 {blob}\ta/executable\n120000 {blob}\ta/link\n160000 {blob}\ta/submodule\n100644 {blob}\ta0\n100644 {blob}\tz/deep/file\n"
+    );
+    input(root, &["update-index", "--index-info"], records.as_bytes());
+    fs::write(root.join("future"), b"unstaged").unwrap();
+    git(root, &["add", "-N", "future"]);
+    let expected = git(root, &["write-tree"]);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    // Ignore cached TREE data and stat/assume-valid/skip-worktree flags.
+    git(root, &["update-index", "--assume-unchanged", "a.c"]);
+    fs::remove_dir_all(repo.git_dir().join("objects")).unwrap();
+    let id = index.tree_id().unwrap();
+    assert_eq!(format!("{id}\n").as_bytes(), expected);
+    assert_eq!(
+        repo.read_index(Limits::default())
+            .unwrap()
+            .unwrap()
+            .tree_id(),
+        Some(id)
+    );
+}
+
+#[rstest]
+#[case::sha1(girt::ObjectFormat::Sha1)]
+#[case::sha256(girt::ObjectFormat::Sha256)]
+fn empty_index_tree_identity_matches_git(#[case] format: girt::ObjectFormat) {
+    let (_root, repo) = repository(format);
+    git(repo.worktree().unwrap(), &["read-tree", "--empty"]);
+    let expected = git(repo.worktree().unwrap(), &["write-tree"]);
+    let index = repo.read_index(Limits::default()).unwrap().unwrap();
+    assert_eq!(
+        format!("{}\n", index.tree_id().unwrap()).as_bytes(),
+        expected
+    );
+}
+
+#[test]
+fn tree_identity_handles_deep_byte_paths_without_recursion() {
+    let format = girt::ObjectFormat::Sha1;
+    let blob = ObjectId::for_blob(format, b"payload");
+    let mut path = b"d/".repeat(4096);
+    path.extend_from_slice(b"\xff");
+    let index = Index::new(
+        format,
+        vec![Entry::new(path, Mode::Regular, blob)],
+        Limits::default(),
+    )
+    .unwrap();
+    let mut expected = Tree::new(
+        format,
+        vec![girt::TreeEntry {
+            name: vec![0xff],
+            mode: girt::EntryMode::Blob,
+            id: blob,
+        }],
+    )
+    .unwrap()
+    .id();
+    for _ in 0..4096 {
+        expected = Tree::new(
+            format,
+            vec![girt::TreeEntry {
+                name: b"d".to_vec(),
+                mode: girt::EntryMode::Tree,
+                id: expected,
+            }],
+        )
+        .unwrap()
+        .id();
+    }
+    assert_eq!(index.tree_id(), Some(expected));
 }

@@ -34,6 +34,29 @@ fn benchmark(c: &mut Criterion) {
         group.finish();
     }
 }
+fn tree_identity(c: &mut Criterion) {
+    let mut group = c.benchmark_group("index_tree_id");
+    let format = girt::ObjectFormat::Sha1;
+    let blob = ObjectId::for_blob(format, b"content");
+    for count in [100, 10_000, 100_000] {
+        let entries = (0..count)
+            .map(|n| {
+                Entry::new(
+                    format!("dir-{:04}/nested/file-{n:08}", n / 100).into_bytes(),
+                    Mode::Regular,
+                    blob,
+                )
+            })
+            .collect();
+        let index = Index::new(format, entries, Limits::default()).unwrap();
+        group.throughput(Throughput::Elements(count));
+        group.bench_with_input(BenchmarkId::from_parameter(count), &index, |b, index| {
+            b.iter(|| black_box(index).tree_id())
+        });
+    }
+    group.finish();
+}
+
 fn stat_reuse(c: &mut Criterion) {
     let mut group = c.benchmark_group("index_stat_reuse");
     for count in [100, 10_000, 100_000] {
@@ -69,5 +92,5 @@ fn stat_reuse(c: &mut Criterion) {
     }
     group.finish();
 }
-criterion_group!(benches, benchmark, stat_reuse);
+criterion_group!(benches, benchmark, tree_identity, stat_reuse);
 criterion_main!(benches);
