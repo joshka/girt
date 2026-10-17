@@ -63,6 +63,28 @@ impl Repository {
         limits: Limits,
         cancel: &AtomicBool,
     ) -> Result<Report, Failure> {
+        self.checkout_tree_with_progress(baseline, target, limits, cancel, |_, _| {})
+    }
+
+    /// Materializes a tree with synchronous completed-operation counts `(done, total)`.
+    ///
+    /// Reports zero after preparation, then each applied file or directory operation. The total
+    /// includes directories, not just files. The final notification follows index publication;
+    /// reaching the operation total alone does not establish publication. Observers must return
+    /// promptly and must not access the repository. A panic may leave the partial mutations
+    /// described by [`crate::checkout`]'s recovery contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::checkout_tree`]'s failures and partial mutation reports.
+    pub fn checkout_tree_with_progress(
+        &self,
+        baseline: Option<ObjectId>,
+        target: Option<ObjectId>,
+        limits: Limits,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(u64, u64),
+    ) -> Result<Report, Failure> {
         let _lock_operation = crate::locks::operation();
         for id in baseline.into_iter().chain(target) {
             id.require_format(self.object_format())
@@ -73,10 +95,18 @@ impl Repository {
                 })?;
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        return super::worktree::run(self, baseline, target, limits, cancel, &mut |_, _| Ok(()));
+        return super::worktree::run_observed(
+            self,
+            baseline,
+            target,
+            limits,
+            cancel,
+            &mut |_, _| Ok(()),
+            &mut progress,
+        );
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (baseline, target, limits);
+            let _ = (baseline, target, limits, progress);
             let cause = if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 super::Error::Cancelled
             } else {

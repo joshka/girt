@@ -89,10 +89,29 @@ impl CloneDownload {
         cancel: &AtomicBool,
         progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<CloneReady, CloneTransferError> {
+        self.validate_with_progress(cancel, progress, |_| {})
+    }
+
+    /// Validates with cumulative object and delta counts before destination publication.
+    ///
+    /// Uses [`DownloadedFetch::validate_with_progress`]'s notification and replay contracts.
+    /// Pass a no-op message callback when network notices have already been displayed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::validate`]'s errors, leaving the destination absent.
+    pub fn validate_with_progress(
+        self,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&[u8]) -> ControlFlow<()>,
+        observe: impl FnMut(crate::fetch::ValidationProgress),
+    ) -> Result<CloneReady, CloneTransferError> {
         Ok(CloneReady {
             request: self.request,
             head: self.head,
-            received: self.downloaded.validate(cancel, progress)?,
+            received: self
+                .downloaded
+                .validate_with_progress(cancel, progress, observe)?,
         })
     }
 }
@@ -115,13 +134,34 @@ impl CloneRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<CloneDownload, CloneTransferError> {
+        self.receive_http_with_progress(remote, limits, control, |_| {})
+            .await
+    }
+
+    /// Downloads a clone while forwarding live receiver sideband messages.
+    ///
+    /// Uses [`crate::fetch::receive_http_with_progress`]'s advisory message and replay contracts.
+    /// No validation or destination I/O runs while polling this future.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::receive_http`]'s errors; messages do not establish a valid clone.
+    #[cfg(feature = "http")]
+    pub async fn receive_http_with_progress(
+        self,
+        remote: &crate::transport::http::HttpRemote,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        progress: impl FnMut(&[u8]),
+    ) -> Result<CloneDownload, CloneTransferError> {
         let mut saved = None;
-        let download = crate::fetch::receive_http(
+        let download = crate::fetch::receive_http_with_progress(
             remote,
             |ad| plan::select(self.plan(ad), &mut saved),
             None,
             limits,
             control,
+            progress,
         )
         .await;
         let (plan, downloaded) = workflow::selected(saved, download)?;

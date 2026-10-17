@@ -1,7 +1,7 @@
 //! `girt clone`, `girt fetch` and `girt push`: move objects and refs between repositories.
 //!
-//! `--git` is ignored by these commands: Git reports transfers on stderr with progress output,
-//! which girt does not reproduce.
+//! Terminal progress goes to stderr; `--quiet` and `--git` suppress it. Transfer result records
+//! on stdout retain girt's format.
 
 use std::io::Write;
 use std::ops::ControlFlow;
@@ -16,7 +16,7 @@ use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
 use girt::refs::{RefName, Reflog};
 use girt::remote::RefSource;
 use girt::transport::TransportControl;
-use girt::workflow::{self, Environment, FetchOptions, NoCallbacks, PushOptions};
+use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
 use crate::Context;
@@ -28,7 +28,7 @@ use crate::config::{
 /// Copy a repository into a new directory and check out its `HEAD`.
 ///
 /// Supports local paths, `file://` and anonymous `http(s)://` URLs; SSH is not supported yet.
-/// `--git` is ignored.
+/// `--git` suppresses progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct CloneArgs {
     /// Repository to clone.
@@ -47,7 +47,7 @@ pub struct CloneArgs {
 /// Fetch a remote's configured refspecs, printing each updated ref as `<old>..<new> <ref>`.
 ///
 /// New refs print the null ID as `<old>`, pruned refs the null ID as `<new>`. Tags are not
-/// followed automatically. `--git` is ignored.
+/// followed automatically. `--git` suppresses progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct FetchArgs {
     /// Configured remote name.
@@ -60,7 +60,7 @@ pub struct FetchArgs {
 /// Each refspec is `[+]<src>[:<dst>]`; an empty `<src>` deletes `<dst>`. The remote must still have
 /// the value recorded by the matching remote-tracking ref (or not have the ref at all if there is
 /// none), like `git push --force-with-lease`; fetch first if the push is rejected as stale. `+`
-/// permits non-fast-forward updates. `--git` is ignored.
+/// permits non-fast-forward updates. `--git` suppresses progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct PushArgs {
     /// Configured remote name.
@@ -101,17 +101,38 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
     let cancel = AtomicBool::new(false);
     let control = TransportControl::new(&cancel);
     let limits = FetchLimits::trusted();
+    let progress = std::cell::RefCell::new(crate::progress::Progress::new(context.progress));
     let ready = match source {
-        Endpoint::Local(path) => {
-            request.receive_local(&path, limits, control, |_| ControlFlow::Continue(()))
-        }
+        Endpoint::Local(path) => request.receive_local_with_progress(
+            &path,
+            limits,
+            control,
+            girt::fetch::LocalFetchObserver::default()
+                .with_messages(&mut |bytes| {
+                    progress.borrow_mut().remote(bytes);
+                    ControlFlow::Continue(())
+                })
+                .with_construction(&mut |event| progress.borrow_mut().local(event))
+                .with_validation(&mut |event| progress.borrow_mut().validation(event)),
+        ),
         Endpoint::Http(url) => {
             let remote = http_remote(&url)?;
-            block_on(request.receive_http(&remote, limits, control))?
-                .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
+            block_on(
+                request.receive_http_with_progress(&remote, limits, control, |bytes| {
+                    progress.borrow_mut().remote(bytes)
+                }),
+            )?
+            .and_then(|download| {
+                download.validate_with_progress(
+                    &cancel,
+                    |_| ControlFlow::Continue(()),
+                    |event| progress.borrow_mut().validation(event),
+                )
+            })
         }
     }
     .wrap_err("downloading")?;
+    progress.borrow_mut().finish();
     let report = ready
         .finish(FetchUpdateLimits::trusted(), &cancel)
         .map_err(|error| eyre!("{error} (inspect {})", destination.display()))?;
@@ -133,7 +154,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         CloneHead::Branch { .. } | CloneHead::Detached(_)
     );
     if !args.bare && !args.no_checkout && has_head {
-        check_out_head(&destination).wrap_err_with(|| {
+        check_out_head(&destination, context.progress).wrap_err_with(|| {
             format!(
                 "the clone succeeded but checkout failed; retry with `girt -C {} checkout HEAD`",
                 destination.display()
@@ -144,18 +165,21 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
 }
 
 /// Fills the new clone's empty index and working tree from `HEAD`.
-fn check_out_head(destination: &std::path::Path) -> Result<()> {
+fn check_out_head(destination: &std::path::Path, enabled: bool) -> Result<()> {
+    let mut progress = crate::progress::Progress::new(enabled);
     let repository = Repository::open(destination).wrap_err("opening the clone")?;
     let objects = crate::common::objects(&repository)?;
     let tree = crate::common::resolve_tree(&repository, &objects, "HEAD")?;
     repository
-        .checkout_tree(
+        .checkout_tree_with_progress(
             None,
             Some(tree),
             Default::default(),
             crate::common::not_cancelled(),
+            |done, total| progress.update("Updating files", done, Some(total)),
         )
         .map_err(|failure| eyre!("{failure}"))?;
+    progress.finish();
     Ok(())
 }
 
@@ -195,14 +219,16 @@ pub fn fetch(args: FetchArgs, context: &Context) -> Result<ExitCode> {
     if refspecs.is_empty() {
         bail!("remote {} has no fetch refspecs", args.remote);
     }
+    let mut progress = crate::progress::Progress::new(context.progress);
     let outcome = workflow::fetch(
         &repository,
         &args.remote,
         &FetchOptions::new(refspecs),
         &environment(context)?,
-        &mut NoCallbacks,
+        &mut progress,
     )
     .wrap_err_with(|| format!("fetching {}", args.remote))?;
+    progress.finish();
     let null = ObjectId::null(repository.object_format());
     let mut out = stdout();
     for change in &outcome.updated {
@@ -229,15 +255,17 @@ pub fn push(args: PushArgs, context: &Context) -> Result<ExitCode> {
                 .wrap_err_with(|| format!("planning {refspec}"))?,
         );
     }
+    let mut progress = crate::progress::Progress::new(context.progress);
     let report = workflow::push(
         &repository,
         &args.remote,
         commands,
         &PushOptions::default(),
         &environment(context)?,
-        &mut NoCallbacks,
+        &mut progress,
     )
     .wrap_err_with(|| format!("pushing to {}", args.remote))?;
+    progress.finish();
     let mut out = stdout();
     for reference in &report.refs {
         let name = display_bytes(reference.command.name.as_bytes());

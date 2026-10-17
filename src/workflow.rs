@@ -782,10 +782,18 @@ pub trait TransferCallbacks {
     /// references updated. A transfer with no pack makes no calls, and counts may start over if
     /// a push is prepared again.
     ///
-    /// Only native local transfers report this. HTTP and SSH transfers report the remote's own
-    /// progress through [`Self::remote_message`] instead. A panic in this callback unwinds before
-    /// any received data is installed.
+    /// Fetch reports this for native local, HTTP and SSH validation; native local push reports
+    /// receiver validation. Remote-owned push validation is reported through
+    /// [`Self::remote_message`] instead. A panic unwinds before received data is installed.
     fn validation_progress(&mut self, _progress: crate::fetch::ValidationProgress) {}
+
+    /// Receives synchronous source traversal and pack construction counts for native local fetch.
+    /// Completion precedes installation and reference publication.
+    fn fetch_progress(&mut self, _progress: crate::fetch::LocalFetchProgress) {}
+
+    /// Receives synchronous source traversal and pack construction counts while preparing a push.
+    /// Counts may restart on retry; completion does not imply upload or receiver acceptance.
+    fn push_progress(&mut self, _progress: crate::push::PreparationProgress) {}
 
     /// Receives diagnostic output of a local transport process, as raw bytes.
     ///
@@ -1770,6 +1778,9 @@ impl Repository {
                             callbacks.borrow_mut().remote_message(message);
                             ControlFlow::Continue(())
                         })
+                        .with_construction(&mut |event| {
+                            callbacks.borrow_mut().fetch_progress(event)
+                        })
                         .with_validation(&mut |event| {
                             callbacks.borrow_mut().validation_progress(event)
                         }),
@@ -1808,8 +1819,13 @@ impl Repository {
                         ControlFlow::Continue(())
                     })?;
                 }
-                download
-                    .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
+                download.and_then(|download| {
+                    download.validate_with_progress(
+                        &cancel,
+                        |_| ControlFlow::Continue(()),
+                        |event| callbacks.validation_progress(event),
+                    )
+                })
             }
             #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
             Endpoint::Ssh(ssh) => {
@@ -1822,8 +1838,13 @@ impl Repository {
                     |message| callbacks.borrow_mut().transport_message(message),
                     |message| callbacks.borrow_mut().remote_message(message),
                 ));
-                download
-                    .and_then(|download| download.validate(&cancel, |_| ControlFlow::Continue(())))
+                download.and_then(|download| {
+                    download.validate_with_progress(
+                        &cancel,
+                        |_| ControlFlow::Continue(()),
+                        |event| callbacks.borrow_mut().validation_progress(event),
+                    )
+                })
             }
         }
         .map_err(|error| TransferError::Fetch(Box::new(error)))?;
@@ -1947,9 +1968,17 @@ impl Repository {
         // Each transport reads the receiver's advertisement before preparing. Like `git
         // send-pack`, preparation excludes the history of every advertised object (`roots`), so
         // the pack holds only what the receiver lacks.
+        let callbacks = std::cell::RefCell::new(callbacks);
         let prepare = |roots: &[ObjectId]| -> Result<PreparedPush, PushFailure> {
             before_prepare();
-            let prepared = PreparedPush::new(&objects, commands.clone(), roots, limits, &cancel)?;
+            let prepared = PreparedPush::new_with_progress(
+                &objects,
+                commands.clone(),
+                roots,
+                limits,
+                &cancel,
+                |event| callbacks.borrow_mut().push_progress(event),
+            )?;
             let prepared = if options.push_options.is_empty() {
                 prepared
             } else {
@@ -1964,7 +1993,7 @@ impl Repository {
         let names: Vec<RefName> = commands.iter().map(|c| c.name.clone()).collect();
         let result = match endpoint {
             Endpoint::Local(path) => {
-                let mut send = || {
+                let send = || {
                     crate::push::send_local_preparing_observed(
                         &path,
                         format,
@@ -1974,7 +2003,7 @@ impl Repository {
                             identity: options.identity.as_ref(),
                         },
                         |advertisement| prepare(&advertisement.receiver_roots()?),
-                        |event| callbacks.validation_progress(event),
+                        |event| callbacks.borrow_mut().validation_progress(event),
                     )
                 };
                 let mut result = send();
@@ -1986,7 +2015,7 @@ impl Repository {
                 // Receive hook output arrives with the report rather than live.
                 if let Ok(report) = &result {
                     for message in &report.progress {
-                        callbacks.remote_message(message);
+                        callbacks.borrow_mut().remote_message(message);
                     }
                 }
                 result
@@ -1995,7 +2024,7 @@ impl Repository {
             Endpoint::Http(http) => {
                 let runtime = runtime()?;
                 let send = |remote: &crate::transport::http::HttpRemote,
-                            callbacks: &mut dyn TransferCallbacks| {
+                            callbacks: &std::cell::RefCell<&mut dyn TransferCallbacks>| {
                     let advertised = std::cell::RefCell::new(BTreeMap::new());
                     let result = runtime.block_on(crate::push::send_http_preparing(
                         remote,
@@ -2006,7 +2035,7 @@ impl Repository {
                             record_targets(advertisement, &names, &advertised);
                             prepare(&advertisement.receiver_roots())
                         },
-                        |message| callbacks.remote_message(message),
+                        |message| callbacks.borrow_mut().remote_message(message),
                     ));
                     result.map(|mut report| {
                         mark_up_to_date(&mut report, &advertised.into_inner());
@@ -2014,11 +2043,11 @@ impl Repository {
                     })
                 };
                 let remote = http.remote(None)?;
-                let mut result = send(&remote, callbacks);
+                let mut result = send(&remote, &callbacks);
                 if is_unauthorized_push(&result) {
-                    let session = http.credentials(callbacks)?;
+                    let session = http.credentials(&mut **callbacks.borrow_mut())?;
                     let remote = http.remote(Some(session))?;
-                    result = send(&remote, callbacks);
+                    result = send(&remote, &callbacks);
                 }
                 result
             }
@@ -2026,7 +2055,6 @@ impl Repository {
             Endpoint::Ssh(ssh) => {
                 let runtime = runtime()?;
                 let advertised = std::cell::RefCell::new(BTreeMap::new());
-                let callbacks = std::cell::RefCell::new(callbacks);
                 let result = runtime.block_on(crate::push::send_ssh_preparing(
                     &ssh,
                     format,

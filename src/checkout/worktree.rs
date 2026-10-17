@@ -19,6 +19,7 @@ use crate::{EntryMode, ObjectId, ObjectKind, Repository, TreeValue, index};
 type Leaves = BTreeMap<Vec<u8>, TreeValue>;
 type Hook<'a> = dyn FnMut(&str, &[u8]) -> Result<(), Error> + 'a;
 
+#[cfg(test)]
 pub(super) fn run(
     repo: &Repository,
     baseline: Option<ObjectId>,
@@ -26,6 +27,22 @@ pub(super) fn run(
     limits: Limits,
     cancel: &AtomicBool,
     hook: &mut Hook<'_>,
+) -> Result<Report, Failure> {
+    run_observed(repo, baseline, target, limits, cancel, hook, &mut |_, _| {})
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "test hook is separate from progress observation"
+)]
+pub(super) fn run_observed(
+    repo: &Repository,
+    baseline: Option<ObjectId>,
+    target: Option<ObjectId>,
+    limits: Limits,
+    cancel: &AtomicBool,
+    hook: &mut Hook<'_>,
+    progress: &mut impl FnMut(u64, u64),
 ) -> Result<Report, Failure> {
     let mut report = Report::default();
     let mut cleanup = Vec::new();
@@ -48,11 +65,14 @@ pub(super) fn run(
         let mut plan = Plan::prepare(repo, root, baseline, target, edit, limits, cancel)?;
         hook("prepared", b"")?;
         check(cancel)?;
+        let total = plan.operations.len() as u64;
+        progress(0, total);
         report.stage = Stage::Worktree;
         for operation in std::mem::take(&mut plan.operations) {
             hook("before operation", &operation.path)?;
             check(cancel)?;
             plan.apply(&operation, cancel, hook, &mut cleanup, &mut report)?;
+            progress(report.applied.len() as u64, total);
             hook("after operation", &report.applied.last().unwrap().path)?;
         }
         report.stage = Stage::Publication;
@@ -61,6 +81,7 @@ pub(super) fn run(
         check(cancel)?;
         edit.publish()?;
         report.index_published = true;
+        progress(total, total);
         Ok(())
     })();
     if let Err(mut cause) = result {

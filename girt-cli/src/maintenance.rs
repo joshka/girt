@@ -93,6 +93,8 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
             print_plan(&repository, &plan)?;
         }
         Command::Repack => {
+            let progress =
+                crate::progress::Activity::new(context.progress, "Repacking retained objects");
             let published = repository
                 .repack_retained(
                     &RetentionPolicy::trusted(),
@@ -101,6 +103,10 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                 )
                 .wrap_err("repacking retained objects")?;
             let written = published.written;
+            progress.finish(format_args!(
+                "{} objects, {} bytes",
+                written.objects, written.pack_bytes
+            ));
             let path = pack_dir(&repository).join(format!("pack-{}.pack", written.checksum));
             writeln!(
                 stdout(),
@@ -110,7 +116,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
                 written.pack_bytes
             )?;
         }
-        Command::Run(args) => return run_phases(&repository, &args),
+        Command::Run(args) => return run_phases(&repository, &args, context.progress),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -132,8 +138,12 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
         }
         PackCommand::Verify => {
             let repository = context.repository()?;
+            let progress = crate::progress::Activity::new(context.progress, "Verifying packs");
             match objects(&repository)?.verify_packs(not_cancelled()) {
-                Ok(()) => writeln!(stdout(), "ok")?,
+                Ok(()) => {
+                    progress.finish("verified");
+                    writeln!(stdout(), "ok")?;
+                }
                 Err(error) => {
                     eprintln!("error: {:#}", color_eyre::eyre::Report::new(error));
                     return Ok(ExitCode::FAILURE);
@@ -145,6 +155,8 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
             let format = context
                 .repository()
                 .map_or(ObjectFormat::Sha1, |repository| repository.object_format());
+            let progress =
+                crate::progress::Activity::new(context.progress, "Rebuilding pack index");
             let rebuilt = rebuild_index(
                 &pack,
                 format,
@@ -152,6 +164,7 @@ pub fn pack(command: PackCommand, context: &Context) -> Result<ExitCode> {
                 not_cancelled(),
             )
             .wrap_err_with(|| format!("rebuilding index for {}", pack.display()))?;
+            progress.finish(format_args!("{} objects", rebuilt.objects));
             let mut out = stdout();
             if context.git {
                 writeln!(out, "{}", rebuilt.checksum)?;
@@ -182,7 +195,7 @@ impl MaintenanceIsolation for UserAsserted {
 }
 
 /// Plans, then runs the selected destructive phases in Git's order when `--yes` is given.
-fn run_phases(repository: &Repository, args: &RunArgs) -> Result<ExitCode> {
+fn run_phases(repository: &Repository, args: &RunArgs, progress_enabled: bool) -> Result<ExitCode> {
     if !(args.prune_loose || args.expire_reflogs || args.retire_packs) {
         bail!("select at least one of --prune-loose, --expire-reflogs, --retire-packs");
     }
@@ -235,15 +248,19 @@ fn run_phases(repository: &Repository, args: &RunArgs) -> Result<ExitCode> {
     let cancel = not_cancelled();
     let mut isolation = UserAsserted;
     if args.expire_reflogs {
+        let progress = crate::progress::Activity::new(progress_enabled, "Expiring reflogs");
         let report = repository
             .expire_reflogs(&mut isolation, &policy, cancel)
             .wrap_err("expiring reflogs")?;
+        progress.finish(format_args!("{} reflogs", report.changed.len()));
         writeln!(out, "expired-reflogs {}", report.changed.len())?;
     }
     if args.retire_packs {
+        let progress = crate::progress::Activity::new(progress_enabled, "Retiring packs");
         let report = repository
             .retire_old_packs(&mut isolation, &policy, RepackLimits::trusted(), cancel)
             .wrap_err("retiring old packs")?;
+        progress.finish(format_args!("{} packs removed", report.removed.len()));
         if let Some(published) = report.published {
             writeln!(out, "new-pack pack-{}", published.written.checksum)?;
         }
@@ -252,9 +269,11 @@ fn run_phases(repository: &Repository, args: &RunArgs) -> Result<ExitCode> {
         }
     }
     if args.prune_loose {
+        let progress = crate::progress::Activity::new(progress_enabled, "Pruning loose objects");
         let report = repository
             .prune_unreachable_loose(&mut isolation, &policy, cancel)
             .wrap_err("pruning loose objects")?;
+        progress.finish(format_args!("{} objects", report.deleted.len()));
         writeln!(out, "pruned-loose {}", report.deleted.len())?;
     }
     Ok(ExitCode::SUCCESS)
