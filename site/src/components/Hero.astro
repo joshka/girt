@@ -1,7 +1,9 @@
 ---
-// The landing hero: the name, one plain sentence, the actions and a column of facts. Other splash
+// The landing hero: the logo, one plain sentence, the actions and a column of facts. Other splash
 // pages (such as the 404 page) keep Starlight's default hero.
 import Default from '@astrojs/starlight/components/Hero.astro';
+import logoDark from '../assets/logo-dark.svg';
+import logoLight from '../assets/logo-light.svg';
 
 const { id, entry } = Astro.locals.starlightRoute;
 const isHome = id === '';
@@ -12,7 +14,11 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
   isHome ? (
     <div class="girt-hero">
       <div class="copy">
-        <h1 id="_top" data-page-title set:html={title} />
+        <h1 id="_top" data-page-title>
+          <span class="sr-only" set:html={title} />
+          <img class="light:sl-hidden print:hidden" src={logoDark.src} width={logoDark.width} height={logoDark.height} alt="" />
+          <img class="dark:sl-hidden print:block" src={logoLight.src} width={logoLight.width} height={logoLight.height} alt="" />
+        </h1>
         {tagline && <p class="lede" set:html={tagline} />}
         <div class="actions">
           {actions.map(({ text, link, variant, attrs }) => (
@@ -86,13 +92,13 @@ const { title = entry.data.title, tagline, actions = [] } = entry.data.hero ?? {
   }
 
   h1 {
-    font-family: var(--girt-font-heading);
-    font-size: clamp(2.75rem, 2rem + 4vw, 4rem);
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -0.02em;
-    color: var(--sl-color-white);
     margin-bottom: 1.1rem;
+  }
+
+  h1 img {
+    height: clamp(3.5rem, 2.75rem + 3.5vw, 5.25rem);
+    width: auto;
+    vertical-align: top;
   }
 
   .lede {

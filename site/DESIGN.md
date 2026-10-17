@@ -85,12 +85,6 @@ typography:
     fontSize: 19px
     fontWeight: 700
     lineHeight: 1.3
-  wordmark:
-    fontFamily: Source Serif 4
-    fontSize: 22px
-    fontWeight: 700
-    lineHeight: 1
-    letterSpacing: -0.01em
   body-lg:
     fontFamily: system-ui
     fontSize: 18px
@@ -245,7 +239,7 @@ They are technical and sceptical, and they want facts and code quickly.
 The site should feel like a well-made tool: calm, precise and crafted, never loud. It explains; it
 doesn't sell.
 
-- **Plain copy.** No taglines or slogans. The landing page heading is the name, followed by one
+- **Plain copy.** No taglines or slogans. The landing page heading is the logo, followed by one
   sentence saying what girt is, written the way a crate README would put it.
 - **Honest comparisons.** Performance is shown as girt against stock jj and Git, with wins and
   losses side by side, and always links to the full results.
@@ -296,7 +290,7 @@ fall below 3:1 against the page only when the same information is written next t
 ## Typography
 
 - **Headings:** Source Serif 4 (SIL Open Font License 1.1), bold. A sturdy serif gives the site its
-  character, and the plain "girt" wordmark is set in it. Self-host the Latin subset.
+  character. Self-host the Latin subset.
 - **Body:** the system UI stack (`system-ui`, `-apple-system`, `Segoe UI`, and so on). It costs no
   bytes, causes no layout shift and reads well at length.
 - **Code, labels and numbers:** JetBrains Mono (SIL Open Font License 1.1). Labels are small
@@ -315,7 +309,7 @@ with the web fonts blocked.
 - Docs pages use three columns at desktop widths: the sidebar (`sidebar-width`), the content column
   (at most `content-max`) and the table of contents. The performance page drops the table of
   contents so the heatmap has room.
-- The landing page has a two-column hero, with the name, description and actions on the left and a
+- The landing page has a two-column hero, with the logo, description and actions on the left and a
   facts column (install, status, licence, no subprocess) on the right. Below it come a code example,
   the comparison card and three plain link cards.
 - At phone width everything stacks into one column. Wide tables scroll sideways inside their own
@@ -346,9 +340,8 @@ inputs, `md` (8px) for code blocks and callouts, and `lg` (12px) for cards. Line
 
 ### Header
 
-The wordmark "girt" (no logo for now), the search field, then text links: Guides, Performance and
-API (docs.rs), and GitHub with the theme switch. The current section's link gets a 2px rust
-underline.
+The logo, the search field, then text links: Guides, Performance and API (docs.rs), and GitHub with
+the theme switch. The current section's link gets a 2px rust underline.
 
 ### Navigation commit graph
 
@@ -438,5 +431,10 @@ outlined in rust.
   keep text size and wrapping stable while fonts load.
 - Don't add JavaScript frameworks. Fonts and npm packages must be compatible with MIT and
   Apache-2.0.
-- The logo is undecided. Use the wordmark alone until a logo is chosen. Don't reuse or modify the
-  Rust logo, which is a Rust Foundation trademark.
+- Do use the logo from `src/assets/`: a solid cog with thirty-six triangular teeth holding a
+  three-commit graph, beside the "girt" wordmark as outlined paths. The light-theme file has a
+  `rust-700` cog and wordmark with an `on-surface-strong` graph; the dark-theme file has an
+  `on-surface-strong` cog and wordmark with a `rust-600` graph. Use the same files in the header and
+  the landing hero. The favicon is the cog and graph alone, generated from the same files at build
+  time, with the dark-theme colours when the browser prefers a dark scheme. Don't reuse or modify
+  the Rust logo, which is a Rust Foundation trademark.

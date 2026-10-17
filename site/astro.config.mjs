@@ -31,12 +31,16 @@ export default defineConfig({
       title: 'girt',
       description:
         'An idiomatic Rust Git library: objects, references, the index and transfer, with Git formats preserved exactly.',
+      logo: {
+        light: './src/assets/logo-light.svg',
+        dark: './src/assets/logo-dark.svg',
+        replacesTitle: true,
+      },
       customCss: ['./src/styles/custom.css'],
       components: {
         Head: './src/components/Head.astro',
         Hero: './src/components/Hero.astro',
         Sidebar: './src/components/Sidebar.astro',
-        SiteTitle: './src/components/SiteTitle.astro',
         SocialIcons: './src/components/SocialIcons.astro',
         ThemeProvider: './src/components/ThemeProvider.astro',
       },
