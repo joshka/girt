@@ -1,35 +1,196 @@
-//! Fetching from and pushing to configured remotes.
+//! Fetch from, push to and query a remote by name, the way `git fetch` and `git push` do.
 //!
-//! This optional convenience API resolves command-like policy for talking to another repository. It
-//! resolves a named remote's URL through the repository configuration (`insteadOf`, `pushurl`,
-//! protocol policy), selects the transport (local path, HTTP(S) or SSH), handles credentials the
-//! way Git does, and drives the lower-level [`crate::fetch`] and [`crate::push`] workflows to
-//! completion.
+//! Most applications that talk to Git remotes want the behavior a Git user already expects: name a
+//! remote such as `origin`, and let the repository's configuration decide the URL, the transport,
+//! the credentials and the proxy. This module provides that in three synchronous functions:
 //!
-//! Core [`crate::fetch`] and [`crate::push`] APIs keep plans, artifacts and caller controls
-//! explicit. jj can use these convenience functions when it wants configured-remote resolution.
-//! They own synchronous network runtimes, credential handling and post-fetch maintenance.
+//! - [`fetch`] downloads objects and updates remote-tracking references and tags.
+//! - [`push`] conditionally updates references on the remote.
+//! - [`remote_head`] asks which branch the remote's `HEAD` names, as a clone does.
 //!
-//! Process state that Git consults (environment variables such as `GIT_SSH_COMMAND`, proxies,
-//! `HOME`) is passed explicitly as an [`Environment`]; use [`Environment::from_process`] for the
-//! usual behavior.
+//! Each takes the [`Repository`] explicitly, an [`Environment`] snapshot instead of reading the
+//! process environment, and a [`TransferCallbacks`] implementation for progress and credential
+//! prompts. They return typed reports, never printed text.
 //!
-//! ```no_run
+//! # Quick start
+//!
+//! Add a remote to a repository's configuration, then fetch from it. In this example `origin` is a
+//! local repository path, so the example runs without a network; an `https://` or `ssh://` URL
+//! takes the same code path once the `http` or `ssh` feature is enabled.
+//!
+//! ```
 //! use girt::Repository;
-//! use girt::workflow::{Environment, FetchOptions, NoCallbacks};
+//! use girt::refs::{RefName, Target};
+//! use girt::remote::RemoteConfig;
+//! use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+//! # let (directory, upstream, _, main, _) = include!("doctest/remote.rs");
+//! # let path = directory.path().join("quick-start");
+//! # Repository::init(girt::ObjectFormat::Sha1, &path, girt::InitKind::Worktree)?;
+//! # let url = upstream.git_dir().to_str().ok_or("temporary path is not UTF-8")?.as_bytes();
 //!
-//! let repo = Repository::open("project")?;
-//! let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
-//! let outcome = girt::workflow::fetch(
+//! // Record the remote in the repository's own config file, as `git remote add` would.
+//! let mut edit = Repository::open(&path)?.edit_config(1 << 20)?;
+//! RemoteConfig::new(edit.document_mut()).add(
+//!     b"origin",
+//!     url,
+//!     &[b"+refs/heads/*:refs/remotes/origin/*"],
+//! )?;
+//! edit.commit()?;
+//!
+//! // A `Repository` holds a configuration snapshot, so reopen it to see the new remote.
+//! let repo = Repository::open(&path)?;
+//! let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+//! let outcome = workflow::fetch(
 //!     &repo,
 //!     "origin",
 //!     &options,
 //!     &Environment::from_process(),
 //!     &mut NoCallbacks,
 //! )?;
-//! println!("{} references updated", outcome.updated.len());
+//!
+//! let tracking = RefName::new("refs/remotes/origin/main")?;
+//! assert_eq!(outcome.updated.len(), 1);
+//! assert_eq!(outcome.updated[0].name, tracking);
+//! assert_eq!(
+//!     repo.references()?.read(&tracking)?,
+//!     Some(Target::Direct(main))
+//! );
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Choosing between `workflow` and the core transfer APIs
+//!
+//! girt has two layers for moving objects between repositories. This module is the convenience
+//! layer. The core layer, [`crate::fetch`], [`crate::push`] and [`crate::clone`], makes every
+//! decision explicit: which endpoint, which resource limits, which credentials, when to install
+//! objects and when to publish references. Use this module when:
+//!
+//! - the remote is named in the repository's configuration and should be resolved as Git resolves
+//!   it;
+//! - the remote is trusted the way a Git user trusts their own remotes (see [Limits and
+//!   trust](#limits-and-trust));
+//! - the caller can block a thread for the whole transfer and does not need to cancel it.
+//!
+//! Use the core APIs instead when the endpoint comes from somewhere other than configuration, when
+//! the peer is untrusted and transfers must be bounded, when the caller needs cancellation or a
+//! deadline, when downloads should be validated on a separate worker pool, or when a clone must
+//! create a new repository. The core APIs are also where to look for operations this module does
+//! not cover, such as retained installation and shallow-boundary publication.
+//!
+//! # What a configured transfer does
+//!
+//! Every function follows the same sequence:
+//!
+//! 1. **Resolve the remote.** The named remote's `url` (or, for [`push`], its first `pushurl`) is
+//!    read from [`Repository::config`] and rewritten by `url.<base>.insteadOf` and `pushInsteadOf`.
+//!    `protocol.allow`, `protocol.<name>.allow` and `GIT_ALLOW_PROTOCOL` decide whether the
+//!    resulting transport may be used. See [`crate::remote::Remote::fetch_destination`] and
+//!    [`crate::remote::Remote::push_destinations`].
+//! 2. **Choose a transport** from the URL. Local paths and `file://` URLs use girt's native local transfer,
+//!    which reads and writes the other repository's storage directly and never starts Git. `http://`
+//!    and `https://` need the `http` feature; `ssh://` and `user@host:path` need the `ssh` feature
+//!    on macOS or Linux. Other schemes, such as `git://` and `remote-helper::url`, return
+//!    [`TransferError::UnsupportedTransport`].
+//! 3. **Authenticate if asked.** An HTTP server that answers `401 Unauthorized` gets one retry with
+//!    a credential. Configured `credential.helper` programs are asked first; Git's `store` helper
+//!    is answered natively by [`crate::remote::CredentialStore`]. If no helper supplies a value,
+//!    [`TransferCallbacks::credential`] is asked for the username and password. A credential the
+//!    server accepts is reported to the helpers for storage; a rejected one is reported for
+//!    removal. SSH authentication is left to OpenSSH and the user's SSH configuration, agent and
+//!    `SSH_ASKPASS` program, all taken from the [`Environment`].
+//! 4. **Negotiate and transfer.** Fetch offers the tips of local references as history it already
+//!    has, so the server can leave out objects the repository holds. Push reads the remote's
+//!    advertisement first and omits history reachable from what the remote already has. HTTP and
+//!    SSH fetches ask for the upload-pack protocol named by `protocol.version` (v2 when unset, as
+//!    Git does) and accept a v0 or v1 answer.
+//! 5. **Validate, install and publish.** Received packs are checked in full (framing, object
+//!    identities, delta chains and the connectivity of every selected tip) before they are
+//!    installed. Only then are references updated, as one batch conditional on the values seen
+//!    before the transfer, so a concurrent writer is never silently overwritten.
+//!
+//! # Limits and trust
+//!
+//! A Git client trusts the remotes its user configured: `git fetch` imposes no limit on how large a
+//! pack, an object or an advertisement may be. This module follows Git and uses
+//! [`FetchLimits::trusted`], [`crate::push::PushLimits::trusted`] and
+//! [`crate::PackLimits::trusted`]. Validation is never relaxed. A trusted transfer still rejects
+//! malformed, corrupt or disconnected data. What trust removes is the ceiling on how much
+//! *well-formed* work a peer can ask for. A hostile server could send a multi-gigabyte pack or a
+//! deeply nested delta chain, and the transfer would only stop when it ran out of disk, memory or
+//! time.
+//!
+//! When the remote is chosen by someone other than the local user, for example a service that
+//! fetches URLs submitted by its users, do not use this module. Call the core APIs with
+//! [`FetchLimits::default`], which bounds wire bytes, pack size, object count, per-object size,
+//! delta depth and decoding work, and set a deadline with
+//! [`TransportControl::with_deadline`](crate::transport::TransportControl::with_deadline).
+//! [`crate::fetch::FetchLimits`] documents each bound and the defaults.
+//!
+//! # Threads, runtimes and cancellation
+//!
+//! Every function blocks the calling thread until the transfer finishes. HTTP and SSH transfers
+//! create a private single-threaded Tokio runtime for the duration of the call, so these functions
+//! must not be called from a thread that is already running a Tokio runtime: Tokio panics when a
+//! runtime is started inside another. From async code, move the call to a blocking thread with
+//! `tokio::task::spawn_blocking`. Local transfers start no runtime.
+//!
+//! Callbacks run on the calling thread, in order. A transfer cannot be cancelled and has no
+//! deadline; a stalled HTTP server or SSH connection blocks until the operating system or the peer
+//! gives up. Applications that need either use the core APIs, which take a [`TransportControl`].
+//!
+//! # Errors
+//!
+//! Every function returns [`TransferError`]. Its variants say how far the operation got:
+//!
+//! | Variant | Local changes | What to do |
+//! | --- | --- | --- |
+//! | [`NoSuchRemote`](TransferError::NoSuchRemote) | none | Check the name or add the remote. |
+//! | [`Configuration`](TransferError::Configuration) | none | Report it; the user's config is invalid or unsupported. |
+//! | [`UnsupportedTransport`](TransferError::UnsupportedTransport) | none | Enable the feature or use another URL. |
+//! | [`Authentication`](TransferError::Authentication) | none | Ask for a different credential. |
+//! | [`Fetch`](TransferError::Fetch) | none | Inspect the cause; retrying is safe. |
+//! | [`FetchFinish`](TransferError::FetchFinish) | objects installed, some references maybe updated | Inspect the report; fetching again is safe. |
+//! | [`Push`](TransferError::Push) | none locally | If [`Uncertain`](crate::push::PushError::Uncertain), read the remote's references before retrying. |
+//! | [`Local`](TransferError::Local) | none | Reading this repository failed. |
+//!
+//! A successful [`push`] can still contain rejected references: check
+//! [`PushReport::all_succeeded`](crate::push::PushReport::all_succeeded) or each
+//! [`RefStatus`](crate::push::RefStatus).
+//!
+//! # How jj uses this module
+//!
+//! [jj](https://github.com/jj-vcs/jj)'s experimental girt backend uses this module for every Git
+//! remote operation. Its adapter is a useful model for other version-control front ends:
+//!
+//! - It captures [`Environment::from_process`] once and layers jj's own overrides on top with
+//!   [`Environment::with`], so tests and subprocesses see exactly the variables jj chose.
+//! - `jj git fetch` builds [`FetchOptions`] from the user's branch patterns, including negative
+//!   `^refs/heads/…` refspecs, and always enables [`FetchOptions::prune`]. It passes the requested
+//!   [`FetchOptions::depth`], records reflog entries with [`FetchOptions::reflog`], and keeps
+//!   per-remote tags in a [`FetchOptions::tag_namespace`]. Branches named exactly but absent on the
+//!   remote arrive in [`FetchOutcome::missing_sources`] and are logged rather than failing the
+//!   fetch.
+//! - After a fetch, jj reopens its [`Repository`] and object store. An open
+//!   [`Objects`](crate::Objects) reader keeps the pack list it started with, so it cannot see the
+//!   pack the fetch just installed.
+//! - jj finds a remote's default branch with [`remote_head`]. Only [`RemoteHead::Symbolic`] and
+//!   [`RemoteHead::Inferred`] name one; every other answer means "no default branch".
+//! - `jj git push` sends one [`PushCommand`] per bookmark, with the remote value jj last saw as
+//!   `expected` and [`ForcePolicy::Allow`](crate::push::ForcePolicy::Allow). That is Git's
+//!   `--force-with-lease`: jj may move a bookmark sideways, but only if nobody else moved it first.
+//!   A rejection with
+//!   [`RejectionOrigin::ExpectedValue`](crate::push::RejectionOrigin::ExpectedValue) becomes jj's
+//!   "stale info" message.
+//! - Its [`TransferCallbacks`] splits [`TransferCallbacks::remote_message`] bytes into lines at
+//!   `\r` and `\n`, parses `Counting objects:` lines into a progress bar, forwards SSH diagnostics
+//!   from [`TransferCallbacks::transport_message`] to the terminal, and answers
+//!   [`TransferCallbacks::credential`] with jj's own prompt.
+//!
+//! # Platform and feature support
+//!
+//! Local paths always work. HTTP(S) needs the `http` feature. SSH needs the `ssh` feature and runs
+//! the system OpenSSH client, on macOS and Linux only. See [`crate::transport`] for each
+//! transport's configuration support and limitations.
 
 #![warn(
     clippy::unwrap_used,
@@ -59,11 +220,59 @@ use crate::remote::{Destination, Direction, Protocol, ProtocolEnvironment, Refsp
 use crate::transport::TransportControl;
 use crate::{ObjectId, Repository};
 
-/// Asks the remote which branch its HEAD points to.
+/// Asks a configured remote which branch its `HEAD` names, without downloading objects.
+///
+/// This is how a client learns a remote's default branch, for example to choose what to check
+/// out after a clone or which bookmark to track. Only the reference advertisement is read: no
+/// objects are transferred and the local repository is not changed. The remote is resolved,
+/// authenticated and reached exactly as by [`fetch`].
+///
+/// The answer is a snapshot. The remote's `HEAD` can change before any later fetch, so don't use
+/// it as a precondition for updating references.
+///
+/// # Interpreting the answer
+///
+/// Servers that send a symbolic `HEAD` hint (all modern Git servers, and every local repository)
+/// produce [`RemoteHead::Symbolic`], or [`RemoteHead::Unborn`] for an empty repository whose
+/// default branch has no commits yet. Older servers advertise only `HEAD`'s object ID; girt then
+/// reports [`RemoteHead::Inferred`] when exactly one branch has that ID, and
+/// [`RemoteHead::Ambiguous`] or [`RemoteHead::Detached`] otherwise. It never guesses.
+///
+/// # Examples
+///
+/// ```
+/// use girt::fetch::RemoteHead;
+/// use girt::workflow::{self, Environment, NoCallbacks};
+/// # let (_directory, _, repo, main, _) = include!("doctest/remote.rs");
+///
+/// // `repo` has a remote `origin` whose `HEAD` names `main`.
+/// let head = workflow::remote_head(
+///     &repo,
+///     "origin",
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// )?;
+/// let default_branch = match head {
+///     RemoteHead::Symbolic { branch, id } => {
+///         assert_eq!(id, main);
+///         Some(branch)
+///     }
+///     RemoteHead::Inferred { branch, .. } => Some(branch),
+///     // An empty remote, a detached HEAD or an ambiguous answer has no default branch.
+///     _ => None,
+/// };
+/// assert_eq!(
+///     default_branch,
+///     Some(girt::refs::RefName::new("refs/heads/main")?)
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// # Errors
 ///
-/// Returns [`TransferError`] for configuration, transport and authentication failures.
+/// Returns [`TransferError`] when the remote is missing or misconfigured, its transport is
+/// unsupported, authentication fails, or the advertisement cannot be read. A failed query changes
+/// nothing.
 pub fn remote_head(
     repository: &Repository,
     remote_name: &str,
@@ -73,22 +282,84 @@ pub fn remote_head(
     repository.remote_head(remote_name, environment, callbacks)
 }
 
-/// Fetches from a configured remote and updates local references.
+/// Downloads objects from a configured remote and updates local references to match.
 ///
-/// Destinations must be remote-tracking references (`refs/remotes/`), tags, or a namespace
-/// allowed with [`FetchOptions::tag_namespace`]. Exact sources the remote doesn't have are
-/// reported in [`FetchOutcome::missing_sources`] rather than failing the fetch. No `FETCH_HEAD`
-/// is written and tags are not followed implicitly. HTTP and SSH remotes request the
-/// `protocol.version` upload-pack protocol (v2 when unset, as Git does) and accept a v0/v1
-/// answer; an invalid value is a configuration error.
+/// The refspecs in `options` choose which remote references to fetch and where to record them,
+/// exactly as on the `git fetch` command line; the remote's configured `fetch` refspecs are not
+/// added. A typical call passes the remote's configured refspecs, such as
+/// `+refs/heads/*:refs/remotes/origin/*`.
 ///
-/// Afterwards, like `git fetch`, runs Git's automatic pack-refs task; see
-/// [`Repository::auto_pack_references`]. A pack failure does not fail the fetch.
+/// Objects are validated and installed before any reference moves. The reference updates are
+/// then checked as one batch: every destination must still have the value it had when the fetch
+/// began, and every move must be allowed by its refspec. If any check fails, no reference is
+/// changed, so a reference moved by another process during the transfer is never overwritten.
+///
+/// # What is and isn't updated
+///
+/// Destinations must be remote-tracking references (`refs/remotes/…`), tags (`refs/tags/…`), or
+/// references below a namespace allowed with [`FetchOptions::tag_namespace`]. Local branches are
+/// never fetch destinations, so a fetch cannot move the branch a working tree has checked out.
+/// Without a `+` prefix, a destination may only fast-forward and an existing tag may not change;
+/// either violation fails the fetch without updating any reference.
+///
+/// Unlike `git fetch`, no `FETCH_HEAD` is written and tags pointing into fetched history are not
+/// followed automatically: name the tags you want with a refspec such as
+/// `refs/tags/*:refs/tags/*`. Exact (non-glob) sources the remote doesn't have are reported in
+/// [`FetchOutcome::missing_sources`] rather than failing the fetch.
+///
+/// Afterwards, like `git fetch`, this runs Git's automatic pack-refs task (see
+/// [`Repository::auto_pack_references`]). A failure there does not fail the fetch.
+///
+/// The repository's open [`Objects`](crate::Objects) readers keep their earlier pack list. Open a
+/// new reader, or reopen the repository, to read the fetched objects.
+///
+/// # Examples
+///
+/// Fetch every branch of `origin` into `refs/remotes/origin/`:
+///
+/// ```
+/// use girt::refs::{RefName, Target};
+/// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+/// # let (_directory, _, repo, main, _) = include!("doctest/remote.rs");
+///
+/// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+/// let outcome = workflow::fetch(
+///     &repo,
+///     "origin",
+///     &options,
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// )?;
+/// for update in &outcome.updated {
+///     // Reference names are bytes, like Git's; they need not be UTF-8.
+///     let name = String::from_utf8_lossy(update.name.as_bytes());
+///     println!("{name}: {:?} -> {:?}", update.old, update.new);
+/// }
+///
+/// let tracking = RefName::new("refs/remotes/origin/main")?;
+/// assert_eq!(
+///     repo.references()?.read(&tracking)?,
+///     Some(Target::Direct(main))
+/// );
+///
+/// // Nothing changed upstream, so a second fetch transfers nothing and updates nothing.
+/// let again = workflow::fetch(
+///     &repo,
+///     "origin",
+///     &options,
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// )?;
+/// assert!(again.updated.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// # Errors
 ///
-/// Returns [`TransferError`]. After [`TransferError::FetchFinish`], new objects are installed
-/// but some references may not have been updated.
+/// Returns [`TransferError`]. Every variant except [`TransferError::FetchFinish`] means no local
+/// change was made. After `FetchFinish`, the new objects are installed but some references may
+/// not have been updated; the boxed [`FetchFinishError`](crate::fetch::FetchFinishError) reports
+/// which. Fetching again is safe in every case.
 pub fn fetch(
     repository: &Repository,
     remote_name: &str,
@@ -99,21 +370,118 @@ pub fn fetch(
     repository.fetch(remote_name, options, environment, callbacks)
 }
 
-/// Updates references on a configured remote's push URL.
+/// Sends objects to a configured remote and conditionally updates its references.
 ///
-/// Each command is a compare-and-swap on the remote: it only applies if the remote reference
-/// currently has the command's expected value. Commands succeed or fail independently; check
-/// each [`crate::push::RefStatus`] in the report.
+/// Each [`PushCommand`] names a remote reference, the value the caller believes it has
+/// (`expected`, or `None` for "must not exist"), and the new value (the null ID deletes it). The
+/// remote applies a command only if the reference still has the expected value. This is Git's
+/// `--force-with-lease` with an explicit lease, and it is always on: girt has no unconditional
+/// push. [`ForcePolicy`](crate::push::ForcePolicy) separately decides whether a branch may move
+/// to a commit that does not descend from its old value.
+///
+/// Commands succeed or fail independently. A successful return means the remote answered, not
+/// that every update was applied; check [`PushReport::all_succeeded`] or each
+/// [`RefStatus`](crate::push::RefStatus).
 ///
 /// Like `git push`, the pack omits history reachable from anything the remote advertises, so
 /// creating a branch sends only the commits the remote lacks. The pack is prepared after the
 /// advertisement is read, while the connection is open. If a local remote's references change
 /// during preparation, the push is prepared again once against the new references.
 ///
+/// After a successful update, the matching remote-tracking reference (found through the remote's
+/// `fetch` refspecs) is updated locally as `git push` does. Failures there are ignored; the next
+/// fetch corrects them.
+///
+/// Only the remote's first push URL is used. Git pushes to every configured `pushurl`; to do the
+/// same, configure one remote per URL. Atomic and signed pushes are unsupported. A local
+/// destination's `receive.denyCurrentBranch` is honored as Git honors it, so by default a branch
+/// checked out in the destination's working tree is refused; the `updateInstead` value is
+/// unsupported and fails the push before anything is sent.
+///
+/// # Examples
+///
+/// Publish a new branch on `origin`. `expected: None` means the push fails if someone else
+/// created the branch first:
+///
+/// ```
+/// use girt::push::{ForcePolicy, PushCommand};
+/// use girt::refs::{RefName, Target};
+/// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks, PushOptions};
+/// # let (_directory, upstream, repo, main, person) = include!("doctest/remote.rs");
+/// let environment = Environment::from_process();
+///
+/// // Fetch first, so the commit to publish exists locally.
+/// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]);
+/// workflow::fetch(&repo, "origin", &options, &environment, &mut NoCallbacks)?;
+///
+/// let topic = RefName::new("refs/heads/topic")?;
+/// let command =
+///     PushCommand::new(topic.clone(), None, main).with_force(ForcePolicy::FastForwardOnly);
+/// let report = workflow::push(
+///     &repo,
+///     "origin",
+///     vec![command],
+///     &PushOptions::default().identity(person),
+///     &environment,
+///     &mut NoCallbacks,
+/// )?;
+/// assert!(report.all_succeeded(), "rejected: {report:?}");
+/// assert_eq!(
+///     upstream.references()?.read(&topic)?,
+///     Some(Target::Direct(main))
+/// );
+///
+/// // The local remote-tracking reference now records the pushed value.
+/// let tracking = RefName::new("refs/remotes/origin/topic")?;
+/// assert_eq!(
+///     repo.references()?.read(&tracking)?,
+///     Some(Target::Direct(main))
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// A stale expectation is reported per reference rather than as an error:
+///
+/// ```
+/// use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
+/// use girt::refs::RefName;
+/// use girt::workflow::{self, Environment, NoCallbacks, PushOptions};
+/// use girt::{ObjectFormat, ObjectId, ObjectKind};
+/// # let (_directory, upstream, repo, main, _) = include!("doctest/remote.rs");
+/// # let environment = Environment::from_process();
+///
+/// // Try to delete `main` on `origin`, believing it points to a commit it doesn't point to.
+/// let believed = ObjectFormat::Sha1.hash_object(ObjectKind::Commit, b"an outdated view");
+/// let delete = ObjectId::null(ObjectFormat::Sha1);
+/// let command = PushCommand::new(RefName::new("refs/heads/main")?, Some(believed), delete)
+///     .with_force(ForcePolicy::Allow);
+/// let report = workflow::push(
+///     &repo,
+///     "origin",
+///     vec![command],
+///     &PushOptions::default(),
+///     &environment,
+///     &mut NoCallbacks,
+/// )?;
+/// assert!(!report.all_succeeded());
+/// assert!(matches!(report.refs[0].status, Some(Status::Rejected(_))));
+/// assert_eq!(
+///     report.refs[0].rejection_origin,
+///     Some(RejectionOrigin::ExpectedValue)
+/// );
+/// # assert!(upstream.references()?.read(&RefName::new("refs/heads/main")?)?.is_some());
+/// # let _ = main;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
 /// # Errors
 ///
-/// Returns [`TransferError::Push`] when the push couldn't complete. Its
-/// [`crate::push::PushError::Uncertain`] variant means some updates may have been applied.
+/// Returns [`TransferError::Push`] when the push could not complete. The boxed
+/// [`PushError`](crate::push::PushError) says whether the remote may have been changed:
+/// [`NotSent`](crate::push::PushError::NotSent) guarantees no command reached it, while
+/// [`Uncertain`](crate::push::PushError::Uncertain) means some updates may have been applied.
+/// After an uncertain failure, read the remote's references (for example with a fetch) before
+/// pushing again. Other variants fail before any data is sent.
 pub fn push(
     repository: &Repository,
     remote_name: &str,
@@ -125,10 +493,46 @@ pub fn push(
     repository.push(remote_name, commands, options, environment, callbacks)
 }
 
-/// A snapshot of the environment variables Git consults while transferring.
+/// The environment variables and working directory a transfer may consult.
 ///
-/// Transfers never read the process environment themselves. Child processes (SSH, credential
-/// helpers) receive exactly these variables.
+/// Git's transfer behavior depends on process state: `GIT_SSH_COMMAND` selects the SSH client,
+/// `https_proxy` and `no_proxy` choose a proxy, `GIT_SSL_CAINFO` replaces trusted certificates,
+/// `GIT_ALLOW_PROTOCOL` restricts transports, `HOME` and `XDG_CONFIG_HOME` locate the credential
+/// store, and `PATH` finds `ssh` and `git-credential-*` helpers. The functions in this module never
+/// read the process environment themselves. They consult only this snapshot, and child processes
+/// (SSH and credential helpers) receive exactly these variables.
+///
+/// That makes behavior reproducible and testable: a test can pass an environment with a private
+/// `HOME`, and a server can run transfers for several users with different settings in one
+/// process. Most applications start from [`Environment::from_process`] and adjust it.
+///
+/// The [`Debug`] output lists variable names only, because values such as proxy URLs can contain
+/// credentials.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+///
+/// use girt::workflow::Environment;
+///
+/// // Start from this process and route SSH through a specific key, as `GIT_SSH_COMMAND` would.
+/// let environment = Environment::from_process()
+///     .with("GIT_SSH_COMMAND", "ssh -i ~/.ssh/deploy_key")
+///     .without("GIT_ALLOW_PROTOCOL");
+/// assert_eq!(
+///     environment.get("GIT_SSH_COMMAND"),
+///     Some(OsStr::new("ssh -i ~/.ssh/deploy_key"))
+/// );
+/// assert_eq!(environment.get("GIT_ALLOW_PROTOCOL"), None);
+///
+/// // Or build a fully controlled environment, for example in a test.
+/// let isolated: Environment = [("HOME", "/nonexistent"), ("PATH", "/usr/bin:/bin")]
+///     .into_iter()
+///     .collect();
+/// assert_eq!(isolated.get("HOME"), Some(OsStr::new("/nonexistent")));
+/// assert_eq!(isolated.get("USER"), None);
+/// ```
 #[derive(Clone, Default)]
 pub struct Environment {
     vars: BTreeMap<OsString, OsString>,
@@ -145,32 +549,65 @@ impl std::fmt::Debug for Environment {
 }
 
 impl Environment {
-    /// Captures the current process environment and working directory.
+    /// Captures the current process's environment variables and working directory.
+    ///
+    /// This is the usual starting point; the result behaves as `git` would when started from this
+    /// process. The snapshot is taken once: later changes to the process environment do not
+    /// affect it. If the working directory cannot be read (for example because it was deleted),
+    /// relative local remote paths resolve against the repository instead; see
+    /// [`Self::with_current_dir`].
     pub fn from_process() -> Self {
         let mut environment: Self = std::env::vars_os().collect();
         environment.current_dir = std::env::current_dir().ok();
         environment
     }
 
-    /// Sets the directory that relative local remote paths are resolved against, as Git resolves
-    /// them against its working directory.
+    /// Sets the directory that relative local remote paths are resolved against.
+    ///
+    /// Git resolves a remote URL such as `../upstream.git` against its working directory. Without
+    /// a current directory (for example an environment built with [`FromIterator`]), relative paths
+    /// resolve against the repository's working tree, or its Git directory if it is bare. A
+    /// relative `credential.helper=store --file` path resolves against this directory as well.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::workflow::{self, Environment, NoCallbacks};
+    /// # use girt::remote::RemoteConfig;
+    /// # let (directory, _, repo, main, _) = include!("doctest/remote.rs");
+    /// # let mut edit = repo.edit_config(1 << 20)?;
+    /// # RemoteConfig::new(edit.document_mut()).add(b"relative", b"upstream.git", &[])?;
+    /// # edit.commit()?;
+    /// # let repo = girt::Repository::open(directory.path().join("local"))?;
+    ///
+    /// // `repo` has a remote `relative` whose URL is the relative path `upstream.git`.
+    /// let environment = Environment::from_process().with_current_dir(directory.path());
+    /// let head = workflow::remote_head(&repo, "relative", &environment, &mut NoCallbacks)?;
+    /// assert!(matches!(head, girt::fetch::RemoteHead::Symbolic { id, .. } if id == main));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_current_dir(mut self, directory: impl Into<PathBuf>) -> Self {
         self.current_dir = Some(directory.into());
         self
     }
 
-    /// Returns a variable's value.
+    /// Returns a variable's value, or `None` if it is not set.
+    ///
+    /// Names are compared exactly, including case, on every platform.
     pub fn get(&self, name: &str) -> Option<&OsStr> {
         self.vars.get(OsStr::new(name)).map(OsString::as_os_str)
     }
 
-    /// Sets a variable, returning `self` for chaining.
+    /// Sets a variable, replacing any previous value, and returns `self` for chaining.
     pub fn with(mut self, name: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.vars.insert(name.into(), value.into());
         self
     }
 
-    /// Removes a variable, returning `self` for chaining.
+    /// Removes a variable, if set, and returns `self` for chaining.
+    ///
+    /// Removing a variable makes the transfer behave as if it were never set, which is different
+    /// from setting it to an empty value: an empty `GIT_ALLOW_PROTOCOL` allows no protocols.
     pub fn without(mut self, name: impl AsRef<OsStr>) -> Self {
         self.vars.remove(name.as_ref());
         self
@@ -199,7 +636,12 @@ impl<K: Into<OsString>, V: Into<OsString>> FromIterator<(K, V)> for Environment 
     }
 }
 
-/// A value requested from the user while authenticating.
+/// Which part of a credential [`TransferCallbacks::credential`] is asking for.
+///
+/// An HTTP transfer asks for the username first, unless a credential helper or the
+/// `credential.username` setting already supplied one, then the password. A personal access token
+/// is usually supplied as the password. The enum is non-exhaustive: return `None` for prompts the
+/// application does not recognize.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum CredentialPrompt {
@@ -209,41 +651,162 @@ pub enum CredentialPrompt {
     Password,
 }
 
-/// Hooks for reporting progress and interacting with the user during a transfer.
+/// Receives progress and diagnostics during a transfer, and answers credential prompts.
 ///
-/// All methods have no-op defaults. Callbacks run on the calling thread and should return
-/// promptly.
+/// A command-line client shows the remote's progress messages, SSH warnings and a password prompt;
+/// a GUI or service needs the same information in its own form. Implement the methods you need:
+/// every method has a default that ignores its input or declines to answer. Use [`NoCallbacks`]
+/// when nothing should be shown and no prompt can be answered.
+///
+/// Callbacks run on the thread that called [`fetch`], [`push`] or [`remote_head`], one at a time
+/// and in the order events occur. The transfer waits while a callback runs, so return promptly;
+/// a credential prompt that waits for the user is expected to block. Callbacks cannot cancel the
+/// transfer.
+///
+/// All message bytes come from the remote or a local process and are untrusted. They need not be
+/// UTF-8 and may contain terminal control sequences; sanitize them before display.
+///
+/// # Examples
+///
+/// Collect remote messages and answer prompts with a token, as a non-interactive client might:
+///
+/// ```
+/// use girt::workflow::{CredentialPrompt, TransferCallbacks};
+///
+/// struct Quiet {
+///     messages: Vec<String>,
+///     token: Option<String>,
+/// }
+///
+/// impl TransferCallbacks for Quiet {
+///     fn remote_message(&mut self, message: &[u8]) {
+///         // Progress lines end in `\r` to be overwritten; keep the final text only.
+///         let text = String::from_utf8_lossy(message);
+///         let text = text.trim_end_matches(['\r', '\n']);
+///         if !text.is_empty() {
+///             self.messages.push(text.to_owned());
+///         }
+///     }
+///
+///     fn credential(&mut self, _url: &str, prompt: CredentialPrompt) -> Option<Vec<u8>> {
+///         match prompt {
+///             // Many hosts accept any username alongside a token.
+///             CredentialPrompt::Username => Some(b"x-access-token".to_vec()),
+///             CredentialPrompt::Password => self.token.clone().map(String::into_bytes),
+///             _ => None,
+///         }
+///     }
+/// }
+///
+/// let mut callbacks = Quiet {
+///     messages: Vec::new(),
+///     token: Some("secret".into()),
+/// };
+/// callbacks.remote_message(b"Counting objects: 100% (3/3), done.\n");
+/// assert_eq!(callbacks.messages, ["Counting objects: 100% (3/3), done."]);
+/// assert_eq!(
+///     callbacks.credential("https://example.com/repo.git", CredentialPrompt::Password),
+///     Some(b"secret".to_vec()),
+/// );
+/// ```
 pub trait TransferCallbacks {
-    /// Receives a progress or informational message from the remote, as raw bytes. Messages may
-    /// end in `\r` (to be overwritten) or `\n`.
+    /// Receives a progress or informational message from the remote, as raw bytes.
+    ///
+    /// These are the `remote: …` lines `git` prints: object counting and compression progress,
+    /// and messages from the server's hooks, such as a link to open a pull request. A message
+    /// ending in `\r` is meant to be overwritten by the next one; `\n` ends a line. One call
+    /// may carry several lines or part of one, so buffer until a terminator before parsing.
     fn remote_message(&mut self, _message: &[u8]) {}
 
-    /// Receives native local pack-validation work on the calling thread.
+    /// Receives counts of objects and deltas validated so far, for a local transfer.
     ///
-    /// Completion describes validation, not installation or reference publication. No pack means
-    /// no snapshots. Counts may restart on a retry. Observers must return promptly; panics unwind
-    /// before this validation phase publishes incoming storage. Network transport messages retain
-    /// their existing byte callback; this observer currently covers native local transfers only.
+    /// Validation checks every received object before installation, and is the longest local
+    /// phase of a large fetch or push. Each call carries a cumulative snapshot; use it to draw a
+    /// progress bar. Completion means validation finished, not that objects were installed or
+    /// references updated. A transfer with no pack makes no calls, and counts may start over if
+    /// a push is prepared again.
+    ///
+    /// Only native local transfers report this. HTTP and SSH transfers report the remote's own
+    /// progress through [`Self::remote_message`] instead. A panic in this callback unwinds before
+    /// any received data is installed.
     fn validation_progress(&mut self, _progress: crate::fetch::ValidationProgress) {}
 
-    /// Receives diagnostic output of a local transport process, such as SSH's standard error
-    /// (e.g. host key warnings or authentication failures), as raw bytes.
+    /// Receives diagnostic output of a local transport process, as raw bytes.
+    ///
+    /// For SSH this is the `ssh` client's standard error: host-key warnings, "Permission denied
+    /// (publickey)" and similar. Show it to the user when a transfer fails, since it usually
+    /// explains why. Chunks are not aligned to lines.
     fn transport_message(&mut self, _message: &[u8]) {}
 
-    /// Asks the user for a credential after configured helpers didn't supply one. Returns
-    /// `None` to cancel. `url` has no embedded password.
+    /// Asks the user for part of a credential, after configured helpers didn't supply one.
+    ///
+    /// Called only for HTTP(S) remotes that answer `401 Unauthorized`. `url` identifies the
+    /// remote for the prompt; it never contains a username or password. Return the bytes the user
+    /// entered, or `None` to cancel, which fails the transfer with
+    /// [`TransferError::Authentication`]. A credential the server accepts is passed to the
+    /// configured `credential.helper` programs for storage.
+    ///
+    /// SSH never calls this: OpenSSH prompts through `SSH_ASKPASS` or its agent instead.
     fn credential(&mut self, _url: &str, _prompt: CredentialPrompt) -> Option<Vec<u8>> {
         None
     }
 }
 
-/// Callbacks that report nothing and never prompt.
+/// Callbacks that discard all messages and decline every credential prompt.
+///
+/// Use it for background transfers and tests. A remote that requires a password the configured
+/// helpers cannot supply fails with [`TransferError::Authentication`].
+///
+/// # Examples
+///
+/// ```
+/// use girt::workflow::{self, Environment, NoCallbacks};
+/// # let (_directory, _, repo, _, _) = include!("doctest/remote.rs");
+///
+/// let head = workflow::remote_head(
+///     &repo,
+///     "origin",
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// )?;
+/// # let _ = head;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoCallbacks;
 
 impl TransferCallbacks for NoCallbacks {}
 
-/// What to fetch and how to update local references.
+/// Which references [`fetch`] downloads and how it records them locally.
+///
+/// Start with [`FetchOptions::new`] and the refspecs to fetch, then opt into pruning, a depth
+/// limit, reflog entries or extra tag namespaces. By default the fetch is a plain `git fetch
+/// <remote> <refspecs>`: full history, no pruning and no reflog entries.
+///
+/// # Examples
+///
+/// Fetch the remote's branches and tags, delete remote-tracking references for branches that no
+/// longer exist, and record a reflog entry for each change:
+///
+/// ```
+/// use girt::workflow::FetchOptions;
+/// # let person = girt::Signature {
+/// #     name: b"A. Writer".to_vec(),
+/// #     email: b"writer@example.com".to_vec(),
+/// #     seconds: 1_700_000_000,
+/// #     offset_minutes: 0,
+/// # };
+///
+/// let options = FetchOptions::new([
+///     "+refs/heads/*:refs/remotes/origin/*",
+///     "refs/tags/*:refs/tags/*",
+///     // Negative refspecs exclude matching sources, as in Git.
+///     "^refs/heads/wip/*",
+/// ])
+/// .prune(true)
+/// .reflog(person, "fetch origin");
+/// # let _ = options;
+/// ```
 #[derive(Clone, Debug)]
 pub struct FetchOptions {
     refspecs: Vec<Vec<u8>>,
@@ -254,7 +817,34 @@ pub struct FetchOptions {
 }
 
 impl FetchOptions {
-    /// Fetches with the given refspecs (positive, negative `^src`, or globs).
+    /// Fetches with the given refspecs and no other options.
+    ///
+    /// Each refspec uses Git's syntax: `[+]<src>:<dst>` maps remote references to local ones, `*`
+    /// matches one glob segment, a leading `+` permits non-fast-forward updates, and `^<src>`
+    /// excludes sources. A refspec with no destination (`refs/heads/main`) downloads the objects
+    /// without recording a reference. Refspecs are parsed when the fetch starts; an invalid one
+    /// fails it with [`TransferError::Configuration`] before any network access.
+    ///
+    /// An empty list fetches nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks, TransferError};
+    /// # let (_directory, _, repo, _, _) = include!("doctest/remote.rs");
+    ///
+    /// // Two `*` in one side is not a valid refspec, so the fetch fails before connecting.
+    /// let options = FetchOptions::new(["refs/heads/*/*:refs/remotes/origin/*"]);
+    /// let result = workflow::fetch(
+    ///     &repo,
+    ///     "origin",
+    ///     &options,
+    ///     &Environment::from_process(),
+    ///     &mut NoCallbacks,
+    /// );
+    /// assert!(matches!(result, Err(TransferError::Configuration(_))));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new<I, S>(refspecs: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -272,37 +862,111 @@ impl FetchOptions {
         }
     }
 
-    /// Limits history to `depth` commits from each fetched tip, creating or adjusting shallow
-    /// boundaries.
+    /// Limits history to `depth` commits from each fetched tip, like `git fetch --depth`.
+    ///
+    /// The repository becomes shallow: the oldest fetched commits are recorded in
+    /// `.git/shallow` as boundaries whose parents are absent. Fetching again with a larger depth
+    /// deepens the history, and the boundaries move. `None` (the default) fetches complete
+    /// history from a complete repository and keeps existing boundaries in a shallow one.
+    ///
+    /// Native local remotes support only a depth of one, with a single fetched branch, from a
+    /// complete (not shallow) source.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::num::NonZeroU32;
+    ///
+    /// use girt::workflow::FetchOptions;
+    ///
+    /// let latest_only =
+    ///     FetchOptions::new(["+refs/heads/main:refs/remotes/origin/main"]).depth(NonZeroU32::new(1));
+    /// # let _ = latest_only;
+    /// ```
     pub fn depth(mut self, depth: Option<NonZeroU32>) -> Self {
         self.depth = depth;
         self
     }
 
-    /// Deletes destinations whose sources no longer exist on the remote, including destinations
-    /// of exact refspecs whose source is missing.
+    /// Deletes local destinations whose remote sources no longer exist, like `git fetch --prune`.
+    ///
+    /// Pruning applies to remote-tracking references under `refs/remotes/` and to any
+    /// [`Self::tag_namespace`], within the destinations the refspecs could produce. For a glob
+    /// refspec, that is every existing reference the destination pattern matches; for an exact
+    /// refspec, its one destination. Ordinary tags under `refs/tags/` are never pruned. Pruned
+    /// references lose their reflogs, as in Git.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefName};
+    /// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+    /// # let (_directory, upstream, repo, _, _) = include!("doctest/remote.rs");
+    /// let environment = Environment::from_process();
+    /// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]).prune(true);
+    /// workflow::fetch(&repo, "origin", &options, &environment, &mut NoCallbacks)?;
+    ///
+    /// // `main` is deleted upstream, so the next fetch deletes its remote-tracking reference.
+    /// let main = RefName::new("refs/heads/main")?;
+    /// let id = upstream.references()?.read(&main)?.expect("main exists");
+    /// upstream
+    ///     .references()?
+    ///     .delete_without_reflog(&main, Expected::Value(id))?;
+    ///
+    /// let outcome = workflow::fetch(&repo, "origin", &options, &environment, &mut NoCallbacks)?;
+    /// assert_eq!(outcome.updated.len(), 1);
+    /// assert_eq!(outcome.updated[0].new, None, "pruned");
+    /// assert_eq!(
+    ///     repo.references()?
+    ///         .read(&RefName::new("refs/remotes/origin/main")?)?,
+    ///     None
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn prune(mut self, prune: bool) -> Self {
         self.prune = prune;
         self
     }
 
-    /// Permits destinations below `namespace` that hold tags (e.g. a per-remote tag namespace).
+    /// Allows fetching tags into references below `namespace`, such as `refs/remote-tags/origin`.
     ///
-    /// Such destinations are force-updatable and pruned like remote-tracking references.
+    /// By default a fetch writes only remote-tracking references and `refs/tags/`. Keeping each
+    /// remote's tags in its own namespace avoids conflicts when two remotes have a tag with the
+    /// same name, which is how jj stores remote tags. References in such a namespace behave like
+    /// remote-tracking references: a forced refspec may replace them, and [`Self::prune`] deletes
+    /// them when the remote's tag disappears. Call this once per namespace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::workflow::FetchOptions;
+    ///
+    /// let options = FetchOptions::new(["+refs/tags/*:refs/remote-tags/origin/*"])
+    ///     .tag_namespace(RefName::new("refs/remote-tags/origin")?)
+    ///     .prune(true);
+    /// # let _ = options;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn tag_namespace(mut self, namespace: RefName) -> Self {
         self.tag_namespaces.push(namespace);
         self
     }
 
-    /// Records reflog entries by `committer` with `message` for changed references. Without
-    /// this, no reflog entries are written.
+    /// Appends a reflog entry by `committer` with `message` for each changed reference.
+    ///
+    /// Without this, no reflog entries are written and existing reflogs are left alone. `git
+    /// fetch` uses messages such as `fetch origin`. Unchanged references get no entry.
     pub fn reflog(mut self, committer: crate::Signature, message: impl Into<Vec<u8>>) -> Self {
         self.reflog = Some((committer, message.into()));
         self
     }
 }
 
-/// One local reference changed by a fetch.
+/// One local reference that a [`fetch`] created, moved or deleted.
+///
+/// `old` and `new` describe the change: `old: None` is a new reference, `new: None` a pruned
+/// one, and both set a moved one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct FetchedRef {
@@ -314,17 +978,78 @@ pub struct FetchedRef {
     pub new: Option<ObjectId>,
 }
 
-/// The result of a successful fetch.
+/// What a successful [`fetch`] changed locally.
+///
+/// # Examples
+///
+/// Summarize a fetch the way `git fetch` reports it:
+///
+/// ```
+/// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks};
+/// # let (_directory, _, repo, _, _) = include!("doctest/remote.rs");
+///
+/// let options = FetchOptions::new([
+///     "+refs/heads/*:refs/remotes/origin/*",
+///     "+refs/heads/gone:refs/remotes/origin/gone",
+/// ]);
+/// let outcome = workflow::fetch(
+///     &repo,
+///     "origin",
+///     &options,
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// )?;
+/// for change in &outcome.updated {
+///     let name = String::from_utf8_lossy(change.name.as_bytes());
+///     match (change.old, change.new) {
+///         (None, Some(_)) => println!(" * [new]     {name}"),
+///         (Some(_), None) => println!(" - [deleted] {name}"),
+///         _ => println!("   [updated] {name}"),
+///     }
+/// }
+/// for source in &outcome.missing_sources {
+///     println!(
+///         "couldn't find remote ref {}",
+///         String::from_utf8_lossy(source)
+///     );
+/// }
+/// assert_eq!(outcome.missing_sources, [b"refs/heads/gone".to_vec()]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct FetchOutcome {
-    /// Local references that were created, updated or pruned.
+    /// Local references that were created, updated or pruned, in refspec order. References that
+    /// already had the fetched value are not listed.
     pub updated: Vec<FetchedRef>,
-    /// Exact (non-glob) refspec sources that the remote doesn't have.
+    /// Sources of exact (non-glob) refspecs that the remote doesn't have, as written in the
+    /// refspec. Git fails the whole fetch in this case; girt fetches the rest and reports them
+    /// here.
     pub missing_sources: Vec<Vec<u8>>,
 }
 
-/// Options for [`push`].
+/// Options for [`push`] beyond the commands themselves.
+///
+/// The default sends no push options, writes no reflog entries in a local destination, and uses
+/// girt's bounded delta compression.
+///
+/// # Examples
+///
+/// ```
+/// use girt::workflow::PushOptions;
+/// # let person = girt::Signature {
+/// #     name: b"A. Writer".to_vec(),
+/// #     email: b"writer@example.com".to_vec(),
+/// #     seconds: 1_700_000_000,
+/// #     offset_minutes: 0,
+/// # };
+///
+/// // Ask a Gerrit server to add a reviewer, and record who pushed in local reflogs.
+/// let options = PushOptions::default()
+///     .push_option("r=reviewer@example.com")
+///     .identity(person);
+/// # let _ = options;
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct PushOptions {
     push_options: Vec<Vec<u8>>,
@@ -348,48 +1073,110 @@ impl PushOptions {
         self
     }
 
-    /// Identity for reflog entries written in a local destination repository.
+    /// Sets the identity for reflog entries this push writes.
+    ///
+    /// The identity is used for reflog entries in a native local destination, and for the local
+    /// remote-tracking references a successful push updates (message `update by push`). Without
+    /// it, those references are updated without reflog entries. Network servers write their own
+    /// reflogs; this identity is not sent to them.
     pub fn identity(mut self, identity: crate::Signature) -> Self {
         self.identity = Some(identity);
         self
     }
 
-    /// Sends server-specific `--push-option` values (e.g. Gerrit review settings).
+    /// Adds one server-specific value, like `git push --push-option`.
+    ///
+    /// Servers use push options for per-push settings such as Gerrit reviewers or GitLab merge
+    /// request creation. Values are sent as given, in order. Push options require the server to
+    /// advertise `push-options`; otherwise the push fails before any command is sent.
     pub fn push_option(mut self, option: impl Into<Vec<u8>>) -> Self {
         self.push_options.push(option.into());
         self
     }
 }
 
-/// How the remote's HEAD is configured, as advertised.
+/// How the remote's `HEAD` is configured, as advertised; an alias of [`RemoteHead`].
 pub type RemoteHeadState = RemoteHead;
 
-/// A transfer failed.
+/// Why [`fetch`], [`push`] or [`remote_head`] failed, and how far it got.
+///
+/// The variants are ordered by how far the operation progressed. Only
+/// [`FetchFinish`](Self::FetchFinish) and an uncertain [`Push`](Self::Push) can follow a change;
+/// every other variant means nothing was changed locally or remotely. The
+/// [module documentation](self#errors) has a table of recovery actions.
+///
+/// For SSH failures, also show the text received by [`TransferCallbacks::transport_message`]:
+/// OpenSSH explains authentication and host-key problems there.
+///
+/// # Examples
+///
+/// ```
+/// use girt::workflow::{self, Environment, FetchOptions, NoCallbacks, TransferError};
+/// # let (_directory, _, repo, _, _) = include!("doctest/remote.rs");
+///
+/// let options = FetchOptions::new(["+refs/heads/*:refs/remotes/upstream/*"]);
+/// match workflow::fetch(
+///     &repo,
+///     "upstream",
+///     &options,
+///     &Environment::from_process(),
+///     &mut NoCallbacks,
+/// ) {
+///     Err(TransferError::NoSuchRemote(name)) => assert_eq!(name, "upstream"),
+///     other => panic!("expected a missing remote, got {other:?}"),
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TransferError {
-    /// No remote with this name, or it has no URL for the direction.
+    /// No remote has this name, or it has no URL for this direction.
+    ///
+    /// Holds the remote name.
     #[error("no such remote: {0}")]
     NoSuchRemote(String),
-    /// The remote configuration is invalid.
+    /// The remote's configuration or the environment is invalid or unsupported.
+    ///
+    /// Examples: an unparsable refspec, a URL rewritten to a form girt cannot parse, a protocol
+    /// refused by `protocol.allow`, an invalid `protocol.version`, an unreadable `GIT_SSL_CAINFO`
+    /// file, or an HTTP setting girt does not implement. Holds a description. Nothing was sent.
     #[error("invalid remote configuration: {0}")]
     Configuration(String),
-    /// The URL uses a transport girt doesn't support (e.g. `git://` or a remote helper).
+    /// The URL's transport is not available in this build or not supported at all.
+    ///
+    /// `http(s)://` URLs need the `http` feature and SSH URLs need the `ssh` feature on macOS or
+    /// Linux. `git://` and remote helpers (`<transport>::<address>`) are never supported. Holds the
+    /// remote name.
     #[error("unsupported transport for remote {0}")]
     UnsupportedTransport(String),
-    /// Authentication failed or was cancelled.
+    /// An HTTP server asked for a credential and none could be obtained.
+    ///
+    /// Raised when credential helpers and [`TransferCallbacks::credential`] supply nothing or the
+    /// user cancels the prompt. Holds the remote URL without any username or password. A
+    /// credential the server then rejects is reported as an HTTP `401` status through
+    /// [`Fetch`](Self::Fetch) or [`Push`](Self::Push). SSH authentication failures are reported
+    /// by OpenSSH through those variants as well.
     #[error("authentication failed for {0}")]
     Authentication(String),
-    /// A fetch failed before any local change.
+    /// The fetch failed before installing anything; the repository is unchanged.
+    ///
+    /// The boxed error distinguishes a refspec or destination policy problem
+    /// ([`FetchWorkflowError::Plan`]) from a transport, protocol or validation failure
+    /// ([`FetchWorkflowError::Transfer`]).
     #[error(transparent)]
     Fetch(Box<FetchWorkflowError>),
-    /// A fetch installed objects but failed to update some references.
+    /// The fetch installed objects but did not finish updating references.
+    ///
+    /// The boxed [`FetchFinishError`](crate::fetch::FetchFinishError) holds a report of what was
+    /// installed and published, and the failure. Installed objects are not rolled back; they are
+    /// harmless and a later maintenance run can remove them if nothing refers to them.
     #[error(transparent)]
     FetchFinish(Box<crate::fetch::FetchFinishError>),
-    /// A push failed; see [`crate::push::PushError`] for whether it may have taken effect.
+    /// The push failed; the boxed [`PushError`](crate::push::PushError) says whether the remote
+    /// may have changed.
     #[error(transparent)]
     Push(Box<crate::push::PushError>),
-    /// Reading local objects or references failed.
+    /// Reading this repository's objects or references failed before the transfer began.
     #[error(transparent)]
     Local(Box<dyn std::error::Error + Send + Sync>),
 }
