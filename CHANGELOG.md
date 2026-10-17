@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/joshka/girt/compare/girt-v0.11.3...girt-v0.12.0) - 2026-10-17
+
+### Other
+
+- Align tree diff names with default-limit APIs ([#430](https://github.com/joshka/girt/pull/430))
+- Add reference helpers and repository-format object IDs ([#429](https://github.com/joshka/girt/pull/429))
+- Rename cfg-gated test calls to the _with forms ([#431](https://github.com/joshka/girt/pull/431))
+- Add snapshot and commit builders ([#424](https://github.com/joshka/girt/pull/424))
+- Speed up commit walks with pack read-ahead and cheaper commit parsing ([#427](https://github.com/joshka/girt/pull/427))
+- Take defaults with short names; move explicit limits to _with ([#421](https://github.com/joshka/girt/pull/421))
+- Add a crate-level error and Git display helpers ([#423](https://github.com/joshka/girt/pull/423))
+- Skip compression when a loose object already exists ([#401](https://github.com/joshka/girt/pull/401))
+
 ## [0.11.3](https://github.com/joshka/girt/compare/girt-v0.11.2...girt-v0.11.3) - 2026-10-17
 
 ### Other

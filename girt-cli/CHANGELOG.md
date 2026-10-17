@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/joshka/girt/compare/girt-cli-v0.2.3...girt-cli-v0.2.4) - 2026-10-17
+
+### Other
+
+- Align tree diff names with default-limit APIs ([#430](https://github.com/joshka/girt/pull/430))
+- Add reference helpers and repository-format object IDs ([#429](https://github.com/joshka/girt/pull/429))
+- Add snapshot and commit builders ([#424](https://github.com/joshka/girt/pull/424))
+- Take defaults with short names; move explicit limits to _with ([#421](https://github.com/joshka/girt/pull/421))
+- Add a crate-level error and Git display helpers ([#423](https://github.com/joshka/girt/pull/423))
+
 ## [0.2.3](https://github.com/joshka/girt/compare/girt-cli-v0.2.2...girt-cli-v0.2.3) - 2026-10-17
 
 ### Other
