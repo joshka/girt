@@ -321,15 +321,8 @@ impl CachedIndex {
             && self.index_change == index.cache_change
             && self.pack_change == pack.cache_change
     }
-
-    fn retained_bytes(&self) -> usize {
-        self.bytes.capacity()
-            + self.table.ranges.capacity() * std::mem::size_of::<(usize, usize)>()
-            + self.table.offsets.capacity() * std::mem::size_of::<usize>()
-    }
 }
 
-const INDEX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const INDEX_CACHE_PAIRS: usize = 8;
 static INDEX_CACHE: Mutex<IndexCache> = Mutex::new(IndexCache(VecDeque::new()));
 
@@ -343,20 +336,7 @@ impl IndexCache {
 
     fn insert(&mut self, entry: Arc<CachedIndex>) {
         self.prune();
-        let size = entry.retained_bytes();
-        if size > INDEX_CACHE_BYTES {
-            return;
-        }
-        while self.0.len() >= INDEX_CACHE_PAIRS
-            || self
-                .0
-                .iter()
-                .filter_map(Weak::upgrade)
-                .map(|entry| entry.retained_bytes())
-                .sum::<usize>()
-                + size
-                > INDEX_CACHE_BYTES
-        {
+        while self.0.len() >= INDEX_CACHE_PAIRS {
             self.0.pop_front();
         }
         self.0.push_back(Arc::downgrade(&entry));
@@ -1837,49 +1817,34 @@ mod publication_tests {
     }
 
     #[test]
-    fn index_cache_bounds_live_representations() {
+    fn index_cache_bounds_pairs_not_representation_size() {
         let root = tempfile::tempdir().unwrap();
         let path = pair(root.path(), "bounds", ObjectFormat::Sha1, b"content");
         let reader = open_pair(&path, ObjectFormat::Sha1);
-        let entry = Arc::new(CachedIndex {
-            format: reader.format,
-            index_stamp: reader.index.stamp.clone(),
-            pack_stamp: reader.pack.stamp.clone(),
-            index_change: reader.index.cache_change,
-            pack_change: reader.pack.cache_change,
-            _index_file: reader.index.file.try_clone().unwrap(),
-            _pack_file: reader.pack.file.try_clone().unwrap(),
-            bytes: reader.index_bytes.clone(),
-            table: reader.table.clone(),
-        });
+        let entry = |bytes: Arc<Vec<u8>>| {
+            Arc::new(CachedIndex {
+                format: reader.format,
+                index_stamp: reader.index.stamp.clone(),
+                pack_stamp: reader.pack.stamp.clone(),
+                index_change: reader.index.cache_change,
+                pack_change: reader.pack.cache_change,
+                _index_file: reader.index.file.try_clone().unwrap(),
+                _pack_file: reader.pack.file.try_clone().unwrap(),
+                bytes,
+                table: reader.table.clone(),
+            })
+        };
+        let small = entry(reader.index_bytes.clone());
         let mut cache = IndexCache(VecDeque::new());
         for _ in 0..INDEX_CACHE_PAIRS + 1 {
-            cache.insert(entry.clone());
+            cache.insert(small.clone());
         }
         assert_eq!(cache.0.len(), INDEX_CACHE_PAIRS);
-        let large = Arc::new(CachedIndex {
-            bytes: Arc::new(Vec::with_capacity(INDEX_CACHE_BYTES / 2)),
-            format: reader.format,
-            index_stamp: reader.index.stamp.clone(),
-            pack_stamp: reader.pack.stamp.clone(),
-            index_change: reader.index.cache_change,
-            pack_change: reader.pack.cache_change,
-            _index_file: reader.index.file.try_clone().unwrap(),
-            _pack_file: reader.pack.file.try_clone().unwrap(),
-            table: reader.table.clone(),
-        });
+        // Weak records retain nothing, so a Git-scale representation is shared like any other.
+        let large = entry(Arc::new(Vec::with_capacity(128 * 1024 * 1024)));
         cache.insert(large.clone());
-        cache.insert(large.clone());
-        assert_eq!(cache.0.len(), 1);
-        assert!(
-            cache
-                .0
-                .iter()
-                .filter_map(Weak::upgrade)
-                .map(|entry| entry.retained_bytes())
-                .sum::<usize>()
-                <= INDEX_CACHE_BYTES
-        );
+        assert_eq!(cache.0.len(), INDEX_CACHE_PAIRS);
+        assert!(cache.0.back().unwrap().ptr_eq(&Arc::downgrade(&large)));
     }
 
     // Original malformed framing, with independent artifact checksums and CRCs rebuilt so the
