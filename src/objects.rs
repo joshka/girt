@@ -799,7 +799,7 @@ impl Objects {
                 check_cancelled(cancel)?;
                 for pack in &store.packs {
                     if let Some(position) = pack.find(id)? {
-                        packed.push((pack_index, pack.offset(position), position, id));
+                        packed.push((pack_index, pack.offset(position)?, position, id));
                         continue 'ids;
                     }
                     pack_index += 1;

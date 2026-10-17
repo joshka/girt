@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use flate2::{Decompress, FlushDecompress, Status};
 
 use super::delta::{apply, byte, charge, size};
+use super::index::Span;
 #[cfg(test)]
 use super::index::{Index, verify_hash, word};
 use crate::{Object, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
@@ -42,6 +43,7 @@ impl Pack {
         }
         let end = data.len() - format.digest_len();
         let index = Index::parse(format, index_bytes, end)?;
+        index.validate(index_bytes)?;
         verify_hash(format, index_bytes, "index checksum")?;
         if word(&data, 8)? as usize != index.len() {
             return Err(Error::Corrupt("pack object count"));
@@ -51,7 +53,7 @@ impl Pack {
             return Err(Error::Corrupt("index/pack checksum disagreement"));
         }
         for position in 0..index.len() {
-            let entry = index.entry(index_bytes, position);
+            let entry = index.entry(index_bytes, position)?;
             if entry
                 .crc
                 .is_some_and(|crc| crc32fast::hash(&data[entry.offset..entry.end]) != crc)
@@ -67,7 +69,7 @@ impl Pack {
     }
 
     pub fn find(&self, id: ObjectId) -> Option<usize> {
-        self.index.find(&self.index_bytes, id)
+        self.index.find(&self.index_bytes, id).ok().flatten()
     }
 
     pub fn read(&self, position: usize, limits: ReadLimits) -> Result<Object, Error> {
@@ -77,16 +79,23 @@ impl Pack {
 
 pub(crate) trait Source {
     fn format(&self) -> crate::ObjectFormat;
-    fn entry(&self, position: usize) -> Result<super::index::Entry, Error>;
+    /// The entry at identity-order `position`.
+    fn span(&self, position: usize) -> Result<Span, Error>;
+    /// The entry starting at `offset`, the base of an offset delta.
+    fn span_at(&self, offset: usize) -> Result<Span, Error>;
+    fn identity(&self, position: usize) -> Result<ObjectId, Error>;
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error>;
-    fn at_offset(&self, offset: usize) -> Result<usize, Error>;
-    fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error>;
+    fn prefix(&self, span: &Span) -> Result<Vec<u8>, Error>;
+    /// Inflates an entry's payload, returning it with the offset where the entry ends.
+    ///
+    /// An exact span must end where the zlib stream does; otherwise the stream's end defines the
+    /// entry's. The CRC, when the span has one, covers exactly the entry's bytes.
     fn inflate(
         &self,
-        entry: &super::index::Entry,
+        span: &Span,
         header: &EntryHeader,
         cancelled: &AtomicBool,
-    ) -> Result<Vec<u8>, Error>;
+    ) -> Result<(Vec<u8>, usize), Error>;
     /// Receive-owned sources can retain identity proof after evicting the decoded payload.
     /// Such sources must keep their representation private and check its recorded entry bytes
     /// on re-read. Ordinary storage/content sources always use the default mandatory hash.
@@ -100,7 +109,7 @@ pub(crate) trait Source {
     }
 }
 
-/// Recently decoded pack entries, keyed by scope and entry position, like Git's delta base cache.
+/// Recently decoded pack entries, keyed by scope and entry offset, like Git's delta base cache.
 ///
 /// Reading a deltified object reconstructs its whole chain, and neighbouring objects usually
 /// share bases, so caching them avoids inflating the same bases repeatedly. Entries record
@@ -136,7 +145,27 @@ struct CacheInner {
 struct Cached {
     kind: ObjectKind,
     data: Arc<Vec<u8>>,
-    verified: bool,
+    proof: Proof,
+}
+
+/// What a cached payload was checked against when it was decoded.
+///
+/// Entries are keyed by offset, and damaged index offsets can make two identities name one
+/// entry, so an identity check proves only the identity it hashed. A base reached by offset has
+/// no index position, so its CRC may be unchecked until a read by identity checks it.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Proof {
+    /// The identity the payload hashed to, if checked.
+    pub identity: Option<ObjectId>,
+    /// Whether the entry's CRC was checked, or it has none.
+    pub crc: bool,
+}
+
+impl Proof {
+    fn merge(&mut self, other: Self) {
+        self.identity = self.identity.or(other.identity);
+        self.crc |= other.crc;
+    }
 }
 
 /// One reader's entries in a cache.
@@ -232,55 +261,43 @@ impl BaseCache {
     }
 
     #[cfg(test)]
-    fn get(&self, position: usize) -> Option<Cached> {
-        self.view().get(position)
+    fn get(&self, offset: usize) -> Option<Cached> {
+        self.view().get(offset)
     }
 
-    pub(crate) fn insert(&self, position: usize, object: &Object, verified: bool) {
+    pub(crate) fn insert(&self, offset: usize, object: &Object, proof: Proof) {
         self.view()
-            .insert_shared(position, object.kind, &object.data, verified);
+            .insert_shared(offset, object.kind, &object.data, proof);
     }
 
     #[cfg(test)]
-    fn insert_shared(
-        &self,
-        position: usize,
-        kind: ObjectKind,
-        data: &Arc<Vec<u8>>,
-        verified: bool,
-    ) {
-        self.view().insert_shared(position, kind, data, verified);
+    fn insert_shared(&self, offset: usize, kind: ObjectKind, data: &Arc<Vec<u8>>, proof: Proof) {
+        self.view().insert_shared(offset, kind, data, proof);
     }
 
     #[cfg(test)]
-    fn mark_verified(&self, position: usize) {
-        self.view().mark_verified(position);
+    fn mark_verified(&self, offset: usize, id: ObjectId) {
+        self.view().mark_verified(offset, id);
     }
 }
 
 impl CacheView<'_> {
-    fn get(&self, position: usize) -> Option<Cached> {
+    fn get(&self, offset: usize) -> Option<Cached> {
         let inner = self.cache.lock();
-        inner.entries.get(&(self.scope, position)).cloned()
+        inner.entries.get(&(self.scope, offset)).cloned()
     }
 
     /// Shares a decoded payload with the cache without copying it.
-    fn insert_shared(
-        &self,
-        position: usize,
-        kind: ObjectKind,
-        data: &Arc<Vec<u8>>,
-        verified: bool,
-    ) {
+    fn insert_shared(&self, offset: usize, kind: ObjectKind, data: &Arc<Vec<u8>>, proof: Proof) {
         let size = data.len();
         // One large object shouldn't evict every shared base.
         if size > BaseCache::LIMIT / 8 {
             return;
         }
-        let key = (self.scope, position);
+        let key = (self.scope, offset);
         let mut inner = self.cache.lock();
         if let Some(existing) = inner.entries.get_mut(&key) {
-            existing.verified |= verified;
+            existing.proof.merge(proof);
             return;
         }
         while inner.bytes + size > BaseCache::LIMIT {
@@ -298,15 +315,15 @@ impl CacheView<'_> {
             Cached {
                 kind,
                 data: Arc::clone(data),
-                verified,
+                proof,
             },
         );
     }
 
-    fn mark_verified(&self, position: usize) {
+    fn mark_verified(&self, offset: usize, id: ObjectId) {
         let mut inner = self.cache.lock();
-        if let Some(entry) = inner.entries.get_mut(&(self.scope, position)) {
-            entry.verified = true;
+        if let Some(entry) = inner.entries.get_mut(&(self.scope, offset)) {
+            entry.proof.identity = Some(id);
         }
     }
 }
@@ -316,25 +333,30 @@ impl Source for Pack {
     fn format(&self) -> crate::ObjectFormat {
         self.index.pack_hash.format()
     }
-    fn entry(&self, position: usize) -> Result<super::index::Entry, Error> {
-        Ok(self.index.entry(&self.index_bytes, position))
+    // Opening validated the whole index, so its offset order exists and every span is exact.
+    fn span(&self, position: usize) -> Result<Span, Error> {
+        self.index.span(&self.index_bytes, position)
+    }
+    fn span_at(&self, offset: usize) -> Result<Span, Error> {
+        self.index.span_at(&self.index_bytes, offset)
+    }
+    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+        Ok(self.index.identity(&self.index_bytes, position))
     }
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
-        Ok(self.find(id))
+        self.index.find(&self.index_bytes, id)
     }
-    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        self.index.at_offset(&self.index_bytes, offset)
-    }
-    fn prefix(&self, entry: &super::index::Entry) -> Result<Vec<u8>, Error> {
-        Ok(self.data[entry.offset..entry.end.min(entry.offset.saturating_add(64))].to_vec())
+    fn prefix(&self, span: &Span) -> Result<Vec<u8>, Error> {
+        Ok(self.data[span.offset..span.end.min(span.offset.saturating_add(64))].to_vec())
     }
     fn inflate(
         &self,
-        entry: &super::index::Entry,
+        span: &Span,
         header: &EntryHeader,
         _: &AtomicBool,
-    ) -> Result<Vec<u8>, Error> {
-        inflate(&self.data[header.data_start..entry.end], header.length)
+    ) -> Result<(Vec<u8>, usize), Error> {
+        let data = inflate(&self.data[header.data_start..span.end], header.length)?;
+        Ok((data, span.end))
     }
 }
 
@@ -375,8 +397,10 @@ pub(crate) fn decode_budgeted(
 
 /// Whether a decode hashes the requested object to check the identity its index entry claims.
 ///
-/// Every other check is unconditional: entry framing, v2 CRCs, zlib termination, declared sizes,
-/// delta programs and [`ReadLimits`]. Only [`crate::UnverifiedObject`] reads pass `Skip`.
+/// Every other check is unconditional: entry framing, zlib termination, declared sizes, delta
+/// programs, [`ReadLimits`], and the v2 CRC of every entry whose index position the read knows.
+/// That excludes an offset delta's base until the index's offset order exists, as Git checks no
+/// CRC on reads. Only [`crate::UnverifiedObject`] reads pass `Skip`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Identity {
     Verify,
@@ -385,7 +409,7 @@ pub(crate) enum Identity {
 
 pub(crate) fn decode_checked(
     source: &impl Source,
-    mut position: usize,
+    position: usize,
     limits: ReadLimits,
     cancelled: &AtomicBool,
     remaining: &mut usize,
@@ -397,65 +421,108 @@ pub(crate) fn decode_checked(
     let mut pending = Vec::new();
     let mut seen = HashSet::new();
     let cache = source.base_cache();
-    let requested = position;
+    let mut span = source.span(position)?;
+    // Entries are keyed by offset: a delta names its base by offset, and finding the base's
+    // index position would need the offset order.
+    let requested = span.offset;
+    // A receive-owned source can vouch for an entry's identity; the CRC is checked when known.
+    let proof_at = |span: &Span| -> Result<Proof, Error> {
+        let identity = match span.position {
+            Some(position) if source.identity_verified(position) => {
+                Some(source.identity(position)?)
+            }
+            _ => None,
+        };
+        // Reading an entry with an index position checks its CRC, if it has one.
+        Ok(Proof {
+            identity,
+            crc: span.position.is_some(),
+        })
+    };
     // Bases are cached for later reads. A requested blob is returned without being cached: large
     // payloads would evict bases that later reads share; measured on the large fixture, caching
     // them cost more re-inflation than it saved. Requested commits, trees and tags stay cached,
     // since walks often read their delta children next.
-    let retain =
-        |position: usize, kind: ObjectKind| position != requested || kind != ObjectKind::Blob;
+    let retain = |offset: usize, kind: ObjectKind| offset != requested || kind != ObjectKind::Blob;
     // Payloads are shared with the cache, never copied out of it.
     let (kind, mut data) = loop {
-        if seen.contains(&position) {
+        let offset = span.offset;
+        if seen.contains(&offset) {
             return Err(Error::DeltaCycle);
         }
         check_cancelled(cancelled)?;
+        // The requested entry's CRC is always checked: a base cached without one is decoded again.
         if let Some(cache) = cache
-            && let Some(hit) = cache.get(position)
+            && let Some(hit) = cache
+                .get(offset)
+                .filter(|hit| offset != requested || hit.proof.crc || span.crc.is_none())
         {
             // A payload cached under looser limits must still fit this read's.
             if hit.data.len() > limits.max_object_bytes {
                 return Err(Error::Limit("object bytes"));
             }
-            if verify && position == requested && !hit.verified {
-                verify_identity(format, hit.kind, &hit.data, source.entry(position)?.id)?;
-                cache.mark_verified(position);
+            if verify && offset == requested {
+                let id = source.identity(position)?;
+                if hit.proof.identity != Some(id) {
+                    verify_identity(format, hit.kind, &hit.data, id)?;
+                    cache.mark_verified(offset, id);
+                }
             }
             break (hit.kind, hit.data);
         }
-        let entry = source.entry(position)?;
-        input_remaining = input_remaining
-            .checked_sub(entry.end - entry.offset)
-            .ok_or(Error::Limit("compressed entry bytes"))?;
-        let header = entry_header(source, &entry)?;
+        // An entry without an exact end ends with its zlib stream; a stream that runs past the
+        // remaining input budget exceeds the limit.
+        let capped = !span.exact && span.end - offset > input_remaining;
+        if span.exact {
+            input_remaining = input_remaining
+                .checked_sub(span.end - offset)
+                .ok_or(Error::Limit("compressed entry bytes"))?;
+        } else if capped {
+            span.end = offset + input_remaining;
+        }
+        let over_budget = |error| match error {
+            Error::Corrupt(
+                "truncated packed zlib stream"
+                | "truncated delta or entry"
+                | "truncated base identity",
+            ) if capped => Error::Limit("compressed entry bytes"),
+            other => other,
+        };
+        let header = entry_header(source, &span).map_err(over_budget)?;
         let kind = header.kind;
         let length = header.length;
-        let base = header.base;
-        let limit = if base.is_some() {
+        let delta = header.base.is_some();
+        let limit = if delta {
             limits.max_delta_bytes
         } else {
             limits.max_object_bytes
         };
         if length > limit {
-            return Err(Error::Limit(if base.is_some() {
+            return Err(Error::Limit(if delta {
                 "delta program bytes"
             } else {
                 "object bytes"
             }));
         }
-        if base.is_some() {
+        if delta {
             if pending.len() >= limits.max_delta_depth {
                 return Err(Error::Limit("delta depth"));
             }
             // Only delta nodes can be revisited: whole objects and cache hits terminate the
             // descent. Ordinary small-object reads need no cycle-set allocation.
-            seen.insert(position);
+            seen.insert(offset);
         }
         charge(remaining, length)?;
-        let data = source.inflate(&entry, &header, cancelled)?;
-        if let Some(base) = base {
-            pending.push((position, data));
-            position = base;
+        let (data, end) = source
+            .inflate(&span, &header, cancelled)
+            .map_err(over_budget)?;
+        if !span.exact {
+            // The stream ended within the span, which the budget capped.
+            input_remaining -= end - offset;
+        }
+        if let Some(base) = header.base {
+            pending.push((offset, proof_at(&span)?, data));
+            span = base;
         } else {
             let kind = match kind {
                 1 => ObjectKind::Commit,
@@ -466,28 +533,29 @@ pub(crate) fn decode_checked(
             };
             // Only the requested object's identity is checked: a corrupt base changes every
             // object reconstructed from it, so the final check still catches it.
-            let check_identity = verify && position == requested;
-            let verified = check_identity || source.identity_verified(position);
-            if check_identity {
-                verify_identity(format, kind, &data, entry.id)?;
+            let mut proof = proof_at(&span)?;
+            if verify && offset == requested {
+                let id = source.identity(position)?;
+                verify_identity(format, kind, &data, id)?;
+                proof.identity = Some(id);
             }
             let data = Arc::new(data);
-            if let Some(cache) = cache.filter(|_| retain(position, kind)) {
-                cache.insert_shared(position, kind, &data, verified);
+            if let Some(cache) = cache.filter(|_| retain(offset, kind)) {
+                cache.insert_shared(offset, kind, &data, proof);
             }
             break (kind, data);
         }
     };
-    while let Some((position, program)) = pending.pop() {
+    while let Some((offset, mut proof, program)) = pending.pop() {
         check_cancelled(cancelled)?;
         data = Arc::new(apply(&data, &program, limits.max_object_bytes, remaining)?);
-        let check_identity = verify && position == requested;
-        let verified = check_identity || source.identity_verified(position);
-        if check_identity {
-            verify_identity(format, kind, &data, source.entry(position)?.id)?;
+        if verify && offset == requested {
+            let id = source.identity(position)?;
+            verify_identity(format, kind, &data, id)?;
+            proof.identity = Some(id);
         }
-        if let Some(cache) = cache.filter(|_| retain(position, kind)) {
-            cache.insert_shared(position, kind, &data, verified);
+        if let Some(cache) = cache.filter(|_| retain(offset, kind)) {
+            cache.insert_shared(offset, kind, &data, proof);
         }
     }
     // The payload stays shared with the cache; callers copy it only to take ownership.
@@ -500,8 +568,8 @@ pub(crate) struct EntryHeader {
     pub kind: u8,
     /// Declared inflated size of the object or delta program.
     pub length: usize,
-    /// Position of the delta base within the same pack, for delta entries.
-    pub base: Option<usize>,
+    /// The delta base within the same pack, for delta entries.
+    pub base: Option<Span>,
     /// Offset of the first zlib byte.
     pub data_start: usize,
     /// Header and read-ahead payload share the source's allocation, without splitting/copying it.
@@ -519,11 +587,8 @@ impl EntryHeader {
     }
 }
 
-/// Parses an entry header and resolves a delta base to a position in the same pack.
-pub(crate) fn entry_header(
-    source: &impl Source,
-    entry: &super::index::Entry,
-) -> Result<EntryHeader, Error> {
+/// Parses an entry header and resolves a delta base to an entry in the same pack.
+pub(crate) fn entry_header(source: &impl Source, entry: &Span) -> Result<EntryHeader, Error> {
     let width = source.format().digest_len();
     let prefix = source.prefix(entry)?;
     let mut input = prefix.as_slice();
@@ -550,7 +615,7 @@ pub(crate) fn entry_header(
                 .offset
                 .checked_sub(distance)
                 .ok_or(Error::Corrupt("delta offset before pack"))?;
-            Some(source.at_offset(offset)?)
+            Some(source.span_at(offset)?)
         }
         7 => {
             let (raw, rest) = input
@@ -559,7 +624,8 @@ pub(crate) fn entry_header(
             let id = ObjectId::from_bytes(source.format(), raw)
                 .map_err(|_| Error::Corrupt("truncated base identity"))?;
             input = rest;
-            Some(source.find(id)?.ok_or(Error::MissingBase(id))?)
+            let position = source.find(id)?.ok_or(Error::MissingBase(id))?;
+            Some(source.span(position)?)
         }
         other => return Err(Error::ObjectType(other)),
     };
@@ -629,6 +695,11 @@ pub(crate) fn inflate_prefix(mut input: &[u8], expected: usize) -> Result<(Vec<u
 mod cache_tests {
     use super::*;
 
+    const CHECKED: Proof = Proof {
+        identity: None,
+        crc: true,
+    };
+
     fn object(data: Vec<u8>) -> Object {
         Object {
             kind: ObjectKind::Blob,
@@ -644,10 +715,10 @@ mod cache_tests {
         let cache = BaseCache::new();
         let held = object(vec![7; 1024]);
         let clone = held.clone();
-        cache.insert(0, &held, true);
+        cache.insert(0, &held, CHECKED);
         let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
         for position in 1..=8 {
-            cache.insert_shared(position, ObjectKind::Blob, &filler, true);
+            cache.insert_shared(position, ObjectKind::Blob, &filler, CHECKED);
         }
         assert!(cache.get(0).is_none(), "the oldest entry is evicted");
         let inner = cache.inner.lock().unwrap();
@@ -670,14 +741,16 @@ mod cache_tests {
         let first = CacheScope::register();
         let second = CacheScope::register();
         let data = Arc::new(b"cached".to_vec());
-        first.view().insert_shared(3, ObjectKind::Blob, &data, true);
-        assert!(first.view().get(3).is_some_and(|hit| hit.verified));
+        first
+            .view()
+            .insert_shared(3, ObjectKind::Blob, &data, CHECKED);
+        assert!(first.view().get(3).is_some_and(|hit| hit.proof.crc));
         assert!(second.view().get(3).is_none(), "another reader misses");
         let filler = Arc::new(vec![0; BaseCache::LIMIT / 8]);
         for position in 0..8 {
             second
                 .view()
-                .insert_shared(position, ObjectKind::Blob, &filler, true);
+                .insert_shared(position, ObjectKind::Blob, &filler, CHECKED);
         }
         assert!(
             first.view().get(3).is_none(),
@@ -696,11 +769,16 @@ mod cache_tests {
         let cache = BaseCache::new();
         let largest = Arc::new(vec![0; BaseCache::LIMIT / 8]);
         let oversized = Arc::new(vec![0; BaseCache::LIMIT / 8 + 1]);
-        cache.insert_shared(0, ObjectKind::Blob, &largest, false);
-        cache.insert_shared(1, ObjectKind::Blob, &oversized, false);
-        assert!(cache.get(0).is_some_and(|hit| !hit.verified));
+        cache.insert_shared(0, ObjectKind::Blob, &largest, Proof::default());
+        cache.insert_shared(1, ObjectKind::Blob, &oversized, Proof::default());
+        assert!(cache.get(0).is_some_and(|hit| hit.proof.identity.is_none()));
         assert!(cache.get(1).is_none());
-        cache.mark_verified(0);
-        assert!(cache.get(0).is_some_and(|hit| hit.verified));
+        let id = ObjectId::for_blob(crate::ObjectFormat::Sha1, b"");
+        cache.mark_verified(0, id);
+        assert!(
+            cache
+                .get(0)
+                .is_some_and(|hit| hit.proof.identity == Some(id))
+        );
     }
 }

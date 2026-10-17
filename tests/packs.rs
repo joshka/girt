@@ -658,8 +658,9 @@ fn open_rejects_truncated_pack(#[case] format: girt::ObjectFormat) {
     file.set_len((offset + format.digest_len()) as u64).unwrap();
     // Finish fixture mutation before opening a reader that excludes writers on Windows.
     drop(file);
+    // The bytes now in the trailer's place disagree with the index, as Git reports.
     assert!(
-        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("offset outside pack entries")))
+        matches!(fixture.repo.objects(PackLimits::default()), Err(ObjectReadError::PackArtifacts { source, .. }) if matches!(*source, ObjectReadError::Corrupt("index/pack checksum disagreement")))
     );
 }
 
@@ -719,6 +720,10 @@ fn corrupt_entry_is_detected_on_read_not_open(#[case] format: girt::ObjectFormat
 #[rstest]
 #[case::sha1(girt::ObjectFormat::Sha1)]
 #[case::sha256(girt::ObjectFormat::Sha256)]
+/// A requested entry's CRC is checked even when its identity matches. A delta reaches its base by
+/// offset, which needs no index position, so a content read checks the base's zlib stream and the
+/// requested object's identity but not the base's CRC, as Git checks no CRC on reads; explicit
+/// verification still finds it.
 fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt::ObjectFormat) {
     let fixture = Fixture::new(format, true, 4);
     let mut index = fs::read(&fixture.index_path).unwrap();
@@ -733,13 +738,21 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
     fs::remove_file(&fixture.index_path).unwrap();
     fs::write(&fixture.index_path, index).unwrap();
     let objects = fixture.repo.objects(PackLimits::default()).unwrap();
-    assert!(
-        error_chain(
-            &objects
-                .read(fixture.delta, ReadLimits::default())
-                .unwrap_err()
-        )
-        .contains("entry CRC")
+    let delta = &fixture
+        .records
+        .iter()
+        .find(|r| r.0 == fixture.delta)
+        .unwrap()
+        .2;
+    // Reading the delta first caches its base without a CRC check; the base's own read in the
+    // same store still checks it.
+    assert_eq!(
+        objects
+            .read(fixture.delta, ReadLimits::default())
+            .unwrap()
+            .unwrap()
+            .data(),
+        &delta[..]
     );
     assert!(
         error_chain(
@@ -748,6 +761,11 @@ fn read_checks_index_crc_even_when_object_identity_matches(#[case] format: girt:
                 .unwrap_err()
         )
         .contains("entry CRC")
+    );
+    assert!(
+        objects
+            .verify_packs(&std::sync::atomic::AtomicBool::new(false))
+            .is_err()
     );
 }
 

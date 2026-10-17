@@ -62,8 +62,11 @@ pack content is unchanged. Re-observe storage and retry under caller isolation, 
 completed steps in the failure report rather than blindly replaying mutations.
 [Git's mapped pack windows](https://git-scm.com/docs/git-config#Documentation/git-config.txt-corepackedGitWindowSize)
 can crash with `SIGBUS` when truncation makes a mapped page inaccessible, as the
-[`mmap` contract](https://man7.org/linux/man-pages/man2/mmap.2.html) describes. Girt uses owned
-buffers and positioned reads, so this path does not acquire that mapping fault hazard.
+[`mmap` contract](https://man7.org/linux/man-pages/man2/mmap.2.html) describes. Girt reads packs
+with owned buffers and positioned reads, so pack reads do not acquire that fault hazard. Pack
+indexes are mapped on macOS and Linux, as Git maps them (see
+[Index validation at open](#index-validation-at-open)), so truncating a published `.idx` in place
+while a reader holds it can crash that reader with `SIGBUS`.
 
 ## Protected data
 
@@ -189,53 +192,104 @@ that blob retries other verified copies or reports the damage. `Objects::verify_
 CRCs and pack checksums and refuses remembered damage; `git fsck` also reports damage. Repack and
 retirement fail at the blob because copying checks its CRC and retirement decodes it.
 
-## Index checksums at open
+## Index validation at open
 
-Opening a pack checks the index structure but not its trailing checksum, as Git does
-([#80](https://github.com/joshka/girt/issues/80)). Hashing a 131k-entry index cost about a fifth of
-every open, and so of every jj command. The structural checks run in linear time: exact table sizes,
-strictly increasing identities, a fanout that matches them, each large offset used once, offsets
-that tile the pack from byte 12, and the index's pack checksum against the pack trailer. Damage to
-any of those fails the open.
+Opening a pack checks what every lookup relies on and nothing that needs a pass over the entries, as
+Git does ([#80](https://github.com/joshka/girt/issues/80),
+[#309](https://github.com/joshka/girt/issues/309)): the index header and version, table sizes that
+match the entry count (with at most 8 bytes of large-offset table for each entry after the first,
+the bound Git applies; a partial slot fails only explicit verification), a fanout that never
+decreases and ends at the entry count, the pack header and version, the pack's object count against
+the index's, and the index's pack checksum against the pack trailer. Damage to any of those fails
+the open. On the 9.1 million-object Linux pack, the earlier linear validation and a heap copy of the
+300 MB index cost about 0.5 s and 1 GB per store per process; Git's open takes no measurable time.
 
-Overlapping readers in one process share fully structurally validated index bytes and entry tables
-for an unchanged pair of pinned index/pack generations. The process-local cache keys one weak record
-per index/pack pair by both files' native identity, so the number of open packs never evicts a live
-record, and a lookup is one ordered-map search. A newer generation of the same pair replaces the
-older record: existing readers keep their shared validation, while later opens of the older
-generation validate again. A match also requires the same object format and both handles' size,
-modification time and metadata change time (Unix ctime or Windows ChangeTime). Change time
-discriminates cache generations without changing the pinned-reader freshness contract: rename/unlink
-can change it while the original artifact remains readable. Platforms without native file identity
-or change time bypass the cache. Concurrent misses can validate independently.
+Git 2.56 was observed on that pack with `git cat-file` after damaging a scratch copy of its index. A
+decreasing fanout, a fanout total that disagrees with the pack, a wrong index size, an unsupported
+version and a pack checksum that disagrees with the pack trailer each failed every lookup. Damage
+that only some entries carry failed only those lookups and left other objects readable:
+
+- a name out of order or duplicated made that object, and sometimes its neighbours, read as missing;
+- an offset outside the pack or inside its header failed that object's read;
+- a large-offset slot beyond its table failed that object's read;
+- the index's own trailing checksum was never checked by reads.
+
+Girt matches that split. Lookups binary search the identity's fanout bucket, so an out-of-order or
+duplicated name can make an object read as absent, as in Git; only explicit verification finds it.
+Each read checks the fields it uses: an offset must lie in the pack's entry bytes and a large-offset
+slot inside its table, or that read fails with a corruption error. No lookup reads outside the index
+bytes, because the table sizes were checked at open.
+
+A read does not need an entry's exact end: the entry ends where its zlib stream ends, and its v2 CRC
+covers the header and exactly the stream bytes consumed. Bytes between the stream and the next entry
+change nothing that a read returns. They fail a v2 read's CRC, which the index recorded over the
+whole entry; a v1 index has no CRCs, so a v1 read ignores them, as Git does. An offset delta's base
+is read at its offset, which gives no index position: until the offset order exists, a content read
+checks the base's framing and zlib stream but not its CRC, as Git checks no CRC on reads. Nothing at
+open shows that an entry starts at that offset either, so a base offset inside another entry fails
+that entry's framing, zlib, size or delta checks, or the requested object's identity check, as in
+Git. The delta base cache is keyed by entry offset, so it records which identity each payload hashed
+to and whether its CRC was checked: a read by identity hashes a cached payload proven for another
+identity, and decodes again a cached base whose CRC is unchecked.
+
+The offset order, which gives each entry's exact end and maps an offset back to its entry, is built
+on first use and fully checked then: every offset in range, each large-offset slot used exactly
+once, and offsets that are distinct and tile the pack from byte 12. Raw entry reuse when writing a
+pack and the explicit verification paths below build it. Content reads and header-only walks do not:
+walks remember resolved delta chains by entry offset, or by index position where a lookup already
+gave one. Once the order exists, reads also use its exact ends and CRCs.
+
+The index's own checksum and its whole structure, including identity order and the fanout's
+agreement with the names, belong to `Objects::verify_packs`, retention planning (which checks every
+pinned index before it can authorize a deletion), verification of a replacement pack before
+retirement, and entry reuse when writing a pack, which checks each source index once before copying
+bytes under its names.
+
+On macOS and Linux the index is mapped read-only and private rather than copied, so a lookup touches
+only the pages it reads. Resident index pages are clean and shared with the page cache; they count
+toward a process's resident set but not its memory footprint. Truncating a mapped index in place can
+raise `SIGBUS` in the reader, as for Git; the immutable-artifact contract above already forbids it.
+Each reader's first lookup still checks the index's live length, which catches a truncation before
+that point. Windows reads the index into memory instead: a mapped file there cannot be deleted until
+it is unmapped, which would stop Git from retiring a pack that a girt reader holds. Other platforms
+also read it into memory. Every open still charges the whole index against the `max_index_bytes`
+budget.
+
+Overlapping readers in one process share the mapped index bytes and the index table, including its
+offset order once built, for an unchanged pair of pinned index/pack generations. The process-local
+cache keys one weak record per index/pack pair by both files' native identity, so the number of open
+packs never evicts a live record, and a lookup is one ordered-map search. A newer generation of the
+same pair replaces the older record: existing readers keep their shared validation, while later
+opens of the older generation map and check the index again. A match also requires the same object
+format and both handles' size, modification time and metadata change time (Unix ctime or Windows
+ChangeTime). Change time discriminates cache generations without changing the pinned-reader
+freshness contract: rename/unlink can change it while the original artifact remains readable.
+Platforms without native file identity or change time bypass the cache. Concurrent misses can
+validate independently.
 
 The cache holds only weak references. Readers own the shared validation and independent artifact
 pins that prevent file-ID reuse, including during an in-flight cache lookup, without extending
-reader-local damage evidence. Dropping the last reader of a generation releases its shared pins and
-buffers; an in-flight open can retain them until that open finishes. Dead weak records retain
-neither handles nor buffers, only a map slot and a weak allocation; they are pruned once the map has
-doubled since the last prune, so it holds at most 16 records or twice those live at the last prune.
-Deleted pack/index storage can then be reclaimed, and Windows delete-pending names cease to be held
-by shared validation. Other readers or external processes can still pin an artifact. Sequential
-opens after all readers drop perform complete validation again.
+reader-local damage evidence. Dropping the last reader of a generation releases its shared pins,
+mapping and buffers; an in-flight open can retain them until that open finishes. Dead weak records
+retain neither handles nor buffers, only a map slot and a weak allocation; they are pruned once the
+map has doubled since the last prune, so it holds at most 16 records or twice those live at the last
+prune. Deleted pack/index storage can then be reclaimed, and Windows delete-pending names cease to
+be held by shared validation. Other readers or external processes can still pin an artifact.
+Sequential opens after all readers drop map and check the index again.
 
 Every open still charges the full input budgets, pins its own artifacts, checks the pack header,
 object count and trailer agreement, and rechecks both handles' metadata before returning. A cache
-hit allocates no per-entry tables or index-byte copy. Cold opens retain the complete eager
-structural validation. Lookup and verification retain live truncation checks; mutation boundaries
-retain freshness checks and explicit checksum gates. Atomic replacement leaves an existing reader on
-its original handles and gives new readers a different cache key. The cache adds no mapping and
-cannot fault on a truncated mapped page. Windows data writers remain excluded while readers pin a
-generation; immutable publication and caller-owned exclusion remain required.
+hit maps nothing and allocates no per-entry tables. Lookup and verification retain live truncation
+checks; mutation boundaries retain freshness checks and explicit checksum gates. Atomic replacement
+leaves an existing reader on its original handles and gives new readers a different cache key.
+Windows data writers remain excluded while readers pin a generation; immutable publication and
+caller-owned exclusion remain required.
 
-Damage the structure cannot see stays harmless because content reads are identity-checked (see
-[Identity checks in walks](#identity-checks-in-walks)). Swapped offsets fail the entry CRC, or the
-identity hash for v1. A changed name makes its object read as absent, and the changed name fails its
-identity check. A read therefore retries a verified copy or fails rather than returning the wrong
-content. The index checksum moves to the paths that trust names without hashing objects:
-`Objects::verify_packs`, retention planning (which checks every pinned index before it can authorize
-a deletion), verification of a replacement pack before retirement, and entry reuse when writing a
-pack, which checks each source index once before copying bytes under its names.
+Damage that opening and lookups cannot see stays harmless because content reads are identity-checked
+(see [Identity checks in walks](#identity-checks-in-walks)). Swapped or duplicated offsets fail the
+entry CRC, or the identity hash for v1. A changed name makes its object read as absent, and the
+changed name fails its identity check. A read therefore retries a verified copy or fails rather than
+returning the wrong content.
 
 ## Fast path contracts
 

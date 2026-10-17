@@ -258,19 +258,27 @@ fn rejects_invalid_index_fields(
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
 fn supports_index_large_offset_table(#[case] format: ObjectFormat) {
-    let (mut index, data) = ordinary(format);
-    index[1036 + format.digest_len()..1040 + format.digest_len()]
-        .copy_from_slice(&0x8000_0000u32.to_be_bytes());
-    index.splice(
-        1040 + format.digest_len()..1040 + format.digest_len(),
-        12u64.to_be_bytes(),
-    );
+    let records = [b"hello", b"world"].map(|data| (ObjectId::for_blob(format, data), data));
+    let entries = records.map(|(id, data)| (id, entry(3, 5, b"", data)));
+    let (mut index, data) = fixture(format, &entries);
+    // The entry after the first moves to the one large offset slot two entries allow.
+    let table = 1032 + 2 * (format.digest_len() + 4);
+    let position = (0..2)
+        .find(|position| index[table + 4 * position..][..4] != 12u32.to_be_bytes())
+        .unwrap();
+    let at = table + 4 * position;
+    let offset = u32::from_be_bytes(index[at..at + 4].try_into().unwrap());
+    index[at..at + 4].copy_from_slice(&0x8000_0000u32.to_be_bytes());
+    index.splice(table + 8..table + 8, u64::from(offset).to_be_bytes());
     reseal(format, &mut index);
     let pack = Pack::open(format, &index, data).unwrap();
-    assert_eq!(
-        pack.read(0, ReadLimits::default()).unwrap().data(),
-        b"hello"
-    );
+    for (id, data) in records {
+        let position = pack.find(id).unwrap();
+        assert_eq!(
+            pack.read(position, ReadLimits::default()).unwrap().data(),
+            data
+        );
+    }
 }
 
 #[rstest]
@@ -352,8 +360,8 @@ fn rejects_malformed_headerless_index(#[case] format: ObjectFormat) {
 #[case::zero_distance_sha256(ObjectFormat::Sha256, &[0], "zero delta distance")]
 #[case::before_pack_sha1(ObjectFormat::Sha1, &[127], "delta offset before pack")]
 #[case::before_pack_sha256(ObjectFormat::Sha256, &[127], "delta offset before pack")]
-#[case::inside_entry_sha1(ObjectFormat::Sha1, &[1], "base offset is not an indexed entry")]
-#[case::inside_entry_sha256(ObjectFormat::Sha256, &[1], "base offset is not an indexed entry")]
+#[case::inside_header_sha1(ObjectFormat::Sha1, &[1], "offset outside pack entries")]
+#[case::inside_header_sha256(ObjectFormat::Sha256, &[1], "offset outside pack entries")]
 #[case::overflow_sha1(ObjectFormat::Sha1, &[255; 20], "delta offset overflow")]
 #[case::overflow_sha256(ObjectFormat::Sha256, &[255; 20], "delta offset overflow")]
 fn rejects_bad_ofs_bases(#[case] format: ObjectFormat, #[case] base: &[u8], #[case] reason: &str) {
@@ -653,16 +661,10 @@ fn corrupt_zlib() -> Vec<u8> {
 #[rstest]
 #[case::truncated_sha1(ObjectFormat::Sha1, truncated_zlib, "truncated packed zlib stream")]
 #[case::truncated_sha256(ObjectFormat::Sha256, truncated_zlib, "truncated packed zlib stream")]
-#[case::trailing_sha1(
-    ObjectFormat::Sha1,
-    trailing_zlib,
-    "packed entry length or trailing data"
-)]
-#[case::trailing_sha256(
-    ObjectFormat::Sha256,
-    trailing_zlib,
-    "packed entry length or trailing data"
-)]
+// A read finds an entry's end where its zlib stream ends, so bytes after the stream fall outside
+// the bytes it checks against the CRC the index recorded for the whole entry.
+#[case::trailing_sha1(ObjectFormat::Sha1, trailing_zlib, "entry CRC")]
+#[case::trailing_sha256(ObjectFormat::Sha256, trailing_zlib, "entry CRC")]
 #[case::checksum_sha1(ObjectFormat::Sha1, corrupt_zlib, "invalid packed zlib stream")]
 #[case::checksum_sha256(ObjectFormat::Sha256, corrupt_zlib, "invalid packed zlib stream")]
 fn validates_zlib_even_with_valid_pack_checksums(
@@ -1155,6 +1157,148 @@ fn oversized_delta_result_declaration_does_not_reserve_it(#[case] format: Object
     ));
 }
 
+/// Writes `entries` as an index/pack pair, letting `edit` change the index, and opens it.
+fn open_file_pack(
+    format: ObjectFormat,
+    entries: &[(ObjectId, Vec<u8>)],
+    edit: impl FnOnce(&mut Vec<u8>),
+) -> (tempfile::TempDir, super::FilePack) {
+    let (mut index, data) = fixture(format, entries);
+    edit(&mut index);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    (root, pack)
+}
+
+/// A damaged offset can make a second identity name an entry another identity already read and
+/// cached. The cached payload proves only the identity it hashed to, so the second read fails
+/// rather than returning the first object.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn cached_entry_does_not_prove_another_identity(#[case] format: ObjectFormat) {
+    let tree = format.hash_object(ObjectKind::Tree, b"");
+    let blob = ObjectId::for_blob(format, b"x");
+    let entries = [
+        (tree, entry(2, 0, b"", b"")),
+        (blob, entry(3, 1, b"", b"x")),
+    ];
+    let (_root, pack) = open_file_pack(format, &entries, |index| {
+        // Point the blob's offset at the tree's entry, at offset 12.
+        let table = 1032 + 2 * (format.digest_len() + 4);
+        let position = usize::from(blob > tree);
+        index[table + 4 * position..table + 4 * position + 4].copy_from_slice(&12u32.to_be_bytes());
+    });
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let read = |id| {
+        pack.read(
+            pack.find(id).unwrap().unwrap(),
+            ReadLimits::default(),
+            &cancelled,
+        )
+    };
+    assert_eq!(read(tree).unwrap().kind, ObjectKind::Tree);
+    assert!(matches!(read(blob), Err(Error::Corrupt(_))));
+}
+
+/// A base read through an offset delta has no index position, so its CRC is unchecked when it
+/// is cached; a later read of that base by identity in the same store still checks its CRC.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn base_cached_by_offset_still_checks_crc_when_requested(#[case] format: ObjectFormat) {
+    let base = format.hash_object(ObjectKind::Tree, b"a");
+    let child = format.hash_object(ObjectKind::Tree, b"ab");
+    let base_entry = entry(2, 1, b"", b"a");
+    let distance = [u8::try_from(base_entry.len()).unwrap()];
+    let entries = [
+        (base, base_entry),
+        (child, entry(6, 5, &distance, &[1, 2, 2, b'a', b'b'])),
+    ];
+    let (_root, pack) = open_file_pack(format, &entries, |index| {
+        let crcs = 1032 + 2 * format.digest_len();
+        let position = usize::from(base > child);
+        index[crcs + 4 * position] ^= 1;
+    });
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let read = |id| {
+        pack.read(
+            pack.find(id).unwrap().unwrap(),
+            ReadLimits::default(),
+            &cancelled,
+        )
+    };
+    assert_eq!(read(child).unwrap().data(), b"ab");
+    assert!(matches!(read(base), Err(Error::Corrupt("entry CRC"))));
+}
+
+/// An input budget that ends inside a reference delta's base identity is a limit, not damage:
+/// the same store reads the entry once the budget allows.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn input_budget_inside_base_identity_is_a_limit(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"a");
+    let child = ObjectId::for_blob(format, b"ab");
+    let entries = [
+        (base, entry(3, 1, b"", b"a")),
+        (child, entry(7, 5, base.as_bytes(), &[1, 2, 2, b'a', b'b'])),
+    ];
+    let (_root, pack) = open_file_pack(format, &entries, |_| {});
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let position = pack.find(child).unwrap().unwrap();
+    // One header byte and half of the base identity.
+    let limits = ReadLimits::default().with_max_input_bytes(1 + format.digest_len() / 2);
+    assert!(matches!(
+        pack.read_candidate(position, limits, &cancelled),
+        Err(super::ReadFailure::Other(Error::Limit(
+            "compressed entry bytes"
+        )))
+    ));
+    let object = pack.read_candidate(position, ReadLimits::default(), &cancelled);
+    assert_eq!(object.unwrap().data(), b"ab");
+}
+
+/// Content reads, an offset delta's included, need no offset order: they find each entry's end
+/// from its zlib stream. Explicit verification builds the order. The index is mapped where the
+/// platform maps files.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn content_reads_do_not_build_the_offset_order(#[case] format: ObjectFormat) {
+    let base = ObjectId::for_blob(format, b"a");
+    let child = ObjectId::for_blob(format, b"ab");
+    let base_entry = entry(3, 1, b"", b"a");
+    let distance = [u8::try_from(base_entry.len()).unwrap()];
+    let entries = [
+        (base, base_entry),
+        (child, entry(6, 5, &distance, &[1, 2, 2, b'a', b'b'])),
+    ];
+    let (index, data) = fixture(format, &entries);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("fixture.idx");
+    std::fs::write(&path, index).unwrap();
+    std::fs::write(path.with_extension("pack"), data).unwrap();
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let pack = super::FilePack::open(format, &path, &mut crate::PackLimits::default(), &cancelled)
+        .unwrap();
+    let mapped = cfg!(any(target_os = "macos", target_os = "linux"));
+    assert_eq!(pack.index_state(), (mapped, false));
+    for (id, expected) in [(child, &b"ab"[..]), (base, b"a")] {
+        let position = pack.find(id).unwrap().unwrap();
+        let object = pack.read(position, ReadLimits::default(), &cancelled);
+        assert_eq!(object.unwrap().data(), expected);
+    }
+    assert_eq!(pack.index_state(), (mapped, false));
+    pack.verify(&cancelled).unwrap();
+    assert_eq!(pack.index_state(), (mapped, true));
+}
+
 /// Bases and requested commits, trees and tags stay cached; a requested blob does not, so a
 /// large payload cannot evict bases that later reads share.
 #[rstest]
@@ -1187,7 +1331,7 @@ fn caches_bases_and_requested_non_blobs(#[case] format: ObjectFormat) {
         .into_data()
     };
     let inflations = |id| {
-        let offset = pack.offset(pack.find(id).unwrap().unwrap());
+        let offset = pack.offset(pack.find(id).unwrap().unwrap()).unwrap();
         super::counters::INFLATIONS.with(|map| map.borrow().get(&offset).copied().unwrap_or(0))
     };
     super::counters::reset();
