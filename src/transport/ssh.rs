@@ -110,12 +110,15 @@ pub struct ApprovedSshCommand {
     /// Trusted absolute executable path.
     pub executable: PathBuf,
     /// Application-approved literal arguments before the destination and service.
-    pub arguments: Vec<String>,
+    ///
+    /// Arguments are passed to the executable as given, without UTF-8 conversion, so a key path
+    /// that is not valid UTF-8 keeps its exact bytes.
+    pub arguments: Vec<OsString>,
 }
 
 impl ApprovedSshCommand {
     /// Records the application-approved command spelling, executable and literal arguments.
-    pub fn new(configured: Vec<u8>, executable: PathBuf, arguments: Vec<String>) -> Self {
+    pub fn new(configured: Vec<u8>, executable: PathBuf, arguments: Vec<OsString>) -> Self {
         Self {
             configured,
             executable,
@@ -139,7 +142,7 @@ impl ApprovedSshCommand {
 
     /// Sets [`Self::arguments`].
     #[must_use]
-    pub fn with_arguments(mut self, arguments: Vec<String>) -> Self {
+    pub fn with_arguments(mut self, arguments: Vec<OsString>) -> Self {
         self.arguments = arguments;
         self
     }
@@ -370,7 +373,7 @@ pub struct SshRemote {
     port: Option<u16>,
     path: String,
     executable: PathBuf,
-    arguments: Vec<String>,
+    arguments: Vec<OsString>,
     policy: LaunchPolicy,
     terminal: Option<std::sync::Arc<ForegroundTerminal>>,
     protocol: super::RequestedProtocol,
@@ -912,11 +915,26 @@ fn validate_endpoint(
     Ok(())
 }
 
+/// Accepts a nonempty argument of at most 8 KiB without control characters.
+///
+/// Unicode arguments reject every control character; other arguments reject ASCII controls in
+/// their platform encoding.
+fn valid_argument(argument: &std::ffi::OsStr) -> bool {
+    let bytes = argument.as_encoded_bytes();
+    if bytes.is_empty() || bytes.len() > 8192 {
+        return false;
+    }
+    match argument.to_str() {
+        Some(text) => !text.chars().any(char::is_control),
+        None => !bytes.iter().any(u8::is_ascii_control),
+    }
+}
+
 fn approve_command(
     selected: Option<&[u8]>,
     approved_command: Option<ApprovedSshCommand>,
     default_executable: PathBuf,
-) -> Result<(PathBuf, Vec<String>), SshError> {
+) -> Result<(PathBuf, Vec<OsString>), SshError> {
     match selected {
         Some(value) => {
             if value.is_empty() {
@@ -928,11 +946,7 @@ fn approve_command(
             if approved.configured != value {
                 return Err(SshError::Configuration("SSH command approval mismatch"));
             }
-            if approved
-                .arguments
-                .iter()
-                .any(|arg| arg.is_empty() || arg.len() > 8192 || arg.chars().any(char::is_control))
-            {
+            if approved.arguments.iter().any(|arg| !valid_argument(arg)) {
                 return Err(SshError::Configuration("SSH command argument"));
             }
             Ok((approved.executable, approved.arguments))

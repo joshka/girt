@@ -1597,7 +1597,11 @@ fn ssh_endpoint(
         ApprovedSshCommand {
             configured,
             executable: PathBuf::from("/bin/sh"),
-            arguments: vec!["-c".into(), format!("{command} \"$@\""), command],
+            arguments: vec![
+                "-c".into(),
+                format!("{command} \"$@\"").into(),
+                command.into(),
+            ],
         }
     });
     let default_executable =

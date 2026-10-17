@@ -23,6 +23,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The crate root no longer re-exports `loose::Error` as `girt::Error`. That name read as a
   crate-wide error type, but it only covers loose-object storage. Import `girt::loose::Error`
   instead; the type itself is unchanged.
+- `transport::ssh::ApprovedSshCommand::arguments` is `Vec<OsString>`, as
+  `remote::CredentialProgram::arguments` already was, so an approved key path that is not UTF-8
+  reaches the SSH command unchanged. `new` and `with_arguments` take `Vec<OsString>`; existing
+  `"…".into()` arguments still compile. The empty, 8 KiB and control-character checks are unchanged
+  for Unicode arguments and reject ASCII control bytes in other arguments.
 
 ## [0.10.3](https://github.com/joshka/girt/compare/v0.10.2...v0.10.3) - 2026-10-17
 
