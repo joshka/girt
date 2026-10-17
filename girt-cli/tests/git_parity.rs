@@ -112,7 +112,7 @@ const CASES: &[Case] = &[
         &["history", "contains", "main", "first"],
         &["merge-base", "--is-ancestor", "main", "first"],
     ),
-    case(&["remote", "list", "--verbose"], &["remote", "-v"]),
+    case(&["remote", "list", "--urls"], &["remote", "-v"]),
     case(&["remote", "heads", "."], &["ls-remote", "."]),
 ];
 

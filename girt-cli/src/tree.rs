@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::{EntryMode, ObjectId, ObjectKind, Objects, Tree, TreeEntry};
 
 use crate::Context;
@@ -79,12 +79,12 @@ fn walk(
 fn read_tree(objects: &Objects, id: ObjectId) -> Result<Tree> {
     let object = objects
         .read(id, read_limits())
-        .with_context(|| format!("reading {id}"))?
-        .ok_or_else(|| anyhow!("missing tree {id}"))?;
+        .wrap_err_with(|| format!("reading {id}"))?
+        .ok_or_else(|| eyre!("missing tree {id}"))?;
     if object.kind() != ObjectKind::Tree {
         bail!("{id} is a {}, not a tree", object.kind().as_str());
     }
-    Tree::parse(object.object_format(), object.data()).with_context(|| format!("parsing {id}"))
+    Tree::parse(object.object_format(), object.data()).wrap_err_with(|| format!("parsing {id}"))
 }
 
 /// Writes one `<mode> <kind> <id>\t<path>` line, quoting the path like Git when `git` is set.

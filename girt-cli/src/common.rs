@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::refs::{RefName, References};
 use girt::{Commit, ObjectId, ObjectKind, Objects, PackLimits, PeelLimits, ReadLimits, Repository};
 
@@ -37,7 +37,7 @@ impl Context {
     /// Discovers the repository containing the working directory.
     pub fn repository(&self) -> Result<Repository> {
         Repository::discover(&self.directory)
-            .with_context(|| format!("no repository at {}", self.directory.display()))
+            .wrap_err_with(|| format!("no repository at {}", self.directory.display()))
     }
 }
 
@@ -51,7 +51,7 @@ pub fn not_cancelled() -> &'static AtomicBool {
 pub fn objects(repository: &Repository) -> Result<Objects> {
     repository
         .objects(PackLimits::default())
-        .context("opening object storage")
+        .wrap_err("opening object storage")
 }
 
 /// Generous read limits for interactive use: objects up to 1 GiB.
@@ -65,7 +65,7 @@ pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
     if let Ok(id) = revision.parse::<ObjectId>() {
         return Ok(id);
     }
-    let references = repository.references().context("opening references")?;
+    let references = repository.references().wrap_err("opening references")?;
     for candidate in candidates(revision) {
         let Ok(name) = RefName::new(&candidate) else {
             continue;
@@ -81,7 +81,7 @@ pub fn resolve(repository: &Repository, revision: &str) -> Result<ObjectId> {
 pub fn resolve_ref(references: &References<'_>, name: &RefName) -> Result<Option<ObjectId>> {
     let resolution = references
         .resolve(name, MAX_SYMREF_DEPTH)
-        .with_context(|| format!("resolving {}", display_bytes(name.as_bytes())))?;
+        .wrap_err_with(|| format!("resolving {}", display_bytes(name.as_bytes())))?;
     Ok(resolution.id)
 }
 
@@ -110,7 +110,7 @@ pub fn resolve_kind(
     let id = resolve(repository, revision)?;
     let peeled = objects
         .peel(id, PeelLimits::default(), not_cancelled())
-        .with_context(|| format!("peeling {revision}"))?;
+        .wrap_err_with(|| format!("peeling {revision}"))?;
     match (peeled.kind, kind) {
         (found, wanted) if found == wanted => Ok(peeled.target),
         (ObjectKind::Commit, ObjectKind::Tree) => Ok(read_commit(objects, peeled.target)?.tree()),
@@ -140,12 +140,12 @@ pub fn resolve_tree(
 pub fn read_commit(objects: &Objects, id: ObjectId) -> Result<Commit> {
     let object = objects
         .read(id, read_limits())
-        .with_context(|| format!("reading {id}"))?
-        .ok_or_else(|| anyhow!("missing object {id}"))?;
+        .wrap_err_with(|| format!("reading {id}"))?
+        .ok_or_else(|| eyre!("missing object {id}"))?;
     if object.kind() != ObjectKind::Commit {
         bail!("{id} is a {:?}, not a commit", object.kind());
     }
-    Commit::parse(objects.object_format(), object.data()).with_context(|| format!("parsing {id}"))
+    Commit::parse(objects.object_format(), object.data()).wrap_err_with(|| format!("parsing {id}"))
 }
 
 /// Formats bytes for display, replacing invalid UTF-8.

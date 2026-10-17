@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::SystemTime;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
 use girt::checkout::Action;
 use girt::ignore::{Case, Ignore, InputKind, Source};
 use girt::index::{Entry, Stage};
@@ -127,7 +127,7 @@ pub fn index(command: IndexCommand, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let index = repository
         .read_index(Default::default())
-        .context("reading index")?;
+        .wrap_err("reading index")?;
     let mut out = stdout();
     for entry in index.as_ref().map_or(&[][..], |index| index.entries()) {
         if stage {
@@ -152,7 +152,7 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     };
     let report = repository
         .raw_status(Baseline::Head, policy, Default::default(), not_cancelled())
-        .context("computing status")?;
+        .wrap_err("computing status")?;
 
     let mut lines: BTreeMap<Vec<u8>, [u8; 2]> = BTreeMap::new();
     for change in &report.staged {
@@ -192,7 +192,7 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     if args.untracked {
         let index = repository
             .read_index(Default::default())
-            .context("reading index")?;
+            .wrap_err("reading index")?;
         let entries = index.as_ref().map_or(&[][..], |index| index.entries());
         let mut rules = IgnoreRules::new(&repository)?;
         let mut leaves = Vec::new();
@@ -283,7 +283,7 @@ pub fn ignore(command: IgnoreCommand, context: &Context) -> Result<ExitCode> {
     let root = worktree_root(&repository)?.to_owned();
     let index = repository
         .read_index(Default::default())
-        .context("reading index")?;
+        .wrap_err("reading index")?;
     let tracked: HashSet<&[u8]> = index
         .as_ref()
         .map_or(&[][..], |index| index.entries())
@@ -344,8 +344,8 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
     let objects = objects(&repository)?;
     let tree = |revision: &str| -> Result<Option<ObjectId>> {
         if revision == "HEAD" {
-            let references = repository.references().context("opening references")?;
-            let head = RefName::new("HEAD").map_err(|_| anyhow!("invalid ref name HEAD"))?;
+            let references = repository.references().wrap_err("opening references")?;
+            let head = RefName::new("HEAD").map_err(|_| eyre!("invalid ref name HEAD"))?;
             if resolve_ref(&references, &head)?.is_none() {
                 return Ok(None);
             }
@@ -359,8 +359,8 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
             Ok(report) => report,
             Err(failure) => {
                 let applied = failure.report.applied.len();
-                return Err(anyhow::Error::new(failure))
-                    .with_context(|| format!("checkout failed after {applied} operations"));
+                return Err(color_eyre::eyre::Report::new(failure))
+                    .wrap_err_with(|| format!("checkout failed after {applied} operations"));
             }
         };
     if context.git {
@@ -391,15 +391,15 @@ pub fn worktree(command: WorktreeCommand, context: &Context) -> Result<ExitCode>
             let registration = registration(&repository, &worktree)?;
             repository
                 .lock_worktree(&registration, &reason)
-                .with_context(|| format!("locking {worktree}"))?;
+                .wrap_err_with(|| format!("locking {worktree}"))?;
         }
         WorktreeCommand::Unlock { worktree } => {
             let registration = registration(&repository, &worktree)?;
             let reason = std::fs::read_to_string(registration.join("locked"))
-                .with_context(|| format!("{worktree} is not locked"))?;
+                .wrap_err_with(|| format!("{worktree} is not locked"))?;
             repository
                 .unlock_worktree(&registration, &reason)
-                .with_context(|| format!("unlocking {worktree}"))?;
+                .wrap_err_with(|| format!("unlocking {worktree}"))?;
         }
         WorktreeCommand::Prune { worktree } => {
             let registration = registration(&repository, &worktree)?;
@@ -409,13 +409,13 @@ pub fn worktree(command: WorktreeCommand, context: &Context) -> Result<ExitCode>
                     SystemTime::now(),
                     WorktreeRetirement::Confirmed,
                 )
-                .with_context(|| format!("pruning {worktree}"))?;
+                .wrap_err_with(|| format!("pruning {worktree}"))?;
         }
         WorktreeCommand::Repair { worktree, path } => {
             let registration = registration(&repository, &worktree)?;
             repository
                 .repair_worktree(&registration, &path)
-                .with_context(|| format!("repairing {worktree}"))?;
+                .wrap_err_with(|| format!("repairing {worktree}"))?;
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -434,7 +434,7 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
     }
     for worktree in repository
         .worktrees(MAX_WORKTREES, not_cancelled())
-        .context("listing worktrees")?
+        .wrap_err("listing worktrees")?
     {
         let state = match worktree.state {
             WorktreeState::Available => None,
@@ -444,7 +444,7 @@ fn list_worktrees(repository: &Repository, git: bool) -> Result<()> {
         let path = worktree.path.unwrap_or_else(|| worktree.git_dir.clone());
         rows.push((path, worktree.git_dir, state));
     }
-    let references = repository.references().context("opening references")?;
+    let references = repository.references().wrap_err("opening references")?;
     let width = rows
         .iter()
         .map(|(path, ..)| path.as_os_str().len())
@@ -499,7 +499,7 @@ fn registration(repository: &Repository, name: &str) -> Result<PathBuf> {
     let wanted = std::fs::canonicalize(name).ok();
     for worktree in repository
         .worktrees(MAX_WORKTREES, not_cancelled())
-        .context("listing worktrees")?
+        .wrap_err("listing worktrees")?
     {
         if wanted.is_some()
             && worktree.path.as_deref().and_then(|p| p.canonicalize().ok()) == wanted
@@ -513,7 +513,7 @@ fn registration(repository: &Repository, name: &str) -> Result<PathBuf> {
 fn worktree_root(repository: &Repository) -> Result<&Path> {
     repository
         .worktree()
-        .ok_or_else(|| anyhow!("repository has no working tree"))
+        .ok_or_else(|| eyre!("repository has no working tree"))
 }
 
 /// Ignore rules loaded lazily from the sources Git consults.
@@ -565,12 +565,12 @@ impl IgnoreRules {
         let content = match std::fs::read(file) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error).with_context(|| format!("reading {label}")),
+            Err(error) => return Err(error).wrap_err_with(|| format!("reading {label}")),
         };
         let index = self
             .ignore
             .add(source, &content)
-            .with_context(|| format!("loading {label}"))?;
+            .wrap_err_with(|| format!("loading {label}"))?;
         debug_assert_eq!(index, self.sources.len());
         self.sources.push((label, content));
         Ok(())
@@ -599,7 +599,7 @@ impl IgnoreRules {
         }
         self.ignore
             .check(path, kind)
-            .with_context(|| format!("checking {}", display_bytes(path)))
+            .wrap_err_with(|| format!("checking {}", display_bytes(path)))
     }
 
     /// The source label and raw pattern text at a one-based line.

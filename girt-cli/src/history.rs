@@ -4,7 +4,7 @@ use std::collections::{BinaryHeap, HashSet};
 use std::io::Write;
 use std::process::ExitCode;
 
-use anyhow::{Context as _, Result, anyhow};
+use color_eyre::eyre::{Result, WrapErr as _, eyre};
 use girt::{Commit, HistoryLimits, IdentityRef, ObjectId, Objects, Repository};
 
 use crate::Context;
@@ -70,14 +70,14 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         Command::Count { rev } => {
             let ids = objects
                 .walk(&[commit(&rev)?], limits)
-                .context("walking history")?;
+                .wrap_err("walking history")?;
             writeln!(out, "{}", ids.len())?;
             ExitCode::SUCCESS
         }
         Command::MergeBase { a, b, all } => {
             let bases = objects
                 .merge_bases(commit(&a)?, commit(&b)?, limits)
-                .context("finding merge bases")?;
+                .wrap_err("finding merge bases")?;
             let shown = if all {
                 &bases[..]
             } else {
@@ -98,7 +98,7 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
         } => {
             let yes = objects
                 .is_ancestor(commit(&ancestor)?, commit(&descendant)?, limits)
-                .context("checking ancestry")?;
+                .wrap_err("checking ancestry")?;
             if !context.git {
                 writeln!(out, "{}", if yes { "yes" } else { "no" })?;
             }
@@ -145,8 +145,8 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
         first = false;
         let author = commit
             .author()
-            .with_context(|| format!("parsing author of {id}"))?
-            .ok_or_else(|| anyhow!("commit {id} has no author"))?;
+            .wrap_err_with(|| format!("parsing author of {id}"))?
+            .ok_or_else(|| eyre!("commit {id} has no author"))?;
         let (seconds, offset) = match author.date() {
             Ok(date) => (date.seconds, date.offset_minutes),
             Err(_) => (0, 0),
