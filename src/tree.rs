@@ -1,4 +1,46 @@
-//! Byte-preserving Git tree parsing and construction.
+//! Directory snapshots as byte names, entry modes, and object identities.
+//!
+//! Use [`Tree`] for one directory. Each [`TreeEntry`] names a blob, subtree, or gitlink. A commit
+//! names the root tree; subdirectories are other tree objects, not slash-containing names in one
+//! tree. Regular files, executable files, and symlinks all point to blobs. For a symlink the blob
+//! stores the link target bytes. A gitlink names a commit in another repository; traversal treats
+//! it as a leaf.
+//!
+//! # Construct a directory snapshot
+//!
+//! ```
+//! use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+//! let format = ObjectFormat::Sha1;
+//! let tree = Tree::new(
+//!     format,
+//!     vec![TreeEntry {
+//!         mode: EntryMode::Blob,
+//!         name: b"README.md".to_vec(),
+//!         id: ObjectId::for_blob(format, b"# Project\n"),
+//!     }],
+//! )?;
+//! assert_eq!(tree.entries()[0].name, b"README.md");
+//! assert_eq!(Tree::parse(format, &tree.encode())?.id(), tree.id());
+//! # Ok::<(), girt::TreeError>(())
+//! ```
+//!
+//! This creates no storage and does not check whether the referenced blob exists. Write the blob
+//! and then [`crate::LooseObjects::write_tree`] to store a complete snapshot. Use
+//! [`crate::Objects::compare_trees`] to compare snapshots, and [`crate::checkout`] to apply one
+//! under that module's filesystem policy.
+//!
+//! # Parsing and validation
+//!
+//! [`Tree::parse`] preserves accepted bytes, including unusual ordering and mode spellings.
+//! [`Tree::validate`] checks names, uniqueness, and Git ordering; [`Tree::new`] validates names and
+//! sorts caller-supplied entries. Reconstructing a parsed tree can change its ID. Inspection tools
+//! can retain a parsed tree after validation fails and report individual records.
+//!
+//! [`TreeError`] separates malformed records from invalid names or ordering. Correct
+//! caller-supplied entries before construction; report malformed stored bytes instead of silently
+//! repairing them. Names are raw bytes, not paths safe for every operating system. Structural
+//! validity is not checkout safety. Memory grows with the input; bound storage reads before
+//! parsing.
 
 #![warn(
     clippy::unwrap_used,
@@ -92,6 +134,21 @@ impl Tree {
     /// validation, not a complete `git fsck` or checkout-safety check. Object IDs are not validated
     /// against a database, and even all-zero IDs are preserved. Foreign-format IDs return
     /// [`TreeError::ObjectFormat`] before encoding.
+    ///
+    /// ```
+    /// use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+    /// let format = ObjectFormat::Sha1;
+    /// let tree = Tree::new(
+    ///     format,
+    ///     vec![TreeEntry {
+    ///         mode: EntryMode::Blob,
+    ///         name: b"notes.txt".to_vec(),
+    ///         id: ObjectId::for_blob(format, b"notes\n"),
+    ///     }],
+    /// )?;
+    /// assert_eq!(tree.entries()[0].name, b"notes.txt");
+    /// # Ok::<(), girt::TreeError>(())
+    /// ```
     pub fn new(
         format: crate::ObjectFormat,
         mut entries: Vec<TreeEntry>,
@@ -123,6 +180,24 @@ impl Tree {
     /// or fewer than `format.digest_len()` bytes for an entry's ID. The caller must select the
     /// payload's format; these binary records have no reliable format autodetection. Empty trees
     /// also retain the selected format for hashing.
+    ///
+    /// ```
+    /// use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+    /// let format = ObjectFormat::Sha1;
+    /// let tree = Tree::new(
+    ///     format,
+    ///     vec![TreeEntry {
+    ///         mode: EntryMode::Blob,
+    ///         name: b"notes.txt".to_vec(),
+    ///         id: ObjectId::for_blob(format, b"notes\n"),
+    ///     }],
+    /// )?;
+    /// let bytes = tree.encode();
+    /// let parsed = Tree::parse(format, &bytes)?;
+    /// assert_eq!(parsed.encode(), bytes);
+    /// assert_eq!(parsed.id(), tree.id());
+    /// # Ok::<(), girt::TreeError>(())
+    /// ```
     pub fn parse(format: crate::ObjectFormat, payload: &[u8]) -> Result<Self, TreeError> {
         let original = payload.to_vec();
         let mut entries = Vec::new();
@@ -164,6 +239,19 @@ impl Tree {
     ///
     /// Returns the name errors documented by [`Tree::new`], or [`TreeError::Unsorted`] if entries
     /// are out of Git order. The same object-reference and checkout-safety exclusions apply.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, Tree, TreeError};
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"payload");
+    /// let mut bytes = b"100644 .\0".to_vec();
+    /// bytes.extend_from_slice(id.as_bytes());
+    /// let parsed = Tree::parse(ObjectFormat::Sha1, &bytes)?;
+    /// assert!(matches!(parsed.validate(), Err(TreeError::InvalidName)));
+    /// // Inspection and exact retention remain possible after validation rejects the component.
+    /// assert_eq!(parsed.entries()[0].name, b".");
+    /// assert_eq!(parsed.encode(), bytes);
+    /// # Ok::<(), girt::TreeError>(())
+    /// ```
     pub fn validate(&self) -> Result<(), TreeError> {
         validate_names(&self.entries)?;
 
@@ -252,6 +340,21 @@ impl<'a> Iterator for RawEntries<'a> {
 /// One tree entry, with an uninterpreted byte name and a format-bearing reference.
 ///
 /// Fields are freely editable before construction. [`Tree::new`] checks names and duplicates.
+///
+/// ```
+/// use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+/// let format = ObjectFormat::Sha1;
+/// let tree = Tree::new(
+///     format,
+///     vec![TreeEntry {
+///         mode: EntryMode::Blob,
+///         name: b"notes.txt".to_vec(),
+///         id: ObjectId::for_blob(format, b"notes\n"),
+///     }],
+/// )?;
+/// assert_eq!(tree.entries()[0].mode, EntryMode::Blob);
+/// # Ok::<(), girt::TreeError>(())
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TreeEntry {
     /// The entry's Git type and executable status.
@@ -287,6 +390,27 @@ impl TreeEntry {
 }
 
 /// Supported modes with their exact octal spelling in an encoded tree payload.
+///
+/// ```
+/// use girt::{EntryMode, ObjectFormat, ObjectId, Tree, TreeEntry};
+/// let format = ObjectFormat::Sha1;
+/// let blob = ObjectId::for_blob(format, b"#!/bin/sh\nexit 0\n");
+/// let snapshot = |mode| {
+///     Tree::new(
+///         format,
+///         vec![TreeEntry {
+///             mode,
+///             name: b"run.sh".to_vec(),
+///             id: blob,
+///         }],
+///     )
+/// };
+/// let regular = snapshot(EntryMode::Blob)?;
+/// let executable = snapshot(EntryMode::Executable)?;
+/// assert_ne!(regular.id(), executable.id()); // Mode changes alter the tree, not the blob.
+/// assert_eq!(regular.entries()[0].id, executable.entries()[0].id);
+/// # Ok::<(), girt::TreeError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum EntryMode {

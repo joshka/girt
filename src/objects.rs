@@ -1,4 +1,50 @@
-//! Bounded reads over loose objects and pack snapshots.
+//! Verified reads across loose objects, indexed packs, and alternate stores.
+//!
+//! Open [`Objects`] through [`crate::Repository::objects`] and retain it while reading many
+//! objects. It owns a snapshot of opened pack artifacts; loose reads observe current files. A pack
+//! snapshot survives repacking, but new packs require [`Objects::refresh`] or a new reader. Refresh
+//! does not refresh configuration or shallow boundaries. Choose [`PackLimits`] for opening and
+//! [`ReadLimits`] for individual decoding work. These bounds are not a process-wide memory quota.
+//!
+//! # Read a blob with an explicit absence branch
+//!
+//! ```
+//! use girt::{InitKind, ObjectFormat, ObjectKind, PackLimits, ReadLimits, Repository};
+//! let directory = tempfile::tempdir()?;
+//! let repo = Repository::init(
+//!     ObjectFormat::Sha1,
+//!     directory.path().join("r.git"),
+//!     InitKind::Bare,
+//! )?;
+//! let id = repo.loose_objects().write_blob(b"notes\n")?;
+//! let objects = repo.objects(PackLimits::default())?;
+//! let object = objects
+//!     .read(id, ReadLimits::default())?
+//!     .ok_or("missing blob")?;
+//! assert_eq!(object.kind(), ObjectKind::Blob);
+//! assert_eq!(object.data(), b"notes\n");
+//! assert_eq!(object.id(), id);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`Object`] owns verified, uncompressed bytes. Storage verification establishes kind, framing,
+//! and identity, not payload syntax or validity of referenced objects. Check the kind before using
+//! [`crate::Tree::parse`], [`crate::Commit::parse`], or [`crate::Tag::parse`]. Blob bytes need no
+//! codec. Packed payloads can share cache storage; borrowing [`Object::data`] avoids copying it.
+//!
+//! # Missing, limited, and corrupt data
+//!
+//! [`Objects::read`] returns `Ok(None)` for absence. It never fetches promised objects
+//! automatically. [`ObjectReadError`] distinguishes corruption and I/O from exhausted opening or
+//! decoding limits. Increase a budget only when the input and available resources justify it. A
+//! corrupt artifact needs inspection or replacement from a trusted source. Missing delta bases are
+//! unsupported thin or cross-pack dependencies; ordinary complete pack/index pairs are required.
+//! Multi-pack and bitmap indexes do not replace those pairs.
+//!
+//! Index files mark published packs; unindexed packs are ignored and an index without a pack fails
+//! opening. Use validated installation APIs for shared storage rather than writing final filenames.
+//! Alternates are borrowed storage: reading them does not give the caller ownership for pruning.
+//! See [`crate::pack`] for artifact production and [`crate::history`] for ancestry queries.
 
 #![warn(
     clippy::unwrap_used,
@@ -28,6 +74,24 @@ use crate::{LooseObjects, ObjectFormat, ObjectId, ObjectKind};
 /// A packed payload may be shared with the reader's delta base cache, and clones share it too, so
 /// borrowing it through [`Self::data`] costs no copy. [`Self::into_data`] copies it only while
 /// another `Object` or the cache shares it.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let id = repo.loose_objects().write_blob(b"payload\n")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let object = objects
+///     .read(id, ReadLimits::default())?
+///     .ok_or("missing blob")?;
+/// assert_eq!(object.data(), b"payload\n");
+/// assert_eq!(object.id(), id);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Object {
     pub(crate) kind: ObjectKind,
@@ -94,6 +158,15 @@ impl UnverifiedObject {
 /// Artifact bytes bound explicit verification work, not retained pack memory. Index input and
 /// derived tables have a separate bound. These are per-reader bounds, not a process RSS quota. Zero
 /// values permit no indexed packs. Unindexed files are ignored.
+///
+/// ```
+/// use girt::PackLimits;
+/// // Bound index work separately from pack artifact bytes for a small-repository tool.
+/// let limits = PackLimits::default()
+///     .with_max_index_bytes(8 * 1024 * 1024)
+///     .with_max_open_files(32);
+/// assert_eq!(limits.max_open_files, 32);
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PackLimits {
@@ -780,6 +853,26 @@ impl Objects {
     /// failures do not mark entries bad or trigger fallback. Only the first packed corruption
     /// cause is reported, including when a later loose copy is also corrupt. No filesystem changes
     /// occur.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"payload\n")?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let limits = ReadLimits::default().with_max_object_bytes(1024);
+    /// assert_eq!(
+    ///     objects.read(id, limits)?.ok_or("missing blob")?.data(),
+    ///     b"payload\n"
+    /// );
+    /// let absent = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not written");
+    /// assert!(objects.read(absent, limits)?.is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read(
         &self,
         id: ObjectId,
@@ -1250,6 +1343,12 @@ impl Store {
 }
 
 /// Failures opening or reading a repository object store; absence is `Ok(None)`.
+///
+/// [`Self::Limit`] reports the exhausted budget; increase that budget only after assessing input
+/// trust and resource cost. [`Self::PackArtifacts`] adds the pack/index paths around an opening
+/// failure. Packed read failures can retain corruption details inside an I/O source chain; keep
+/// that chain in diagnostics rather than printing only the outer message. Unsupported storage and
+/// missing delta bases require a complete supported representation, not relaxed verification.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ObjectReadError {

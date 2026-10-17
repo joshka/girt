@@ -1,4 +1,40 @@
-//! Individual loose-object reads and writes.
+//! Read and publish individual compressed Git objects.
+//!
+//! Use [`LooseObjects`] when writing individual blobs, trees, commits, and annotated tags, or when
+//! inspecting loose storage specifically. Each file contains a zlib-compressed Git header and
+//! payload. Its path is derived from its identity. For general reads use [`crate::Objects`], which
+//! also searches packs and configured alternates. A loose-only read can report absence after a
+//! repository is packed.
+//!
+//! # Store bytes without a complete repository
+//!
+//! ```
+//! use girt::{LooseObjects, ObjectFormat};
+//! let directory = tempfile::tempdir()?;
+//! let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha256);
+//! let id = objects.write_blob(b"binary\0payload\xff")?;
+//! assert_eq!(objects.read_blob(id, 1024)?, b"binary\0payload\xff");
+//! # Ok::<(), girt::Error>(())
+//! ```
+//!
+//! Supply the correct format: the object directory itself carries no format metadata. Repository
+//! callers should obtain this handle from [`crate::Repository::loose_objects`]. Writes publish
+//! objects without changing refs or the working tree. Duplicate writes compare existing content;
+//! they do not silently overwrite a conflicting object.
+//!
+//! # Errors and filesystem assumptions
+//!
+//! [`Error`] distinguishes I/O, malformed framing, wrong kind, hash mismatch, size limits, and
+//! payload parsing. A payload-size refusal calls for an explicit budget decision; a hash mismatch
+//! calls for investigation of storage, not a larger limit. For a missing packed-only object, use
+//! the combined reader. Typed reads parse payloads but retain each codec's separate validation
+//! contract.
+//!
+//! Operations block the calling thread. Reads allocate up to the selected payload limit; writes
+//! encode and compress caller bytes. The directory and ancestors must be trusted against hostile
+//! replacement. Publishing requires hard links, does not promise power-loss durability, and does
+//! not implement Git's shared-repository permission policy. See [`LooseObjects`] for the full
+//! storage contract.
 
 #![warn(
     clippy::unwrap_used,
@@ -70,6 +106,14 @@ impl LooseObjects {
     /// metadata; passing [`ObjectFormat::Sha1`] does not validate repository configuration.
     ///
     /// Both closed object formats are supported; construction performs no I/O.
+    ///
+    /// ```
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
+    /// let id = objects.write_blob(b"standalone storage")?;
+    /// assert_eq!(objects.read_blob(id, 1024)?, b"standalone storage");
+    /// # Ok::<(), girt::Error>(())
+    /// ```
     pub fn new(directory: impl Into<PathBuf>, object_format: ObjectFormat) -> Self {
         Self {
             directory: directory.into(),
@@ -95,6 +139,16 @@ impl LooseObjects {
     /// for malformed headers, incomplete or trailing compressed
     /// data, or identity mismatches.
     /// Foreign-format IDs return [`Error::ObjectFormat`] before any filesystem access.
+    ///
+    /// ```
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
+    /// let id = objects.write_blob(b"hello\0Git")?;
+    /// assert_eq!(objects.read_blob(id, 1024)?, b"hello\0Git");
+    /// // A size refusal leaves the stored object intact.
+    /// assert!(objects.read_blob(id, 1).is_err());
+    /// # Ok::<(), girt::Error>(())
+    /// ```
     pub fn read_blob(&self, id: ObjectId, max_size: usize) -> Result<Vec<u8>, Error> {
         self.read_object(id, max_size, "blob")
     }
@@ -114,6 +168,15 @@ impl LooseObjects {
     /// Returns the storage errors documented by [`Self::read_blob`], including
     /// [`Error::UnsupportedObjectType`] for a non-tree object, or [`Error::Tree`] when the
     /// verified payload cannot be parsed.
+    ///
+    /// ```
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
+    /// let tree = girt::Tree::new(girt::ObjectFormat::Sha1, vec![])?;
+    /// let id = objects.write_tree(&tree)?;
+    /// assert_eq!(objects.read_tree(id, 1024)?.id(), tree.id());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_tree(&self, id: ObjectId, max_size: usize) -> Result<Tree, Error> {
         let payload = self.read_object(id, max_size, "tree")?;
         Ok(Tree::parse(self.format, &payload)?)
@@ -130,6 +193,32 @@ impl LooseObjects {
     ///
     /// Returns the storage errors of [`Self::read_blob`], including wrong object type, or
     /// [`Error::Commit`] if the verified payload cannot be parsed.
+    ///
+    /// ```
+    /// use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let commit = Commit::new(CommitFields {
+    ///     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(),
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person,
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?;
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
+    /// let id = objects.write_commit(&commit)?;
+    /// assert_eq!(
+    ///     objects.read_commit(id, 4096)?.message(),
+    ///     b"Initial snapshot\n"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_commit(&self, id: ObjectId, max_size: usize) -> Result<Commit, Error> {
         let payload = self.read_object(id, max_size, "commit")?;
         Ok(Commit::parse(self.format, &payload)?)
@@ -146,6 +235,23 @@ impl LooseObjects {
     ///
     /// Returns the storage errors of [`Self::read_blob`], including wrong object type, or
     /// [`Error::Tag`] if the verified payload cannot be parsed.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    /// let tag = Tag::new(TagFields {
+    ///     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    ///     target_kind: ObjectKind::Blob,
+    ///     name: b"v1".to_vec(),
+    ///     tagger: None,
+    ///     extra_headers: vec![],
+    ///     message: b"Release manifest\n".to_vec(),
+    /// })?;
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), girt::ObjectFormat::Sha1);
+    /// let id = objects.write_tag(&tag)?;
+    /// assert_eq!(objects.read_tag(id, 4096)?.target(), tag.target());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_tag(&self, id: ObjectId, max_size: usize) -> Result<Tag, Error> {
         let payload = self.read_object(id, max_size, "tag")?;
         Ok(Tag::parse(self.format, &payload)?)
@@ -262,6 +368,18 @@ impl LooseObjects {
     /// filesystem/compression failures (including filesystems without hard-link support).
     /// Failed operations may leave created directories. No directory synchronization is
     /// performed, so success does not guarantee power-loss durability.
+    ///
+    /// ```
+    /// use girt::{LooseObjects, ObjectFormat, ObjectId};
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
+    /// let first = objects.write_blob(b"hello\0Git")?;
+    /// let second = objects.write_blob(b"hello\0Git")?;
+    /// assert_eq!(first, second); // Publishing identical content is idempotent.
+    /// assert_eq!(first, ObjectId::for_blob(ObjectFormat::Sha1, b"hello\0Git"));
+    /// assert_ne!(first, objects.write_blob(b"hello Git")?);
+    /// # Ok::<(), girt::Error>(())
+    /// ```
     pub fn write_blob(&self, bytes: &[u8]) -> Result<ObjectId, Error> {
         self.write_object(self.format, ObjectKind::Blob, bytes)
     }
@@ -280,6 +398,25 @@ impl LooseObjects {
     /// Returns [`Error::ObjectFormat`] for a foreign-format tree before filesystem access.
     /// Returns the storage errors documented by [`Self::write_blob`]. Existing corrupt objects
     /// remain untouched; failed writes may leave created directories.
+    ///
+    /// ```
+    /// use girt::{EntryMode, LooseObjects, ObjectFormat, Tree, TreeEntry};
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = LooseObjects::new(directory.path(), ObjectFormat::Sha1);
+    /// let blob = objects.write_blob(b"notes\n")?;
+    /// let tree = Tree::new(
+    ///     ObjectFormat::Sha1,
+    ///     vec![TreeEntry {
+    ///         mode: EntryMode::Blob,
+    ///         name: b"notes.txt".to_vec(),
+    ///         id: blob,
+    ///     }],
+    /// )?;
+    /// let id = objects.write_tree(&tree)?;
+    /// assert_eq!(id, tree.id()); // Child storage precedes publishing a complete snapshot.
+    /// assert_eq!(objects.read_tree(id, 4096)?.entries()[0].id, blob);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn write_tree(&self, tree: &Tree) -> Result<ObjectId, Error> {
         self.write_object(tree.object_format(), ObjectKind::Tree, &tree.encode())
     }
@@ -296,6 +433,24 @@ impl LooseObjects {
     /// Returns [`Error::ObjectFormat`] for a foreign-format commit before filesystem access.
     /// Returns the storage errors of [`Self::write_blob`]. Existing corrupt files remain untouched;
     /// failed writes may leave created directories. Success does not promise power-loss durability.
+    ///
+    /// ```
+    /// # use girt::{Commit, CommitFields, ObjectFormat, Signature, Tree};
+    /// # let person = Signature { name: b"A. Writer".to_vec(), email: b"a@example.com".to_vec(),
+    /// #                          seconds: 1_700_000_000, offset_minutes: 0 };
+    /// # let commit = Commit::new(CommitFields {
+    /// #     tree: Tree::new(ObjectFormat::Sha1, vec![])?.id(), parents: vec![],
+    /// #     author: person.clone(), committer: person,
+    /// #     extra_headers: vec![], message: b"Initial snapshot\n".to_vec(),
+    /// # })?;
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), ObjectFormat::Sha1);
+    /// let id = objects.write_commit(&commit)?;
+    /// assert_eq!(id, commit.id());
+    /// // Storing a commit neither creates its referenced tree nor publishes a branch.
+    /// assert!(objects.read_tree(commit.tree(), 4096).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn write_commit(&self, commit: &Commit) -> Result<ObjectId, Error> {
         self.write_object(
             commit.object_format(),
@@ -314,6 +469,22 @@ impl LooseObjects {
     /// Returns [`Error::ObjectFormat`] for a foreign-format tag before filesystem access.
     /// Returns the same storage failures as [`Self::write_blob`]. Failed writes can leave created
     /// directories; existing corrupt files are preserved and temporary files are cleaned up.
+    ///
+    /// ```
+    /// # use girt::{ObjectFormat, ObjectId, ObjectKind, Tag, TagFields};
+    /// # let tag = Tag::new(TagFields {
+    /// #     target: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    /// #     target_kind: ObjectKind::Blob, name: b"v1".to_vec(), tagger: None,
+    /// #     extra_headers: vec![], message: b"Release manifest\n".to_vec(),
+    /// # })?;
+    /// let directory = tempfile::tempdir()?;
+    /// let objects = girt::LooseObjects::new(directory.path(), ObjectFormat::Sha1);
+    /// let id = objects.write_tag(&tag)?;
+    /// assert_eq!(id, tag.id());
+    /// // No reference is created, and the target is not fetched or written implicitly.
+    /// assert!(objects.read_blob(tag.target(), 4096).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn write_tag(&self, tag: &Tag) -> Result<ObjectId, Error> {
         self.write_object(tag.object_format(), ObjectKind::Tag, tag.as_bytes())
     }

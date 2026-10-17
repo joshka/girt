@@ -1,4 +1,35 @@
-//! Format-bearing object identities and Git framing.
+//! Object identities, hash formats, and canonical Git framing.
+//!
+//! Use [`ObjectId`] to name content and [`ObjectFormat`] to choose its hash. Git hashes the object
+//! kind, decimal payload length, a NUL separator, and the exact payload bytes. File names,
+//! reference names, compression, and pack placement do not participate: the same blob in many trees
+//! has one ID. A blob has no additional structure or text encoding. [`encode_blob`] creates
+//! uncompressed framing; use [`crate::LooseObjects::write_blob`] to publish compressed storage.
+//!
+//! # Identify bytes without a repository
+//!
+//! ```
+//! use girt::{ObjectFormat, ObjectId, ObjectKind};
+//! let bytes = b"hello";
+//! let id = ObjectId::for_blob(ObjectFormat::Sha1, bytes);
+//! assert_eq!(id.to_string(), "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0");
+//! assert_eq!(id, ObjectFormat::Sha1.hash_object(ObjectKind::Blob, bytes));
+//! assert_ne!(id, ObjectId::for_blob(ObjectFormat::Sha1, b"hello\n"));
+//! ```
+//!
+//! # Identity is not existence or validation
+//!
+//! IDs retain their format. Parsing full hexadecimal text does not read storage or infer kind;
+//! abbreviations require a separate lookup policy and are rejected here. [`ObjectId::null`] is an
+//! all-zero sentinel, not an empty blob's ID. Use [`crate::Objects::read`] to establish existence
+//! and verify bytes, then decode the payload with [`crate::Tree`], [`crate::Commit`], or
+//! [`crate::Tag`].
+//!
+//! [`ParseObjectIdError`] means the width, selected format, or hexadecimal spelling is wrong: pass
+//! a full 40-digit SHA-1 or 64-digit SHA-256 ID matching the repository. [`ObjectFormatError`]
+//! means IDs from different hash spaces were combined. Rehashing only an outer object cannot
+//! convert a graph; embedded IDs would also need conversion. Hashing itself does not check payload
+//! structure or detect hash collisions.
 
 #![warn(
     clippy::unwrap_used,
@@ -70,6 +101,15 @@ impl fmt::Display for ObjectFormat {
 /// then compares bytes lexicographically. Parsing infers the format from exactly 40 or 64 ASCII
 /// hexadecimal digits; display is lowercase. Abbreviations are rejected. Hashing does not provide
 /// collision detection or translate identities between formats.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId};
+/// let id: ObjectId = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0".parse()?;
+/// assert_eq!(id, ObjectId::for_blob(ObjectFormat::Sha1, b"hello"));
+/// assert!(!id.is_null()); // Null is a sentinel, not the hash of empty content.
+///
+/// # Ok::<(), girt::ParseObjectIdError>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum ObjectId {
@@ -88,6 +128,13 @@ impl Hash for ObjectId {
 
 impl ObjectId {
     /// Hashes the canonical blob header and exact bytes in the selected format.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha256, b"manifest\n");
+    /// assert_eq!(id.format(), ObjectFormat::Sha256);
+    /// assert_ne!(id, ObjectId::for_blob(ObjectFormat::Sha256, b"manifest"));
+    /// ```
     pub fn for_blob(format: ObjectFormat, bytes: &[u8]) -> Self {
         format.hash_object(crate::ObjectKind::Blob, bytes)
     }
@@ -102,6 +149,14 @@ impl ObjectId {
     /// # Errors
     ///
     /// Returns an error when the byte length differs from the selected format.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"payload");
+    /// assert_eq!(ObjectId::from_bytes(ObjectFormat::Sha1, id.as_bytes())?, id);
+    /// assert!(ObjectId::from_bytes(ObjectFormat::Sha256, id.as_bytes()).is_err());
+    /// # Ok::<(), girt::ParseObjectIdError>(())
+    /// ```
     pub fn from_bytes(format: ObjectFormat, bytes: &[u8]) -> Result<Self, ParseObjectIdError> {
         match format {
             ObjectFormat::Sha1 => bytes.try_into().map(Self::Sha1),
@@ -115,6 +170,18 @@ impl ObjectId {
     /// # Errors
     ///
     /// Rejects wrong widths, non-ASCII/non-hexadecimal bytes, and the other format.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let text = "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0";
+    /// assert_eq!(
+    ///     ObjectId::from_hex(ObjectFormat::Sha1, text)?,
+    ///     ObjectId::for_blob(ObjectFormat::Sha1, b"hello")
+    /// );
+    /// assert!(ObjectId::from_hex(ObjectFormat::Sha256, text).is_err());
+    /// assert!(ObjectId::from_hex(ObjectFormat::Sha1, "b6fc4c6").is_err());
+    /// # Ok::<(), girt::ParseObjectIdError>(())
+    /// ```
     pub fn from_hex(format: ObjectFormat, value: &str) -> Result<Self, ParseObjectIdError> {
         let id: Self = value.parse()?;
         if id.format() != format {
