@@ -6,8 +6,8 @@ description: Transfer objects and references over local paths, HTTP(S) and SSH.
 girt moves objects and references between repositories at two levels. The `workflow` module does
 what `git fetch` and `git push` do for a named remote: it reads the configuration, picks the
 transport, asks for credentials and updates references. The core `fetch`, `push` and `clone` modules
-expose each step instead, so an application can choose its own endpoint, limits, worker threads and
-publication policy. This page explains both levels and when to use each.
+expose each step instead, so an application chooses its own endpoint, limits and worker threads, and
+decides how references are published.
 
 ## Choose a level
 
@@ -165,7 +165,7 @@ A clone is a fetch into a repository that does not exist yet. The destination mu
 its parent directory must. With the core API:
 
 1. `CloneRequest::prepare_tracking` chooses the destination path, bare or ordinary layout, the
-   stored origin URL, which branch becomes the local branch, and the reflog policy. Nothing is
+   stored origin URL, which branch becomes the local branch, and how reflogs are written. Nothing is
    created yet.
 2. Receive from an explicit endpoint. `receive_local` transfers and validates from a path. The HTTP
    and SSH adapters return an owned download for you to validate on a worker thread of your choice.
@@ -180,7 +180,7 @@ which phases completed. girt never deletes a partially created destination for y
 
 ## The core fetch API
 
-`workflow` is built from the core APIs, which keep every phase visible. Each phase takes its own
+`workflow` is built from the core APIs. Used directly, each phase is a separate call with its own
 limits and controls:
 
 ```rust
