@@ -1,10 +1,11 @@
 //! Object identities, hash formats, and canonical Git framing.
 //!
-//! Use [`ObjectId`] to name content and [`ObjectFormat`] to choose its hash. Git hashes the object
-//! kind, decimal payload length, a NUL separator, and the exact payload bytes. File names,
-//! reference names, compression, and pack placement do not participate: the same blob in many trees
-//! has one ID. A blob has no additional structure or text encoding. [`encode_blob`] creates
-//! uncompressed framing; use [`crate::LooseObjects::write_blob`] to publish compressed storage.
+//! Use [`ObjectId`] to name content, [`ObjectFormat`] to choose its hash, and [`ObjectKind`] to
+//! say what the bytes are. Git hashes the object kind, decimal payload length, a NUL separator, and
+//! the exact payload bytes. File names, reference names, compression, and pack placement do not
+//! participate: the same blob in many trees has one ID. A blob has no additional structure or text
+//! encoding. [`encode_blob`] creates uncompressed framing; use [`crate::LooseObjects::write_blob`]
+//! to publish compressed storage.
 //!
 //! # Identify bytes without a repository
 //!
@@ -45,6 +46,50 @@ use std::str::FromStr;
 
 mod id_hash;
 pub(crate) use id_hash::{IdMap, IdSet, PeerIdMap, PeerIdSet};
+
+/// One of Git's four object kinds, also used to declare an annotated tag's target type.
+///
+/// In a tag this declaration does not prove that the target exists or has the stated type.
+/// In a verified [`crate::Object`] it identifies the kind included in the object's identity.
+///
+/// This set is exhaustive: Git object framing and pack encodings define exactly these four
+/// fundamental kinds. A new hash algorithm does not add an object kind.
+///
+/// Use the stored kind to choose a payload codec after an object read. A hash or file name cannot
+/// supply this information, and blobs have no further structural codec.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectKind};
+/// let bytes = b"same payload";
+/// assert_ne!(
+///     ObjectFormat::Sha1.hash_object(ObjectKind::Blob, bytes),
+///     ObjectFormat::Sha1.hash_object(ObjectKind::Tag, bytes)
+/// );
+/// assert_eq!(ObjectKind::Commit.as_str(), "commit");
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ObjectKind {
+    /// File content.
+    Blob,
+    /// A directory snapshot.
+    Tree,
+    /// A recorded snapshot and its history metadata.
+    Commit,
+    /// An annotated tag; no recursive peeling is performed.
+    Tag,
+}
+
+impl ObjectKind {
+    /// Returns the type's spelling in Git object headers.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blob => "blob",
+            Self::Tree => "tree",
+            Self::Commit => "commit",
+            Self::Tag => "tag",
+        }
+    }
+}
 
 /// The hash format used by a Git object database.
 ///
