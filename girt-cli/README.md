@@ -1,11 +1,11 @@
 # girt-cli
 
 `girt` is a command-line tool for inspecting, comparing and benchmarking Git repositories with the
-[girt](../README.md) library. It is not a replacement for Git: it exposes what the library does
-today, under names that follow girt's concepts rather than Git's plumbing commands.
+[girt](https://github.com/joshka/girt) library. It is not a replacement for Git: it exposes what the
+library does today, under names that follow girt's concepts rather than Git's plumbing commands.
 
 ```sh
-cargo install --path girt-cli
+cargo install girt-cli
 girt repo info
 girt log --limit 5
 girt diff --patch v1 main
@@ -43,6 +43,12 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 | `remote list` / `heads`                                      | `git remote -v` / `git ls-remote`                                                                    |
 | `clone` / `fetch` / `push`                                   | no `--git` output                                                                                    |
 | `pack verify` / `reindex`, `maintenance`                     | `git index-pack` for `reindex` only                                                                  |
+
+## Errors and logging
+
+Errors print as [color-eyre](https://docs.rs/color-eyre) reports. `-v`, `-vv` and `-vvv` (or
+`RUST_LOG`) log girt's [tracing](https://docs.rs/tracing) spans to stderr; at debug level the active
+spans are also captured in error reports.
 
 ## Limits
 
