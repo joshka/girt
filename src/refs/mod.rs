@@ -1,5 +1,23 @@
 //! Git references, conditional transactions and reflogs across files and reftable storage.
 //!
+//! References give mutable names to immutable Git objects. A branch is a direct reference such as
+//! `refs/heads/main`; a symbolic reference stores another name. `HEAD` often names a branch that
+//! does not exist yet (an unborn branch). A lightweight tag is a reference; an annotated tag also
+//! needs a [`Tag`](crate::Tag) object. Reading a reference does not establish object existence or
+//! kind. Resolve symbolic chains first, then use [`Objects::peel`](crate::Objects::peel) if the
+//! resulting object may be an annotated tag.
+//!
+//! # Choose the operation
+//!
+//! | Need | Operation |
+//! | --- | --- |
+//! | Inspect the stored value, including symbolic names | [`References::read`] |
+//! | Follow symbolic names to a terminal name and optional ID | [`References::resolve`] |
+//! | Enumerate `refs/` names, excluding `HEAD` | [`References::list`] |
+//! | Publish with preconditions and explicit history policy | [`References::transaction`] |
+//! | Inspect complete interpreted history | [`References::reflog`] |
+//! | Recover bounded imported records and detect incompleteness | [`imported_reflog`](References::imported_reflog) |
+//!
 //! # Names, reads, and updates
 //!
 //! - [`RefName`] validates a full reference name. [`References`] reads stored [`Target`] values and
@@ -20,6 +38,38 @@
 //!
 //! [`References::imported_reflog`] reads bounded imported history. [`ImportedRecord`] preserves raw
 //! data and separates [`ImportedRecord::fields`] from canonical append validation.
+//!
+//! # Preconditions and recovery
+//!
+//! Choose [`Expected::Absent`] for creation or [`Expected::Value`] for compare-and-swap updates.
+//! These conditions are checked under locks; a preceding read alone cannot protect against another
+//! writer. A mismatch means re-read and reconsider the intended update. Using [`Expected::Any`]
+//! deliberately gives up that protection. [`Expected::Exists`] permits replacement of any existing
+//! value, while [`Expected::AbsentOr`] permits absence or one specific value; neither is a
+//! fast-forward policy. Object installation must precede reference publication;
+//! transactions do not validate the objects they name.
+//!
+//! [`RefEdit`] defaults to editing the stored name. With [`Dereference::Follow`], editing `HEAD`
+//! changes its terminal branch while preserving `HEAD`'s symbolic spelling. Choose [`Reflog`]
+//! explicitly; low-level transactions do not infer logging policy from Git configuration.
+//!
+//! [`Reflog::AppendExistingIfChanged`] appends only changed values to already-existing logs;
+//! [`Reflog::Delete`] removes the edited name's log on deletion. Reflogs describe name changes,
+//! not commit ancestry, and may contain IDs no longer present in storage.
+//!
+//! [`TransactionError::Prepare`] changes no ref or log contents. [`TransactionError::Publish`]
+//! includes effects already made; files publication is sequential and has no rollback. Inspect
+//! outcomes and read fresh state before retrying. Files transactions already wait for
+//! [`FilesTransactionOptions::GIT_DEFAULT`] before reporting contended reference/packed locks;
+//! reflog locks fail immediately. Use [`References::transaction_files_with_options`] for explicit
+//! waits or cancellation. A remaining lock conflict requires a caller policy decision, never
+//! deleting another writer's lock. Malformed loose refs
+//! shadow packed refs and fail explicitly; they do not disappear into a fallback value.
+//!
+//! Reads are synchronous. Files reads are live across names; reftable reads take bounded stack
+//! snapshots, with separate reads not necessarily sharing a generation. See [`References`] for
+//! trusted-filesystem and backend-specific atomicity contracts. [`reftable::Snapshot`] is the
+//! lower-level choice for retaining one complete stack generation.
 //!
 //! # Example
 //!
@@ -141,3 +191,7 @@ pub(crate) fn fuzz_files(format: crate::ObjectFormat, kind: u8, bytes: &[u8]) {
         }
     }
 }
+
+#[cfg(doctest)]
+#[doc = include_str!("../../site/src/content/docs/guides/refs.md")]
+mod website_refs_guide {}

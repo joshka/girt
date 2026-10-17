@@ -19,6 +19,17 @@ use crate::{ObjectId, Signature};
 /// original lexical record. An omitted message separator maps to
 /// an empty message. Object existence and continuity
 /// between records are not checked.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId};
+/// let old = ObjectId::null(ObjectFormat::Sha1);
+/// let new = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+/// let bytes = format!("{old} {new} A <a@example.com> 60 +0000\trecord\n");
+/// let entries = girt::refs::ReflogEntry::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+/// assert!(entries[0].old.is_null());
+/// assert_eq!(entries[0].message, b"record");
+/// # Ok::<(), girt::refs::ReferenceError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReflogEntry {
     /// Previous object ID, or zero for creation.
@@ -36,6 +47,17 @@ pub struct ReflogEntry {
 ///
 /// Interpretation may normalize name padding and numeric dates. Retain this value when copying
 /// history: constructing a new entry applies stricter canonical identity and date rules.
+///
+/// ```
+/// use girt::{ObjectFormat, ObjectId};
+/// let old = ObjectId::null(ObjectFormat::Sha1);
+/// let new = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+/// let bytes = format!("{old} {new} A <a@example.com> 60 +0000\trecord\n");
+/// let records = girt::refs::ReflogRecord::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+/// assert_eq!(records[0].as_bytes(), bytes.as_bytes());
+/// assert_eq!(records[0].entry().new, new);
+/// # Ok::<(), girt::refs::ReferenceError>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReflogRecord {
     bytes: Vec<u8>,
@@ -48,6 +70,16 @@ impl ReflogRecord {
     /// # Errors
     ///
     /// Returns the framing and numeric limits documented by [`ReflogEntry::parse`].
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let old = ObjectId::null(ObjectFormat::Sha1);
+    /// let new = ObjectId::for_blob(ObjectFormat::Sha1, b"manifest");
+    /// let bytes = format!("{old} {new} A <a@example.com> 60 +0000\trecord\n");
+    /// let records = girt::refs::ReflogRecord::parse(ObjectFormat::Sha1, bytes.as_bytes())?;
+    /// assert_eq!(records[0].as_bytes(), bytes.as_bytes());
+    /// # Ok::<(), girt::refs::ReferenceError>(())
+    /// ```
     pub fn parse(format: crate::ObjectFormat, bytes: &[u8]) -> Result<Vec<Self>, ReferenceError> {
         let entries = ReflogEntry::parse(format, bytes)?;
         Ok(bytes
@@ -72,6 +104,30 @@ impl ReflogRecord {
 }
 
 /// Explicit policy for every name affected by an operation.
+///
+/// ```
+/// # use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+/// # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+/// # let directory = tempfile::tempdir()?;
+/// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+/// # let loose = repo.loose_objects();
+/// # let person = Signature { name: b"A. Writer".to_vec(), email: b"a@example.com".to_vec(),
+/// #                          seconds: 1_700_000_000, offset_minutes: 0 };
+/// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+/// # let id = loose.write_commit(&Commit::new(CommitFields {
+/// #     tree, parents: vec![], author: person.clone(), committer: person.clone(),
+/// #     extra_headers: vec![], message: b"Initial snapshot\n".to_vec(),
+/// # })?)?;
+/// # let refs = repo.references()?;
+/// # let main = RefName::new("refs/heads/main")?;
+/// let policy = Reflog::AppendIfChanged { committer: person, message: b"publish".to_vec() };
+/// let first = RefEdit::new(main.clone(), Some(Target::Direct(id)), Expected::Absent, policy.clone());
+/// refs.transaction(&[first])?;
+/// let unchanged = RefEdit::new(main.clone(), Some(Target::Direct(id)), Expected::Value(Target::Direct(id)), policy);
+/// refs.transaction(&[unchanged])?;
+/// assert_eq!(refs.reflog(&main)?.ok_or("log missing")?.len(), 1); // No duplicate entry.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Reflog {
@@ -214,6 +270,32 @@ impl References<'_> {
     /// # Errors
     ///
     /// Reports filesystem, symlink, and malformed-record errors, including a truncated tail.
+    ///
+    /// ```
+    /// # use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+    /// # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+    /// # let loose = repo.loose_objects();
+    /// # let person = Signature { name: b"A. Writer".to_vec(), email: b"a@example.com".to_vec(),
+    /// #                          seconds: 1_700_000_000, offset_minutes: 0 };
+    /// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// # let id = loose.write_commit(&Commit::new(CommitFields {
+    /// #     tree, parents: vec![], author: person.clone(), committer: person.clone(),
+    /// #     extra_headers: vec![], message: b"Initial snapshot\n".to_vec(),
+    /// # })?)?;
+    /// # let refs = repo.references()?;
+    /// # let main = RefName::new("refs/heads/main")?;
+    /// # let edit = RefEdit::new(main.clone(), Some(Target::Direct(id)), Expected::Absent,
+    /// #     Reflog::Append { committer: person, message: b"commit (initial)".to_vec() });
+    /// # refs.transaction(&[edit])?;
+    /// let log = refs.reflog(&main)?.ok_or("log missing")?;
+    /// assert!(log[0].old.is_null()); // Zero marks creation, not a stored empty object.
+    /// assert_eq!(log[0].new, id);
+    /// assert_eq!(log[0].committer.seconds, 1_700_000_000);
+    /// assert_eq!(log[0].message, b"commit (initial)");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn reflog(&self, name: &RefName) -> Result<Option<Vec<ReflogEntry>>, ReferenceError> {
         if self.reference_backend == super::Backend::Reftable {
             return super::reftable::backend::reflog(self, name);
