@@ -115,6 +115,37 @@ tips. See the
 [history query contracts](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.walk)
 for ordering, complexity, shallow-boundary, and error contracts.
 
+## Turn user input into commits
+
+When IDs come from a person rather than your program, parse them as Git revisions. `Revision`
+accepts expressions such as `main~2`, `v1.0^{tree}`, `HEAD:src/lib.rs`, `main@{1}` and `@{u}`;
+`Range` adds `A..B`, `A...B` and `^A`. Parsing reads nothing, so syntax errors surface first. A
+`Resolver` then looks the expression up in one repository, and `Resolver::select` turns ranges into
+commits to include and exclude:
+
+```rust
+use girt::revision::{Range, Resolver, Selection};
+use girt::{PackLimits, Repository};
+
+/// Resolves an argument such as `main..topic` to the commits to walk and to skip.
+fn select(
+    repository: &Repository,
+    argument: &str,
+) -> Result<Selection, Box<dyn std::error::Error>> {
+    let range: Range = argument.parse()?;
+    let objects = repository.objects(PackLimits::default())?;
+    let resolver = Resolver::new(repository, &objects)?;
+    Ok(resolver.select(&[range])?)
+}
+```
+
+Pseudo-references such as `ORIG_HEAD`, dated reflog selectors, `@{-N}` and message searches are
+refused with an explicit error rather than guessed. The `girt::revision` module documentation lists
+the full syntax and its limits; the `girt` command line tool accepts the same syntax, as its
+[README](https://github.com/joshka/girt/blob/main/girt-cli/README.md#limits) notes.
+
+<!-- Link the module on docs.rs (girt/latest/girt/revision/) once a release includes it. -->
+
 ## Diagnose missing history and refresh storage
 
 A missing object can mean incomplete storage, an incorrect ID, or a reader that predates a newly

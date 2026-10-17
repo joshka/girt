@@ -160,13 +160,10 @@ fn ref_name(name: &str) -> Result<RefName> {
 
 /// Finds the first existing full name for a possibly short name.
 fn find(references: &References<'_>, name: &str) -> Result<(RefName, Target)> {
-    for candidate in common::candidates(name) {
-        let Ok(full) = RefName::new(&candidate) else {
-            continue;
-        };
+    for full in girt::revision::ref_candidates(name) {
         if let Some(target) = references
             .read(&full)
-            .wrap_err_with(|| format!("reading {candidate}"))?
+            .wrap_err_with(|| format!("reading {}", display_bytes(full.as_bytes())))?
         {
             return Ok((full, target));
         }

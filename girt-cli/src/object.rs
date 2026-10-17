@@ -14,6 +14,8 @@ use crate::tree::write_entry;
 /// Object commands.
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
+    /// Print the object ID a revision names (like `git rev-parse --verify`).
+    Id(RevArgs),
     /// Compute an object ID for file contents (like `git hash-object`).
     Hash(HashArgs),
     /// Pretty-print an object: trees one entry per line, other kinds as stored (like
@@ -53,14 +55,14 @@ pub struct HashArgs {
 /// A single revision argument.
 #[derive(Debug, clap::Args)]
 pub struct RevArgs {
-    /// Object ID or ref name.
+    /// Revision, e.g. `main`, `v1^{}`, `HEAD~2` or `HEAD:path`.
     rev: String,
 }
 
 /// Arguments for `object info`.
 #[derive(Debug, clap::Args)]
 pub struct InfoArgs {
-    /// Object ID or ref name.
+    /// Revision, e.g. `main`, `v1^{}`, `HEAD~2` or `HEAD:path`.
     rev: String,
     /// Print only the kind (`git cat-file -t`).
     #[arg(long, conflicts_with = "size")]
@@ -82,6 +84,7 @@ pub struct BatchArgs {
 pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
     match command {
         Command::Hash(args) => hash(args, context),
+        Command::Id(args) => id(args, context),
         Command::Show(args) => show(args, context),
         Command::Info(args) => info(args, context),
         Command::Cat(args) => cat(args, context),
@@ -207,6 +210,14 @@ fn cat(args: RevArgs, context: &Context) -> Result<ExitCode> {
     let object = read(context, &args.rev)?;
     let mut out = stdout();
     out.write_all(object.data())?;
+    out.flush()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn id(args: RevArgs, context: &Context) -> Result<ExitCode> {
+    let id = resolve(&context.repository()?, &args.rev)?;
+    let mut out = stdout();
+    writeln!(out, "{id}")?;
     out.flush()?;
     Ok(ExitCode::SUCCESS)
 }

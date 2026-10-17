@@ -178,6 +178,7 @@ pub mod refs;
 pub mod remote;
 pub mod repository;
 pub mod retention;
+pub mod revision;
 pub mod rewrites;
 pub mod status;
 pub mod tag;

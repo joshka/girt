@@ -15,12 +15,13 @@ use girt::fetch::{FetchLimits, FetchUpdateLimits};
 use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
 use girt::refs::{RefName, Reflog};
 use girt::remote::RefSource;
+use girt::revision::Resolver;
 use girt::transport::TransportControl;
 use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
 use crate::Context;
-use crate::common::{candidates, display_bytes, resolve, resolve_ref, stdout};
+use crate::common::{display_bytes, resolve, resolve_ref, stdout};
 use crate::config::{
     Endpoint, block_on, configured_repository, endpoint, find_remote, http_remote,
 };
@@ -302,14 +303,13 @@ fn push_command(
         Some((source, destination)) => (source, Some(destination)),
         None => (spec, None),
     };
-    let references = repository.references().wrap_err("opening references")?;
+    let objects = crate::common::objects(repository)?;
     let source_ref = if source.is_empty() {
         None
     } else {
-        candidates(source)
-            .into_iter()
-            .filter_map(|name| RefName::new(&name).ok())
-            .find(|name| matches!(references.read(name), Ok(Some(_))))
+        Resolver::new(repository, &objects)?
+            .expand_ref(source)?
+            .map(|(name, _)| name)
     };
     let new = if source.is_empty() {
         ObjectId::null(repository.object_format())
