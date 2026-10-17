@@ -13,6 +13,7 @@ use color_eyre::eyre::eyre;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+mod blame;
 mod color;
 mod common;
 mod complete;
@@ -83,6 +84,9 @@ enum Command {
     /// List, read and change references.
     #[command(subcommand, name = "ref")]
     Ref(refs::Command),
+
+    /// Attribute file lines (commit, final start, count, original start, path).
+    Blame(blame::Args),
 
     /// Show commit history.
     Log(history::LogArgs),
@@ -265,6 +269,7 @@ fn run(command: Command, context: &Context) -> color_eyre::Result<ExitCode> {
         Command::Object(command) => object::run(command, context),
         Command::Tree(command) => tree::run(command, context),
         Command::Ref(command) => refs::run(command, context),
+        Command::Blame(args) => blame::run(args, context),
         Command::Log(args) => history::log(args, context),
         Command::History(command) => history::run(command, context),
         Command::Diff(args) => diff::run(args, context),

@@ -155,6 +155,7 @@ extern crate self as girt;
 #[path = "../tests/support/pack_git.rs"]
 mod pack_git;
 
+pub mod blame;
 mod bytes;
 pub mod checkout;
 pub mod clone;

@@ -2072,6 +2072,36 @@ The local evidence uses Git 2.55.0 on macOS arm64; native Linux and Windows refr
 work. The comparison adds no platform-specific filesystem or process behavior; it inherits the
 existing reader's storage boundary. No additional platform support is established by this slice.
 
+## Line Attribution
+
+`Objects::blame` and `trusted::Handle::blame` return consecutive line ranges with commit id,
+original byte path, original start line, destination start line and count. Coordinates are
+one-based; empty files have no ranges. Both object formats are supported. File renames use the tree
+rewrite inference policy. At merges, an identical parent file takes precedence; otherwise unchanged
+lines pass to the first matching parent in stored parent order. New lines belong to the merge
+itself.
+
+`blame_with` takes whole-walk limits and cancellation. Verified blob content travels with pending
+history states and is shared across identical-parent edges. Pending states prefer newer committer
+dates; groups for the same queued commit and path combine their work. Timestamp-skewed ancestry can
+still repeat work, under the same whole-walk bounds. Missing or malformed dates sort oldest and do
+not change attribution. History traversal still visits unaffected commits. It returns no partial
+result on failure. Incomplete rename inference is a resource refusal, never an assumed file
+addition; raise the explicit rewrite bounds to retry. Missing objects are errors, not roots. Reached
+shallow boundaries and a NUL-containing or nonregular requested file are refused. Older
+NUL-containing versions are compared as raw lines; historical type transitions start a new file
+history. Empty files need no history attribution. Copy/move detection within or across files,
+ignore-revs, attributes/textconv and incremental output are unsupported. Repeated lines can have
+different shortest-edit alignment from Git; [440](https://github.com/joshka/girt/issues/440) tracks
+this.
+
+Original disposable histories in `tests/blame.rs` compare commit, original line and original path
+against Git 2.56.0 `blame --line-porcelain` on macOS arm64. They cover edited renames, merges with
+edits in both parents, a rename crossing a merge, identical-parent precedence, both hashes and
+unterminated lines. Separate fixtures cover byte paths, CRLF/non-UTF-8 content, empty files, missing
+history, cancellation and resource refusals. No upstream source or fixtures were used. See the
+[real-repository timing evidence](benchmarks.md#line-attribution-baseline).
+
 ## Content Diff
 
 `content_diff::diff` accepts borrowed byte payloads and returns unchanged, binary-changed or owned

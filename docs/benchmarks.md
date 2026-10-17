@@ -1256,3 +1256,35 @@ existing packed-history harness, and shallow-metadata/empty-inventory operations
 harness. Fixture creation is outside measurement. The [retained R10 report](evidence/r10.md) records
 exact source, commands, intervals and limitations, including disabled/no-subscriber/interested-sink
 tracing modes. These baselines establish observations, not a speedup claim or numerical gate.
+
+## Line Attribution Baseline
+
+On 2026-10-17, a release build of girt runtime source `b409bc68b91199e2e5bf251680700fb2dd1d9823`
+attributed jj revision `8a26df289729c40208e5d8f180a71d709a745d03` with default limits. Three
+fresh-process runs on macOS arm64 used warm filesystem caches on a loaded shared machine. Git 2.56.0
+used `blame --line-porcelain`; girt used its range-output CLI. Both commands included repository
+opening and output generation, captured in memory. Global and system Git configuration were
+disabled, including the local ignore-revs setting. Builds and runs used `nice -n 10`.
+
+- `README.md`: 355 lines, history dating to 2020. Girt took 0.165, 0.111 and 0.113 seconds; Git took
+  0.106, 0.044 and 0.043 seconds. Medians were 0.113 versus 0.044 seconds (2.6 times slower).
+- `lib/src/repo.rs`: 2027 lines. Girt took 0.224, 0.215 and 0.212 seconds; Git took 0.119, 0.107 and
+  0.107 seconds. Medians were 0.215 versus 0.107 seconds (2.0 times slower).
+
+Comparing every line's commit, original line and path found 318 exact README matches; its 37
+attribution differences were all blank lines. The Rust file had 1982 exact matches and 45
+differences involving repeated blank lines, braces, documentation blocks, signatures and attributes.
+These are ambiguous repeated-content alignments of the kind tracked in
+[440](https://github.com/joshka/girt/issues/440); these workloads do not establish exact Git
+attribution parity. Both completed under default bounds. Loaded-machine observations establish no
+isolated performance gate or cold-cache claim.
+
+Reproduce with a checkout containing that jj revision and an optimized girt CLI:
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  git -C /path/to/jj blame --line-porcelain \
+  8a26df289729c40208e5d8f180a71d709a745d03 -- README.md
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  girt -C /path/to/jj blame README.md 8a26df289729c40208e5d8f180a71d709a745d03
+```
