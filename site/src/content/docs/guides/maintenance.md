@@ -3,15 +3,17 @@ title: Maintenance and garbage collection
 description: Plan retention, choose cutoffs, and reclaim storage without losing readable objects.
 ---
 
-Maintenance decides which stored data may be retired while preserving every retained object. A
-reference-only reachability walk is insufficient:
+Maintenance removes stored data that nothing still needs and keeps every object that something
+does. Walking from refs alone misses data that is still in use:
 [staged blobs](/girt/guides/index-and-working-tree/), reflog history, linked worktrees, recent
 writes, application-owned heads and alternate-store relationships can all keep data alive. Girt
-exposes policy and isolation explicitly because it cannot discover every external reader or writer.
+can't discover every external reader or writer, so your application chooses the retention policy and
+supplies the isolation.
 
 The [storage-safety model](https://github.com/joshka/girt/blob/main/docs/storage-safety.md) explains
-the rules behind these APIs. The central rule is that deleting the last readable copy is
-irreversible. When complete evidence or exclusion is unavailable, maintenance refuses the operation.
+the rules behind these APIs. The main one is that deleting the last readable copy can't be undone,
+so if maintenance can't observe the repository completely or can't establish exclusion, it refuses
+the operation.
 
 ## Choose an operation
 
@@ -26,14 +28,14 @@ irreversible. When complete evidence or exclusion is unavailable, maintenance re
 | Run all phases          | `run_maintenance`         | Expiry, pack retirement, then loose pruning       |
 
 The standalone prune and retirement operations retain all observed reflog history, even if the
-policy contains expiry cutoffs. Composed operations expire first, advance the exact observation for
-those outputs, and then reclaim data under one isolation guard. A successful additive repack never
-establishes permission to delete its inputs.
+policy contains expiry cutoffs. The composed operations expire reflogs first, update their
+observation to match the rewritten reflogs, and then reclaim data, all under one isolation guard. A
+successful additive repack doesn't make its inputs safe to delete.
 
 ## Understand roots and plan outcomes
 
 `RetentionPolicy` defaults to retaining every reflog record, loose object and pack regardless of
-age. This conservative default makes reclamation an explicit choice. Supply `heads` for objects your
+age, so nothing is reclaimed until you change the policy. Supply `heads` for objects your
 application owns but Git refs do not name, such as unpublished operation state.
 
 ```rust
@@ -74,23 +76,23 @@ gitlinks are external and do not pull submodule objects into this repository.
 A `RetentionPlan` preserves `roots`, `strong_roots`, `reachable`, `required`, expiry candidates and
 protected storage. `reachable` includes all observed reflog candidates; `required` applies the
 selected expiry policy. These sets can be partial after failure: always check `is_complete()` or
-match `RetentionOutcome`. Even a complete observation cannot authorize later deletion after state
-changes. Destructive executors rescan under their own boundary.
+match `RetentionOutcome`. A complete plan still can't justify a later deletion, because state can
+change after planning; the destructive operations rescan under their own isolation guard.
 
 Graph-bearing commits, trees and tags are decoded and identity-checked. Typed blob edges are located
 with kind, size and ancestry checks without decoding every blob payload. Planning is therefore not a
 full integrity check. Drop the plan promptly: it pins the object-store generation, and its open
 handles can keep retired pack storage allocated.
 
-Unknown, malformed, missing or unsupported inputs refuse completeness. Partial clones,
-precious-object repositories and `gc.recentObjectsHook` need support outside the current subset.
+Unknown, malformed, missing or unsupported inputs make the plan incomplete. Partial clones,
+precious-object repositories and `gc.recentObjectsHook` are outside the supported subset.
 Limits bound names, roots, edges and decoded graph bytes. `RetentionError::kind()` groups recovery
 into limit, unsupported, malformed, changed, cancelled or read; inspect the underlying storage cause
 of a read failure before deciding to retry.
 
 These operations preserve Git's object relationships and conservative expiry rules; they do not
 reproduce every `git gc` policy or read all of its configuration automatically. The caller chooses
-policy and isolation, and unsupported cases remain explicit refusals. Whole-pack protection can
+the policy and provides isolation, and unsupported cases return errors. Whole-pack protection can
 retain more data than Git's per-loose-file expiry boundary.
 
 ## Set cutoffs without confusing their boundaries
@@ -102,16 +104,17 @@ loose expiry is disabled and packs remain protected. With a cutoff:
   retained closure. The inclusive boundary matches Git prune expiry, including subsecond times.
 - A newer loose file becomes a root, retaining its dependencies as well as itself. Age alone never
   establishes that an object is garbage.
-- A pack with `mtime >= cutoff` remains protected in its entirety. This boundary is deliberately
-  more conservative than loose-file expiry.
+- A pack with `mtime >= cutoff` remains protected in its entirety. This boundary is more
+  conservative than loose-file expiry.
 
 `.keep` packs and alternate stores are also protected. Girt never deletes or rewrites their storage.
-Dependencies of surviving protected packs receive a separate protection closure without making their
-objects live for reflog classification. Omitting replacement copies relies on verified protected
-survivors, not merely their index entries. Unsupported pack sidecars can also prevent retirement;
-known optional `.rev` and `.bitmap` sidecars can retire with their pack.
+Girt also protects the objects that surviving protected packs depend on, but doesn't count them as
+live when classifying reflog records. Before leaving an object out of a replacement because a
+protected pack keeps it, girt verifies the protected copy instead of trusting its index entry.
+Unsupported pack sidecars can also prevent retirement; known optional `.rev` and `.bitmap` sidecars
+can retire with their pack.
 
-Reflog expiry is independent. `KeepAll` is the default. `ClassifiedCutoffs` uses the live cutoff
+Reflog expiry has its own policy. `KeepAll` is the default. `ClassifiedCutoffs` uses the live cutoff
 when either endpoint is in the non-reflog live closure and the disconnected cutoff otherwise.
 `Configured` uses a resolved `ReflogExpiry` snapshot and Git's independent general and unreachable
 rules: the general rule applies to every record, and the unreachable rule also applies if either
@@ -120,15 +123,14 @@ endpoint is disconnected. Null endpoints count as live in configured policy.
 `ReflogExpiry::from_config` takes a caller-supplied Unix clock. Global defaults are 90 days for
 general expiry and 30 days for unreachable history. Reference-pattern sections can override them;
 absent matching patterns leave `refs/stash` protected even when global settings request expiry.
-Supported date syntax is deliberately bounded; unsupported expressions are errors rather than
-guesses.
+Only a limited date syntax is supported; unsupported expressions are errors rather than guesses.
 
 ## Establish exclusion before deletion
 
 Implement `MaintenanceIsolation` with a guard that excludes all relevant Git and girt writers,
 readers still depending on old data, and repositories using this store as an alternate. Hold that
-boundary for the full operation. Girt cannot enforce external relationships; a mutex observed only
-by your own girt calls is insufficient. If your application cannot establish exclusion, return an
+boundary for the full operation. Girt cannot enforce external relationships; a mutex that only your
+own girt calls take is not enough. If your application cannot establish exclusion, return an
 error from `acquire` and use read-only planning or additive repacking instead.
 
 This program needs `girt` and `tempfile`. It returns early on non-Unix hosts because composed GC
@@ -196,8 +198,8 @@ truncation; that does not make in-place mutation supported.
 For a private store used only by cooperating application threads, a mutex guard can hold the
 exclusion boundary. Every reader and writer that might depend on old storage must take that mutex.
 This does not extend to an external Git process or another repository using the store as an
-alternate. If those participants cannot be excluded, refuse acquisition rather than returning a
-marker guard.
+alternate. If those participants cannot be excluded, return an error from `acquire` rather than a
+guard that excludes nothing.
 
 A `MutexGuard` can hold the boundary for the maintenance call, as required by the
 [isolation contract](https://docs.rs/girt/latest/girt/retention/trait.MaintenanceIsolation.html). In
@@ -206,10 +208,10 @@ with an external process protocol can supply its own guard with the same lifetim
 protocol excludes every dependent participant.
 
 Do not reuse an earlier plan as a deletion list after acquiring the guard. The destructive methods
-make fresh observations inside it; partial failure requires inspection there and a new guarded
-attempt. Independent `expire_reflogs`, `retire_old_packs` and `prune_unreachable_loose` calls
-acquire separate guards, so each later phase observes new state. Use `collect_garbage` or
-`run_maintenance` to keep the whole sequence under one guard.
+rescan inside it. After a partial failure, inspect the repository while it is still excluded, then
+retry under a new guard. Independent `expire_reflogs`, `retire_old_packs` and
+`prune_unreachable_loose` calls acquire separate guards, so each later phase observes new state. Use
+`collect_garbage` or `run_maintenance` to keep the whole sequence under one guard.
 
 ## Publish, verify, retire
 
@@ -223,22 +225,21 @@ steps could copy a different generation than the plan described. Before removing
 1. Revalidates input/replacement handles and metadata, then retires eligible old artifacts.
 
 A pack checksum or CRC can establish intact bytes without proving that an index names the correct
-object or that a delta chain reconstructs it under the reader's limits. Survivor decoding and
-identity hashes provide that evidence. Individually valid delta chains can exceed limits when
-combined; the writer must re-encode appropriately or verification refuses retirement after additive
-publication.
+object or that a delta chain reconstructs it under the reader's limits. Decoding and hashing
+the surviving copies proves that. Individually valid delta chains can exceed limits when combined;
+the writer must re-encode them to fit, or verification refuses to retire the old storage after the
+replacement is published.
 
 Old pack indexes are removed before their packs. An interrupted sequence can leave an unindexed pack
-that readers ignore; it cannot justify deleting it without fresh observations. Alternate and
-protected data remain untouched. Object pruning removes only eligible primary loose files, never
-working files or arbitrary unknown objects. After any deletion, it also removes
+that readers ignore; being unindexed doesn't justify deleting it without a fresh observation.
+Alternate and protected data remain untouched. Object pruning removes only eligible primary loose
+files, never working files or arbitrary unknown objects. After any deletion, it also removes
 `objects/info/commit-graph` and `objects/info/commit-graphs`, because those derived caches can name
 pruned commits. When any pack will retire, retirement first removes `multi-pack-index*` artifacts,
 including associated bitmaps, reverse indexes and incremental-chain directories, so Git does not
 consult indexes naming removed packs. Git can rebuild these accelerators; queries lose their
 speedups until then. No-op standalone prune/expiry can avoid graph traversal after a complete
-bounded observation proves no candidates exist; an empty report is not a history-integrity
-certificate.
+bounded observation proves no candidates exist; an empty report doesn't prove history is intact.
 
 Destructive reflog expiry, pack retirement and composed maintenance require Unix durability support.
 Non-Unix platforms refuse those operations before publication. Standalone loose pruning and additive
@@ -249,9 +250,9 @@ phase.
 
 An ordinary content read can retry a damaged packed entry through other packs or loose copies. Each
 fallback must fully decode and identity-verify. A successful rescue proves the returned copy only:
-the original pack remains known damaged. Mutation boundaries reject known damaged pinned inputs;
-maintenance preserves that pack and its unique objects rather than treating the good duplicate as
-permission to erase the damaged artifact.
+the original pack remains known damaged. Mutating operations reject pinned inputs known to be
+damaged; maintenance preserves that pack and its unique objects rather than treating the good
+duplicate as permission to erase the damaged artifact.
 
 Damage evidence follows pinned pack/offset identities and reader clones. A separately opened reader
 establishes its own evidence; opening another reader is not proof of repair. Restore or rebuild
@@ -272,12 +273,12 @@ corruption cause from the source chain for recovery diagnostics.
    every source error, including the artifact path and entry offset.
 1. Recover or rebuild storage from verified data. Account for unique objects in the damaged pack;
    one rescued blob does not establish that every retained object has another copy. Maintenance
-   deliberately refuses known damaged inputs instead of acting as a damaged-pack removal tool.
+   refuses known damaged inputs instead of acting as a damaged-pack removal tool.
 1. Drop old readers, open a fresh view after repair, verify artifacts and read the retained objects.
    `verify_packs` checks raw-byte integrity, not all object identities, syntax or connectivity. A
    retention plan's blob-header traversal is also not a full integrity check.
 1. Make a fresh retention observation under exclusion before any later reclamation. An old complete
-   plan or successful fallback is not deletion authorization.
+   plan or a successful fallback doesn't make deletion safe.
 
 The [retention module](https://docs.rs/girt/latest/girt/retention/) documents the recovery and
 verification contracts. Its damaged-pack diagnostic fixture creates corruption before opening a
@@ -313,8 +314,8 @@ attempts obsolete-file cleanup. Success can include retained files whose cleanup
 compaction does not fsync or promise power-loss durability; destructive history expiry uses the
 maintenance path instead.
 
-For shutdown, stop admissions, request cooperative cancellation and call `locks::cleanup` on a
-normal thread. It waits for active lock operations, cancels pending reference-lock waits and, on
+For shutdown, stop accepting new work, request cooperative cancellation and call `locks::cleanup` on
+a normal thread. It waits for active lock operations, cancels pending reference-lock waits and, on
 Unix, invalidates registered guards and removes only identity-matched transient lock files. A
 surviving invalidated edit cannot publish. Inspect per-file failures and preserved replacement paths
 even when `cleanup` itself returns `Ok`.
@@ -350,7 +351,7 @@ paths as a list of files to remove.
 After a process dies, its locks are outside the live registry. Establish exclusive control and
 verify that no writer still owns a leftover lock before manual recovery. Age alone cannot establish
 that a lock is abandoned. Inspect unpublished contents before removing it; ordinary acquisition
-refuses an existing lock, and `cleanup` does not scan for stale locks. Keep admissions closed until
+refuses an existing lock, and `cleanup` does not scan for stale locks. Don't accept new work until
 all old writers are joined, because cleanup allows new acquisitions after it returns.
 
 ## API reference
