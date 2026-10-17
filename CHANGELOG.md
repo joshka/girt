@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/joshka/girt/compare/girt-v0.12.0...girt-v0.12.1) - 2026-10-17
+
+### Other
+
+- Pair empty files by default in rewrite detection ([#449](https://github.com/joshka/girt/pull/449))
+- Name reftable tables the way Git's strict fsck accepts ([#447](https://github.com/joshka/girt/pull/447))
+- Fix Repo CI targets and guide links ([#448](https://github.com/joshka/girt/pull/448))
+- Rename the convenience handle to Repo ([#446](https://github.com/joshka/girt/pull/446))
+- Add recorded identity date formatting ([#445](https://github.com/joshka/girt/pull/445))
+- Add bounded line attribution with rename following ([#444](https://github.com/joshka/girt/pull/444))
+- Add unified patch output for tree and content diffs ([#443](https://github.com/joshka/girt/pull/443))
+- Add configured clone with checkout ([#438](https://github.com/joshka/girt/pull/438))
+- Accept configured Windows drive remotes ([#437](https://github.com/joshka/girt/pull/437))
+- Add a trusted repository convenience handle ([#432](https://github.com/joshka/girt/pull/432))
+- Add ignore-aware status and repository ignore rules ([#434](https://github.com/joshka/girt/pull/434))
+
 ### Breaking changes
 
 - Pair empty files by default in rewrite detection, matching `git diff -M` and `git diff-tree -r -M`.

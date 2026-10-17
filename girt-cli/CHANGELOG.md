@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/joshka/girt/compare/girt-cli-v0.2.4...girt-cli-v0.2.5) - 2026-10-17
+
+### Other
+
+- Rename the convenience handle to Repo ([#446](https://github.com/joshka/girt/pull/446))
+- Add recorded identity date formatting ([#445](https://github.com/joshka/girt/pull/445))
+- Add bounded line attribution with rename following ([#444](https://github.com/joshka/girt/pull/444))
+- Add unified patch output for tree and content diffs ([#443](https://github.com/joshka/girt/pull/443))
+- Add configured clone with checkout ([#438](https://github.com/joshka/girt/pull/438))
+- Add a trusted repository convenience handle ([#432](https://github.com/joshka/girt/pull/432))
+- Add ignore-aware status and repository ignore rules ([#434](https://github.com/joshka/girt/pull/434))
+
 ## [0.2.4](https://github.com/joshka/girt/compare/girt-cli-v0.2.3...girt-cli-v0.2.4) - 2026-10-17
 
 ### Other
