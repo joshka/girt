@@ -61,6 +61,7 @@ export default defineConfig({
           items: [
             { label: 'Open a repository', slug: 'guides/open-a-repository' },
             { label: 'Read objects and history', slug: 'guides/objects-and-history' },
+            { label: 'Diffs and renames', slug: 'guides/diffs-and-renames' },
             { label: 'Read and update refs', slug: 'guides/refs' },
             { label: 'The index and working tree', slug: 'guides/index-and-working-tree' },
             { label: 'Fetch, push and clone', slug: 'guides/fetch-push-clone' },
