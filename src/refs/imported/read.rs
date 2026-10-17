@@ -149,6 +149,34 @@ impl ImportedReflog {
     /// The reader may already buffer data; these limits bound requests made here. No extra byte is
     /// read beyond a byte budget to prove EOF, so a file ending exactly at that budget reports a
     /// limit. I/O, cancellation and limit stops return retained data rather than discard roots.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::refs::{ImportedReflog, ReflogLimits};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let format = ObjectFormat::Sha1;
+    /// let tip = ObjectId::for_blob(format, b"manifest");
+    /// let bytes = format!(
+    ///     "{} {tip} A <a@example.com> 60 +0000\tcreated\n",
+    ///     ObjectId::null(format)
+    /// );
+    /// let complete = ImportedReflog::read(
+    ///     format,
+    ///     bytes.as_bytes(),
+    ///     ReflogLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// );
+    /// assert!(complete.is_complete());
+    /// assert_eq!(complete.recoverable_roots().collect::<Vec<_>>(), [tip]);
+    /// let partial = ImportedReflog::read(
+    ///     format,
+    ///     bytes.as_bytes(),
+    ///     ReflogLimits::default().with_bytes(10),
+    ///     &AtomicBool::new(false),
+    /// );
+    /// assert!(!partial.is_complete()); // A retained prefix cannot establish a complete root set.
+    /// ```
     pub fn read(
         format: ObjectFormat,
         mut reader: impl Read,
@@ -309,6 +337,55 @@ impl References<'_> {
     /// Opening/path failures and reftable snapshot failures return an error, never an empty root
     /// set. Files I/O after opening and selected-log limits/cancellation are reported in the owned
     /// result. Check [`ImportedReflog::is_complete`] before considering roots complete.
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+    /// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// let id = loose.write_commit(&Commit::new(CommitFields {
+    ///     tree,
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person.clone(),
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?)?;
+    /// let refs = repo.references()?;
+    /// let main = RefName::new("refs/heads/main")?;
+    /// let edit = RefEdit::new(
+    ///     main.clone(),
+    ///     Some(Target::Direct(id)),
+    ///     Expected::Absent,
+    ///     Reflog::Append {
+    ///         committer: person,
+    ///         message: b"commit (initial)".to_vec(),
+    ///     },
+    /// );
+    /// refs.transaction(&[edit])?;
+    /// let log = refs
+    ///     .imported_reflog(
+    ///         &main,
+    ///         girt::refs::ReflogLimits::default(),
+    ///         &std::sync::atomic::AtomicBool::new(false),
+    ///     )?
+    ///     .ok_or("reflog missing")?;
+    /// assert!(log.is_complete());
+    /// assert_eq!(log.records()[0].fields()?.new, id);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn imported_reflog(
         &self,
         name: &RefName,

@@ -24,6 +24,32 @@ pub enum Dereference {
 }
 
 /// A conditional change to one stored name or one symbolic chain's terminal name.
+///
+/// ```
+/// # use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+/// # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+/// # let directory = tempfile::tempdir()?;
+/// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+/// # let loose = repo.loose_objects();
+/// # let person = Signature { name: b"A. Writer".to_vec(), email: b"a@example.com".to_vec(),
+/// #                          seconds: 1_700_000_000, offset_minutes: 0 };
+/// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+/// # let id = loose.write_commit(&Commit::new(CommitFields {
+/// #     tree, parents: vec![], author: person.clone(), committer: person.clone(),
+/// #     extra_headers: vec![], message: b"Initial snapshot\n".to_vec(),
+/// # })?)?;
+/// # let refs = repo.references()?;
+/// # let main = RefName::new("refs/heads/main")?;
+/// let head = RefName::new("HEAD")?;
+/// let edit = RefEdit::new(head.clone(), Some(Target::Direct(id)), Expected::Absent,
+///     Reflog::Append { committer: person, message: b"commit (initial)".to_vec() })
+///     .with_dereference(girt::refs::Dereference::Follow);
+/// refs.transaction(&[edit])?;
+/// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main.clone())));
+/// assert_eq!(refs.resolve(&head, 5)?.id, Some(id));
+/// assert_eq!(refs.reflog(&head)?.ok_or("HEAD log missing")?.len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct RefEdit {
@@ -49,6 +75,8 @@ impl RefEdit {
     /// Creates an edit of the stored name with explicit precondition and history policy.
     ///
     /// A `target` of `None` deletes the reference; `Some` replaces its stored target.
+    /// See [`RefEdit`] for publication through HEAD and [`References::transaction`] for an
+    /// expected-value update. Construction alone neither locks nor writes storage.
     pub fn new(name: RefName, target: Option<Target>, expected: Expected, reflog: Reflog) -> Self {
         Self {
             name,
@@ -143,6 +171,11 @@ pub struct RefEditOutcome {
 }
 
 /// Failure before publication or a report of effects already made.
+///
+/// [`Self::Prepare`] leaves ref and log contents unchanged. [`Self::Publish`] retains exact
+/// outcomes without rollback; a reference may have advanced while its reflog append failed.
+/// Retain the outcomes in diagnostics and read fresh state before designing a retry. Replaying
+/// the same batch blindly can overwrite intervening work or duplicate log entries.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TransactionError {
@@ -208,6 +241,38 @@ impl References<'_> {
     /// [`TransactionError::Prepare`] preserves ref/log contents on malformed data, invalid edits,
     /// precondition mismatch, namespace conflicts, or lock failure. [`TransactionError::Publish`]
     /// reports effects at meaningful publication boundaries. An empty batch is a successful no-op.
+    ///
+    /// ```
+    /// # use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+    /// # use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    /// # let directory = tempfile::tempdir()?;
+    /// # let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r.git"), InitKind::Bare)?;
+    /// # let loose = repo.loose_objects();
+    /// # let person = Signature { name: b"A. Writer".to_vec(), email: b"a@example.com".to_vec(),
+    /// #                          seconds: 1_700_000_000, offset_minutes: 0 };
+    /// # let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// # let id = loose.write_commit(&Commit::new(CommitFields {
+    /// #     tree, parents: vec![], author: person.clone(), committer: person.clone(),
+    /// #     extra_headers: vec![], message: b"Initial snapshot\n".to_vec(),
+    /// # })?)?;
+    /// # let refs = repo.references()?;
+    /// # let main = RefName::new("refs/heads/main")?;
+    /// # let edit = RefEdit::new(main.clone(), Some(Target::Direct(id)), Expected::Absent,
+    /// #     Reflog::Append { committer: person, message: b"commit (initial)".to_vec() });
+    /// # refs.transaction(&[edit])?;
+    /// // Publish a child only if the branch still has the stored value we observed.
+    /// let observed = refs.read(&main)?.ok_or("branch missing")?;
+    /// let mut fields = loose.read_commit(id, 4096)?.to_fields()?;
+    /// fields.parents = vec![id];
+    /// fields.message = b"Next snapshot\n".to_vec();
+    /// let next = loose.write_commit(&Commit::new(fields)?)?;
+    /// let advance = RefEdit::new(main.clone(), Some(Target::Direct(next)), Expected::Value(observed),
+    ///     Reflog::Append { committer: Signature { name: b"A".to_vec(), email: b"a@example.com".to_vec(),
+    ///         seconds: 1_700_000_001, offset_minutes: 0 }, message: b"commit: next".to_vec() });
+    /// refs.transaction(&[advance])?;
+    /// assert_eq!(refs.read(&main)?, Some(Target::Direct(next)));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn transaction(&self, edits: &[RefEdit]) -> Result<Vec<RefEditOutcome>, TransactionError> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(

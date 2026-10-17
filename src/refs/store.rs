@@ -59,6 +59,26 @@ use crate::{ObjectFormat, ObjectId, Repository};
 /// Unix cleanup checks device/inode identity and leaves replacement locks untouched.
 /// Permissions follow ordinary file creation and the process umask on Unix; Windows inherits
 /// directory ACLs. Existing destination ACLs and crash durability are not preserved guarantees.
+///
+/// ```
+/// use girt::refs::{RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let refs = repo.references()?;
+/// let head = RefName::new("HEAD")?;
+/// assert_eq!(
+///     refs.read(&head)?,
+///     Some(Target::Symbolic(RefName::new("refs/heads/main")?))
+/// );
+/// assert!(refs.list()?.is_empty()); // HEAD is not one of the enumerated refs/ names.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct References<'a> {
     pub(super) reftable_limits: super::reftable::StackLimits,
@@ -95,6 +115,24 @@ pub enum Backend {
 }
 
 /// The stored value of one reference, before symbolic resolution.
+///
+/// ```
+/// use girt::refs::{RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let refs = repo.references()?;
+/// let head = RefName::new("HEAD")?;
+/// let main = RefName::new("refs/heads/main")?;
+/// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main)));
+/// // resolve follows names; object reads and tag peeling are separate operations.
+/// assert!(refs.resolve(&head, 5)?.id.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Target {
@@ -105,6 +143,59 @@ pub enum Target {
 }
 
 /// A precondition checked under locks against the destination's stored value.
+///
+/// ```
+/// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+/// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let person = Signature {
+///     name: b"A. Writer".to_vec(),
+///     email: b"a@example.com".to_vec(),
+///     seconds: 1_700_000_000,
+///     offset_minutes: 0,
+/// };
+/// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+/// let id = loose.write_commit(&Commit::new(CommitFields {
+///     tree,
+///     parents: vec![],
+///     author: person.clone(),
+///     committer: person.clone(),
+///     extra_headers: vec![],
+///     message: b"Initial snapshot\n".to_vec(),
+/// })?)?;
+/// let refs = repo.references()?;
+/// let main = RefName::new("refs/heads/main")?;
+/// let edit = RefEdit::new(
+///     main.clone(),
+///     Some(Target::Direct(id)),
+///     Expected::Absent,
+///     Reflog::Append {
+///         committer: person,
+///         message: b"commit (initial)".to_vec(),
+///     },
+/// );
+/// refs.transaction(&[edit])?;
+/// let stale_creation = RefEdit::new(
+///     main,
+///     Some(Target::Direct(id)),
+///     Expected::Absent,
+///     Reflog::Preserve,
+/// );
+/// assert!(matches!(
+///     refs.transaction(&[stale_creation]),
+///     Err(girt::refs::TransactionError::Prepare {
+///         source: girt::refs::ReferenceError::Mismatch { .. },
+///         ..
+///     })
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Expected {
@@ -136,6 +227,24 @@ impl std::fmt::Display for DisplayTarget<'_> {
 }
 
 /// The terminal name and optional object identity reached by symbolic resolution.
+///
+/// ```
+/// use girt::refs::{RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let refs = repo.references()?;
+/// let head = RefName::new("HEAD")?;
+/// let main = RefName::new("refs/heads/main")?;
+/// let terminal = refs.resolve(&head, 5)?;
+/// assert_eq!(terminal.name, main);
+/// assert!(terminal.id.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Resolution {
@@ -146,6 +255,13 @@ pub struct Resolution {
 }
 
 /// Reference validation, storage, resolution, or update failure.
+///
+/// A mismatch requires a fresh observation and a new update decision. [`Self::Locked`] means the
+/// lock protocol refused this attempt; do not remove a lock merely because this call failed.
+/// [`Self::Cycle`] and [`Self::Depth`] identify symbolic resolution problems, not missing objects.
+/// Fix malformed data explicitly rather than falling back to packed storage. I/O errors retain the
+/// failed path and original source. For batches, also inspect [`super::TransactionError`] to learn
+/// whether publication began and which effects completed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReferenceError {
@@ -191,7 +307,9 @@ pub enum ReferenceError {
     /// A caller-supplied bound stopped a reference or history inventory.
     #[error("reference resource limit: {0}")]
     Limit(&'static str),
-    /// Another writer owns a lock. No waiting, lock stealing, or automatic retry is performed.
+    /// Another writer owns a lock after this entry point's acquisition policy is exhausted.
+    /// [`Self::Locked`] does not imply the lock is stale. Files transactions use default or
+    /// explicit waits for reference/packed locks; reflog locks fail immediately. No lock is stolen.
     #[error("reference lock already exists: {0}")]
     Locked(PathBuf),
     /// The destination did not satisfy the caller's precondition.
@@ -260,6 +378,24 @@ impl<'a> References<'a> {
     ///
     /// Reports I/O, malformed loose/packed data, unsupported packed traits, and filesystem
     /// symlinks.
+    ///
+    /// ```
+    /// use girt::refs::{RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let refs = repo.references()?;
+    /// let head = RefName::new("HEAD")?;
+    /// let main = RefName::new("refs/heads/main")?;
+    /// assert_eq!(refs.read(&head)?, Some(Target::Symbolic(main.clone())));
+    /// assert_eq!(refs.read(&main)?, None); // Unborn branch, not a malformed HEAD.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read(&self, name: &RefName) -> Result<Option<Target>, ReferenceError> {
         Ok(self
             .read_observation(name)?
@@ -329,6 +465,25 @@ impl<'a> References<'a> {
     /// # Errors
     ///
     /// Reports [`ReferenceError::Cycle`], [`ReferenceError::Depth`], or a [`Self::read`] failure.
+    ///
+    /// ```
+    /// use girt::refs::{RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let refs = repo.references()?;
+    /// let head = RefName::new("HEAD")?;
+    /// let main = RefName::new("refs/heads/main")?;
+    /// let resolution = refs.resolve(&head, 5)?;
+    /// assert_eq!(resolution.name, main);
+    /// assert_eq!(resolution.id, None); // Resolution can succeed without a branch ID.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn resolve(&self, name: &RefName, max_depth: usize) -> Result<Resolution, ReferenceError> {
         let mut current = name.clone();
         let mut seen = Vec::new();

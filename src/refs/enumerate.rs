@@ -76,6 +76,50 @@ impl References<'_> {
     /// Reports I/O errors, invalid names or targets, conflicting effective names, filesystem
     /// symlinks and non-regular files, or malformed/unsupported packed data. Returns no partial
     /// list on error and does not modify storage.
+    ///
+    /// ```
+    /// use girt::refs::{Expected, RefEdit, RefName, Reflog, Target};
+    /// use girt::{Commit, CommitFields, InitKind, ObjectFormat, Repository, Signature, Tree};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let loose = repo.loose_objects();
+    /// let person = Signature {
+    ///     name: b"A. Writer".to_vec(),
+    ///     email: b"a@example.com".to_vec(),
+    ///     seconds: 1_700_000_000,
+    ///     offset_minutes: 0,
+    /// };
+    /// let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
+    /// let id = loose.write_commit(&Commit::new(CommitFields {
+    ///     tree,
+    ///     parents: vec![],
+    ///     author: person.clone(),
+    ///     committer: person.clone(),
+    ///     extra_headers: vec![],
+    ///     message: b"Initial snapshot\n".to_vec(),
+    /// })?)?;
+    /// let refs = repo.references()?;
+    /// let main = RefName::new("refs/heads/main")?;
+    /// let edit = RefEdit::new(
+    ///     main.clone(),
+    ///     Some(Target::Direct(id)),
+    ///     Expected::Absent,
+    ///     Reflog::Append {
+    ///         committer: person,
+    ///         message: b"commit (initial)".to_vec(),
+    ///     },
+    /// );
+    /// refs.transaction(&[edit])?;
+    /// let listed = refs.list()?;
+    /// assert_eq!(listed.len(), 1); // HEAD is a pseudoref, excluded from list().
+    /// assert_eq!(listed[0].name, main);
+    /// assert_eq!(listed[0].target, Target::Direct(id));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn list(&self) -> Result<Vec<Reference>, ReferenceError> {
         self.enumerate(None)
     }
