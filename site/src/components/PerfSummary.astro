@@ -1,0 +1,128 @@
+---
+// Headline numbers and the cells where jj on girt costs the most extra time, against stock jj.
+import { GIRT_RESPONSIBLE_RATIO, SIZES, payload } from '../data/jj-performance';
+import { extraOf, formatExtra, formatMs, rowLabel, worstOf } from '../data/perf-render';
+
+const { rows, issuesUrl } = payload;
+
+const large = rows.map((row) => row.cells.large).filter((cell) => cell != null);
+const largeClose = large.filter(
+  (cell) => cell.status === 'ok' && (cell.g! <= cell.s! * GIRT_RESPONSIBLE_RATIO || cell.g! - cell.s! < 100),
+).length;
+const slowRows = rows.filter((row) => worstOf(row, 'stock') >= 2_000).length;
+
+// A timed-out command counts at its timeout, so the total is a lower bound. Faster commands count
+// as zero: the total is the extra waiting, not a net difference.
+const timedOut = (cell: (typeof rows)[number]['cells']['large']) =>
+  cell?.status === 'timeout' && cell.timeoutS != null && cell.s != null ? cell.timeoutS * 1_000 - cell.s : null;
+const largeExtras = rows
+  .map((row) => {
+    const cell = row.cells.large;
+    return { row, extra: Math.max(0, extraOf(cell, 'stock') ?? timedOut(cell) ?? 0), timeout: timedOut(cell) != null };
+  })
+  .sort((a, b) => b.extra - a.extra);
+const largeTimeouts = largeExtras.filter(({ timeout }) => timeout).length;
+const largeTotal = largeExtras.reduce((total, { extra }) => total + extra, 0);
+const largeTop = largeExtras.slice(0, 3);
+const largeTopShare = largeTop.reduce((total, { extra }) => total + extra, 0) / largeTotal;
+
+const costs = rows
+  .flatMap((row) => SIZES.map((size) => ({ row, size, cell: row.cells[size], extra: extraOf(row.cells[size], 'stock') })))
+  .filter((item) => item.extra != null && item.extra >= 500)
+  .sort((a, b) => b.extra! - a.extra!)
+  .slice(0, 8);
+const longest = costs[0]?.extra ?? 1;
+
+const failures = rows.flatMap((row) =>
+  SIZES.map((size) => ({ row, size, cell: row.cells[size] })).filter(({ cell }) => cell && cell.status !== 'ok'),
+);
+const failureText = (cell: NonNullable<(typeof failures)[number]['cell']>) =>
+  cell.status === 'timeout'
+    ? `timed out${cell.timeoutS ? ` after ${formatMs(cell.timeoutS * 1_000)}` : ''}`
+    : cell.status === 'refused'
+      ? 'refused'
+      : 'gave no result';
+---
+
+<div class="jjp-headline">
+  <div>
+    <span class="jjp-big">{largeClose} of {large.length}</span>
+    <span>commands on the large repository are within 1.2× or 0.1 s of stock jj</span>
+  </div>
+  <div>
+    <span class="jjp-big">{slowRows}</span>
+    <span>commands cost 2 s or more extra on at least one repository, or don't finish</span>
+  </div>
+  <div>
+    <span class="jjp-big">{largeTimeouts > 0 && 'at least '}{formatMs(largeTotal)}</span>
+    <span>
+      extra waiting if you ran every command once on the large repository
+      {largeTimeouts > 0 && `, counting ${largeTimeouts === 1 ? 'the timed-out command' : 'timed-out commands'} at the timeout`}
+      ; {Math.round(largeTopShare * 100)}% of it is{' '}
+      {largeTop.map(({ row }, index) => (
+        <>
+          {index > 0 && (index === largeTop.length - 1 ? ' and ' : ', ')}
+          <code>jj {row.op}</code>
+        </>
+      ))}
+    </span>
+  </div>
+</div>
+
+<div class="jjp-scroll" tabindex="0" role="region" aria-label="Largest extra times">
+  <table class="jjp-costs">
+    <thead>
+      <tr>
+        <th scope="col">command</th>
+        <th scope="col">repository</th>
+        <th scope="col" class="jjp-num">girt vs stock</th>
+        <th scope="col" class="jjp-num">extra</th>
+        <th scope="col" class="jjp-barhead"><span class="sr-only">relative extra time</span></th>
+        <th scope="col">tracking</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        costs.map(({ row, size, cell, extra }) => (
+          <tr>
+            <th scope="row">
+              <Fragment set:html={rowLabel(row)} />
+              <code class="jjp-cmd">{row.jj}</code>
+            </th>
+            <td>{size}</td>
+            <td class="jjp-num">
+              {formatMs(cell!.g!)} <span class="jjp-muted">vs {formatMs(cell!.s!)}</span>
+            </td>
+            <td class="jjp-num">
+              <b>{formatExtra(extra!)}</b>
+            </td>
+            <td class="jjp-barcell">
+              <span class="jjp-bar" style={`width: ${Math.max(1, (100 * extra!) / longest)}%`} />
+            </td>
+            <td>
+              {cell!.issues.map((n) => (
+                <a href={`${issuesUrl}${n}`}>#{n}</a>
+              ))}
+            </td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+{
+  failures.length > 0 && (
+    <p class="jjp-failures">
+      Didn't finish:{' '}
+      {failures.map(({ row, size, cell }, index) => (
+        <>
+          {index > 0 && '; '}
+          <Fragment set:html={rowLabel(row)} /> on {size} {failureText(cell!)}
+          {cell!.s != null && <> (stock jj {formatMs(cell!.s)})</>}
+        </>
+      ))}
+      .
+    </p>
+  )
+}

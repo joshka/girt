@@ -1,82 +1,65 @@
 ---
 title: jj on girt benchmark
-description: jj running on girt compared with stock jj and Git, grouped by how often you run each command.
-tableOfContents:
-  maxHeadingLevel: 3
+description: How long jj commands take when jj stores its Git data with girt, compared with stock jj and the git CLI.
+tableOfContents: false
 ---
 
-import { GROUPS } from '../../../data/jj-performance';
-import PerfGroup from '../../../components/PerfGroup.astro';
-import PerfPainPoints from '../../../components/PerfPainPoints.astro';
+import PerfMatrix from '../../../components/PerfMatrix.astro';
 import PerfProvenance from '../../../components/PerfProvenance.astro';
+import PerfRepositories from '../../../components/PerfRepositories.astro';
+import PerfSummary from '../../../components/PerfSummary.astro';
 
-This benchmark runs the same jj commands three ways: jj built on girt, stock jj (which uses gix and
-the `git` executable), and the closest `git` command. It uses three real repositories: jj's own
-history (small), git.git (medium) and Linux v6.1 (large). The tables are generated at build time
-from the committed results JSON. The underlying data, issue links and per-cell notes are tracked on
-[girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
+This benchmark runs the same jj commands with jj built on girt and with stock jj (which uses gix and
+the `git` executable), and times the closest `git` command alongside. It uses three real
+repositories, described under [Test repositories](#test-repositories): an early 2023 snapshot of
+jj (small), git.git with extra branches (medium) and Linux v6.1 (large).
 
-## What you would notice
+jj on girt is not ready for everyday use. Read this page as a dashboard of the gap still to close:
+every rust-tinted cell is work left to do, and the headline numbers are the ones to drive down.
 
-### Doesn't complete with girt
+Colour shows the extra time you wait, not the ratio. A 10 ms command that is 3× slower stays plain;
+one that costs an extra minute is dark. Commands girt makes faster are tinted green.
 
-<PerfPainPoints kind="failures" />
+<div class="not-content jjp-summary">
+  <PerfSummary />
+</div>
 
-### Feels slower with girt
+## Every command
 
-In these cells girt is at least 20% slower than stock jj, and either moves the command into a slower
-band or adds at least the group's first bound (100 ms, 1 s or 10 s). They are ordered by how often
-the command runs, then by the time girt adds.
+Rows are grouped by how often you run the command, because a delay that is fine for
+`jj git clone` is painful for `jj status`. Each row shows the jj command line it times. Select a row
+for the repository state it runs against, the git command it is compared with, sample ranges and
+tracking issues; hover over a cell for its numbers.
 
-<PerfPainPoints kind="slower" />
+Unless a row says otherwise, each command runs in a fresh copy of a local clone colocated with
+`jj git init --colocate`, so the working copy is an empty change on top of the main branch.
 
-### Slow in stock jj too
+<div class="not-content">
+  <PerfMatrix />
+</div>
 
-Stock jj is already in one of the two slowest bands for these, so girt alone can't make them fast.
+## Test repositories
 
-<PerfPainPoints kind="jj" />
+These three repositories are what the benchmark has used so far. They are not a deliberate spread of
+repository shapes, and a better set will replace them; read the numbers with that in mind.
 
-## How to read the tables
+<div class="not-content">
+  <PerfRepositories />
+</div>
 
-Operations are grouped by how often a jj user typically runs them, because a delay that is fine for
-`jj git clone` is painful for `jj status`. Each group has its own four time bands.
+## Method
 
-Each cell shows jj with girt's median time, coloured by band. Below it are stock jj's time, the
-ratio (girt ÷ stock, lower is better) and Git's time. Cells outside the fastest band are tagged with
-where the time goes:
+Each tool runs against a fresh copy of the same repository. Caches are warm and machine load was not
+controlled, so treat small differences as noise. Times are medians. Most cells take six samples per
+tool; cells whose first sample takes more than 10 seconds take three, and more than 60 seconds take
+one, so their ratios are less precise. jj on girt is stopped once it takes twice as long as stock jj
+(at least 5 seconds). Some git commands do different work from their jj counterpart, and Git has no
+counterpart to `jj undo`, `jj op restore`, `jj git import` or colocated initialization.
 
-- **girt:** jj with girt is at least 20% slower than stock jj.
-- **jj:** stock jj is also outside the fastest band, so jj's own work is part of the cost.
-- **near bound:** stock jj sits just inside a band boundary and girt is less than 20% slower.
-
-Linked numbers are the girt issues tracking that cell. "Refused" means girt stopped with an explicit
-error, usually a resource limit, instead of producing a result. "Timed out" means girt exceeded
-twice stock jj's time (at least 5 seconds).
-
-## Run constantly
-
-<PerfGroup group={GROUPS[0]} />
-
-## Run hourly
-
-<PerfGroup group={GROUPS[1]} />
-
-## Run occasionally
-
-<PerfGroup group={GROUPS[2]} />
+The harness is `scripts/jj-e2e/bench-ops.py` in the girt repository. Results and provenance live in
+`docs/jj-performance.json` and `docs/jj-performance-provenance.json`. The underlying gaps are tracked
+on [girt issue 66](https://github.com/joshka/girt/issues/66) (performance gaps against Git).
 
 ## Provenance
 
 <PerfProvenance />
-
-## Method
-
-Each tool runs against a fresh copy of the same fixture. Caches are warm and machine load was not
-controlled, so treat small differences as noise. Times are medians of the samples listed in the
-JSON. Most cells take six samples per tool. Cells whose first sample takes more than 10 seconds take
-three, and more than 60 seconds take one, so their ratios are less precise. Some Git equivalents do
-different work: Git has no counterpart to `jj undo`, `jj op restore` or colocated initialization, so
-those cells have no Git time. Each row's workload note in the tables describes what was measured.
-
-The harness is `scripts/jj-e2e/bench-ops.py` in the girt repository. Results and provenance live in
-`docs/jj-performance.json` and `docs/jj-performance-provenance.json`.
