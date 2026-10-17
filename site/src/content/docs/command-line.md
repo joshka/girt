@@ -53,6 +53,18 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 The [CLI README](https://github.com/joshka/girt/blob/main/girt-cli/README.md) maps every command to
 its Git equivalent, and a parity test checks those pairs against `git` on every change.
 
+## Color
+
+Use the global `--color auto|always|never` option to control help, diagnostics and human output. The
+default, `auto`, decides separately for stdout and stderr. A non-empty `NO_COLOR` disables color;
+otherwise a non-empty `CLICOLOR_FORCE` other than `0` forces it, then `CLICOLOR=0` disables it.
+Without those overrides, color requires a terminal and `TERM` other than `dumb`. An explicit
+`always` or `never` overrides the environment.
+
+Status colors staged changes green and unstaged and untracked changes red. Patches use bold headers,
+cyan hunk headers, green additions and red deletions; log commit IDs are yellow. `--git` output is
+always uncolored. Color settings do not affect progress display.
+
 ## Live progress
 
 Clone, fetch, push and checkout show live phases and available object counts on stderr when it is

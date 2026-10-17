@@ -120,6 +120,8 @@ pub fn run(command: Command, context: &Context) -> Result<ExitCode> {
 pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
     let repository = context.repository()?;
     let objects = common::objects(&repository)?;
+    let yellow = crate::color::style(context.color, crate::color::YELLOW);
+    let reset = crate::color::style(context.color, crate::color::RESET);
     let selection = common::select(&repository, &objects, &args.revs)?;
     let hidden = hidden(&objects, &selection)?;
     let width = common::abbrev_len(&repository, &objects)?;
@@ -138,7 +140,15 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
             } else {
                 id.to_string()
             };
-            writeln!(out, "{id} {}", display_bytes(&subject(message)))?;
+            if context.color {
+                writeln!(
+                    out,
+                    "{yellow}{id}{reset} {}",
+                    display_bytes(&subject(message))
+                )?;
+            } else {
+                writeln!(out, "{id} {}", display_bytes(&subject(message)))?;
+            }
             continue;
         }
         if !first {
@@ -166,7 +176,11 @@ pub fn log(args: LogArgs, context: &Context) -> Result<ExitCode> {
             writeln!(out, "Author: {}", identity(author))?;
             writeln!(out, "Date:   {}", format_date(seconds, offset, false))?;
         } else {
-            writeln!(out, "commit {id}")?;
+            if context.color {
+                writeln!(out, "commit {yellow}{id}{reset}")?;
+            } else {
+                writeln!(out, "commit {id}")?;
+            }
             for parent in commit.parents() {
                 writeln!(out, "parent {parent}")?;
             }

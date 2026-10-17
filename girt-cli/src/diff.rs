@@ -79,11 +79,32 @@ pub fn run(args: DiffArgs, context: &Context) -> Result<ExitCode> {
     let width = crate::common::abbrev_len(&repository, &objects)?;
     if args.patch {
         for entry in &entries {
-            write_patch(&mut out, &objects, entry, width)?;
+            if context.color {
+                let mut colored = PatchColor::new(&mut out);
+                write_patch(&mut colored, &objects, entry, width)?;
+                colored.flush()?;
+            } else {
+                write_patch(&mut out, &objects, entry, width)?;
+            }
         }
     } else {
         for entry in &entries {
-            write_status(&mut out, entry, context.git)?;
+            if context.color {
+                let style = match entry {
+                    Entry::Change(change) if change.new.is_none() => crate::color::RED,
+                    Entry::Change(change) if change.old.is_none() => crate::color::GREEN,
+                    _ => crate::color::YELLOW,
+                };
+                let mut record = Vec::new();
+                write_status(&mut record, entry, context.git)?;
+                // End the style before the record's newline, as patch output does.
+                record.pop();
+                out.write_all(style.as_bytes())?;
+                out.write_all(&record)?;
+                writeln!(out, "{}", crate::color::RESET)?;
+            } else {
+                write_status(&mut out, entry, context.git)?;
+            }
         }
     }
     out.flush()?;
@@ -490,4 +511,81 @@ fn quote(bytes: &[u8]) -> String {
     }
     quoted.push('"');
     quoted
+}
+
+/// Only the colored path buffers patch lines; plain patches retain their original writer.
+struct PatchColor<W> {
+    out: W,
+    line: Vec<u8>,
+    in_hunk: bool,
+}
+
+impl<W: Write> PatchColor<W> {
+    fn new(out: W) -> Self {
+        Self {
+            out,
+            line: Vec::new(),
+            in_hunk: false,
+        }
+    }
+
+    fn write_line(&mut self) -> std::io::Result<()> {
+        if self.line.starts_with(b"diff ") {
+            self.in_hunk = false;
+        }
+        let style = if self.line.starts_with(b"@@") {
+            self.in_hunk = true;
+            "\x1b[36m"
+        } else if !self.in_hunk
+            && (self.line.starts_with(b"diff ")
+                || self.line.starts_with(b"index ")
+                || self.line.starts_with(b"--- ")
+                || self.line.starts_with(b"+++ ")
+                || self.line.starts_with(b"old mode ")
+                || self.line.starts_with(b"new ")
+                || self.line.starts_with(b"deleted ")
+                || self.line.starts_with(b"similarity ")
+                || self.line.starts_with(b"rename ")
+                || self.line.starts_with(b"copy "))
+        {
+            "\x1b[1m"
+        } else if self.line.starts_with(b"+") {
+            crate::color::GREEN
+        } else if self.line.starts_with(b"-") {
+            crate::color::RED
+        } else {
+            ""
+        };
+        self.out.write_all(style.as_bytes())?;
+        let has_newline = self.line.ends_with(b"\n");
+        let end = self.line.len() - usize::from(has_newline);
+        self.out.write_all(&self.line[..end])?;
+        if !style.is_empty() {
+            self.out.write_all(crate::color::RESET.as_bytes())?;
+        }
+        if has_newline {
+            self.out.write_all(b"\n")?;
+        }
+        self.line.clear();
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for PatchColor<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        for part in bytes.split_inclusive(|byte| *byte == b'\n') {
+            self.line.extend_from_slice(part);
+            if part.ends_with(b"\n") {
+                self.write_line()?;
+            }
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if !self.line.is_empty() {
+            self.write_line()?;
+        }
+        self.out.flush()
+    }
 }
