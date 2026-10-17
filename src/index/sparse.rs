@@ -86,41 +86,37 @@ impl Default for SparseLimits {
 ///
 /// A failed expansion leaves the draft intact, including its collapsed directories. Resolve a
 /// missing/wrong-kind tree or its storage source before retrying; increasing a budget cannot repair
-/// it. A limit failure can come from index output bounds or the independent tree traversal bounds.
+/// it. Both index-output and tree-traversal budgets report
+/// `SparseError::Index(Error::Limit(label))`; retain the label to distinguish the exhausted bound.
 ///
 /// ```
 /// use std::sync::atomic::AtomicBool;
 ///
-/// use girt::index::{Entry, Index, Limits, Mode, SparseLimits};
-/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+/// use girt::index::{Entry, Error, Index, Limits, Mode, SparseError, SparseLimits};
+/// use girt::{InitKind, ObjectFormat, Repository, Tree};
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
-///     InitKind::Bare,
+///     InitKind::Worktree,
 /// )?;
-/// let loose = repo.loose_objects();
-/// let id = loose.write_blob(b"pub fn library() {}\n")?;
-/// let tree = loose.write_tree(&Tree::new(
-///     ObjectFormat::Sha1,
-///     vec![TreeEntry {
-///         name: b"lib.rs".to_vec(),
-///         mode: EntryMode::Blob,
-///         id,
-///     }],
-/// )?)?;
+/// let tree = repo
+///     .loose_objects()
+///     .write_tree(&Tree::new(ObjectFormat::Sha1, vec![])?)?;
 /// let collapsed =
 ///     Entry::new(b"vendor/".to_vec(), Mode::SparseDirectory, tree).with_skip_worktree(true);
 /// let mut index = Index::new(ObjectFormat::Sha1, vec![collapsed], Limits::default())?;
-/// let objects = repo.objects(Default::default())?;
-///
-/// use girt::index::{Error, SparseError};
 /// let original = index.clone();
-/// let budget = SparseLimits::default().with_max_trees(0);
-/// assert!(matches!(
-///     index.expand_sparse(&objects, Limits::default(), budget, &AtomicBool::new(false)),
-///     Err(SparseError::Index(Error::Limit(_)))
-/// ));
+/// let objects = repo.objects(Default::default())?;
+/// let error = index
+///     .expand_sparse(
+///         &objects,
+///         Limits::default(),
+///         SparseLimits::default().with_max_trees(0),
+///         &AtomicBool::new(false),
+///     )
+///     .unwrap_err();
+/// assert!(matches!(error, SparseError::Index(Error::Limit(_))));
 /// assert_eq!(index, original);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

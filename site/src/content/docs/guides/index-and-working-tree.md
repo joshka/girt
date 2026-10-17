@@ -143,7 +143,8 @@ does not make discarding them harmless. A rejected edit leaves the guard and its
 choose a supported operation or abort rather than silently retrying with an empty index.
 
 - Entry-offset accelerators (`EOIE`, `IEOT`) can be removed together with `invalidate_entry_offsets`
-  before an edit that changes entry framing.
+  before `discard_resolve_undo` or `invalidate_tree_cache`, which refuse those caches. Entry
+  replacement and framing changes already remove them.
 - Resolve-undo (`REUC`) remembers prior conflict stages. `discard_resolve_undo` intentionally
   forgets that information; call it only when that matches the application operation.
 - The cached tree (`TREE`) can be invalidated without changing staged entries.
@@ -158,8 +159,9 @@ combining them; one successful cache removal does not authorize every subsequent
 `replace_entries_reusing_stat` preserves old stat words only for entries with the same path, stage,
 mode, identity and flags. It helps applications that reconstruct a whole entry list avoid throwing
 away useful cache data. Changed entries retain the supplied stat words. The operation never checks
-the working file, and cached equality is not proof that its content is unchanged. Commit also
-handles racily clean timestamps by clearing cached size where necessary.
+the working file, and cached equality is not proof that its content is unchanged. When a timestamp
+could make changed content appear clean to a stat-cache consumer, commit clears the cached size to
+force content verification.
 
 Framing is independent of content selection: v4 compresses repeated path prefixes, while v2 is
 useful for older consumers. Extended flags require v3 or v4; requesting v2 does not remove them.

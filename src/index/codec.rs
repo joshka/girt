@@ -316,8 +316,10 @@ impl Index {
     /// consumed even on failure.
     ///
     /// Construction sorts drafts, which is useful when accumulating paths from multiple sources.
-    /// An empty or zero identity is retained as data; publishing its object is a separate
+    /// A null object identity is retained as data; publishing its object is a separate
     /// operation.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use girt::index::{Entry, Index, Limits, Mode};
@@ -675,9 +677,10 @@ impl Index {
     /// Rejects malformed/truncated input, bad checksums, unsupported versions/modes or unknown
     /// extended flags, mandatory extensions, invalid paths/order/stages, and exhausted limits.
     ///
-    /// Use the repository's object format; the index does not carry an independent hash-format
-    /// selector. Parsing never repairs damaged input. In particular, a checksum error must not
+    /// Parsing never repairs damaged input. In particular, a checksum error must not
     /// become an empty index.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use girt::ObjectFormat;
@@ -807,6 +810,8 @@ impl Index {
     /// # Errors
     ///
     /// Fails before output allocation when an encoded size/count/path exceeds the supplied limits.
+    ///
+    /// # Examples
     ///
     /// ```
     /// use girt::index::{Entry, Index, Limits, Mode};

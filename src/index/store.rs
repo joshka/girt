@@ -62,22 +62,43 @@ impl IndexCommitOptions {
 /// not permission to ignore changed snapshots or replace an arbitrary directory.
 ///
 /// ```
+/// # #[cfg(unix)]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use girt::index::{EditOptions, Version};
 /// use girt::{InitKind, ObjectFormat, Repository};
 /// let directory = tempfile::tempdir()?;
 /// let repo = Repository::init(
 ///     ObjectFormat::Sha1,
 ///     directory.path().join("r"),
-///     InitKind::Bare,
+///     InitKind::Worktree,
 /// )?;
-///
-/// use girt::index::EditOptions;
-/// let path = directory.path().join("alternate.index");
-/// let options = EditOptions::default().with_resolve_split(true);
-/// repo.edit_index_at_with_options(&path, Default::default(), options)?
+/// let original = directory.path().join("original.index");
+/// repo.edit_index_at(&original, Default::default())?
 ///     .commit()?;
-/// assert!(repo.read_index_at(&path, Default::default())?.is_some());
-/// assert!(repo.read_index(Default::default())?.is_none());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// let original_bytes = std::fs::read(&original)?;
+/// let selected = directory.path().join("selected.index");
+/// std::os::unix::fs::symlink(&original, &selected)?;
+/// assert!(repo.edit_index_at(&selected, Default::default()).is_err());
+/// let options = EditOptions::default().with_follow_symlink(true);
+/// let mut edit = repo.edit_index_at_with_options(&selected, Default::default(), options)?;
+/// edit.set_version(Version::V4)?;
+/// edit.commit()?;
+/// assert!(
+///     !std::fs::symlink_metadata(&selected)?
+///         .file_type()
+///         .is_symlink()
+/// );
+/// assert_eq!(std::fs::read(&original)?, original_bytes);
+/// assert_eq!(
+///     repo.read_index_at(&selected, Default::default())?
+///         .unwrap()
+///         .version(),
+///     Version::V4
+/// );
+/// # Ok(())
+/// # }
+/// # #[cfg(not(unix))]
+/// # fn main() {}
 /// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -190,7 +211,11 @@ impl LeafSnapshot {
 ///     InitKind::Worktree,
 /// )?;
 /// let edit = repository.edit_index(Default::default())?;
-/// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
+/// edit.commit_with_options(
+///     IndexCommitOptions::default()
+///         .with_shared_permissions(girt::SharedPermissions::Group)
+///         .with_sync(true),
+/// )?;
 /// assert!(repository.read_index(Default::default())?.is_some());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -358,7 +383,7 @@ impl Repository {
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     InitKind::Bare,
+    ///     InitKind::Worktree,
     /// )?;
     ///
     /// let path = directory.path().join("preview.index");
@@ -481,7 +506,7 @@ impl Repository {
     /// ```
     /// # use girt::{Repository, index::Limits};
     /// # let directory = tempfile::tempdir()?;
-    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Worktree)?;
     /// let mut edit = repository.edit_index_at(directory.path().join("temporary.index"), Limits::default())?;
     /// edit.replace_entries(Vec::new())?;
     /// edit.commit()?;
@@ -511,7 +536,7 @@ impl Repository {
     /// ```
     /// # use girt::{Repository, index::{EditOptions, Limits}};
     /// # let directory = tempfile::tempdir()?;
-    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Worktree)?;
     /// let options = EditOptions::default()
     ///     .with_resolve_split(true)
     ///     .with_follow_symlink(true);
@@ -653,13 +678,15 @@ impl IndexEdit {
     /// Propagates [`Index::replace_entries`] errors and preserves the previous in-memory index.
     /// No bytes are written; the guard continues to own the lock after failure.
     ///
+    /// # Examples
+    ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     InitKind::Bare,
+    ///     InitKind::Worktree,
     /// )?;
     ///
     /// use girt::index::{Entry, Mode};
@@ -696,13 +723,15 @@ impl IndexEdit {
     /// Use this when a consumer has built a complete replacement with its own framing choice, while
     /// retaining the original guard's publication preconditions.
     ///
+    /// # Examples
+    ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     InitKind::Bare,
+    ///     InitKind::Worktree,
     /// )?;
     ///
     /// use girt::index::{Entry, Index, Mode, Version};
@@ -782,13 +811,15 @@ impl IndexEdit {
     /// identical entries. This is cache preservation, not worktree verification; an identity or
     /// mode change must not inherit the old entry's stat evidence.
     ///
+    /// # Examples
+    ///
     /// ```
     /// use girt::{InitKind, ObjectFormat, Repository};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     InitKind::Bare,
+    ///     InitKind::Worktree,
     /// )?;
     ///
     /// use girt::index::{Entry, Mode, Stat};
@@ -869,7 +900,7 @@ impl IndexEdit {
     /// let repository = girt::Repository::init(
     ///     girt::ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     girt::InitKind::Bare,
+    ///     girt::InitKind::Worktree,
     /// )?;
     /// let mut edit = repository.edit_index(girt::index::Limits::default())?;
     /// edit.make_standalone()?;
@@ -916,7 +947,7 @@ impl IndexEdit {
     /// ```
     /// # use girt::{Repository, index::Limits};
     /// # let directory = tempfile::tempdir()?;
-    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Bare)?;
+    /// # let repository = Repository::init(girt::ObjectFormat::Sha1, directory.path().join("r"), girt::InitKind::Worktree)?;
     /// let mut edit = repository.edit_index(Limits::default())?;
     /// edit.invalidate_entry_offsets()?;
     /// edit.discard_resolve_undo()?;
@@ -974,25 +1005,44 @@ impl IndexEdit {
     /// Returns [`Self::commit`]'s errors plus invalid/unsupported mode and file-sync failures.
     /// Exact modes are validated before writing the lock. No synchronization failure is ignored.
     ///
+    /// # Examples
+    ///
     /// ```
+    /// # #[cfg(unix)]
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use girt::{InitKind, ObjectFormat, Repository};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
     ///     ObjectFormat::Sha1,
     ///     directory.path().join("r"),
-    ///     InitKind::Bare,
+    ///     InitKind::Worktree,
     /// )?;
     ///
     /// use girt::index::{IndexCommitOptions, Version};
     /// let mut edit = repo.edit_index(Default::default())?;
     /// edit.set_version(Version::V4)?;
-    /// edit.commit_with_options(IndexCommitOptions::default().with_sync(true))?;
+    /// edit.commit_with_options(
+    ///     IndexCommitOptions::default()
+    ///         .with_shared_permissions(girt::SharedPermissions::Group)
+    ///         .with_sync(true),
+    /// )?;
     /// assert_eq!(
     ///     repo.read_index(Default::default())?.unwrap().version(),
     ///     Version::V4
     /// );
+    /// #[cfg(unix)]
+    /// {
+    ///     use std::os::unix::fs::PermissionsExt;
+    ///     let mode = std::fs::metadata(repo.git_dir().join("index"))?
+    ///         .permissions()
+    ///         .mode();
+    ///     assert_eq!(mode & 0o660, 0o660);
+    /// }
     /// // The lock file was flushed; the parent directory was not synchronized.
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(unix))]
+    /// # fn main() {}
     /// ```
     pub fn commit_with_options(mut self, options: IndexCommitOptions) -> Result<(), StorageError> {
         #[cfg(feature = "tracing")]
