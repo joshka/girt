@@ -18,6 +18,35 @@ use crate::refs::ReferenceError;
 use crate::refs::store::{Lock, check_path, io_error, malformed};
 
 /// Bounds shared by every table in one stack operation.
+///
+/// Use this bound for aggregate eager stack reads; more tables increase both opening work and
+/// simultaneous file pins. A large byte budget does not waive a table-count refusal.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::refs::Backend;
+/// use girt::refs::reftable::{Snapshot, StackLimits};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init_with_backend(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+///     Backend::Reftable,
+/// )?;
+/// let stack = repo.git_dir().join("reftable");
+/// assert!(
+///     Snapshot::read(
+///         &stack,
+///         ObjectFormat::Sha1,
+///         StackLimits::default().with_tables(0),
+///         &AtomicBool::new(false)
+///     )
+///     .is_err()
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct StackLimits {
@@ -63,10 +92,12 @@ impl Default for StackLimits {
 }
 
 impl StackLimits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite stack bounds for caller-approved repository metadata.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Table-count and list-byte limits retain arithmetic headroom, and decoding uses
+    /// [`Limits::trusted`]. Reading pins all listed tables before decoding, so file-handle or
+    /// allocation failures can occur well before these bounds. Prefer selected default-bound
+    /// overrides when the application needs a predictable resource policy.
     pub const fn trusted() -> Self {
         Self {
             tables: usize::MAX / 4,
@@ -87,6 +118,41 @@ impl StackLimits {
 /// fresh state; an old snapshot intentionally does not see later publications. Reading is eager
 /// and bounded across the whole stack, rather than a lazy on-disk key lookup. See [`Self::read`]
 /// for an executable repository example and [`compact`] for reducing the number of tables.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::refs::reftable::{Snapshot, StackLimits};
+/// use girt::refs::{Backend, Expected, RefName, Target};
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init_with_backend(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+///     Backend::Reftable,
+/// )?;
+/// let stack = repo.git_dir().join("reftable");
+/// let before = Snapshot::read(
+///     &stack,
+///     ObjectFormat::Sha1,
+///     StackLimits::default(),
+///     &AtomicBool::new(false),
+/// )?;
+/// let tag = RefName::new("refs/tags/new")?;
+/// let id = repo.loose_objects().write_blob(b"manifest")?;
+/// repo.references()?
+///     .update_without_reflog(&tag, Target::Direct(id), Expected::Absent)?;
+/// assert!(
+///     !before
+///         .table
+///         .references
+///         .iter()
+///         .any(|r| r.name.as_bytes() == tag.as_bytes())
+/// );
+/// assert!(repo.references()?.read(&tag)?.is_some());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Snapshot {
@@ -244,6 +310,7 @@ impl Snapshot {
 ///
 /// The replacement stack is already visible on success. Failed obsolete-file cleanup never
 /// reverses publication. Retrying compaction is safe but is not an obsolete-file cleanup service.
+/// See the [`reftable module example`](crate::refs::reftable#example) for a complete workflow.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Compaction {
@@ -450,6 +517,7 @@ fn sync_directory(directory: &Path) -> Result<(), ReferenceError> {
 /// discarded. Holds `tables.list.lock` and each input table's `.lock` until publication and cleanup
 /// finish. No expiration, fsync, automatic retries or stale-lock stealing occurs. Cancellation
 /// before list replacement leaves the old stack; after replacement cleanup runs to completion.
+/// See the [`reftable module example`](crate::refs::reftable#example) for a runnable workflow.
 ///
 /// # Errors
 ///

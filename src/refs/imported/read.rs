@@ -21,6 +21,30 @@ use crate::{ObjectFormat, ObjectId};
 /// Reftable additionally uses [`References::with_reftable_limits`] for encoded stack bytes,
 /// decompression and aggregate records; a bounded table decode is one cancellation interval.
 /// Payload budgets exclude allocator overhead and fixed record structs, bounded by `records`.
+///
+/// Select both scan and retention bounds when inspecting potentially large imported history. A
+/// stopped scan still returns retained data; it never becomes a complete root inventory merely
+/// because some IDs were recovered.
+///
+/// ```
+/// use girt::refs::{ImportedReflog, ReflogLimits};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let id = ObjectId::Sha1([1; 20]);
+/// let bytes = format!(
+///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
+///     ObjectId::null(format)
+/// );
+/// let log = ImportedReflog::read(
+///     format,
+///     bytes.as_bytes(),
+///     ReflogLimits::default().with_records(0),
+///     &std::sync::atomic::AtomicBool::new(false),
+/// );
+/// assert!(!log.is_complete());
+/// assert!(log.records().is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct ReflogLimits {
@@ -91,6 +115,29 @@ impl ReflogLimits {
 }
 
 /// Why reading stopped. EOF alone does not establish a complete usable root set.
+///
+/// Inspect the stop reason together with completeness. EOF can still include malformed records; a
+/// limit or cancellation can retain a useful prefix without permission to treat it as complete.
+///
+/// ```
+/// use girt::refs::{ImportedReflog, ReflogLimits};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let id = ObjectId::Sha1([1; 20]);
+/// let bytes = format!(
+///     "{} {id} A <a@example.com> 60 +0130\tnote\n",
+///     ObjectId::null(format)
+/// );
+/// let log = ImportedReflog::read(
+///     format,
+///     bytes.as_bytes(),
+///     ReflogLimits::default().with_bytes(4),
+///     &std::sync::atomic::AtomicBool::new(false),
+/// );
+/// assert!(matches!(log.end(), girt::refs::ReflogReadEnd::Limit(_)));
+/// assert!(!log.is_complete());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ReflogReadEnd {

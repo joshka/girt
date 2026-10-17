@@ -14,6 +14,11 @@ use super::{
 use crate::ObjectId;
 
 /// Which stored reference a conditional edit updates.
+///
+/// Choose [`Self::Stored`] when replacing the named symbolic spelling itself, and [`Self::Follow`]
+/// when advancing its
+/// terminal destination while preserving aliases. Preconditions and logging scope follow this
+/// choice; changing it is not a mere convenience.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum Dereference {
@@ -124,6 +129,10 @@ impl RefEdit {
 }
 
 /// Reference publication state at the time a transaction returns.
+///
+/// Use this state with the matching log outcomes to diagnose publication. [`Self::Published`]
+/// describes visibility, not power-loss durability; [`Self::PackedRemoved`] can already mean an
+/// absent packed-only reference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RefOutcome {
@@ -138,6 +147,9 @@ pub enum RefOutcome {
 }
 
 /// Reflog mutation state at the time a transaction returns.
+///
+/// Inspect this state independently of reference publication. An advanced ref can have a failed or
+/// partial log record; replaying the transaction can duplicate history rather than repair it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum LogOutcome {
@@ -158,6 +170,10 @@ pub enum LogOutcome {
 }
 
 /// Effects for one input operation, retained in input order.
+///
+/// Retain these receipts after publication failure. Input order identifies the intended edits,
+/// while each reference and log state describes actual effects; obtain fresh observations before
+/// retrying.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct RefEditOutcome {
@@ -176,6 +192,41 @@ pub struct RefEditOutcome {
 /// outcomes without rollback; a reference may have advanced while its reflog append failed.
 /// Retain the outcomes in diagnostics and read fresh state before designing a retry. Replaying
 /// the same batch blindly can overwrite intervening work or duplicate log entries.
+///
+/// ```
+/// use girt::refs::{
+///     Expected, RefEdit, RefName, RefOutcome, ReferenceError, Reflog, Target, TransactionError,
+/// };
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let refs = repo.references()?;
+/// let name = RefName::new("refs/tags/result")?;
+/// let id = repo.loose_objects().write_blob(b"build result")?;
+/// let edit = RefEdit::new(
+///     name.clone(),
+///     Some(Target::Direct(id)),
+///     Expected::Absent,
+///     Reflog::Preserve,
+/// );
+/// let outcomes = refs.transaction(&[edit.clone()])?;
+/// assert_eq!(outcomes[0].reference, RefOutcome::Published);
+/// assert!(outcomes[0].logs.is_empty());
+/// // A stale creation is refused before publication; don't replace it with Expected::Any.
+/// assert!(matches!(
+///     refs.transaction(&[edit]),
+///     Err(TransactionError::Prepare {
+///         operation: Some(0),
+///         source: ReferenceError::Mismatch { .. },
+///     })
+/// ));
+/// assert_eq!(refs.read(&name)?, Some(Target::Direct(id)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TransactionError {
@@ -324,8 +375,8 @@ impl References<'_> {
     ///
     /// Uses the same locked rechecks, expected values, cleanup and publication as
     /// [`Self::transaction`]. It never refreshes preconditions or retries preparation/publication.
-    /// No configuration or environment is read. Existing transaction methods still fail
-    /// immediately on contention.
+    /// No configuration or environment is read. The ordinary transaction entry point uses
+    /// [`FilesTransactionOptions::GIT_DEFAULT`]; no-reflog single-name operations fail immediately.
     ///
     /// # Errors
     ///
@@ -334,15 +385,35 @@ impl References<'_> {
     /// Publication failures retain their effects in [`TransactionError::Publish`]; never retry
     /// them without inspecting current state.
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::atomic::AtomicBool;
-    /// use std::time::Duration;
-    /// use girt::refs::{FilesTransactionOptions, LockWait};
-    /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
-    /// let options = FilesTransactionOptions::default().with_reference_lock_wait(LockWait::For(Duration::from_millis(100))).with_packed_refs_lock_wait(LockWait::For(Duration::from_secs(1)));
-    /// repo.references()?.transaction_files_with_options(edits, options, &AtomicBool::new(false))?;
-    /// # Ok(())
-    /// # }
+    ///
+    /// use girt::refs::{Expected, FilesTransactionOptions, RefEdit, RefName, Reflog, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"manifest")?;
+    /// let name = RefName::new("refs/tags/exported")?;
+    /// let edits = [RefEdit::new(
+    ///     name.clone(),
+    ///     Some(Target::Direct(id)),
+    ///     Expected::Absent,
+    ///     Reflog::Preserve,
+    /// )];
+    /// let options = FilesTransactionOptions::GIT_DEFAULT.with_reference_lock_wait(
+    ///     girt::refs::LockWait::For(std::time::Duration::from_millis(25)),
+    /// ); // Shorten loose-ref waits while retaining the one-second packed-refs wait.
+    /// let outcomes = repo.references()?.transaction_files_with_options(
+    ///     &edits,
+    ///     options,
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(outcomes.len(), 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn transaction_files_with_options(
         &self,
@@ -375,15 +446,50 @@ impl References<'_> {
     /// contents; [`TransactionError::Publish`] reports any partial publication and must not be
     /// retried without inspecting current state.
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::atomic::AtomicBool;
-    /// use girt::refs::FilesTransactionOptions;
-    /// # fn example(repo: &girt::Repository, edits: &[girt::refs::RefEdit]) -> Result<(), Box<dyn std::error::Error>> {
-    /// repo.references()?.transaction_files_with_stored_log_ids(
-    ///     edits, FilesTransactionOptions::default(), &AtomicBool::new(false),
+    ///
+    /// use girt::refs::{Expected, FilesTransactionOptions, RefEdit, RefName, Reflog, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository, Signature};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
     /// )?;
-    /// # Ok(())
-    /// # }
+    /// let old = repo.loose_objects().write_blob(b"old")?;
+    /// let new = repo.loose_objects().write_blob(b"replacement")?;
+    /// let refs = repo.references()?;
+    /// let base = RefName::new("refs/tags/base")?;
+    /// let alias = RefName::new("refs/tags/alias")?;
+    /// refs.update_without_reflog(&base, Target::Direct(old), Expected::Absent)?;
+    /// refs.update_without_reflog(&alias, Target::Symbolic(base.clone()), Expected::Absent)?;
+    /// let edit = RefEdit::new(
+    ///     alias.clone(),
+    ///     Some(Target::Direct(new)),
+    ///     Expected::Value(Target::Symbolic(base.clone())),
+    ///     Reflog::Append {
+    ///         committer: Signature {
+    ///             name: b"A".to_vec(),
+    ///             email: b"a@example.com".to_vec(),
+    ///             seconds: 1_700_000_000,
+    ///             offset_minutes: 0,
+    ///         },
+    ///         message: b"replace alias".to_vec(),
+    ///     },
+    /// );
+    /// let outcomes = refs.transaction_files_with_stored_log_ids(
+    ///     &[edit],
+    ///     FilesTransactionOptions::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert_eq!(outcomes[0].name, alias);
+    /// let log = refs.reflog(&alias)?.ok_or("log absent")?;
+    /// assert!(log[0].old.is_null()); // The stored old value was symbolic, not the resolved `old` ID.
+    /// assert_eq!(log[0].new, new);
+    /// assert_eq!(refs.read(&base)?, Some(Target::Direct(old))); // The target was never edited.
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn transaction_files_with_stored_log_ids(
         &self,

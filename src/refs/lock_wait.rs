@@ -11,6 +11,10 @@ use super::store::Lock;
 ///
 /// Each acquisition starts a fresh monotonic budget. No lock is stolen. Scheduling and filesystem
 /// operations can exceed a finite budget; waits do not impose a deadline on the whole transaction.
+///
+/// Choose a finite wait for interactive operations or explicit cancellation for an unbounded
+/// acquisition. Each lock gets its own budget, so this is not a deadline for the entire
+/// transaction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum LockWait {
@@ -27,6 +31,11 @@ pub enum LockWait {
 ///
 /// Reference locks include HEAD, symbolic dependencies and placeholders. Reflog locks always fail
 /// immediately on contention. These options neither load Git configuration nor apply to reftable.
+///
+/// Use this entry point to choose waits rather than changing process-global settings. The type
+/// default tries immediately, while [`super::References::transaction`] uses
+/// [`FilesTransactionOptions::GIT_DEFAULT`]; reflog contention
+/// remains immediate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct FilesTransactionOptions {

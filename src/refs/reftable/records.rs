@@ -139,6 +139,20 @@ pub struct Table {
 ///
 /// Limits apply before record allocation and decompression. The caller already owns the input
 /// bytes. These are finite safety defaults, not measured acceptance thresholds for all consumers.
+///
+/// Choose codec budgets for caller-owned table bytes. Stack limits aggregate work across several
+/// tables; these limits additionally constrain individual blocks and reconstructed strings before
+/// allocation.
+///
+/// ```
+/// use girt::refs::reftable::Limits;
+/// // Limit compressed input and reconstructed strings independently for an inspector.
+/// let limits = Limits::default()
+///     .with_bytes(1024 * 1024)
+///     .with_string_bytes(4096);
+/// assert_eq!(limits.bytes, 1024 * 1024);
+/// assert_eq!(limits.string_bytes, 4096);
+/// ```
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Limits {
@@ -204,10 +218,11 @@ impl Default for Limits {
 }
 
 impl Limits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite codec bounds for caller-approved table bytes.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Byte, string, record and decoded-data limits retain arithmetic headroom. They can permit
+    /// allocations beyond available memory; they neither reserve resources nor cap process memory.
+    /// Prefer selected default-bound overrides for input with an unknown resource cost.
     ///
     /// Block size stays at the format's 24-bit maximum.
     pub const fn trusted() -> Self {
@@ -238,12 +253,16 @@ impl Limits {
 #[non_exhaustive]
 pub enum Error {
     /// Invalid framing, ordering, checksum or record representation.
+    /// Retain the bytes for diagnosis and obtain a verified table; increasing limits cannot repair
+    /// framing or checksums.
     #[error("malformed reftable: {0}")]
     Malformed(&'static str),
     /// Recognized boundary not supported by this codec.
+    /// Select a supported table representation or extend codec support explicitly.
     #[error("unsupported reftable: {0}")]
     Unsupported(&'static str),
     /// A caller-selected budget was exhausted before allocation or processing.
+    /// Choose a justified encoded/decoded budget before a fresh decode or encode attempt.
     #[error("reftable resource limit: {0}")]
     Limit(&'static str),
 }

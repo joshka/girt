@@ -21,6 +21,28 @@ impl Table {
     /// Reports unsupported versions/hash IDs, malformed framing/checksums/records and exhausted
     /// limits. A failure returns no partial table. Work is synchronous and bounded by the input,
     /// inflated block and record limits.
+    ///
+    /// ```
+    /// use girt::refs::Target;
+    /// use girt::refs::reftable::{Limits, RecordName, RefRecord, Table};
+    /// use girt::{ObjectFormat, ObjectId};
+    /// let table = Table {
+    ///     format: ObjectFormat::Sha1,
+    ///     min_update_index: 1,
+    ///     max_update_index: 1,
+    ///     references: vec![RefRecord {
+    ///         name: RecordName::new("refs/tags/one")?,
+    ///         update_index: 1,
+    ///         target: Some(Target::Direct(ObjectId::Sha1([1; 20]))),
+    ///         peeled: None,
+    ///     }],
+    ///     logs: vec![],
+    /// };
+    /// let bytes = table.encode(Limits::default())?;
+    /// assert_eq!(Table::decode(&bytes, Limits::default())?, table);
+    /// assert!(Table::decode(&bytes, Limits::default().with_bytes(1)).is_err());
+    /// # Ok::<(), girt::refs::reftable::Error>(())
+    /// ```
     pub fn decode(bytes: &[u8], limits: Limits) -> Result<Self, Error> {
         #[cfg(feature = "tracing")]
         let span = tracing::debug_span!(target: "girt", "reftable.decode", outcome = "incomplete", failure_class = tracing::field::Empty, bytes = bytes.len());
