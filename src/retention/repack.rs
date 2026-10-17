@@ -72,6 +72,11 @@ pub struct RepackPublished {
 }
 
 /// Failure before complete pair publication. An unindexed pack may remain after interruption.
+///
+/// This operation leaves old storage intact. An incomplete plan needs its typed retention cause
+/// resolved; missing/corrupt input needs recovery. A publication failure may leave an unindexed
+/// pack that readers ignore; do not manually delete checksum-named files without fresh ownership
+/// and dependency checks. A successful additive repack is never deletion authorization.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RepackError {
@@ -148,6 +153,32 @@ impl Repository {
     /// publication does not promise durability of the index name; retirement synchronizes both
     /// names before removing old storage. Publication assumes a trusted local filesystem with no
     /// in-place artifact edits.
+    ///
+    /// # Add a pack without deleting loose objects
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// use girt::retention::{RepackLimits, RetentionPolicy};
+    /// let id = repo.loose_objects().write_blob(b"keep me")?;
+    /// let published = repo.repack_retained(
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// assert_eq!(published.written.objects, 1);
+    /// assert_eq!(repo.loose_objects().read_blob(id, 1024)?, b"keep me");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn repack_retained(
         &self,
         policy: &RetentionPolicy,

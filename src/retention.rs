@@ -19,6 +19,65 @@
 //! for the full operation. Failure reports preserve completed effects; retry from fresh scans under
 //! a new isolation guard. Read each method's platform and recovery contract before use.
 //!
+//! # What keeps an object alive?
+//!
+//! References are only one source of liveness. The index can stage a blob no commit names yet;
+//! reflogs can preserve history after a branch moves; another linked worktree has its own HEAD
+//! and index; a consumer may own unpublished heads. Planning includes those roots, object-bearing
+//! pseudorefs and recent loose objects, follows verified commit/tree/tag edges, and stops parent
+//! traversal at shallow boundaries. Gitlinks refer to another repository and stay external.
+//! A partial clone, precious-object repository or unsupported recent-object hook refuses a
+//! complete plan rather than treating unknown objects as disposable.
+//!
+//! Default [`RetentionPolicy`] keeps all reflog records, loose objects and packs regardless of
+//! age. Choose a recent cutoff to enable reclamation; choose reflog expiry separately. Loose
+//! files at or before the cutoff are eligible only outside the retained closure. Newer loose
+//! objects become roots, protecting their dependencies as well. Packs at or after the cutoff
+//! remain protected in their entirety. The inclusive loose cutoff matches Git prune expiry;
+//! whole-pack protection is deliberately conservative. Girt does not interpret `gc.pruneExpire`
+//! here: the application supplies the instant.
+//!
+//! # Publish, verify, retire
+//!
+//! Destructive maintenance first establishes caller-owned exclusion, observes one pinned store,
+//! publishes and synchronizes a replacement, verifies surviving copies, and only then removes old
+//! data. A name in a pack index or a matching checksum cannot establish that an object decodes
+//! correctly under the caller's real read limits. Retirement decodes retained objects from the
+//! replacement or protected survivor before removing the old copy. Combined delta chains must
+//! also fit those limits. Repacking alone is additive and never supplies deletion authorization.
+//!
+//! `.keep` packs, recent packs and alternate stores are untouchable. Before relying on protected
+//! storage to omit a replacement copy, girt verifies the survivor. Dependencies of protected packs
+//! receive a separate closure, so they survive without changing reflog liveness classification.
+//! Loose pruning removes only eligible regular files from the primary object directory. It does
+//! not remove packs, alternates or working files. Standalone prune retains every observed reflog
+//! record even if the supplied policy has expiry cutoffs;
+//! [`Repository::collect_garbage`](crate::Repository::collect_garbage) expires history before
+//! pruning under one guard and advances the exact observation.
+//!
+//! # Races, damage and recovery
+//!
+//! Like Git, girt assumes published packs and indexes are immutable. Pinned handles keep one
+//! generation through scanning and copying. Metadata/identity checks at mutation boundaries
+//! detect observed changes, but cannot prevent a writer racing the final check or changing bytes
+//! while restoring metadata. [`MaintenanceIsolation`] must exclude external Git processes,
+//! dependent readers and repositories using this store as an alternate for the whole operation.
+//! An internal lock alone cannot provide that boundary. Refuse acquisition if it cannot be held.
+//!
+//! Content reads can rescue a damaged packed entry using another fully decoded and identity-checked
+//! copy. That proves only the returned copy; the pack remains known damaged and pinned-input
+//! mutation gates refuse it. Cancellation, limits, unsupported types and missing/external delta
+//! bases are immediate errors, not fallback triggers. Recovery therefore means restoring or
+//! rebuilding verified storage and opening a fresh reader, rather than asking GC to erase the
+//! damaged pack. Unique objects in it must remain protected. A plan's blob-header traversal is
+//! not a full integrity check, and a no-op prune/expiry report can skip unneeded graph traversal.
+//!
+//! Failure reports describe completed effects and uncertain publication/unlink boundaries.
+//! Cancellation does not roll back earlier phases. Preserve typed causes and source chains,
+//! inspect actual storage under exclusion, then retry with fresh scans and a new guard.
+//! Composed maintenance, pack retirement and destructive reflog expiry require Unix directory
+//! durability support; additive repack has its own less destructive publication contract.
+//!
 //! # Example
 //!
 //! Plan retention for a repository whose `main` branch (setup hidden) reaches one commit and its
@@ -165,6 +224,33 @@ pub enum ReflogExpiryPolicy {
 }
 
 /// Caller policy and aggregate work bounds for one observation.
+///
+/// # Retain application-owned heads
+///
+/// References cannot describe every consumer's live data. Include unpublished heads (for example,
+/// an application's operation state) explicitly. Defaults keep every reflog record and all loose
+/// objects/packs regardless of age. Enabling reclamation is a separate caller decision.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+///
+/// use girt::retention::RetentionPolicy;
+/// let id = repo.loose_objects().write_blob(b"application-owned data")?;
+/// let policy = RetentionPolicy::default().with_heads(vec![id]);
+/// let plan = repo.plan_retention(&policy, &cancel);
+/// assert!(plan.is_complete(), "{:?}", plan.outcome);
+/// assert!(plan.required.contains(&id));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct RetentionPolicy {
@@ -212,6 +298,20 @@ impl RetentionPolicy {
     }
 
     /// Enables age-based reclamation by setting [`Self::recent_cutoff`] to `Some(recent_cutoff)`.
+    ///
+    /// Choose the instant from application policy; girt does not read `gc.pruneExpire` here. At the
+    /// instant, loose expiry is inclusive (`mtime <= cutoff`), while pack protection is inclusive
+    /// in the other direction (`mtime >= cutoff`). A recent loose root protects its
+    /// dependencies too.
+    ///
+    /// ```
+    /// use std::time::{Duration, UNIX_EPOCH};
+    ///
+    /// use girt::retention::RetentionPolicy;
+    /// let cutoff = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    /// let policy = RetentionPolicy::default().with_recent_cutoff(cutoff);
+    /// assert_eq!(policy.recent_cutoff, Some(cutoff));
+    /// ```
     #[must_use]
     pub fn with_recent_cutoff(mut self, recent_cutoff: SystemTime) -> Self {
         self.recent_cutoff = Some(recent_cutoff);
@@ -320,7 +420,7 @@ impl RetentionPolicy {
     /// Returns the default policy with limits for a repository the caller trusts.
     ///
     /// Git bounds none of these values; see [`ReadLimits::trusted`]. Cutoffs and heads keep their
-    /// defaults, so set them with struct update syntax.
+    /// defaults; select them with the policy's builder methods.
     pub fn trusted() -> Self {
         Self {
             max_entries: usize::MAX / 4,
@@ -342,13 +442,47 @@ impl RetentionPolicy {
 /// Even complete reports never authorize deletion: the executor must exclude writers, rediscover
 /// roots/recent objects and compare storage generations before it acts. `reachable` includes every
 /// imported reflog candidate, while `required` applies the supplied expiry cutoffs. A record is
-/// classed as live if either endpoint is reachable from non-reflog roots; this conservative rule
-/// uses the longer live cutoff when the record straddles live and unreachable history. Callers
+/// classed as live under [`ReflogExpiryPolicy::ClassifiedCutoffs`] if either endpoint is reachable
+/// from non-reflog roots; this conservative rule uses the live cutoff for a straddling record.
+/// [`ReflogExpiryPolicy::Configured`] instead applies Git's independent expiry rules. Callers
 /// must not delete an object based solely on `reachable - required` while retained packs, recent
 /// objects, alternates, or an independent writer can still refer to it. The plan retains the pinned
 /// object store used for its observations until dropped; execution reuses those exact handles.
 /// Drop the plan promptly after use: its handles keep retired packs' disk space allocated. On
 /// Windows a deleted pinned file remains pending deletion and can prevent recreating its name.
+///
+/// # Inspect completion before using sets
+///
+/// Partial sets explain observed progress; they cannot establish that another object is garbage.
+/// The executor constructs its own fresh plan under isolation. A complete plan also does not
+/// certify every blob payload: graph traversal locates typed blob edges without decoding them.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+///
+/// use girt::retention::{RetentionOutcome, RetentionPolicy};
+/// let id = repo
+///     .loose_objects()
+///     .write_blob(b"unreferenced, but retained by default")?;
+/// let plan = repo.plan_retention(&RetentionPolicy::default(), &cancel);
+/// match plan.outcome {
+///     RetentionOutcome::Complete => assert!(plan.required.contains(&id)),
+///     RetentionOutcome::Incomplete(error) => return Err(error.into()),
+///     _ => return Err("unknown retention outcome".into()),
+/// }
+/// drop(plan); // Release pinned pack handles promptly.
+///
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct RetentionPlan {
@@ -384,6 +518,36 @@ struct ObjectInfo {
 }
 
 /// Why a plan can or cannot describe complete reachability.
+///
+/// Cancellation from a lower-level inventory can be wrapped in [`RetentionError::Read`]. Keep
+/// its typed source: the recovery category alone does not distinguish every storage condition.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::retention::{RetentionError, RetentionErrorKind, RetentionOutcome, RetentionPolicy};
+/// use girt::{InitKind, ObjectFormat, Repository, WorktreeError};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let plan = repo.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(true));
+/// let RetentionOutcome::Incomplete(error) = &plan.outcome else {
+///     panic!("cancelled inventory cannot establish completeness");
+/// };
+/// assert_eq!(error.kind(), RetentionErrorKind::Read);
+/// let RetentionError::Read(source) = error else {
+///     panic!("expected inventory failure");
+/// };
+/// assert!(matches!(
+///     source.downcast_ref::<WorktreeError>(),
+///     Some(WorktreeError::Cancelled)
+/// ));
+/// assert!(!plan.is_complete());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RetentionOutcome {
@@ -486,12 +650,17 @@ impl Repository {
     /// composite operations use one plan under isolation and revalidate input fingerprints
     /// before mutation.
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
     /// use girt::Repository;
     /// use girt::retention::RetentionPolicy;
-    /// let repository = Repository::open("/path/to/repository")?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repository = Repository::init(
+    ///     girt::ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     girt::InitKind::Bare,
+    /// )?;
     /// let plan = repository.plan_retention(&RetentionPolicy::default(), &AtomicBool::new(false));
     /// if !plan.is_complete() {
     ///     eprintln!("retention scan incomplete: {:?}", plan.outcome);

@@ -50,6 +50,11 @@ static REGISTRY: std::sync::LazyLock<Mutex<HashMap<usize, Weak<Registration>>>> 
 thread_local! { static DEPTH: Cell<usize> = const { Cell::new(0) }; }
 
 /// Effects of one cleanup attempt; failures do not prevent attempts on other owned locks.
+///
+/// An `Ok` return from [`cleanup`] means the registry was processed, not that every lock was
+/// removed. Inspect `failures` and `preserved`. Unix invalidates the old guard even when a
+/// replacement path is preserved; never remove that replacement merely because it has the same
+/// name. Persistent worktree lock markers and pack `.keep` files are outside this registry.
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct CleanupReport {
@@ -90,6 +95,32 @@ pub struct CleanupFailure {
 /// handler may call this function: it locks, allocates and performs filesystem I/O.
 ///
 /// See the [module example](crate::locks#example) for a shutdown sequence.
+///
+/// # Cancel and invalidate an outstanding edit
+///
+/// Run cleanup on a normal thread after stopping admissions and requesting cancellation. This
+/// standalone example holds a real index edit: on Unix its guard cannot publish after cleanup.
+/// On other platforms cleanup reports unsupported identity cleanup and ordinary abort still works.
+///
+/// ```standalone_crate
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+/// let edit = repo.edit_index(Default::default())?;
+/// let report = girt::locks::cleanup()?;
+/// #[cfg(unix)]
+/// {
+///     assert_eq!(report.removed.len(), 1);
+///     assert!(edit.commit().is_err());
+///     assert!(repo.read_index(Default::default())?.is_none());
+/// }
+/// #[cfg(not(unix))]
+/// {
+///     assert_eq!(report.failures.len(), 1);
+///     edit.abort()?;
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn cleanup() -> io::Result<CleanupReport> {
     cleanup_matching(|_| true, true)
 }

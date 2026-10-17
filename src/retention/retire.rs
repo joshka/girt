@@ -24,7 +24,7 @@ use crate::{ObjectId, ObjectReadError, Repository};
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct RetireReport {
-    /// Replacement pair visibly published by R32; later synchronization or verification may fail.
+    /// Replacement pair visibly published; later synchronization or verification may fail.
     pub published: Option<RepackPublished>,
     /// Both pack and object directories synchronized after publication.
     pub durable: bool,
@@ -69,6 +69,11 @@ pub enum RetireCause {
 }
 
 /// Failure with the known successful effects and any uncertain artifact.
+///
+/// Publication can succeed before verification, synchronization or an old-artifact unlink fails.
+/// Use `report.published`, `report.durable`, `report.removed` and `uncertain` together. A visible
+/// replacement alone does not establish that removing old storage is safe. Re-observe under
+/// isolation before retrying; never complete the deletion sequence manually from this report.
 #[derive(Debug, thiserror::Error)]
 #[error("pack retirement failed")]
 #[non_exhaustive]
