@@ -1325,3 +1325,64 @@ fn native_push_opens_destination_within_destination_pack_limits(
     );
     git_in(&destination, &["fsck", "--strict"]);
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_clone_no_checkout_is_portable_and_checkout_preserves_platform_scope(
+    #[case] format: ObjectFormat,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let source = repository(&root, "source", format, Backend::Files);
+    let id = commit(&source);
+    let url = source.git_dir().to_str().unwrap();
+    let environment = girt::workflow::Environment::default();
+    let inputs = ConfigInputs::default();
+    let options = girt::workflow::CloneOptions::default().with_checkout(false);
+    let outcome = girt::workflow::clone_with(
+        url,
+        root.path().join("no-checkout"),
+        &options,
+        &inputs,
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+    let cloned = outcome.clone.repository.unwrap();
+    assert_eq!(cloned.head().unwrap().id, Some(id));
+    assert!(!cloned.git_dir().join("index").exists());
+    // The persisted absolute URL remains usable with a later fetch from another current directory.
+    let configured = girt::remote::Remote::find(cloned.config(), b"origin")
+        .unwrap()
+        .unwrap();
+    girt::workflow::fetch(
+        &cloned,
+        "origin",
+        &girt::workflow::FetchOptions::new(
+            configured
+                .fetch_refspecs()
+                .specs()
+                .iter()
+                .map(|spec| spec.as_bytes()),
+        ),
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+    let checked_out = girt::workflow::clone_with(
+        url,
+        root.path().join("checkout"),
+        &Default::default(),
+        &inputs,
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    );
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(checked_out.unwrap().checkout.unwrap().index_published);
+    } else {
+        let girt::workflow::CloneError::UnsupportedCheckout = checked_out.unwrap_err() else {
+            panic!("expected unsupported checkout");
+        };
+        assert!(!root.path().join("checkout").exists());
+    }
+}

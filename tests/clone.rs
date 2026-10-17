@@ -863,3 +863,337 @@ fn local_clone_forwards_construction_and_validation_before_destination_creation(
     ready.finish(FetchUpdateLimits::default(), &cancel).unwrap();
     assert!(destination.exists());
 }
+
+fn configured_clone(
+    source: &str,
+    path: &Path,
+    options: girt::workflow::CloneOptions,
+) -> Result<girt::workflow::CloneOutcome, girt::workflow::CloneError> {
+    girt::workflow::clone_with(
+        source,
+        path,
+        &options,
+        &girt::config::ConfigInputs::default(),
+        &girt::workflow::Environment::default(),
+        &mut girt::workflow::NoCallbacks,
+    )
+}
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn configured_clone_checks_out_default_branch_like_git(#[case] format: ObjectFormat) {
+    let source = Source::with_format(format);
+    git(
+        source.root.path(),
+        &["symbolic-ref", "HEAD", "refs/heads/topic"],
+        b"",
+    );
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("girt");
+    let url = source.root.path().to_str().unwrap();
+    let outcome = configured_clone(url, &destination, Default::default()).unwrap();
+    assert!(outcome.checkout.unwrap().index_published);
+    git(root.path(), &["clone", url, "git"], b"");
+    let oracle = root.path().join("git");
+    for args in [
+        vec!["symbolic-ref", "HEAD"],
+        vec!["rev-parse", "HEAD"],
+        vec!["ls-files", "--stage"],
+        vec!["status", "--porcelain"],
+        vec!["config", "--get", "branch.topic.remote"],
+        vec!["config", "--get", "branch.topic.merge"],
+        vec!["config", "--get", "remote.origin.url"],
+    ] {
+        assert_eq!(
+            git(&destination, &args, b""),
+            git(&oracle, &args, b""),
+            "{args:?}"
+        );
+    }
+    assert_eq!(
+        fs::read(destination.join("file")).unwrap(),
+        b"original workflow payload\n"
+    );
+    for reference in [
+        "refs/heads/topic",
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/topic",
+        "refs/tags/v1",
+    ] {
+        assert_eq!(
+            git(&destination, &["rev-parse", reference], b""),
+            git(&oracle, &["rev-parse", reference], b"")
+        );
+    }
+}
+
+#[test]
+fn configured_clone_preserves_collision_and_reports_checkout_failure() {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    let url = source.root.path().to_str().unwrap();
+    let path = root.path().join("existing");
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("keep"), b"keep").unwrap();
+    assert!(matches!(
+        configured_clone(url, &path, Default::default()),
+        Err(girt::workflow::CloneError::Prepare(CloneFailure::Exists(_)))
+    ));
+    assert_eq!(fs::read(path.join("keep")).unwrap(), b"keep");
+    let options = girt::workflow::CloneOptions::default()
+        .with_checkout_limits(girt::checkout::Limits::default().with_max_file_bytes(1));
+    let path = root.path().join("failed-checkout");
+    let error = configured_clone(url, &path, options).unwrap_err();
+    let girt::workflow::CloneError::Checkout { report, source } = error else {
+        panic!("{error:?}")
+    };
+    assert!(report.configured);
+    assert!(report.repository.is_some());
+    assert!(!source.report.index_published);
+    assert_eq!(
+        git(&path, &["symbolic-ref", "HEAD"], b""),
+        b"refs/heads/main\n"
+    );
+    assert!(!path.join("file").exists());
+}
+
+#[rstest]
+#[case(InitKind::Worktree)]
+#[case(InitKind::Bare)]
+fn configured_clone_supports_no_checkout(#[case] kind: InitKind) {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    let options = girt::workflow::CloneOptions::default()
+        .with_kind(kind)
+        .with_checkout(false);
+    let outcome = configured_clone(
+        source.root.path().to_str().unwrap(),
+        &root.path().join("clone"),
+        options,
+    )
+    .unwrap();
+    assert!(outcome.checkout.is_none());
+    assert!(
+        !outcome
+            .clone
+            .repository
+            .unwrap()
+            .git_dir()
+            .join("index")
+            .exists()
+    );
+}
+
+#[test]
+fn configured_clone_skips_checkout_of_empty_remote() {
+    let root = tempfile::tempdir().unwrap();
+    let empty = root.path().join("empty");
+    fs::create_dir(&empty).unwrap();
+    git(
+        &empty,
+        &[
+            "init",
+            "--bare",
+            "--template=",
+            "--initial-branch=unborn",
+            ".",
+        ],
+        b"",
+    );
+    let outcome = configured_clone(
+        empty.to_str().unwrap(),
+        &root.path().join("unborn"),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(matches!(outcome.clone.head, CloneHead::Unborn(_)));
+    assert!(outcome.checkout.is_none());
+}
+
+#[test]
+fn configured_clone_checks_out_detached_remote_head() {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    git(
+        source.root.path(),
+        &[
+            "update-ref",
+            "--no-deref",
+            "HEAD",
+            &source.second.to_string(),
+        ],
+        b"",
+    );
+    let outcome = configured_clone(
+        source.root.path().to_str().unwrap(),
+        &root.path().join("detached"),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(matches!(outcome.clone.head, CloneHead::Detached(_)));
+    assert!(outcome.checkout.unwrap().index_published);
+}
+
+#[test]
+fn configured_clone_refuses_missing_default_branch_in_nonempty_remote() {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    git(
+        source.root.path(),
+        &["symbolic-ref", "HEAD", "refs/heads/missing"],
+        b"",
+    );
+    let path = root.path().join("clone");
+    assert!(matches!(
+        configured_clone(
+            source.root.path().to_str().unwrap(),
+            &path,
+            Default::default()
+        ),
+        Err(girt::workflow::CloneError::Receive(
+            CloneTransferError::Plan(_)
+        ))
+    ));
+    assert!(!path.exists());
+}
+
+#[test]
+fn configured_clone_reuses_fetch_url_rewrites_protocol_policy_and_environment() {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    let config = format!(
+        "[url \"{}/\"]\ninsteadOf = alias:\n",
+        source.root.path().display()
+    );
+    let inputs = girt::config::ConfigInputs::default()
+        .with_command(Some(girt::Config::parse(config.as_bytes()).unwrap()));
+    let environment = girt::workflow::Environment::default().with_current_dir(root.path());
+    let outcome = girt::workflow::clone_with(
+        "alias:",
+        "rewritten",
+        &Default::default(),
+        &inputs,
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+    assert!(outcome.checkout.unwrap().index_published);
+    let remote = Remote::find(
+        outcome.clone.repository.as_ref().unwrap().config(),
+        b"origin",
+    )
+    .unwrap()
+    .unwrap();
+    git(
+        root.path(),
+        &[
+            "-c",
+            &format!("url.{}/.insteadOf=alias:", source.root.path().display()),
+            "clone",
+            "alias:",
+            "oracle",
+        ],
+        b"",
+    );
+    assert_eq!(
+        remote.fetch_url().unwrap(),
+        git(
+            &root.path().join("oracle"),
+            &["config", "--get", "remote.origin.url"],
+            b""
+        )
+        .strip_suffix(b"\n")
+        .unwrap()
+    );
+    let refused = environment.with("GIT_ALLOW_PROTOCOL", "https");
+    assert!(matches!(
+        girt::workflow::clone_with(
+            "alias:",
+            "refused",
+            &Default::default(),
+            &inputs,
+            &refused,
+            &mut girt::workflow::NoCallbacks
+        ),
+        Err(girt::workflow::CloneError::Transfer(_))
+    ));
+    assert!(!root.path().join("refused").exists());
+}
+
+#[rstest]
+#[case::absolute(0)]
+#[case::file_url(1)]
+#[case::relative_symlink(2)]
+#[case::absolute_dot(3)]
+fn configured_clone_stores_the_same_source_url_as_git(#[case] form: usize) {
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(source.root.path(), root.path().join("source-link")).unwrap();
+    let url = match form {
+        0 => source.root.path().to_str().unwrap().to_owned(),
+        1 => format!("file://{}", source.root.path().display()),
+        2 => "source-link".to_owned(),
+        _ => format!("{}/.", source.root.path().display()),
+    };
+    let environment = girt::workflow::Environment::default()
+        .with_current_dir(fs::canonicalize(root.path()).unwrap());
+    let outcome = girt::workflow::clone_with(
+        &url,
+        "girt",
+        &Default::default(),
+        &Default::default(),
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+    git(root.path(), &["clone", &url, "git"], b"");
+    assert_eq!(
+        git(
+            &outcome.clone.destination,
+            &["config", "--get", "remote.origin.url"],
+            b""
+        ),
+        git(
+            &root.path().join("git"),
+            &["config", "--get", "remote.origin.url"],
+            b""
+        ),
+    );
+}
+
+#[test]
+fn configured_clone_preserves_completed_report_when_configuration_changes_before_reopen() {
+    struct ChangeConfig(std::path::PathBuf);
+    impl girt::workflow::TransferCallbacks for ChangeConfig {
+        fn validation_progress(&mut self, _: girt::fetch::ValidationProgress) {
+            fs::write(&self.0, b"[broken\n").unwrap();
+        }
+    }
+    let source = Source::new();
+    let root = tempfile::tempdir().unwrap();
+    let global = root.path().join("global");
+    let inputs = girt::config::ConfigInputs::default().with_files(vec![
+        girt::config::ConfigFile::new(global.clone(), girt::config::ConfigScope::Global)
+            .with_optional(true),
+    ]);
+    let error = girt::workflow::clone_with(
+        source.root.path().to_str().unwrap(),
+        root.path().join("clone"),
+        &Default::default(),
+        &inputs,
+        &Default::default(),
+        &mut ChangeConfig(global),
+    )
+    .unwrap_err();
+    let girt::workflow::CloneError::Read { report, .. } = error else {
+        panic!("{error:?}")
+    };
+    assert!(report.configured);
+    assert!(report.repository.is_some());
+    assert_eq!(
+        git(&report.destination, &["rev-parse", "HEAD"], b""),
+        format!("{}\n", source.first).as_bytes()
+    );
+    assert!(!report.destination.join("file").exists());
+}

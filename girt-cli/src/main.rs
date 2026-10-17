@@ -67,10 +67,10 @@ enum Command {
     Init(repo::InitArgs),
     /// Copy a repository from another location and check out HEAD.
     ///
-    /// Supports local paths, file URLs, anonymous HTTP(S), and system OpenSSH on macOS/Linux.
+    /// Supports local paths, file URLs, configured HTTP(S), and system OpenSSH on macOS/Linux.
     /// SSH accepts `ssh://[user@]host[:port]/path` and `[user@]host:path`. Normal SSH config,
     /// GIT_SSH_COMMAND, core.sshCommand and GIT_SSH apply. Use an agent or askpass; terminal
-    /// prompts and job control are unavailable. HTTP credential helpers are not used here.
+    /// prompts and job control are unavailable. HTTP uses configured credential helpers.
     Clone(transfer::CloneArgs),
 
     /// Hash, read and inspect objects.

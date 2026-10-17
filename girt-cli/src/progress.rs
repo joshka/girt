@@ -180,6 +180,10 @@ impl TransferCallbacks for Progress {
         }
     }
 
+    fn checkout_progress(&mut self, done: u64, total: u64) {
+        self.update("Updating files", done, Some(total));
+    }
+
     fn validation_progress(&mut self, progress: ValidationProgress) {
         self.validation(progress);
     }

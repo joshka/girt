@@ -2697,6 +2697,20 @@ fn http_fetch_authenticates_from_native_store_without_running_git() {
     )
     .unwrap();
     assert!(!outcome.updated.is_empty());
+    let inputs = girt::config::ConfigInputs::default().with_command(Some(
+        girt::Config::parse(b"[credential]\nhelper = store\n").unwrap(),
+    ));
+    let cloned = girt::workflow::clone_with(
+        &server.url,
+        root.path().join("configured-clone"),
+        &Default::default(),
+        &inputs,
+        &environment,
+        &mut girt::workflow::NoCallbacks,
+    )
+    .unwrap();
+    assert!(cloned.checkout.unwrap().index_published);
+
     assert!(!log.exists(), "{}", std::fs::read_to_string(&log).unwrap());
     // Approval rewrote the entry, and Git still reads it back.
     let answer = git(

@@ -4,30 +4,26 @@
 //! on stdout retain girt's format.
 
 use std::io::Write;
-use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::AtomicBool;
 
 use clap_complete::ArgValueCandidates;
 use color_eyre::eyre::{Result, WrapErr as _, bail, eyre};
-use girt::clone::{BranchSelection, CloneHead, CloneRequest};
-use girt::fetch::{FetchLimits, FetchUpdateLimits};
+use girt::clone::CloneHead;
 use girt::push::{ForcePolicy, PushCommand, RejectionOrigin, Status};
-use girt::refs::{RefName, Reflog};
+use girt::refs::RefName;
 use girt::remote::RefSource;
 use girt::revision::Resolver;
-use girt::transport::TransportControl;
 use girt::workflow::{self, Environment, FetchOptions, PushOptions};
 use girt::{InitKind, ObjectId, Repository};
 
 use crate::common::{display_bytes, resolve, resolve_ref, stdout};
-use crate::config::{Endpoint, block_on, endpoint, find_remote, http_remote};
+use crate::config::find_remote;
 use crate::{Context, complete};
 
 /// Copy a repository into a new directory and check out its `HEAD`.
 ///
-/// Supports local paths, `file://`, anonymous HTTP(S), and SSH on macOS/Linux.
+/// Supports local paths, `file://`, configured HTTP(S) credentials, and SSH on macOS/Linux.
 /// SSH accepts `ssh://` and `[user@]host:path`, normal OpenSSH config and configured commands.
 /// Use an agent or askpass for authentication; terminal prompts are unavailable.
 /// `--git` suppresses progress but retains girt's result format.
@@ -78,87 +74,44 @@ pub struct PushArgs {
 }
 
 pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
-    let source = endpoint(&args.url, context.directory())?;
     let directory = match args.destination {
         Some(directory) => directory,
         None => default_directory(&args.url, args.bare)?,
     };
-    let destination = context.directory().join(directory);
-    // Record an absolute path for local sources, so later fetches work from the new repository.
-    let stored_url = match &source {
-        Endpoint::Local(path) => std::fs::canonicalize(path)
-            .wrap_err_with(|| format!("reading {}", path.display()))?
-            .to_string_lossy()
-            .into_owned(),
-        Endpoint::Http(url) => url.clone(),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        Endpoint::Ssh(url) => url.clone(),
-    };
-    let kind = if args.bare {
-        InitKind::Bare
-    } else {
-        InitKind::Worktree
-    };
-    let request = CloneRequest::prepare_tracking(
+    let destination = std::fs::canonicalize(context.directory())
+        .wrap_err_with(|| format!("reading {}", context.directory().display()))?
+        .join(directory);
+    let options = workflow::CloneOptions::default()
+        .with_kind(if args.bare {
+            InitKind::Bare
+        } else {
+            InitKind::Worktree
+        })
+        .with_checkout(!args.no_checkout)
+        .with_fetch_limits(girt::fetch::FetchLimits::trusted())
+        .with_update_limits(girt::fetch::FetchUpdateLimits::trusted());
+    let mut progress = crate::progress::Progress::new(context.progress);
+    let outcome = workflow::clone_with(
+        &args.url,
         &destination,
-        kind,
-        stored_url.as_bytes(),
-        BranchSelection::Default,
-        Reflog::Preserve,
+        &options,
+        &context.config_inputs()?,
+        &environment(context)?,
+        &mut progress,
     )
-    .wrap_err("preparing clone")?;
-    let cancel = AtomicBool::new(false);
-    let control = TransportControl::new(&cancel);
-    let limits = FetchLimits::trusted();
-    let progress = std::cell::RefCell::new(crate::progress::Progress::new(context.progress));
-    let ready = match source {
-        Endpoint::Local(path) => request.receive_local_with_progress(
-            &path,
-            limits,
-            control,
-            girt::fetch::LocalFetchObserver::default()
-                .with_messages(&mut |bytes| {
-                    progress.borrow_mut().remote(bytes);
-                    ControlFlow::Continue(())
-                })
-                .with_construction(&mut |event| progress.borrow_mut().local(event))
-                .with_validation(&mut |event| progress.borrow_mut().validation(event)),
-        ),
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        Endpoint::Ssh(url) => {
-            let remote = crate::config::ssh_remote(&url, &context.user_config()?)?;
-            block_on(request.receive_ssh(&remote, limits, control))?.and_then(|download| {
-                download.validate_with_progress(
-                    &cancel,
-                    |bytes| {
-                        progress.borrow_mut().remote(bytes);
-                        ControlFlow::Continue(())
-                    },
-                    |event| progress.borrow_mut().validation(event),
-                )
-            })
-        }
-        Endpoint::Http(url) => {
-            let remote = http_remote(&url)?;
-            block_on(
-                request.receive_http_with_progress(&remote, limits, control, |bytes| {
-                    progress.borrow_mut().remote(bytes)
-                }),
-            )?
-            .and_then(|download| {
-                download.validate_with_progress(
-                    &cancel,
-                    |_| ControlFlow::Continue(()),
-                    |event| progress.borrow_mut().validation(event),
-                )
-            })
-        }
-    }
-    .wrap_err("downloading")?;
-    progress.borrow_mut().finish();
-    let report = ready
-        .finish(FetchUpdateLimits::trusted(), &cancel)
-        .map_err(|error| eyre!("{error} (inspect {})", destination.display()))?;
+    .map_err(|error| match &error {
+        workflow::CloneError::Checkout { .. } | workflow::CloneError::Read { .. } =>
+            eyre!(error).wrap_err(format!(
+                "clone completed at {}; inspect files and index before recovery with `girt -C {} checkout HEAD`",
+                destination.display(), destination.display(),
+            )),
+        workflow::CloneError::Finish(_) => eyre!(error).wrap_err(format!(
+            "clone installation failed; inspect {} for partial effects", destination.display()
+        )),
+        _ => eyre!(error).wrap_err("cloning"),
+    })?;
+    progress.finish();
+    let report = outcome.clone;
     let mut out = stdout();
     writeln!(out, "cloned into {}", destination.display())?;
     match &report.head {
@@ -172,39 +125,7 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
         other => writeln!(out, "HEAD {other:?}")?,
     }
     out.flush()?;
-    let has_head = matches!(
-        report.head,
-        CloneHead::Branch { .. } | CloneHead::Detached(_)
-    );
-    if !args.bare && !args.no_checkout && has_head {
-        check_out_head(&destination, context).wrap_err_with(|| {
-            format!(
-                "the clone succeeded but checkout failed; retry with `girt -C {} checkout HEAD`",
-                destination.display()
-            )
-        })?;
-    }
     Ok(ExitCode::SUCCESS)
-}
-
-/// Fills the new clone's empty index and working tree from `HEAD`.
-fn check_out_head(destination: &std::path::Path, context: &Context) -> Result<()> {
-    let mut progress = crate::progress::Progress::new(context.progress);
-    let repository = Repository::open_with_config(destination, &context.config_inputs()?)
-        .wrap_err("opening the clone")?;
-    let objects = repository.objects()?;
-    let tree = crate::common::resolve_tree(&repository, &objects, "HEAD")?;
-    repository
-        .checkout_tree_with_progress(
-            None,
-            Some(tree),
-            Default::default(),
-            &AtomicBool::new(false),
-            |done, total| progress.update("Updating files", done, Some(total)),
-        )
-        .map_err(|failure| eyre!("{failure}"))?;
-    progress.finish();
-    Ok(())
 }
 
 /// Git's default clone directory: the last path component, without `.git` unless bare.

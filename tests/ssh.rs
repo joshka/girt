@@ -1668,8 +1668,20 @@ fn repository_workflow_fetches_with_protocol_version(
         tip(&repo, "refs/remotes/origin/main"),
         tip(&f.repo, "refs/heads/main")
     );
-    // Discovery and fetch each start one upload-pack session.
+
+    let inputs = girt::config::ConfigInputs::default().with_command(Some(repo.config().clone()));
+    let cloned = girt::workflow::clone_with(
+        &url,
+        root.path().join("configured-clone"),
+        &Default::default(),
+        &inputs,
+        &environment,
+        &mut callbacks,
+    )
+    .unwrap();
+    assert!(cloned.checkout.unwrap().index_published);
+    // Discovery, fetch and clone each start one upload-pack session.
     let protocols = std::fs::read_to_string(server.root.join("protocols")).unwrap();
-    assert_eq!(protocols, format!("{sent}\n{sent}\n"));
+    assert_eq!(protocols, format!("{sent}\n{sent}\n{sent}\n"));
     git(repo.git_dir(), &["fsck", "--full"], b"");
 }

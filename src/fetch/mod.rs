@@ -652,8 +652,8 @@ impl Default for FetchLimits {
 impl FetchLimits {
     /// Returns limits for a transfer the caller trusts as Git trusts the user's own remotes.
     ///
-    /// [`crate::workflow`] uses these limits. Choose them when the user picked the remote, or when
-    /// opening a large local source repository you control: the default
+    /// [`crate::workflow::fetch`] uses these limits. Choose them when the user picked the remote,
+    /// or when opening a large local source repository you control: the default
     /// [`Self::source_packs`] refuses Git-scale repositories.
     ///
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough

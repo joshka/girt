@@ -363,55 +363,30 @@ Desired sketch: `git.push_current_branch()?`. Gap closure:
 
 ### Clone with checkout
 
-<!-- ergonomics-status: partial -->
+<!-- ergonomics-status: supported -->
 
-Partial: CloneRequest creates a no-checkout repository; checkout_tree can then materialize an
-explicit commit tree under exclusive ownership. No workflow clone or combined checkout transaction
-is provided. The examples intentionally keep publication reports and cleanup ownership visible.
-Verbose: BranchSelection, transfer limits, controls, false cancellation and separate finish.
+Supported: `workflow::clone(url, destination)` resolves Git-default configuration and transport
+policy, creates `origin` and branch tracking configuration, and checks out the remote's default
+branch. `workflow::clone_with` accepts explicit configuration inputs, environment, callbacks and
+`CloneOptions`; `trusted::Handle::clone` constructs the convenience handle.
 
 ```rust,no_run
-use std::path::Path;
-use std::sync::atomic::AtomicBool;
-
-use girt::InitKind;
-use girt::clone::{BranchSelection, CloneRequest};
-use girt::fetch::{FetchLimits, FetchUpdateLimits};
-use girt::refs::Reflog;
-use girt::transport::TransportControl;
-
-fn clone_without_checkout(
-    source: &Path,
-    destination: &Path,
-    url: &[u8],
-) -> girt::Result<()> {
-    // URL is credential-free metadata; source is the caller-selected native local endpoint.
-    let request = CloneRequest::prepare_tracking(
-        destination,
-        InitKind::Worktree,
-        url,
-        BranchSelection::Default,
-        Reflog::Preserve,
-    )?;
-    let cancel = AtomicBool::new(false);
-    let ready = request.receive_local(
-        source,
-        FetchLimits::default(),
-        TransportControl::new(&cancel),
-        |_| std::ops::ControlFlow::Continue(()),
-    )?;
-    let report = ready.finish(FetchUpdateLimits::default(), &cancel)?;
-    println!("{:?}", report.head);
+fn clone_repository(url: &str, destination: &std::path::Path) -> girt::Result<()> {
+    let outcome = girt::workflow::clone(url, destination)?;
+    println!("{:?}", outcome.clone.head);
     Ok(())
 }
 ```
 
-Disposable end-to-end evidence: [clone_repository](../examples/clone_repository.rs),
-[checkout](../examples/checkout.rs).
+The destination must be absent and exclusively owned throughout the operation. Core clone publishes
+objects, refs, configuration and HEAD before checkout writes files and publishes the index. Errors
+preserve partial reports; nothing is automatically rolled back or deleted. Checkout retains its
+Linux/macOS platform scope and conservative path policy. Bare and no-checkout modes are explicit
+options. Empty remote HEAD skips checkout; detached remote HEAD stays detached. A missing default
+branch in a nonempty remote is refused. Unsupported checkout platforms are refused before transfer.
 
-Desired sketch: `CloneOptions::new(url, destination).with_checkout(true).run()?`. Gap closure:
-[412](https://github.com/joshka/girt/issues/412) (clone orchestration is outside the stated
-[408](https://github.com/joshka/girt/issues/408) prototype).
+Disposable end-to-end evidence: [clone_repository](../examples/clone_repository.rs). The explicit
+`clone::CloneRequest` API remains available for caller-owned transport, validation and publication.
 
 ### Read effective config values
 

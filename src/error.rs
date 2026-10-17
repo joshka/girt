@@ -209,6 +209,7 @@ from_domain_errors! {
     crate::TreeError,
     crate::TreeCompareError,
     crate::workflow::TransferError,
+    crate::workflow::CloneError,
     crate::trusted::Error,
 }
 

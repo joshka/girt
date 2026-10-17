@@ -8,7 +8,7 @@ use girt::fetch::{FetchLimits, FetchUpdateLimits};
 use girt::refs::{Expected, RefName, Reflog, Target};
 use girt::remote::Remote;
 use girt::transport::TransportControl;
-use girt::{Commit, CommitFields, InitKind, Repository, Signature, Tree};
+use girt::{Commit, CommitFields, EntryMode, InitKind, Repository, Signature, Tree, TreeEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -19,7 +19,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let destination_path = root.path().join("destination");
     let objects = source.loose_objects();
-    let tree = objects.write_tree(&Tree::new(girt::ObjectFormat::Sha1, Vec::new())?)?;
+    let blob = objects.write_blob(b"hello from the clone\n")?;
+    let tree = objects.write_tree(&Tree::new(
+        girt::ObjectFormat::Sha1,
+        vec![TreeEntry {
+            mode: EntryMode::Blob,
+            name: b"hello.txt".to_vec(),
+            id: blob,
+        }],
+    )?)?;
     let identity = Signature {
         name: b"Fetch Example".to_vec(),
         email: b"fetch@example.com".to_vec(),
@@ -96,6 +104,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         report.head
     );
     drop(report);
+    // The configured workflow composes the same core clone with checkout. Explicit empty inputs
+    // and environment isolate this disposable example from the caller's machine settings.
+    let checked_out = root.path().join("checked-out");
+    let outcome = girt::workflow::clone_with(
+        url,
+        &checked_out,
+        &girt::workflow::CloneOptions::default()
+            .with_checkout(cfg!(any(target_os = "linux", target_os = "macos"))),
+        &girt::config::ConfigInputs::default(),
+        &girt::workflow::Environment::default(),
+        &mut girt::workflow::NoCallbacks,
+    )?;
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(
+            outcome
+                .checkout
+                .as_ref()
+                .is_some_and(|report| report.index_published)
+        );
+    }
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert_eq!(
+            std::fs::read(checked_out.join("hello.txt"))?,
+            b"hello from the clone\n"
+        );
+    }
+    drop(outcome);
     root.close()?; // Cleanup belongs to this disposable example, not the clone operation.
     Ok(())
 }
