@@ -2517,6 +2517,61 @@ mod publication_tests {
     }
 
     #[test]
+    fn content_window_serves_ascending_reads_and_skips_scattered_ones() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        let bytes: Vec<_> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+        fs::write(&path, &bytes).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        let reads = |start: usize, end: usize| {
+            counters::reset();
+            assert_eq!(
+                super::window::bytes(&artifact, start, end).unwrap(),
+                bytes[start..end]
+            );
+            counters::OS_READS.with(|reads| reads.get())
+        };
+        // A first read has no predecessor; the next ascending one fills the 16 KiB window.
+        assert_eq!(reads(1000, 1300), 1);
+        assert_eq!(reads(1300, 1700), 1);
+        assert_eq!(reads(1700, 2100), 0);
+        assert_eq!(reads(15_000, 16_300), 0);
+        // A scattered read uses one small read and leaves the window in place.
+        assert_eq!(reads(400_000, 400_100), 1);
+        assert_eq!(reads(2100, 2500), 0);
+        // Past the window, an ascending read refills it.
+        assert_eq!(reads(18_000, 18_200), 1);
+        assert_eq!(reads(18_200, 20_000), 0);
+        // A read larger than the window is read directly.
+        assert_eq!(reads(20_000, 60_000), 1);
+        // A fill near the end of the file is clipped to it.
+        assert_eq!(reads(500_000, 500_100), 1);
+        assert_eq!(reads(510_000, 511_000), 1);
+        assert_eq!(reads(511_000, 512 * 1024), 0);
+        // Another artifact never sees this one's bytes.
+        let other_path = root.path().join("other.pack");
+        fs::write(&other_path, vec![7; 4096]).unwrap();
+        let other = super::Artifact::open(&other_path).unwrap();
+        assert_eq!(
+            super::window::bytes(&other, 1000, 1100).unwrap(),
+            vec![7; 100]
+        );
+    }
+
+    #[test]
+    fn content_window_allocation_stays_bounded_after_a_clipped_fill() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bytes.pack");
+        fs::write(&path, vec![1; 100_000]).unwrap();
+        let artifact = super::Artifact::open(&path).unwrap();
+        // The first fill is clipped at the end of the file; a later full fill must not grow it.
+        for start in [89_000, 90_000, 1000, 2000] {
+            super::window::bytes(&artifact, start, start + 100).unwrap();
+        }
+        assert_eq!(super::window::content_allocated(), 16 * 1024);
+    }
+
+    #[test]
     fn truncation_cache_retries_after_initializer_panic() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("bytes.pack");

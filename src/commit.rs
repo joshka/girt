@@ -111,6 +111,8 @@ pub struct Commit {
     tree: ObjectId,
     parents: Vec<ObjectId>,
     payload: Vec<u8>,
+    /// Offset of the blank line ending the headers, or the payload length if there is none.
+    header_end: usize,
 }
 
 impl Commit {
@@ -169,6 +171,7 @@ impl Commit {
         Ok(Self {
             tree: fields.tree,
             parents: fields.parents,
+            header_end: header_end(&payload),
             payload,
         })
     }
@@ -208,6 +211,7 @@ impl Commit {
         Ok(Self {
             tree,
             parents,
+            header_end: header_end(payload),
             payload: payload.to_vec(),
         })
     }
@@ -217,6 +221,9 @@ impl Commit {
         format: crate::ObjectFormat,
         payload: &[u8],
     ) -> Result<(ObjectId, Vec<ObjectId>), CommitError> {
+        if let Some(graph) = fixed_width_graph(format, payload) {
+            return Ok(graph);
+        }
         // Git graph traversal consumes the leading tree and contiguous parent records only.
         let mut lines = payload.split_inclusive(|&byte| byte == b'\n').peekable();
         let first = lines.next().ok_or(CommitError::RequiredHeader)?;
@@ -286,21 +293,12 @@ impl Commit {
     }
 
     fn header_bytes(&self) -> &[u8] {
-        let end = self
-            .payload
-            .windows(2)
-            .position(|p| p == b"\n\n")
-            .unwrap_or(self.payload.len());
-        self.payload.get(..end).unwrap_or_default()
+        self.payload.get(..self.header_end).unwrap_or_default()
     }
 
     /// Borrows message bytes after the first empty line, or an empty slice if absent.
     pub fn message(&self) -> &[u8] {
-        self.payload
-            .windows(2)
-            .position(|p| p == b"\n\n")
-            .and_then(|end| self.payload.get(end + 2..))
-            .unwrap_or_default()
+        self.payload.get(self.header_end + 2..).unwrap_or_default()
     }
 
     /// Builds editable construction fields from the imported object.
@@ -681,9 +679,51 @@ pub enum CommitError {
     InvalidHeader,
 }
 
+/// Decodes graph records that all have the canonical fixed width, without scanning for line ends.
+///
+/// Returns `None` for anything else, including every malformed payload, so the general parser
+/// decides those cases. Whenever it returns a graph, the general parser returns the same one.
+fn fixed_width_graph(
+    format: crate::ObjectFormat,
+    payload: &[u8],
+) -> Option<(ObjectId, Vec<ObjectId>)> {
+    let width = format.digest_len() * 2;
+    let record = |rest: &[u8], prefix: &[u8]| {
+        let id = rest.strip_prefix(prefix)?;
+        if id.get(width) != Some(&b'\n') {
+            return None;
+        }
+        parse_id(format, id.get(..width)?).ok()
+    };
+    let tree = record(payload, b"tree ")?;
+    let mut rest = payload.get(b"tree ".len() + width + 1..)?;
+    let mut parents = Vec::new();
+    while rest.len() >= width + 8 && rest.starts_with(b"parent ") {
+        parents.push(record(rest, b"parent ")?);
+        rest = rest.get(b"parent ".len() + width + 1..)?;
+    }
+    (!rest.is_empty()).then_some((tree, parents))
+}
+
 fn required_line<'a>(line: Option<&'a [u8]>, prefix: &[u8]) -> Result<&'a [u8], CommitError> {
     line.and_then(|line| line.strip_prefix(prefix))
         .ok_or(CommitError::RequiredHeader)
+}
+
+/// Offset of the first `\n\n`, which ends the headers, or `payload.len()` if there is none.
+fn header_end(payload: &[u8]) -> usize {
+    let mut start = 0;
+    while let Some(newline) = payload
+        .get(start..)
+        .and_then(|rest| rest.iter().position(|&byte| byte == b'\n'))
+    {
+        let at = start + newline;
+        if payload.get(at + 1) == Some(&b'\n') {
+            return at;
+        }
+        start = at + 1;
+    }
+    payload.len()
 }
 
 fn parse_id(format: crate::ObjectFormat, value: &[u8]) -> Result<ObjectId, CommitError> {
@@ -772,6 +812,54 @@ mod tests {
                 .unwrap(),
             fields
         );
+    }
+
+    #[rstest]
+    #[case::message(
+        b"Fix\n\nauthor B <b@example.com> 1 +0000\n",
+        b"Fix\n\nauthor B <b@example.com> 1 +0000\n"
+    )]
+    #[case::empty_message(b"", b"")]
+    #[case::blank_first_line(b"\n\nbody\n", b"\n\nbody\n")]
+    fn splits_headers_at_the_first_blank_line(#[case] message: &[u8], #[case] expected: &[u8]) {
+        let commit =
+            Commit::parse(crate::ObjectFormat::Sha1, &payload(PERSON, b"", message)).unwrap();
+        assert_eq!(commit.message(), expected);
+        assert_eq!(commit.author().unwrap().unwrap().email, b"a@example.com");
+    }
+
+    #[rstest]
+    #[case::root(format!("tree {TREE}\nauthor {PERSON}\n"), Ok(0))]
+    #[case::merge(format!("tree {TREE}\nparent {TREE}\nparent {TREE}\nauthor {PERSON}\n"), Ok(2))]
+    #[case::uppercase(format!("tree {}\nparent {TREE}\nx\n", TREE.to_uppercase()), Ok(1))]
+    #[case::short_parent_fragment(format!("tree {TREE}\nparent 4b82\n"), Ok(0))]
+    #[case::graph_only(format!("tree {TREE}\nparent {TREE}\n"), Err(CommitError::RequiredHeader))]
+    #[case::long_parent(
+        format!("tree {TREE}\nparent {TREE}0\nauthor {PERSON}\n"),
+        Err(CommitError::InvalidObjectId)
+    )]
+    #[case::crlf_tree(format!("tree {TREE}\r\nauthor {PERSON}\n"), Err(CommitError::InvalidObjectId))]
+    fn decodes_graph_records_in_fast_and_general_paths(
+        #[case] payload: String,
+        #[case] expected: Result<usize, CommitError>,
+    ) {
+        let result = Commit::parse_graph(crate::ObjectFormat::Sha1, payload.as_bytes());
+        assert_eq!(
+            result.map(|(tree, parents)| {
+                assert_eq!(tree.to_string(), TREE);
+                assert!(parents.iter().all(|parent| parent.to_string() == TREE));
+                parents.len()
+            }),
+            expected
+        );
+    }
+
+    #[test]
+    fn treats_a_payload_without_a_blank_line_as_all_headers() {
+        let input = format!("tree {TREE}\nauthor {PERSON}\ncommitter {PERSON}\n");
+        let commit = Commit::parse(crate::ObjectFormat::Sha1, input.as_bytes()).unwrap();
+        assert_eq!(commit.message(), b"");
+        assert!(commit.committer().unwrap().is_some());
     }
 
     #[rstest]
