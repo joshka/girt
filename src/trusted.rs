@@ -12,7 +12,7 @@
 //! Mutations require exclusive ownership of the working tree and repository state across the call.
 //! Commit and switch do not run hooks, filters or signing programs. Status loads repository ignore
 //! rules and collapses untracked directories. Tracked comparisons and checkout use raw bytes
-//! without normalization policy. Clone, patch rendering and blame remain separate.
+//! without normalization policy. Patch rendering and blame remain separate.
 //!
 //! ```
 //! use girt::trusted::Handle;

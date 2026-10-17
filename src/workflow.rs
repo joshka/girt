@@ -1,16 +1,18 @@
-//! Fetch from, push to and query a remote by name, the way `git fetch` and `git push` do.
+//! Clone repositories, fetch from, push to and query configured remotes.
 //!
 //! Most applications that talk to Git remotes want the behavior a Git user already expects: name a
 //! remote such as `origin`, and let the repository's configuration decide the URL, the transport,
-//! the credentials and the proxy. This module provides that in three synchronous functions:
+//! the credentials and the proxy. This module provides synchronous transfer functions:
 //!
+//! - [`clone()`] creates a repository and checks out its default branch; [`clone_with`] selects
+//!   policy.
 //! - [`fetch`] downloads objects and updates remote-tracking references and tags.
 //! - [`push`] conditionally updates references on the remote.
 //! - [`remote_head`] asks which branch the remote's `HEAD` names, as a clone does.
 //!
-//! Each takes the [`Repository`] explicitly, an [`Environment`] snapshot instead of reading the
-//! process environment, and a [`TransferCallbacks`] implementation for progress and credential
-//! prompts. They return typed reports, never printed text.
+//! Fetch, push and remote-head queries take the [`Repository`] explicitly, an [`Environment`]
+//! snapshot instead of reading the process environment, and a [`TransferCallbacks`] implementation
+//! for progress and credential prompts. They return typed reports, never printed text.
 //!
 //! # Quick start
 //!
@@ -78,15 +80,15 @@
 //!
 //! Use the core APIs instead when the endpoint comes from somewhere other than configuration, when
 //! the peer is untrusted and transfers must be bounded, when the caller needs cancellation or a
-//! deadline, when downloads should be validated on a separate worker pool, or when a clone must
-//! create a new repository. The core APIs also cover operations this module does not, such as
-//! retaining a fetched pack against repacking while the caller checks it before publishing
-//! references, or publishing shallow boundaries under caller control. Depth-limited fetches
-//! themselves are supported here through [`FetchOptions::with_depth`].
+//! deadline, or when downloads should be validated on a separate worker pool. The core APIs also
+//! cover operations this module does not, such as retaining a fetched pack against repacking while
+//! the caller checks it before publishing references, or publishing shallow boundaries under caller
+//! control. Depth-limited fetches themselves are supported here through
+//! [`FetchOptions::with_depth`].
 //!
 //! # What a configured transfer does
 //!
-//! All three functions find the remote, choose a transport and authenticate the same way:
+//! Configured transfers choose a transport and authenticate the same way:
 //!
 //! 1. **Resolve the remote.** The named remote's `url` (or, for [`push`], its first `pushurl`) is
 //!    read from [`Repository::config`] and rewritten by `url.<base>.insteadOf` and `pushInsteadOf`.
@@ -151,6 +153,8 @@
 //! deeply nested delta chain, and the transfer would only stop when it ran out of disk, memory or
 //! time.
 //!
+//! Clone instead uses bounded default limits; [`CloneOptions`] makes its bounds explicit.
+//!
 //! When the remote is chosen by someone other than the local user, for example a service that
 //! fetches URLs submitted by its users, do not use this module. Call the core APIs with
 //! [`FetchLimits::default`], which bounds wire bytes, pack size, object count, per-object size,
@@ -172,7 +176,8 @@
 //!
 //! # Errors
 //!
-//! Every function returns [`TransferError`]. Its variants say how far the operation got:
+//! Fetch, push and remote-head queries return [`TransferError`]. Its variants say how far the
+//! operation got:
 //!
 //! | Variant | Local changes | What to do |
 //! | --- | --- | --- |
@@ -184,6 +189,9 @@
 //! | [`FetchFinish`](TransferError::FetchFinish) | objects, shallow boundaries or some references, depending on the phase | Inspect the report; fetching again is safe. |
 //! | [`Push`](TransferError::Push) | none locally | If [`Uncertain`](crate::push::PushError::Uncertain), read the remote's references before retrying. |
 //! | [`Local`](TransferError::Local) | none | Reading this repository failed. |
+//!
+//! Clone returns [`CloneError`], preserving destination creation and checkout reports as well as
+//! transfer errors.
 //!
 //! A successful [`push`] can still contain rejected references: check
 //! [`PushReport::all_succeeded`](crate::push::PushReport::all_succeeded) or each
@@ -237,9 +245,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
-#[cfg(feature = "http")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use crate::fetch::{
@@ -251,6 +257,9 @@ use crate::refs::{RefName, Reflog};
 use crate::remote::{Destination, Direction, Protocol, ProtocolEnvironment, Refspecs, Remote};
 use crate::transport::TransportControl;
 use crate::{ObjectId, Repository};
+
+mod clone;
+pub use clone::{CloneError, CloneOptions, CloneOutcome, clone, clone_with};
 
 /// Asks a configured remote which branch its `HEAD` names, without downloading objects.
 ///
@@ -795,6 +804,10 @@ pub trait TransferCallbacks {
     /// Receives synchronous source traversal and pack construction counts for native local fetch.
     /// Completion precedes installation and reference publication.
     fn fetch_progress(&mut self, _progress: crate::fetch::LocalFetchProgress) {}
+
+    /// Receives completed and total working-tree operations during clone checkout.
+    /// Completion precedes index publication; inspect the checkout report for final effects.
+    fn checkout_progress(&mut self, _done: u64, _total: u64) {}
 
     /// Receives synchronous source traversal and pack construction counts while preparing a push.
     /// Counts may restart on retry; completion does not imply upload or receiver acceptance.
@@ -1628,6 +1641,64 @@ fn ssh_endpoint(
     .map_err(|error| TransferError::Configuration(error.to_string()))
 }
 
+fn configured_endpoint(
+    config: &crate::Config,
+    remote: &Remote,
+    remote_name: &str,
+    direction: Direction,
+    base: &Path,
+    environment: &Environment,
+) -> Result<(Endpoint, Destination), TransferError> {
+    let protocol_environment =
+        ProtocolEnvironment::from_environment(|name| environment.bytes(name))
+            .map_err(|error| TransferError::Configuration(error.to_string()))?;
+    let destination = match direction {
+        Direction::Fetch => remote.fetch_destination(config, &protocol_environment),
+        Direction::Push => remote
+            .push_destinations(config, &protocol_environment)
+            .and_then(|destinations| {
+                destinations
+                    .into_iter()
+                    .next()
+                    .ok_or(crate::remote::EndpointError::Missing)
+            }),
+    }
+    .map_err(|error| match error {
+        crate::remote::EndpointError::Missing => {
+            TransferError::NoSuchRemote(remote_name.to_owned())
+        }
+        error => TransferError::Configuration(error.to_string()),
+    })?;
+    let endpoint = match destination.protocol() {
+        Protocol::Local | Protocol::File => {
+            let path = destination
+                .local_path()
+                .map_err(|error| TransferError::Configuration(error.to_string()))?;
+            // Like Git, relative paths are relative to the working directory, falling back to
+            // the working tree (or Git directory).
+            let base = environment.current_dir.as_deref().unwrap_or(base);
+            Endpoint::Local(base.join(path))
+        }
+        #[cfg(feature = "http")]
+        Protocol::Http | Protocol::Https => Endpoint::Http(Box::new(Http {
+            environment: http_environment(config, &destination, environment)?,
+            protocol: requested_protocol(config)?,
+            helpers: credential_helpers(config, environment),
+            display_url: redacted_url(destination.bytes()),
+            settings_config: config.clone(),
+            remote_name: remote_name.as_bytes().to_vec(),
+            destination: destination.clone(),
+        })),
+        #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+        Protocol::Ssh => Endpoint::Ssh(Box::new(
+            ssh_endpoint(config, &destination, environment)?
+                .with_protocol(requested_protocol(config)?),
+        )),
+        _ => return Err(TransferError::UnsupportedTransport(remote_name.to_owned())),
+    };
+    Ok((endpoint, destination))
+}
+
 impl Repository {
     fn endpoint(
         &self,
@@ -1639,58 +1710,14 @@ impl Repository {
         let remote = Remote::find(config, remote_name.as_bytes())
             .map_err(|error| TransferError::Configuration(error.to_string()))?
             .ok_or_else(|| TransferError::NoSuchRemote(remote_name.to_owned()))?;
-        let protocol_environment =
-            ProtocolEnvironment::from_environment(|name| environment.bytes(name))
-                .map_err(|error| TransferError::Configuration(error.to_string()))?;
-        let destination = match direction {
-            Direction::Fetch => remote.fetch_destination(config, &protocol_environment),
-            Direction::Push => remote
-                .push_destinations(config, &protocol_environment)
-                .and_then(|destinations| {
-                    destinations
-                        .into_iter()
-                        .next()
-                        .ok_or(crate::remote::EndpointError::Missing)
-                }),
-        }
-        .map_err(|error| match error {
-            crate::remote::EndpointError::Missing => {
-                TransferError::NoSuchRemote(remote_name.to_owned())
-            }
-            error => TransferError::Configuration(error.to_string()),
-        })?;
-        let endpoint = match destination.protocol() {
-            Protocol::Local | Protocol::File => {
-                let path = destination
-                    .local_path()
-                    .map_err(|error| TransferError::Configuration(error.to_string()))?;
-                // Like Git, relative paths are relative to the working directory, falling back to
-                // the working tree (or Git directory).
-                let base = environment
-                    .current_dir
-                    .as_deref()
-                    .or(self.worktree())
-                    .unwrap_or(self.git_dir());
-                Endpoint::Local(base.join(path))
-            }
-            #[cfg(feature = "http")]
-            Protocol::Http | Protocol::Https => Endpoint::Http(Box::new(Http {
-                environment: http_environment(config, &destination, environment)?,
-                protocol: requested_protocol(config)?,
-                helpers: credential_helpers(config, environment),
-                display_url: redacted_url(destination.bytes()),
-                settings_config: config.clone(),
-                remote_name: remote_name.as_bytes().to_vec(),
-                destination: destination.clone(),
-            })),
-            #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
-            Protocol::Ssh => Endpoint::Ssh(Box::new(
-                ssh_endpoint(config, &destination, environment)?
-                    .with_protocol(requested_protocol(config)?),
-            )),
-            _ => return Err(TransferError::UnsupportedTransport(remote_name.to_owned())),
-        };
-        Ok((endpoint, destination))
+        configured_endpoint(
+            config,
+            &remote,
+            remote_name,
+            direction,
+            self.worktree().unwrap_or(self.git_dir()),
+            environment,
+        )
     }
 
     fn remote_head(

@@ -192,13 +192,39 @@ impl CloneRequest {
         limits: FetchLimits,
         control: TransportControl<'_>,
     ) -> Result<CloneDownload, CloneTransferError> {
+        self.receive_ssh_with_progress(remote, limits, control, |_| {}, |_| {})
+            .await
+    }
+
+    /// Downloads a clone with live SSH diagnostics and sideband messages.
+    ///
+    /// Uses [`Self::receive_ssh`]'s ownership and runtime contract and
+    /// [`crate::fetch::receive_ssh_with_progress`]'s bounded observer contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::receive_ssh`], without destination effects.
+    #[cfg(all(feature = "ssh", any(target_os = "macos", target_os = "linux")))]
+    pub async fn receive_ssh_with_progress(
+        self,
+        remote: &crate::transport::ssh::SshRemote,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        diagnostics: impl FnMut(&[u8]),
+        progress: impl FnMut(&[u8]),
+    ) -> Result<CloneDownload, CloneTransferError> {
         let mut saved = None;
-        let download = crate::fetch::receive_ssh(
+        let download = crate::fetch::receive_ssh_with_progress(
             remote,
             |ad| plan::select(self.plan(ad), &mut saved),
             None,
-            limits,
+            crate::fetch::FetchOptions {
+                limits,
+                depth: None,
+            },
             control,
+            diagnostics,
+            progress,
         )
         .await;
         let (plan, downloaded) = workflow::selected(saved, download)?;

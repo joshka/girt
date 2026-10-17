@@ -112,6 +112,23 @@ impl Handle {
         Ok(Self::new(repository).with_environment(environment))
     }
 
+    /// Clones a URL and checks out its default branch with [`workflow::clone()`].
+    ///
+    /// Uses Git-default configuration and the process environment. For explicit options or
+    /// callbacks use [`workflow::clone_with`], then construct a handle with [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Preserves workflow partial clone/checkout reports; see [`workflow::clone_with`].
+    pub fn clone(url: &str, destination: impl AsRef<Path>) -> crate::Result<Self> {
+        let outcome = workflow::clone(url, destination)?;
+        let repository = outcome
+            .clone
+            .repository
+            .ok_or_else(|| std::io::Error::other("completed clone has no repository"))?;
+        Ok(Self::new(repository))
+    }
+
     /// Chooses the environment for [`Signature`], [`Repository::ignore_rules`] and [`workflow`].
     /// Repository configuration is unchanged; load it with matching inputs before construction.
     #[must_use]
