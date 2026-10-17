@@ -545,3 +545,77 @@ fn rename_limit_keeps_exact_matches_and_reports_skipped_inference() {
     );
     assert!(result.is_err());
 }
+
+#[rstest]
+#[case(ObjectFormat::Sha1)]
+#[case(ObjectFormat::Sha256)]
+fn write_tree_rechecks_shared_objects_between_calls_and_preflights_before_publication(
+    #[case] format: ObjectFormat,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Repository::init(format, dir.path(), InitKind::Worktree).unwrap();
+    let loose = repo.loose_objects();
+    let blob = loose.write_blob(b"shared content\n").unwrap();
+    let entries = vec![
+        Entry::new(b"a/one".to_vec(), Mode::Regular, blob),
+        Entry::new(b"b/two".to_vec(), Mode::Regular, blob),
+    ];
+    let index = Index::new(format, entries.clone(), Limits::default()).unwrap();
+    let root = index.write_tree(&repo).unwrap();
+    assert_eq!(Some(root), index.tree_id());
+    let hex = blob.to_string();
+    std::fs::remove_file(repo.object_dir().join(&hex[..2]).join(&hex[2..])).unwrap();
+    assert!(
+        matches!(index.write_tree(&repo), Err(girt::index::WriteTreeError::MissingObject { id, .. }) if id == blob)
+    );
+    // A gitlink with the same ID must not exempt a later regular file from presence checks.
+    let exempt_first = Index::new(
+        format,
+        vec![
+            Entry::new(b"a-module".to_vec(), Mode::Gitlink, blob),
+            Entry::new(b"file".to_vec(), Mode::Regular, blob),
+        ],
+        Limits::default(),
+    )
+    .unwrap();
+    assert!(
+        matches!(exempt_first.write_tree(&repo), Err(girt::index::WriteTreeError::MissingObject { id, .. }) if id == blob)
+    );
+    let fresh = Repository::init(format, dir.path().join("fresh"), InitKind::Bare).unwrap();
+    fresh
+        .loose_objects()
+        .write_blob(b"shared content\n")
+        .unwrap();
+    let mut incomplete = entries;
+    incomplete.push(Entry::new(
+        b"z/missing".to_vec(),
+        Mode::Regular,
+        ObjectId::for_blob(format, b"absent"),
+    ));
+    let incomplete = Index::new(format, incomplete, Limits::default()).unwrap();
+    let subtree = girt::Tree::new(
+        format,
+        vec![girt::TreeEntry {
+            name: b"one".to_vec(),
+            mode: girt::EntryMode::Blob,
+            id: blob,
+        }],
+    )
+    .unwrap()
+    .id();
+    assert!(incomplete.write_tree(&fresh).is_err());
+    assert!(
+        !fresh
+            .objects(Default::default())
+            .unwrap()
+            .contains(subtree)
+            .unwrap()
+    );
+    assert!(
+        !fresh
+            .objects(Default::default())
+            .unwrap()
+            .contains(incomplete.tree_id().unwrap())
+            .unwrap()
+    );
+}
