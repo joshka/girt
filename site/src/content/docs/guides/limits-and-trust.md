@@ -9,9 +9,11 @@ Every transfer API in girt takes explicit resource limits: `FetchLimits`, `Fetch
 
 ## Validation is not the same as a limit
 
-girt validates everything it receives, whatever the limits: pack framing and checksums, every
-object's identity and syntax, delta chains, and the connectivity of every fetched tip. Malformed or
-corrupt input is always rejected, and nothing is installed until validation finishes.
+girt validates what it receives, whatever the limits. Every received object's pack framing,
+checksum, delta chain and identity are checked. Then the history of every fetched tip is walked,
+down to any shallow boundary: each object reached must be present and well-formed. Malformed objects
+outside that history, such as extras a server included, are not parsed further and do not fail the
+fetch. Nothing is installed until validation finishes.
 
 Limits answer a different question: how much well-formed work may the other side ask for? A pack can
 be valid and still be 50 GB, contain ten million objects, or chain deltas thousands deep. A Git
@@ -76,10 +78,12 @@ let control = TransportControl::new(&cancel)
 A transfer that reaches a `FetchLimits` bound while receiving or validating fails before anything is
 installed, with an error such as `fetch limit exceeded: …`. The repository is unchanged.
 
-`FetchUpdateLimits` bounds a later phase. `finish` installs the pack, and may publish new shallow
-boundaries, before it verifies the installed history and decides which updates fast-forward. A limit
-reached there fails the fetch after installation: the error's report says what was installed or
-published, and no references are updated. Nothing is rolled back or cleaned up automatically.
+`FetchUpdateLimits` bounds `finish`. Its snapshot limits apply while opening the destination to
+check dependencies, before installation. Its verification and history limits apply after the pack is
+installed, and possibly after new shallow boundaries are published, while `finish` checks the
+installed history and decides which updates fast-forward. Either way no references are updated, and
+the error's report says what was installed or published. Nothing is rolled back or cleaned up
+automatically.
 
 The limits bound input and work, not total process memory. Allocator overhead, TLS buffers and
 memory on the server are outside them. Each transfer has its own budget, so an application running

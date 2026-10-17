@@ -80,8 +80,9 @@ A fetch goes through these steps:
    feature. `ssh://` and `user@host:path` need the `ssh` feature on macOS or Linux.
 3. **Negotiate.** Local reference tips are offered as history the repository already has, so the
    server can leave those objects out.
-4. **Validate.** The received pack is checked in full before anything is written: pack framing,
-   every object's identity, delta chains, and that every fetched tip's history is complete.
+4. **Validate.** Before anything is written, every received object's framing, delta chain and
+   identity are checked, and every fetched tip's history is walked to check that it is complete and
+   well-formed.
 5. **Install.** The pack and its index are written to the repository's object storage.
 6. **Publish.** Every planned change is checked against its refspec's rules, such as
    fast-forwarding; if any check fails, no reference changes. Stale references are then pruned in
