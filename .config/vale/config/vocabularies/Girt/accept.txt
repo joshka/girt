@@ -92,3 +92,6 @@ backpressure
 stdin
 nondeletion
 libFuzzer
+
+ruleset
+semver

@@ -1,0 +1,72 @@
+name: Main CI health
+
+on: # zizmor: ignore[dangerous-triggers] -- metadata-only reporter; no checkout or artifacts
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+# Serialize updates to the singleton issue; never execute the completed run's code.
+concurrency:
+  group: main-ci-health
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const run = context.payload.workflow_run;
+            if (run.path !== '.github/workflows/validation.yml') return;
+            const candidates = await Promise.all(['push', 'schedule'].map(async event => {
+              const {data} = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: 'validation.yml', branch: 'main', event, per_page: 1
+              });
+              return data.workflow_runs[0];
+            }));
+            const latest = candidates.filter(Boolean).sort((a, b) => b.id - a.id)[0];
+            if (!latest || latest.id !== run.id || latest.run_attempt !== run.run_attempt ||
+                latest.status !== 'completed') {
+              core.info('A newer main/nightly run or attempt owns the health report');
+              return;
+            }
+            const title = 'CI regression on main';
+            const issues = await github.paginate(github.rest.issues.listForRepo,
+              {owner, repo, state: 'all', creator: 'github-actions[bot]', per_page: 100});
+            const existing = issues.find(issue => !issue.pull_request && issue.title === title &&
+              issue.user?.login === 'github-actions[bot]');
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+              {owner, repo, run_id: run.id, filter: 'latest', per_page: 100});
+            const failed = jobs.filter(job => !['success', 'skipped'].includes(job.conclusion));
+            const green = run.conclusion === 'success' && failed.length === 0;
+            if (green && (!existing || existing.state === 'closed')) return;
+            const detail = failed.map(job => `- [${job.name}](${job.html_url}): ${job.conclusion || job.status}`).join('\n');
+            const body = `${green ? 'Recovered' : 'Main/nightly CI failed'} at ${run.head_sha}.\n\n` +
+              `[CI run](${run.html_url}) (attempt ${run.run_attempt}): ${run.conclusion}\n\n${detail}\n\n` +
+              'Claim and repair failures promptly; keep full-ci on the fix PR. Publish a patch if a released version is affected. Unrelated ready work continues.';
+            if (existing) {
+              if (existing.body === body) return;
+              // Preserve earlier failures and notify subscribers when an open incident changes.
+              if (!green && existing.state === 'open') {
+                await github.rest.issues.createComment({owner, repo, issue_number: existing.number, body});
+              }
+              const transition = existing.state === (green ? 'closed' : 'open') ? {} : {
+                state: green ? 'closed' : 'open', state_reason: green ? 'completed' : 'reopened'
+              };
+              await github.rest.issues.update({owner, repo, issue_number: existing.number, body, ...transition});
+            } else {
+              await github.rest.issues.create({owner, repo, title, body});
+            }
