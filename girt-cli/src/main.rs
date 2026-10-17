@@ -4,16 +4,16 @@
 //! for people and simple scripts; `--git` switches a command to the byte-for-byte output of its
 //! Git equivalent so the two tools can be diffed.
 
-use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::builder::styling::{AnsiColor, Styles};
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use color_eyre::eyre::eyre;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+mod color;
 mod common;
 mod config;
 mod diff;
@@ -44,6 +44,10 @@ struct Cli {
     /// Print exactly what the equivalent Git command prints.
     #[arg(long, global = true)]
     git: bool,
+
+    /// When to use color; auto honors NO_COLOR, CLICOLOR_FORCE, CLICOLOR and terminal detection.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    color: color::Color,
 
     /// Suppress terminal progress on stderr.
     #[arg(short, long, global = true)]
@@ -141,8 +145,42 @@ const STYLES: Styles = Styles::styled()
     .invalid(AnsiColor::Yellow.on_default().bold());
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    if let Err(error) = install_reporting(cli.verbose) {
+    let args: Vec<_> = std::env::args_os().collect();
+    let early_color = color::Color::early(&args);
+    // Help uses stdout; parse errors use stderr. Resolve each before clap prints and exits.
+    let mut command = Cli::command();
+    let matches = match command.try_get_matches_from_mut(args) {
+        Ok(matches) => matches,
+        Err(error) => {
+            let enabled = if error.use_stderr() {
+                early_color.stderr()
+            } else {
+                early_color.stdout()
+            };
+            let choice = if enabled {
+                anstream::ColorChoice::Always
+            } else {
+                anstream::ColorChoice::Never
+            };
+            choice.write_global();
+            let command = command.color(if enabled {
+                clap::ColorChoice::Always
+            } else {
+                clap::ColorChoice::Never
+            });
+            error.with_cmd(&command).exit();
+        }
+    };
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let stderr_color = cli.color.stderr() && !cli.git;
+    // Future anstream diagnostics must share the reporting policy too.
+    if stderr_color {
+        anstream::ColorChoice::Always
+    } else {
+        anstream::ColorChoice::Never
+    }
+    .write_global();
+    if let Err(error) = install_reporting(cli.verbose, stderr_color) {
         eprintln!("error: {error}");
         return ExitCode::FAILURE;
     }
@@ -153,6 +191,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let mut context = Context::new(cli.git);
+    context.color = cli.color.stdout() && !cli.git;
     context.progress = !cli.quiet && !cli.git;
     match run(cli.command, &context) {
         Ok(code) => code,
@@ -168,8 +207,8 @@ fn main() -> ExitCode {
 /// those reports.
 ///
 /// `GIRT_LOG` (tracing `EnvFilter` directives) overrides the `-v` level; `RUST_LOG` is ignored.
-fn install_reporting(verbose: u8) -> color_eyre::Result<()> {
-    let theme = if std::io::stderr().is_terminal() {
+fn install_reporting(verbose: u8, color: bool) -> color_eyre::Result<()> {
+    let theme = if color {
         color_eyre::config::Theme::dark()
     } else {
         color_eyre::config::Theme::new()
@@ -197,7 +236,7 @@ fn install_reporting(verbose: u8) -> color_eyre::Result<()> {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_ansi(std::io::stderr().is_terminal()),
+                .with_ansi(color),
         )
         .with(tracing_error::ErrorLayer::default())
         .try_init()?;

@@ -674,6 +674,7 @@ dependencies = [
 name = "girt-cli"
 version = "0.1.0"
 dependencies = [
+ "anstream",
  "clap",
  "color-eyre",
  "girt",

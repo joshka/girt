@@ -44,6 +44,19 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 | `clone` / `fetch` / `push`                                          | no `--git` output                                                                                    |
 | `pack verify` / `reindex`, `maintenance`                            | `git index-pack` for `reindex` only                                                                  |
 
+## Color
+
+The global `--color auto|always|never` option controls help, diagnostics and human output. The
+default, `auto`, decides separately for stdout and stderr: a non-empty `NO_COLOR` disables color,
+then a non-empty `CLICOLOR_FORCE` other than `0` forces it, then `CLICOLOR=0` disables it.
+Otherwise, color requires a terminal and `TERM` other than `dumb`. An explicit `always` or `never`
+overrides the environment.
+
+Status uses green for staged changes and red for unstaged and untracked changes. Patches use bold
+headers, cyan hunk headers, green additions and red deletions; log IDs are yellow. `--git` output
+remains uncolored even with `--color always`. Color settings do not change when progress is
+displayed.
+
 ## Live progress
 
 Clone, fetch, push and checkout show live phases and available object counts on stderr when it is

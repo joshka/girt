@@ -18,6 +18,8 @@ pub struct Context {
     directory: PathBuf,
     /// Print the equivalent Git command's exact output.
     pub git: bool,
+    /// Color human output on stdout.
+    pub color: bool,
     /// Allow progress when stderr is a terminal.
     pub progress: bool,
 }
@@ -29,6 +31,7 @@ impl Context {
         Self {
             directory: PathBuf::from("."),
             git,
+            color: false,
             progress: !git,
         }
     }

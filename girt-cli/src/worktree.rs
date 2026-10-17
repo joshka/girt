@@ -223,13 +223,29 @@ pub fn status(args: StatusArgs, context: &Context) -> Result<ExitCode> {
     }
 
     let mut out = stdout();
+    let reset = crate::color::style(context.color, crate::color::RESET);
     for (path, code) in &lines {
-        out.write_all(code)?;
+        if context.color {
+            let staged = crate::color::GREEN;
+            let unstaged = crate::color::RED;
+            write!(
+                out,
+                "{staged}{}{reset}{unstaged}{}{reset}",
+                char::from(code[0]),
+                char::from(code[1])
+            )?;
+        } else {
+            out.write_all(code)?;
+        }
         out.write_all(b" ")?;
         write_path(&mut out, path, context.git)?;
     }
     for path in &untracked {
-        out.write_all(b"?? ")?;
+        if context.color {
+            write!(out, "{}??{reset} ", crate::color::RED)?;
+        } else {
+            out.write_all(b"?? ")?;
+        }
         write_path(&mut out, path, context.git)?;
     }
     out.flush()?;
