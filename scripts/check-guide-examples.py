@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile and run the standalone Rust programs in girt's developer guides.
+"""Compile and run Rust programs in girt's developer guides and ergonomics catalogue.
 
 Use Cargo's artifact paths so the examples use the same compiler dependencies as the library,
 including custom target directories. Website content is excluded from published packages; an
@@ -18,7 +18,8 @@ GUIDES = ROOT / "site/src/content/docs/guides"
 
 def main():
     pages = sorted(
-        page for page in GUIDES.rglob("*")
+        page for page in [*GUIDES.rglob("*"), ROOT / "docs/ergonomics.md"]
+        if page.exists()
         if page.suffix in (".md", ".mdx")
         and re.search(r"^```rust(?:[, \t][^\n]*)?\s*$", page.read_text(), re.MULTILINE)
     )

@@ -1,14 +1,14 @@
 # Quality Scorecard
 
-The scorecard measures girt on four axes: correctness, robustness, idiomatic Rust and documentation.
-Each metric has a target, so a run shows where the library falls short of its own standards rather
-than an overall grade. The standards are the repository guides: [Testing](testing.md),
-[Rust Conventions](rust-conventions.md), [Documentation](documentation.md), [Rustdoc](rustdoc.md)
-and [Storage Safety](storage-safety.md). Numeric targets the guides do not set, such as 85% line
-coverage, 70% branch coverage, 40% of items with examples and 90 per axis, are scorecard policy
-chosen on [#100](https://github.com/joshka/girt/issues/100), not repository conventions; the guides
-establish no coverage threshold. The metric definitions and first results are on #100, and each gap
-links its own issue from there.
+The scorecard measures girt on five axes: correctness, robustness, idiomatic Rust, documentation and
+ergonomics. Each metric has a target, so a run shows where the library falls short of its own
+standards rather than an overall grade. The standards are the repository guides:
+[Testing](testing.md), [Rust Conventions](rust-conventions.md), [Documentation](documentation.md),
+[Rustdoc](rustdoc.md) and [Storage Safety](storage-safety.md). Numeric targets the guides do not
+set, such as 85% line coverage, 70% branch coverage, 40% of items with examples and 90 per axis, are
+scorecard policy chosen on [#100](https://github.com/joshka/girt/issues/100), not repository
+conventions; the guides establish no coverage threshold. The metric definitions and first results
+are on #100, and each gap links its own issue from there.
 
 ## Running It
 
@@ -78,3 +78,43 @@ target and `(target + 1) / (value + 1)` above it, so one panic site against a ta
 the axis incomplete, so an unmeasured checkout never outscores a measured one. Clippy pedantic and
 nursery counts and the size of the public API are reported without a score. Fuzz coverage counts the
 parser capabilities that a [fuzz target](../CONTRIBUTING.md#fuzzing) exercises.
+
+## Ergonomics
+
+The [everyday task catalogue](ergonomics.md) adds a fifth axis. It records 15 workloads, separates
+missing capabilities from verbosity, and links proposed improvements to their issues. Current
+Markdown snippets are compiled by `scripts/check-guide-examples.py`; linked example programs are
+checked by Cargo. Proposed sketches are excluded from compilation and measurement.
+
+```sh
+nice -n 10 python3 scripts/quality-scorecard.py --ergonomics-only
+```
+
+This fast mode measures the same axis as a full scorecard run. It reports nonblank source lines,
+explicitly imported names, default/trusted calls, never-cancel constructors, byte-vector conversions
+and explicit object formats, identity literals, commit fields, branch prefixes (including refspecs),
+boxed errors and empty vectors, with per-task details in JSON. Counts cover the catalogue's stated
+inputs and include shared setup each time; linked fixture programs are excluded. These are lexical
+cost indicators, so review scope and formatting changes before interpreting a reduction.
+
+The dated [baseline](ergonomics-baseline.json) records 2026-10-17 against library code `1ecc6fff`;
+that revision predates the catalogue. Its catalogue SHA-256 identifies the initial measured text.
+The baseline stays fixed. The separate [budget](ergonomics-budget.json) stores per-task maxima; when
+an ergonomics change lowers a cost, lower that task's budget in the same PR. The report shows
+reductions against the dated baseline and flags every task that exceeds its budget, so an
+improvement in one workload cannot conceal a regression in another. Task names must match all three
+artifacts, and budgets cannot exceed the dated baseline. The capability-gap target remains zero. The
+scorecard reports gaps without failing the process; it is an investigation tool, not a CI gate.
+
+| Caller-cost indicator                               | Improvement issue                                |
+| --------------------------------------------------- | ------------------------------------------------ |
+| Lines and imported names                            | All catalogue follow-ups                         |
+| Default/trusted calls and never-cancel constructors | [404](https://github.com/joshka/girt/issues/404) |
+| Signature literals and byte-vector conversions      | [403](https://github.com/joshka/girt/issues/403) |
+| Branch prefixes and repeated object formats         | [405](https://github.com/joshka/girt/issues/405) |
+| CommitFields literals and empty vectors             | [406](https://github.com/joshka/girt/issues/406) |
+| Boxed heterogeneous errors                          | [407](https://github.com/joshka/girt/issues/407) |
+
+Counts are lexical indicators. A zero can mean the supplied inputs already include an identity or an
+object ID; it does not prove that an application can construct that input without extra code. The
+per-task input contract must remain comparable when updating a snippet and lowering its budget.
