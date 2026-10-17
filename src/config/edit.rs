@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -190,9 +190,7 @@ impl ConfigEdit {
             let mut lock_name = destination.as_os_str().to_os_string();
             lock_name.push(".lock");
             let lock_path = PathBuf::from(lock_name);
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
+            let file = crate::locks::lock_options()
                 .open(&lock_path)
                 .map_err(|source| {
                     if source.kind() == io::ErrorKind::AlreadyExists {

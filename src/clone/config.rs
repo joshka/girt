@@ -1,4 +1,4 @@
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
 
 use super::CloneHead;
@@ -50,10 +50,7 @@ pub(super) fn publish(repo: &Repository, kind: InitKind, bytes: &[u8]) -> io::Re
     let _lock_operation = crate::locks::operation();
     let lock = std::path::absolute(repo.git_dir().join("config.lock"))?;
     let destination = repo.git_dir().join("config");
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&lock)?;
+    let file = crate::locks::lock_options().open(&lock)?;
     let identity = crate::locks::capture_identity(&lock, &file)?;
     let mut file = crate::locks::SharedFile::from(file);
     let cleanup = crate::locks::Guard::new(&lock, &file, identity);

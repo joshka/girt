@@ -211,6 +211,28 @@ fn cleanup_matching(
     Ok(report)
 }
 
+/// Options for exclusively creating a transient lock file that caller cleanup can release.
+pub(crate) fn lock_options() -> fs::OpenOptions {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    options
+}
+
+/// Like [`lock_options`], but other Windows openers can't rename or delete the file while its
+/// handle is open. Suits locks that publish through a separate temporary file.
+pub(crate) fn unreplaceable_lock_options() -> fs::OpenOptions {
+    #[cfg_attr(not(windows), expect(unused_mut))]
+    let mut options = lock_options();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    options
+}
+
 pub(crate) fn wait_generation() -> usize {
     WAIT_GENERATION.load(Ordering::Relaxed)
 }
@@ -403,7 +425,6 @@ impl Registration {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn cleanup_waits_for_registration_and_nested_operation() {
         let root = tempfile::tempdir().unwrap();
@@ -415,11 +436,7 @@ mod tests {
             let path_ref = &path;
             let creator = scope.spawn(move || {
                 let _operation = operation();
-                let file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(path_ref)
-                    .unwrap();
+                let file = lock_options().open(path_ref).unwrap();
                 created.send(()).unwrap();
                 wait.recv().unwrap();
                 let _nested = operation();
@@ -448,6 +465,76 @@ mod tests {
             assert!(guard.check().is_err());
         });
         assert!(!path.exists());
+    }
+
+    fn register(path: &std::path::Path, options: &fs::OpenOptions) -> (SharedFile, Guard) {
+        let _operation = operation();
+        let file = options.open(path).unwrap();
+        let identity = capture_identity(path, &file).unwrap();
+        let file = SharedFile::from(file);
+        let guard = Guard::new(path, &file, identity);
+        (file, guard)
+    }
+
+    #[test]
+    fn cleanup_frees_the_name_while_an_unreplaceable_writer_stays_open() {
+        let root = tempfile::tempdir().unwrap();
+        let path = std::path::absolute(root.path().join("owned.lock")).unwrap();
+        let (mut file, guard) = register(&path, &unreplaceable_lock_options());
+        std::io::Write::write_all(&mut file, b"draft").unwrap();
+        let report = cleanup_under(root.path()).unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.removed, std::slice::from_ref(&path));
+        assert!(guard.check().is_err());
+        assert!(!path.exists());
+        // Another owner can take the name although the old writer's handle is still open.
+        let next = lock_options().open(&path).unwrap();
+        drop((file, guard));
+        assert!(path.is_file());
+        drop(next);
+    }
+
+    #[test]
+    fn cleanup_after_the_writer_closed_removes_only_the_registered_file() {
+        let root = tempfile::tempdir().unwrap();
+        let path = std::path::absolute(root.path().join("owned.lock")).unwrap();
+        let (file, guard) = register(&path, &unreplaceable_lock_options());
+        drop(file);
+        let report = cleanup_under(root.path()).unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.removed, std::slice::from_ref(&path));
+        assert!(guard.check().is_err());
+        assert!(!path.exists());
+
+        let (file, guard) = register(&path, &unreplaceable_lock_options());
+        drop(file);
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"replacement").unwrap();
+        let report = cleanup_under(root.path()).unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.preserved, std::slice::from_ref(&path));
+        assert!(guard.check().is_err());
+        drop(guard);
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_windows_cleanup_reports_the_path_and_keeps_the_guard_valid() {
+        let root = tempfile::tempdir().unwrap();
+        let path = std::path::absolute(root.path().join("owned.lock")).unwrap();
+        // Without delete access on the writer's handle, nothing may delete the file.
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 3);
+        let (file, guard) = register(&path, &options);
+        let report = cleanup_under(root.path()).unwrap();
+        assert!(report.removed.is_empty() && report.preserved.is_empty());
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].path, path);
+        assert!(guard.check().is_ok());
+        assert!(path.is_file());
+        drop(file);
     }
 
     #[test]

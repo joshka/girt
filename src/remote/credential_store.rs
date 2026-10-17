@@ -5,7 +5,6 @@
 //! kept verbatim when rewriting. The behavior follows gitcredentials(7), git-credential-store(1)
 //! and observations of `git credential-store` (Git 2.56).
 
-use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
@@ -353,8 +352,8 @@ impl Lock {
         let mut lock = file.as_os_str().to_owned();
         lock.push(".lock");
         let lock = std::path::absolute(PathBuf::from(lock)).map_err(write_error)?;
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
+        #[cfg_attr(not(unix), expect(unused_mut))]
+        let mut options = crate::locks::lock_options();
         // New files are owner-only. A rewrite keeps stricter existing bits (such as 0400) and,
         // like Git, drops group and other access.
         #[cfg(unix)]
@@ -678,7 +677,6 @@ mod tests {
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o400);
     }
-    #[cfg(unix)]
     #[test]
     fn cleanup_invalidates_credential_rewrite_and_preserves_original() {
         let root = tempfile::tempdir().unwrap();
