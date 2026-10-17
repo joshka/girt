@@ -125,3 +125,27 @@ username or password. Plain `http://` sends credentials unencrypted.
   [`workflow`](https://docs.rs/girt/latest/girt/workflow/index.html) on docs.rs.
 - [Fetch, push and clone](/girt/guides/fetch-push-clone/) and
   [Limits and trust](/girt/guides/limits-and-trust/).
+
+## CLI transfers
+
+The `girt` CLI supports SSH for `clone`, `remote heads`, `fetch` and `push` on macOS/Linux. Use
+either URL form from the table above. For example:
+
+```sh
+girt remote heads git@example.com:team/project.git
+girt clone ssh://git@example.com/team/project.git
+girt -C project fetch origin
+girt -C project push origin main
+```
+
+OpenSSH reads its normal configuration, identities, agent and host-trust files. The CLI selects
+`GIT_SSH_COMMAND`, then `core.sshCommand`, then `GIT_SSH`, then `ssh` on PATH. Command strings
+execute through the shell; only use configuration you trust. Clone reads system/global configuration
+and ignores the enclosing repository. Discovery also reads global configuration when run outside a
+repository. Terminal prompts and job control are unavailable; use an agent or askpass. Non-OpenSSH
+variants, percent encoding, query/fragment fields and repository paths starting with `~` remain
+unsupported.
+
+HTTP(S) clone and discovery currently allow anonymous access only. Fetch and push use configured
+credential helpers through `workflow`, but do not prompt interactively for missing credentials.
+Clone checks out the default branch unless `--bare` is used.

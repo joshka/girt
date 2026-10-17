@@ -28,7 +28,9 @@ use crate::config::{
 
 /// Copy a repository into a new directory and check out its `HEAD`.
 ///
-/// Supports local paths, `file://` and anonymous `http(s)://` URLs; SSH is not supported yet.
+/// Supports local paths, `file://`, anonymous HTTP(S), and SSH on macOS/Linux.
+/// SSH accepts `ssh://` and `[user@]host:path`, normal OpenSSH config and configured commands.
+/// Use an agent or askpass for authentication; terminal prompts are unavailable.
 /// `--git` suppresses progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct CloneArgs {
@@ -48,7 +50,9 @@ pub struct CloneArgs {
 /// Fetch a remote's configured refspecs, printing each updated ref as `<old>..<new> <ref>`.
 ///
 /// New refs print the null ID as `<old>`, pruned refs the null ID as `<new>`. Tags are not
-/// followed automatically. `--git` suppresses progress but retains girt's result format.
+/// followed automatically. Local, HTTP(S) credential helpers and system OpenSSH remotes are
+/// supported. Interactive credential and SSH terminal prompts are unavailable. `--git` suppresses
+/// progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct FetchArgs {
     /// Configured remote name.
@@ -61,7 +65,9 @@ pub struct FetchArgs {
 /// Each refspec is `[+]<src>[:<dst>]`; an empty `<src>` deletes `<dst>`. The remote must still have
 /// the value recorded by the matching remote-tracking ref (or not have the ref at all if there is
 /// none), like `git push --force-with-lease`; fetch first if the push is rejected as stale. `+`
-/// permits non-fast-forward updates. `--git` suppresses progress but retains girt's result format.
+/// permits non-fast-forward updates. Local, HTTP(S) credential helpers and system OpenSSH remotes
+/// are supported. Interactive credential and SSH terminal prompts are unavailable. `--git`
+/// suppresses progress but retains girt's result format.
 #[derive(Debug, clap::Args)]
 pub struct PushArgs {
     /// Configured remote name.
@@ -85,6 +91,8 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
             .to_string_lossy()
             .into_owned(),
         Endpoint::Http(url) => url.clone(),
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        Endpoint::Ssh(url) => url.clone(),
     };
     let kind = if args.bare {
         InitKind::Bare
@@ -116,6 +124,20 @@ pub fn clone(args: CloneArgs, context: &Context) -> Result<ExitCode> {
                 .with_construction(&mut |event| progress.borrow_mut().local(event))
                 .with_validation(&mut |event| progress.borrow_mut().validation(event)),
         ),
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        Endpoint::Ssh(url) => {
+            let remote = crate::config::ssh_remote(&url, &crate::config::global_config()?)?;
+            block_on(request.receive_ssh(&remote, limits, control))?.and_then(|download| {
+                download.validate_with_progress(
+                    &cancel,
+                    |bytes| {
+                        progress.borrow_mut().remote(bytes);
+                        ControlFlow::Continue(())
+                    },
+                    |event| progress.borrow_mut().validation(event),
+                )
+            })
+        }
         Endpoint::Http(url) => {
             let remote = http_remote(&url)?;
             block_on(

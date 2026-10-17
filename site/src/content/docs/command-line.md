@@ -97,7 +97,12 @@ These come from the library; each command's help repeats the ones that apply to 
   ending conversion or `core.filemode`. `checkout` refuses indexes that carry fsmonitor or
   untracked-cache data.
 - `diff --patch` uses a plain Myers diff, so ambiguous hunks can line up differently from Git.
-- `clone` and `remote heads` do not yet use SSH.
+- All four transfer commands (`clone`, `remote heads`, `fetch`, `push`) support SSH on macOS/Linux.
+  OpenSSH configuration and agents apply; terminal prompts and job control are unavailable. See
+  [CLI transports](/girt/guides/credentials-and-transports/#cli-transfers) for URL forms, configured
+  SSH commands and authentication limits.
+- HTTP(S) clone and discovery allow anonymous access only. Fetch and push use configured credential
+  helpers, without interactive credential prompts.
 - `maintenance run` deletes data. It requires `--yes`, and nothing else may use the repository while
   it runs.
 
