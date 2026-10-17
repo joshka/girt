@@ -154,6 +154,11 @@ mobile-starlight-toc .toggle {
   color: var(--sl-color-gray-3);
 }
 
+/* The header logo sits smaller than Starlight's full nav height so it lines up with the links. */
+.site-title img {
+  height: 1.75rem;
+}
+
 /* Headings use the serif. */
 h1#_top,
 .sl-markdown-content :is(h1, h2, h3, h4, h5) {
