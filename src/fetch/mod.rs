@@ -251,6 +251,62 @@ impl FetchOptions {
 
 /// Bounds for one advertisement, transfer, import, and connectivity check.
 ///
+/// Use [`FetchLimits::default`] when the remote is not under the user's control, and
+/// [`FetchLimits::trusted`] for remotes trusted as Git trusts a user's own. Limits never relax
+/// validation; see [Limits and trust](crate::transport#limits-and-trust) for the model. A
+/// transfer that exceeds a bound while receiving or validating fails with [`FetchError::Limit`]
+/// before anything is installed.
+///
+/// # Examples
+///
+/// Tighten the defaults for a service that fetches from user-supplied URLs:
+///
+/// ```
+/// use girt::fetch::FetchLimits;
+///
+/// let limits = FetchLimits::default()
+///     .with_max_pack_bytes(64 * 1024 * 1024)
+///     .with_max_objects(200_000)
+///     .with_max_object_bytes(16 * 1024 * 1024);
+/// assert_eq!(limits.max_delta_depth, 64);
+/// ```
+///
+/// A fetch that needs more than the limits allow fails without changing the repository:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::fetch::{FetchError, FetchLimits, FetchRequest, FetchWorkflowError, KnownHistory};
+/// use girt::refs::Reflog;
+/// use girt::remote::Remote;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, _, _) = include!("../doctest/remote.rs");
+///
+/// // `upstream`'s `main` is a commit and a tree: two objects.
+/// let origin = Remote::find(repo.config(), b"origin")?.expect("configured");
+/// let request = FetchRequest::prepare(
+///     repo.clone(),
+///     origin.fetch_refspecs().clone(),
+///     BTreeSet::new(),
+///     Reflog::Preserve,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+/// let result = request.receive_local(
+///     upstream.git_dir(),
+///     &KnownHistory::default(),
+///     FetchLimits::default().with_max_objects(1),
+///     TransportControl::new(&cancel),
+///     girt::fetch::LocalFetchObserver::default(),
+/// );
+/// assert!(matches!(
+///     result,
+///     Err(FetchWorkflowError::Transfer(FetchError::Limit(_)))
+/// ));
+/// assert!(repo.references()?.list()?.is_empty());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
 /// Wire transfers spool the response and pack to temporary files, each bounded by `max_wire_bytes`
 /// and `max_pack_bytes` respectively. Decoded delta bases use a 96 MiB cache; live reconstruction
 /// buffers are bounded by `max_decode_bytes` and per-object limits. Protocol prefixes and
@@ -495,6 +551,10 @@ impl Default for FetchLimits {
 
 impl FetchLimits {
     /// Returns limits for a transfer the caller trusts as Git trusts the user's own remotes.
+    ///
+    /// [`crate::workflow`] uses these limits. Choose them when the user picked the remote, or when
+    /// opening a large local source repository you control: the default
+    /// [`Self::source_packs`] refuses Git-scale repositories.
     ///
     /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
     /// that only available memory bounds the work, while keeping headroom for internal arithmetic.

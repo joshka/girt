@@ -1,9 +1,11 @@
 # SSH Fetch and Push
 
-Enable `ssh` on macOS/Linux for protocol v0 over a system OpenSSH client. Supply
-`transport::ssh::SshRemote` with literal host, user, port and repository path components, an
-absolute OpenSSH executable path and an absolute configuration file path. Call `fetch::receive_ssh`
-or `push::send_ssh` inside a caller-owned Tokio runtime with I/O and time enabled.
+Enable `ssh` on macOS/Linux for Git over a system OpenSSH client. Fetch and discovery speak
+upload-pack v0, v1 or v2, as requested with `SshRemote::with_protocol` (v0 by default) and answered
+by the server; push speaks receive-pack v0. Supply `transport::ssh::SshRemote` with literal host,
+user, port and repository path components, an absolute OpenSSH executable path and an absolute
+configuration file path. Call `fetch::receive_ssh` or `push::send_ssh` inside a caller-owned Tokio
+runtime with I/O and time enabled.
 
 `SshRemote::configured` accepts a resolved SSH destination and `SshEnvironment` supplied by the
 application. It supports `ssh://[user@]host[:port]/path` and `[user@]host:path`. The application
@@ -49,9 +51,10 @@ commands and backgrounding. Batch mode applies unless askpass is selected. Calle
 override these settings. Only explicitly selected public-key identities are used. The explicit
 constructor disables agents and prompts; hardware keys may still need user presence, so impose a
 deadline. The environment is cleared except the selected PATH and authentication variables.
-`GIT_PROTOCOL` environment discovery is not used. Explicit config `SetEnv`/`SendEnv` directives
-remain caller policy; do not request another Git protocol version. Unsupported service versions are
-rejected before update commands. Connection attempts are limited to one.
+`GIT_PROTOCOL` environment discovery is not used: a requested version is sent with
+`SendEnv=GIT_PROTOCOL`. Explicit config `SetEnv`/`SendEnv` directives remain caller policy; do not
+request a protocol version through them. Unsupported service versions are rejected before update
+commands. Connection attempts are limited to one.
 
 The configured constructor selects `GIT_SSH_COMMAND`, then the last `core.sshCommand`, then
 `GIT_SSH`. These are application-supplied values, never read from the process environment. A
@@ -98,10 +101,10 @@ an executable does not establish compatibility with all of its configuration.
 
 The environment is replaced by exactly the caller's map. Applications can explicitly capture
 inherited variables or construct a narrower map; girt does not discover `HOME`, `PATH`, agents,
-askpass, display settings or credentials. `GIT_PROTOCOL` must be absent or `version=0`. Girt adds no
-`SendEnv` option; caller-owned `SetEnv`/`SendEnv` or wrappers must not request another version. Only
-a protocol v0 advertisement is supported. Production girt starts the approved SSH executable, never
-a local Git executable; Git services remain on the server.
+askpass, display settings or credentials. `GIT_PROTOCOL` must be absent or `version=0` in that map;
+request another version with `SshRemote::with_protocol`, which adds `SendEnv=GIT_PROTOCOL`.
+Caller-owned `SetEnv`/`SendEnv` or wrappers must not request a version themselves. Production girt
+starts the approved SSH executable, never a local Git executable; Git services remain on the server.
 
 Without a terminal attachment, the new process group can make `/dev/tty` prompts inaccessible;
 askpass can operate through the supplied environment. Applications can opt into raw local stderr and
@@ -358,9 +361,9 @@ thread-local signal-mask and pre-exec handoff calls on macOS/Linux. Core-only bu
 runtime-free. OpenSSH is an external caller-selected executable with its own distribution notices,
 not linked or vendored code.
 
-Supported Git scope uses SHA-1/SHA-256 protocol v0 and push packs that may use thin REF deltas
-against advertised receiver history. Windows SSH, proxy/jump hosts, connection reuse, broader
-URL/refspec/remote policy, protocol v2, shallow/partial repositories and new credential services
-remain excluded. Broader async object-store/filesystem interfaces and storage concurrency need a
-subsequent design investigation driven by a consumer's responsiveness requirements; this adapter
-does not decide them.
+Supported Git scope uses SHA-1/SHA-256, upload-pack protocol v0/v1/v2, and push packs that may use
+thin REF deltas against advertised receiver history. Windows SSH, proxy/jump hosts, connection
+reuse, broader URL/refspec/remote policy, partial clone filters and new credential services remain
+excluded. Broader async object-store/filesystem interfaces and storage concurrency need a subsequent
+design investigation driven by a consumer's responsiveness requirements; this adapter does not
+decide them.

@@ -11,7 +11,24 @@
 //! Available with `ssh` on macOS/Linux. No runtime, credential discovery, keychain or cryptography
 //! is implemented here. Callers own a Tokio runtime with I/O/time enabled and trust the executable,
 //! config (including includes and Match exec), remote account and service. The configured path
-//! accepts an R21 [`Destination`] and [`SshEnvironment`]. See [`SshRemote`].
+//! accepts a [`Destination`] and [`SshEnvironment`]. See [`SshRemote`].
+//!
+//! # Choosing a constructor
+//!
+//! - [`SshRemote::openssh`] runs `ssh` the way Git does, with the user's own `~/.ssh/config`, keys,
+//!   agent and host-key policy. Interactive clients such as jj use it, through [`crate::workflow`].
+//! - [`SshRemote::configured`] resolves the same URLs, but pins an explicit configuration file and
+//!   forces restrictive options: strict host-key checking, no password prompts, forwarding or
+//!   connection sharing. Services that must not depend on a user's settings use it.
+//! - [`SshRemote::new`] takes host, user, port and path as separate, validated values, with the
+//!   same restrictions as [`SshRemote::configured`].
+//!
+//! SSH authentication is entirely OpenSSH's; girt never sees a key or password. Because the SSH
+//! process runs in its own process group, it cannot prompt on the terminal unless the application
+//! attaches one with [`SshRemote::with_terminal`]. Otherwise passphrase prompts need an agent or
+//! `SSH_ASKPASS` in the supplied environment. OpenSSH's standard error explains authentication
+//! and host-key failures; receive it with [`crate::fetch::discover_ssh_with_diagnostics`] or the
+//! `*_with_progress` adapters and show it to the user.
 //!
 //! # Example
 //!
@@ -63,6 +80,25 @@ use crate::Config;
 use crate::remote::{Destination, Protocol};
 
 /// Application approval for one configured SSH command, without shell interpretation.
+///
+/// Git runs `GIT_SSH_COMMAND` and `core.sshCommand` through a shell. girt never does: the
+/// application decides what the configured text means and supplies the executable and literal
+/// arguments. [`crate::workflow`] approves the configured command by running it through `/bin/sh`,
+/// as Git does; an application that does not trust its configuration can refuse instead.
+///
+/// # Examples
+///
+/// ```
+/// use girt::transport::ssh::ApprovedSshCommand;
+///
+/// // `GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy"`, approved with the path expanded by the application.
+/// let approved = ApprovedSshCommand::new(
+///     b"ssh -i ~/.ssh/deploy".to_vec(),
+///     "/usr/bin/ssh".into(),
+///     vec!["-i".into(), "/home/ci/.ssh/deploy".into()],
+/// );
+/// # let _ = approved;
+/// ```
 ///
 /// `configured` must exactly match the selected `GIT_SSH_COMMAND`, `GIT_SSH`, or
 /// `core.sshCommand` value. The application parses and approves its meaning, then supplies an
@@ -294,6 +330,29 @@ impl std::fmt::Debug for SshRemote {
 }
 
 /// Sanitized process/SSH failure, distinct from Git protocol rejection reports.
+///
+/// [`Configuration`](Self::Configuration) errors are raised before any process starts. Once `ssh`
+/// has run, an [`Exit`](Self::Exit) code of 255 can mean an authentication, host-key or network
+/// failure; OpenSSH's standard error, delivered to the diagnostics callbacks, says which.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use girt::transport::ssh::{SshError, SshRemote};
+///
+/// // A relative executable path is refused before anything runs.
+/// let result = SshRemote::new(
+///     "git.example.com",
+///     "git",
+///     22,
+///     "srv/project.git",
+///     Path::new("ssh"),
+///     Path::new("/etc/girt/ssh_config"),
+/// );
+/// assert!(matches!(result, Err(SshError::Configuration(_))));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SshError {
@@ -402,7 +461,7 @@ impl SshRemote {
         })
     }
 
-    /// Resolves an R21 SSH destination with an explicit command and authentication policy.
+    /// Resolves an SSH destination with an explicit command and authentication policy.
     ///
     /// Commands select `GIT_SSH_COMMAND`, then the last `core.sshCommand`, then `GIT_SSH`,
     /// then the trusted default executable. Empty commands and selected valueless config keys

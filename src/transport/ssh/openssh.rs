@@ -78,7 +78,38 @@ impl SshRemote {
     /// terminal prompt may be inaccessible from that process group. Terminal leasing requires
     /// caller-owned job control; see [`super::ForegroundTerminal`]. Askpass can use the supplied
     /// environment. Do not automatically retry after a launched failure: authentication and
-    /// trust side effects may already have occurred. Only Git protocol v0 is supported.
+    /// trust side effects may already have occurred. Request a fetch protocol version with
+    /// [`Self::with_protocol`]; a `GIT_PROTOCOL` in the supplied environment must be absent or
+    /// `version=0`.
+    ///
+    /// # Examples
+    ///
+    /// Resolve `origin` the way Git would, keeping the user's OpenSSH configuration:
+    ///
+    /// ```
+    /// use girt::Config;
+    /// use girt::remote::{ProtocolEnvironment, Remote};
+    /// use girt::transport::RequestedProtocol;
+    /// use girt::transport::ssh::{OpenSshOptions, SshRemote};
+    ///
+    /// let config = Config::parse(b"[remote \"origin\"]\nurl = git@example.com:team/project.git\n")?;
+    /// let origin = Remote::find(&config, b"origin")?.expect("configured");
+    /// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+    ///
+    /// // The child process sees exactly this environment: pass what OpenSSH needs to find the
+    /// // user's configuration, keys and agent.
+    /// let environment = ["HOME", "PATH", "SSH_AUTH_SOCK"]
+    ///     .into_iter()
+    ///     .filter_map(|name| Some((name.into(), std::env::var_os(name)?)))
+    ///     .collect();
+    /// let options = OpenSshOptions::default()
+    ///     .with_default_executable("/usr/bin/ssh".into())
+    ///     .with_environment(environment);
+    /// let remote =
+    ///     SshRemote::openssh(&config, &destination, options)?.with_protocol(RequestedProtocol::V2);
+    /// assert!(!remote.has_terminal());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///

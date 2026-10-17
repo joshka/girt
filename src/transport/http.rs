@@ -8,9 +8,10 @@
 //!
 //! [`HttpRemote`] binds credentials to one repository URL. Over HTTP/1.1, upload-pack (fetch and
 //! discovery) speaks v0, v1 or v2 as selected by [`HttpRemote::with_protocol`]; receive-pack (push)
-//! speaks v0/v1. [`HttpSettings`] resolves an R21 destination, HTTP configuration and explicit
-//! application environment. The legacy [`HttpRemote::new`] remains an explicit, redirect-free
-//! constructor. Cookies, automatic mutating retries and HTTP content compression are disabled.
+//! speaks v0/v1. [`HttpSettings`] resolves a [`crate::remote::Destination`], HTTP configuration
+//! and explicit application environment. The legacy [`HttpRemote::new`] remains an explicit,
+//! redirect-free constructor. Cookies, automatic mutating retries and HTTP content compression are
+//! disabled.
 //!
 //! # Example
 //!
@@ -62,6 +63,32 @@ pub use configuration::{HttpEnvironment, HttpSettings};
 /// One repository endpoint and explicit headers, usable with [`crate::fetch::receive_http`] and
 /// [`crate::push::send_http`]. No URL or headers are included in Debug output or transport errors.
 ///
+/// Construct it with [`Self::configured`] to follow the repository's `http.*` configuration, or
+/// with [`Self::new`] to supply headers yourself. Construction performs no network I/O, so an
+/// endpoint can be built and checked before any runtime is involved.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{ProtocolEnvironment, Remote};
+/// use girt::transport::RequestedProtocol;
+/// use girt::transport::http::{HttpEnvironment, HttpRemote, HttpSettings};
+///
+/// let config = Config::parse(b"[remote \"origin\"]\nurl = https://example.com/project.git\n")?;
+/// let origin = Remote::find(&config, b"origin")?.expect("configured");
+/// let destination = origin.fetch_destination(&config, &ProtocolEnvironment::default())?;
+/// let settings = HttpSettings::resolve_for_remote(
+///     &config,
+///     b"origin",
+///     &destination,
+///     &HttpEnvironment::default(),
+/// )?;
+/// let remote = HttpRemote::configured(settings)?.with_protocol(RequestedProtocol::V2);
+/// assert_eq!(remote.protocol(), RequestedProtocol::V2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
 /// Network methods require a Tokio runtime with I/O and time enabled. Cancellation is polled every
 /// 20 ms during network waits; absolute deadlines cover discovery and RPC waits without being reset
 /// by traffic. Scheduling and synchronous callbacks/pack validation can delay observation. Dropping
@@ -74,7 +101,7 @@ pub use configuration::{HttpEnvironment, HttpSettings};
 /// Plain HTTP sends supplied credentials without encryption; use HTTPS on untrusted networks.
 /// Helper approval/rejection is synchronous and may block the calling executor thread, including
 /// process startup and application callbacks. Run configured operations on an application worker
-/// when this latency matters; R22's deadline and cancellation limits apply to helper processes.
+/// when this latency matters; the session's deadline and cancellation apply to helper processes.
 /// Server-controlled Git progress and rejection messages remain untrusted bytes, and should not be
 /// logged as trusted diagnostics. This type emits no logs of its own.
 ///
@@ -104,6 +131,25 @@ impl std::fmt::Debug for HttpRemote {
 
 /// Sanitized HTTP failures. Response bodies, URLs, header values and underlying client diagnostic
 /// strings are deliberately excluded because they may contain credentials.
+///
+/// Constructing an endpoint fails only with [`Configuration`](Self::Configuration), before any
+/// request; configuration and policy checks during discovery, such as a refused redirect, can also
+/// report it. For a push, the receive-pack POST is the boundary: errors during discovery arrive
+/// inside [`PushError::NotSent`](crate::push::PushError::NotSent), and errors once the POST has
+/// started inside [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the server
+/// may have applied it.
+///
+/// # Examples
+///
+/// ```
+/// use girt::transport::http::{HttpError, HttpRemote};
+///
+/// // Credentials in the URL are refused; pass them as a header or credential session instead.
+/// let result = HttpRemote::new("https://alice:secret@example.com/repo.git", &[], &[]);
+/// assert!(matches!(result, Err(HttpError::Configuration(_))));
+/// // The error never repeats the URL or the secret.
+/// assert!(!result.unwrap_err().to_string().contains("secret"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HttpError {
@@ -174,7 +220,7 @@ impl TrustRoots<'_> {
 }
 
 impl HttpRemote {
-    /// Builds an HTTP connection from an R21 destination and explicit policy inputs.
+    /// Builds an HTTP connection from a resolved destination and explicit policy inputs.
     ///
     /// [`HttpSettings::resolve`] validates policy before a request can begin. Supplied CA bundles
     /// replace platform roots; absent bundles use the rustls platform verifier.
@@ -260,6 +306,27 @@ impl HttpRemote {
     }
 
     /// Creates an endpoint with explicit headers and optional additional PEM trust roots.
+    ///
+    /// Use this when the application manages authentication itself, for example with an OAuth
+    /// token. It ignores Git configuration: no proxies, no redirects, and no credential helpers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use girt::transport::http::HttpRemote;
+    ///
+    /// let remote = HttpRemote::new(
+    ///     "https://example.com/project.git",
+    ///     &[
+    ///         ("Authorization", "Bearer example-token"),
+    ///         ("User-Agent", "my-app/1.0"),
+    ///     ],
+    ///     &[],
+    /// )?;
+    /// // Debug output never shows the URL or headers.
+    /// assert!(!format!("{remote:?}").contains("example-token"));
+    /// # Ok::<(), girt::transport::http::HttpError>(())
+    /// ```
     ///
     /// Headers may be `Authorization`, `User-Agent`, or application-specific `X-*` fields. Values
     /// must be valid single-line HTTP values; all are marked sensitive. No challenge retry occurs:

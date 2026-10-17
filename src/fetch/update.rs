@@ -7,6 +7,25 @@ use crate::{HistoryLimits, ObjectId, ObjectKind, PackLimits, PeelLimits};
 
 /// Bounds for reopening installed objects and checking remote-tracking update ancestry.
 ///
+/// These apply in [`FetchReady::finish`](super::FetchReady::finish), after the transfer: reopening
+/// the destination's object store, verifying the installed tips, and walking history to decide
+/// whether each update fast-forwards. Pair `default()` with
+/// [`FetchLimits::default`](super::FetchLimits::default) for untrusted remotes, and `trusted()`
+/// with [`FetchLimits::trusted`](super::FetchLimits::trusted) otherwise; see [Limits and
+/// trust](crate::transport#limits-and-trust).
+///
+/// # Examples
+///
+/// ```
+/// use girt::fetch::{FetchLimits, FetchUpdateLimits};
+///
+/// // A large repository the user owns, fetching from a remote they configured.
+/// let transfer = FetchLimits::trusted();
+/// let update = FetchUpdateLimits::trusted();
+/// assert_eq!(update.max_tag_depth, 10_000);
+/// # let _ = transfer;
+/// ```
+///
 /// History limits apply separately to each changed commit-valued destination. Total work can be
 /// that budget times the number of mappings (bounded by transfer `max_wants`). Tag reads apply the
 /// history's per-read limits. Reference enumeration/transactions retain their existing unbounded

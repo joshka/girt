@@ -9,6 +9,22 @@ use crate::remote::{Destination, Protocol};
 
 /// Application-supplied HTTP inputs. Girt does not read Git/proxy environment variables.
 ///
+/// Fill it from the process environment the application chose to honor: `GIT_SSL_CAINFO` (read
+/// the file yourself), `GIT_SSL_NO_VERIFY`, `https_proxy` and `no_proxy`. [`crate::workflow`]
+/// does this from its [`Environment`](crate::workflow::Environment). The default uses platform
+/// trust, no proxy, and refuses to disable TLS verification.
+///
+/// # Examples
+///
+/// ```
+/// use girt::transport::http::HttpEnvironment;
+///
+/// let environment = HttpEnvironment::default()
+///     .with_proxy(std::env::var("https_proxy").ok())
+///     .with_no_proxy(std::env::var("no_proxy").ok());
+/// assert!(!environment.allow_insecure_tls);
+/// ```
+///
 /// Default trust uses the TLS backend's platform verifier, which may consult OS trust settings
 /// and native certificate environment variables. This is not a Git/libcurl backend selector.
 #[derive(Default, Clone)]
@@ -83,7 +99,11 @@ impl std::fmt::Debug for HttpEnvironment {
     }
 }
 
-/// Resolved HTTP policy for one R21 destination. Its Debug output omits URLs and secrets.
+/// Resolved HTTP policy for one destination. Its Debug output omits URLs and secrets.
+///
+/// Resolution reads `http.<url>.*` settings scoped to the destination's URL, and fails on settings
+/// girt does not implement, such as client certificates, rather than ignoring them. See
+/// [`HttpRemote`](super::HttpRemote) for an example.
 pub struct HttpSettings {
     pub(super) url: String,
     pub(super) roots: Vec<Vec<u8>>,
