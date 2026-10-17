@@ -75,7 +75,8 @@ for that run's `required` check. Do not remove `full-ci` to bypass a platform fa
 failure and rerun instead. Any label change starts another CI run, including labels unrelated to CI.
 Release branches named `release-plz-*` always get the full matrix, regardless of labels. Ordinary
 pull requests can merge before a macOS/Windows regression is detected. Main and nightly failures
-open or update the `CI regression on main` issue; investigate that issue before releasing.
+open or update the `CI regression on main` issue; repair failures promptly; see
+[Releases](#releases) for the Linux publishing gate.
 
 On pull requests, changes that touch only Markdown, `docs/`, licenses, `.vale.ini`,
 `.config/rumdl.toml` or `.config/vale/` run just `Docs` (`just docs-check`); Rust and platform tests
@@ -180,22 +181,25 @@ Keep documentation consistent with what the library actually implements.
 
 The first `girt` release was published manually. Subsequent releases use
 [`release-plz`](https://release-plz.dev/docs/github/quickstart): a push to `main` prepares a release
-pull request, and merging that request starts full main CI. Only successful full CI for that exact
-main revision permits the release job to publish through crates.io trusted publishing. Review the
-proposed version, changelog, CI results and supported scope before merging.
+pull request and independently checks that exact revision on Linux before publishing. The Linux
+publish check builds default features, checks all targets with all features and the core, HTTP-only
+and SSH-only library configurations, and runs all-feature library tests. A failed, cancelled or
+missing check prevents publishing. Full integration, feature, macOS and Windows checks continue in
+main CI; publishing does not wait for them. Repair a regression found after release and publish a
+patch release, or the appropriate breaking version if its fix changes the public API.
 
-The release workflow uses GitHub's default token, so checks on the release pull request do not start
-on their own: GitHub holds them for approval. Approve the waiting runs, or close and reopen the pull
-request, after its last update, then wait for `required` before merging. The publish job uses a
-short-lived crates.io token obtained through OIDC; do not add a persistent registry token to the
-workflow. The push-triggered Release workflow waits up to 90 minutes for full push CI on its exact
-SHA. Missing, failed, cancelled or timed-out CI prevents publishing. To retry after a transient
-failure, rerun that push-triggered Release workflow after CI succeeds. Later qualifying main pushes
-also retry unpublished versions, including a release whose version bump has already merged. Any
-unpublished version committed to main can publish after full CI, even without a release pull
-request. Manually dispatching Release only prepares a release pull request. The first release after
-changing this workflow still needs hosted verification of the exact-commit checkout and OIDC
-publishing path.
+Review the proposed version, changelog and supported scope before merging a release pull request.
+The release workflow uses GitHub's default token, so checks on that pull request may require
+approval or a close/reopen after its last update. The publish job uses a short-lived crates.io token
+obtained through OIDC; do not add a persistent registry token. Publishing stays push-triggered:
+crates.io rejects tokens from `workflow_run` events. Both the Linux check and publisher check out
+`github.sha`, and only publishing receives `id-token: write`.
+
+Rerun the push-triggered Release workflow after a transient Linux or publishing failure. Later main
+pushes also retry unpublished versions, including a version bump already merged. Any unpublished
+version committed to main can publish after its Linux check, even without a release pull request.
+Manually dispatching Release only prepares a release pull request. The first release after changing
+this workflow needs hosted verification of the exact-revision checkout and OIDC publishing path.
 
 ## HTTP Fixtures
 
