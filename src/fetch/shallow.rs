@@ -8,14 +8,17 @@ use crate::{ObjectFormat, ObjectId, ShallowRoots};
 
 /// Failure acquiring or publishing the shared shallow boundary file.
 ///
-/// A fetch that changes the shallow boundaries takes a `shallow.lock` file before installing its
-/// objects, and replaces `.git/shallow` after verifying them, before publishing references. This
+/// A fetch takes a `shallow.lock` file before installing its objects when it changes the shallow
+/// boundaries or the destination is already shallow, and replaces `.git/shallow` after verifying
+/// them, before publishing references. This
 /// error arrives inside [`FetchFinishFailure::Shallow`](super::FetchFinishFailure::Shallow).
 /// `.git/shallow` and every reference are unchanged; the pack is installed only if the failure
 /// came after taking the lock, which the report's `installed` field shows.
 ///
 /// - [`Changed`](Self::Changed): another operation changed the shallow boundaries after
-///   [`FetchRequest::prepare`](super::FetchRequest::prepare). Prepare the fetch again.
+///   [`FetchRequest::prepare`](super::FetchRequest::prepare), or the held `shallow.lock` was
+///   replaced or removed by someone else. Prepare the fetch again, after checking nothing else is
+///   writing the repository.
 /// - [`Read`](Self::Read): the existing `.git/shallow` file is malformed, unreadable or too large.
 ///   Inspect it; girt will not replace a file it cannot interpret.
 /// - [`Io`](Self::Io): the lock could not be taken or the file not replaced. An existing

@@ -1482,7 +1482,8 @@ pub struct FetchFinishError {
 
 /// Failed phase after validated transfer.
 ///
-/// [`FetchReady::finish`] takes the shallow lock if the boundaries change, installs the pack,
+/// [`FetchReady::finish`] takes the shallow lock if the boundaries change or the destination is
+/// already shallow, installs the pack,
 /// verifies the installed history, publishes the shallow file, rechecks worktrees, checks the
 /// update rules and finally publishes references. The variant says which step failed; the report
 /// in [`FetchFinishError`] has the exact effects.
@@ -1491,7 +1492,7 @@ pub struct FetchFinishError {
 /// | --- | --- | --- | --- |
 /// | [`Installation`](Self::Installation) | no, but maybe an unindexed pack | unchanged | unchanged |
 /// | [`Shallow`](Self::Shallow) | no if the lock was refused, yes if publishing failed | unchanged | unchanged |
-/// | [`Safety`](Self::Safety) | no if found before installation, otherwise yes | maybe changed | unchanged |
+/// | [`Safety`](Self::Safety) | no for a refused shallow change, which is checked first; otherwise yes | maybe changed | unchanged |
 /// | [`BeforePublication`](Self::BeforePublication) | yes | maybe changed | unchanged |
 /// | [`Reopen`](Self::Reopen) | yes | maybe changed | unchanged |
 /// | [`Update`](Self::Update) | yes | maybe changed | unchanged |
@@ -1499,7 +1500,8 @@ pub struct FetchFinishError {
 ///
 /// Fetching again with a new [`FetchRequest`] is safe after any of them. Before retrying,
 /// address the cause: [`Safety`](Self::Safety) means a worktree's `HEAD` or registration changed
-/// during the fetch, [`Update`](Self::Update) is usually a refused non-fast-forward, and
+/// during the fetch, or the response would change shallow boundaries the request did not ask to
+/// change, [`Update`](Self::Update) is usually a refused non-fast-forward, and
 /// [`Publication`](Self::Publication) usually means another writer moved a destination.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

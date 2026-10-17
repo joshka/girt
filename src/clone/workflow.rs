@@ -591,15 +591,20 @@ pub struct CloneError {
 /// [`CloneRequest::prepare_tracking`] returns these directly; [`CloneReady::finish`] wraps them in
 /// a [`CloneError`] with a report of the completed phases.
 ///
-/// - **Before anything is created:** [`Exists`](Self::Exists) (choose another path or remove the
-///   existing one), [`Url`](Self::Url) (the stored URL is empty or contains NUL or a carriage
-///   return) and [`Plan`](Self::Plan) (the branch choice doesn't fit the remote).
-/// - **While creating the repository:** [`Io`](Self::Io), [`Initialization`](Self::Initialization)
-///   and [`Open`](Self::Open). Partial metadata may remain if the report says the destination was
-///   reserved.
-/// - **While fetching into it:** [`FetchPlan`](Self::FetchPlan), [`Fetch`](Self::Fetch) (with its
-///   own [`FetchFinishError`] report) and [`Verification`](Self::Verification) (cancellation, or
-///   the selected branch's tip is not a commit).
+/// - **Before anything is created:** [`Exists`](Self::Exists) (choose another path, or remove the
+///   existing one only after confirming it is disposable), [`Url`](Self::Url) (the stored URL is
+///   empty or contains NUL or a carriage return) and [`Plan`](Self::Plan) (the branch choice
+///   doesn't fit the remote).
+/// - **While creating the repository:** [`Io`](Self::Io) and
+///   [`Initialization`](Self::Initialization). Partial metadata may remain if the report says the
+///   destination was reserved.
+/// - **While fetching into it:** [`FetchPlan`](Self::FetchPlan) and [`Fetch`](Self::Fetch) (with
+///   its own [`FetchFinishError`] report).
+/// - **In more than one phase:** [`Open`](Self::Open) reopening the repository, which happens after
+///   the fetch and again at the very end, so the clone may be fully published.
+///   [`Verification`](Self::Verification) covers cancellation, which is checked before creation and
+///   between later phases, failures reading the installed objects, and a fetched branch whose tip
+///   is not a commit. For these, the [`CloneReport`] says what completed.
 /// - **While finishing:** [`Configuration`](Self::Configuration), [`Reference`](Self::Reference),
 ///   [`PackRefs`](Self::PackRefs), [`Objects`](Self::Objects) and
 ///   [`Publication`](Self::Publication). The objects and remote-tracking references are in place;

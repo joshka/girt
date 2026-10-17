@@ -584,12 +584,14 @@ pub enum PushError {
 ///
 /// - **Fix the commands.** [`Command`](Self::Command) (duplicate destination, zero expected ID,
 ///   name outside `refs/`), [`WouldForce`](Self::WouldForce) (a non-fast-forward update or tag
-///   replacement needs [`ForcePolicy::Allow`]) and [`Identity`](Self::Identity) (an invalid reflog
-///   identity).
+///   replacement needs [`ForcePolicy::Allow`]), [`ObjectFormat`](Self::ObjectFormat) (a command or
+///   receiver root uses the other object format) and [`Identity`](Self::Identity) (an invalid
+///   reflog identity).
 /// - **The local repository can't supply the history.** [`Missing`](Self::Missing),
-///   [`Kind`](Self::Kind), [`Read`](Self::Read), [`Commit`](Self::Commit), [`Tree`](Self::Tree),
-///   [`Tag`](Self::Tag) and [`Pack`](Self::Pack): the commands point at objects that are absent, of
-///   the wrong kind or invalid. Fetch the missing history or correct the commands.
+///   [`Kind`](Self::Kind), [`Read`](Self::Read), [`Commit`](Self::Commit), [`Tree`](Self::Tree) and
+///   [`Tag`](Self::Tag): the commands point at objects that are absent, of the wrong kind or
+///   invalid. Fetch the missing history or correct the commands. [`Pack`](Self::Pack) is a failure
+///   building the pack, such as temporary-file I/O or a pack budget; see its nested error.
 /// - **The receiver's state changed.** [`KnowledgeChanged`](Self::KnowledgeChanged): a receiver
 ///   root used to shrink the pack is no longer advertised. Prepare again from a fresh
 ///   advertisement, as [`crate::workflow::push`] does automatically once.
@@ -599,8 +601,12 @@ pub enum PushError {
 ///   Retrying may succeed, but only after checking the receiver if the error is
 ///   [`PushError::Uncertain`].
 /// - **The receiver refused or misbehaved.** [`Remote`](Self::Remote) (an error message from the
-///   receiver), [`Protocol`](Self::Protocol) and [`Unsupported`](Self::Unsupported) (a required
-///   capability, such as `report-status` or `delete-refs`, is missing).
+///   receiver) and [`Protocol`](Self::Protocol).
+/// - **Something isn't supported.** [`Unsupported`](Self::Unsupported) covers a receiver missing a
+///   required capability such as `report-status` or `delete-refs`, a shallow source repository,
+///   and, for a local destination, a format, shallow state, configuration value or hook girt does
+///   not support. The message names which; change the request or destination, or use another
+///   implementation.
 /// - **A local destination failed.** [`Destination`](Self::Destination) (not a repository),
 ///   [`Install`](Self::Install), [`Reference`](Self::Reference) and
 ///   [`QuarantineCleanup`](Self::QuarantineCleanup). Inspect the destination before retrying;
