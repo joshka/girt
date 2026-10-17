@@ -10,6 +10,27 @@ use super::ObjectReadError;
 ///
 /// Discovery is iterative and visits canonical directories once. Limits include the primary
 /// store, repeated/missing path records and all metadata read. No process environment is read.
+///
+/// Use aggregate budgets when a repository borrows object directories. The primary store counts
+/// too. Reading borrowed objects does not give maintenance permission to prune those directories.
+///
+/// ```
+/// use girt::{AlternateLimits, InitKind, ObjectFormat, PackLimits, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r.git"),
+///     InitKind::Bare,
+/// )?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let strict = AlternateLimits::default().with_max_stores(0);
+/// assert!(
+///     repo.objects_with_alternates(PackLimits::default(), strict)
+///         .is_err()
+/// );
+/// assert_eq!(objects.store_directories().count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct AlternateLimits {

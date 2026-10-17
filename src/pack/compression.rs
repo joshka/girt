@@ -1,6 +1,50 @@
 use super::write::PackWriteError;
 
 /// Outgoing pack compression policy. All entries use zlib level 6.
+///
+/// Use ordinary compression for predictable streaming scratch work. Choose delta search when
+/// smaller artifacts justify additional bounded matching and compression work; delta mode can still
+/// emit ordinary entries.
+///
+/// ```
+/// use girt::{
+///     DeltaOptions, ObjectFormat, ObjectId, ObjectKind, PackCompression, PackObject,
+///     PackWriteLimits, write_pack_with_compression,
+/// };
+/// let base: Vec<u8> = (0..4096u32)
+///     .flat_map(|n| n.wrapping_mul(2_654_435_761).to_le_bytes())
+///     .collect();
+/// let mut revised = base.clone();
+/// revised.extend_from_slice(b"new footer\n");
+/// let inputs: Vec<_> = [&base[..], &revised[..]]
+///     .into_iter()
+///     .map(|data| PackObject {
+///         id: ObjectId::for_blob(ObjectFormat::Sha1, data),
+///         kind: ObjectKind::Blob,
+///         data,
+///     })
+///     .collect();
+/// let encode = |policy| {
+///     let (mut pack, mut index) = (Vec::new(), Vec::new());
+///     let report = write_pack_with_compression(
+///         ObjectFormat::Sha1,
+///         &inputs,
+///         &mut pack,
+///         &mut index,
+///         PackWriteLimits::default(),
+///         policy,
+///     )?;
+///     Ok::<_, girt::PackWriteError>((pack.len(), report))
+/// };
+/// let (ordinary_bytes, ordinary) = encode(PackCompression::Ordinary)?;
+/// let (delta_bytes, delta) = encode(PackCompression::Delta(DeltaOptions::default()))?;
+/// assert_eq!(ordinary.deltas.entries, 0);
+/// assert_eq!(delta.deltas.entries, 1);
+/// assert!(delta_bytes < ordinary_bytes);
+/// assert!(delta.deltas.candidates > 0);
+/// assert!(delta.deltas.work > 0);
+/// # Ok::<(), girt::PackWriteError>(())
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub enum PackCompression {
@@ -40,6 +84,44 @@ pub enum PackCompression {
 /// proportional to input count. These are not total-process heap bounds. Objects larger than the
 /// configured size (or `u32::MAX`) use the streaming ordinary path. Zero bounds disable search;
 /// no option value is invalid. Small objects under eight bytes also use ordinary entries.
+///
+/// Tune search effort independently of the pack input bounds. Exhaustion falls back to the best
+/// completed encoding; it does not authorize an incomplete pack or weaken identity verification.
+///
+/// ```
+/// use girt::{
+///     DeltaOptions, ObjectFormat, ObjectId, ObjectKind, PackCompression, PackObject,
+///     PackWriteLimits, write_pack_with_compression,
+/// };
+/// # let base: Vec<u8> = (0..4096u32)
+/// #     .flat_map(|n| n.wrapping_mul(2_654_435_761).to_le_bytes())
+/// #     .collect();
+/// # let mut revised = base.clone();
+/// # revised.extend_from_slice(b"new footer\n");
+/// # let inputs: Vec<_> = [&base[..], &revised[..]]
+/// #     .into_iter()
+/// #     .map(|data| PackObject {
+/// #         id: ObjectId::for_blob(ObjectFormat::Sha1, data),
+/// #         kind: ObjectKind::Blob,
+/// #         data,
+/// #     })
+/// #     .collect();
+/// let (mut pack, mut index) = (Vec::new(), Vec::new());
+/// // These related payloads can delta, but this policy allows no search work.
+/// let policy = PackCompression::Delta(DeltaOptions::default().with_max_work(0));
+/// let report = write_pack_with_compression(
+///     ObjectFormat::Sha1,
+///     &inputs,
+///     &mut pack,
+///     &mut index,
+///     PackWriteLimits::default(),
+///     policy,
+/// )?;
+/// assert_eq!(report.objects, 2);
+/// assert_eq!(report.deltas.entries, 0);
+/// assert_eq!(report.deltas.work, 0);
+/// # Ok::<(), girt::PackWriteError>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct DeltaOptions {
@@ -121,6 +203,10 @@ impl DeltaOptions {
 }
 
 /// Search accounting for a completed pack; excludes ordinary hashing and zlib work.
+///
+/// Use these counters to assess search effectiveness alongside measured total time and artifact
+/// size. They omit ordinary compression and hashing, so they cannot stand in for a complete
+/// performance measurement. The [`PackCompression`] example compares artifact sizes and counters.
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct DeltaStats {

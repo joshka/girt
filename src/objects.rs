@@ -116,6 +116,25 @@ impl Object {
     }
 
     /// Takes ownership of the payload, copying it if another `Object` or the cache shares it.
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"payload")?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let object = objects
+    ///     .read(id, ReadLimits::default())?
+    ///     .ok_or("blob absent")?;
+    /// let retained = object.clone();
+    /// let owned = object.into_data(); // A shared payload may be copied; the other owner stays usable.
+    /// assert_eq!(owned, retained.data());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn into_data(self) -> Vec<u8> {
         Arc::unwrap_or_clone(self.data)
     }
@@ -235,10 +254,18 @@ impl Default for PackLimits {
 }
 
 impl PackLimits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite bounds for caller-approved local storage.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Use this only after deciding that the repository's size and cost are acceptable. It permits
+    /// up to 100,000 packs and 4,096 retained file handles; byte and directory bounds retain
+    /// arithmetic headroom. Operating-system limits and allocation failures can occur first. Prefer
+    /// selected default-bound overrides when an application needs a predictable resource policy.
+    ///
+    /// ```
+    /// use girt::PackLimits;
+    /// let limits = PackLimits::trusted().with_max_open_files(64);
+    /// assert_eq!(limits.max_open_files, 64);
+    /// ```
     pub const fn trusted() -> Self {
         Self {
             max_bytes: usize::MAX / 4,
@@ -349,12 +376,18 @@ impl Default for ReadLimits {
 }
 
 impl ReadLimits {
-    /// Returns limits for a repository the caller trusts as Git trusts the user's own.
+    /// Returns generous finite bounds for reads whose resource cost the caller accepts.
     ///
-    /// Git bounds none of these values. The defaults suit untrusted input; these are large enough
-    /// that only available memory bounds the work, while keeping headroom for internal arithmetic.
+    /// Byte limits keep arithmetic headroom and delta chains may have up to 10,000 edges. These
+    /// values can permit allocations far beyond available memory; they do not reserve resources or
+    /// prevent allocation failure. Prefer selected default-bound overrides for untrusted input.
     ///
-    /// Delta chains may be up to 10,000 edges deep, well beyond `git gc --aggressive`'s 250.
+    /// ```
+    /// use girt::ReadLimits;
+    /// // Accept large trusted payloads but retain an application-specific reconstruction bound.
+    /// let limits = ReadLimits::trusted().with_max_delta_depth(128);
+    /// assert_eq!(limits.max_delta_depth, 128);
+    /// ```
     pub const fn trusted() -> Self {
         Self {
             max_object_bytes: usize::MAX / 4,
@@ -625,6 +658,55 @@ impl Objects {
     /// broken pair is repaired/removed, the caller may explicitly retry with its own finite
     /// attempt budget. Continuing publication may require another refresh even after success:
     /// directory enumeration and alternate discovery are not atomic snapshots.
+    ///
+    /// ```
+    /// use girt::{
+    ///     AlternateLimits, InitKind, ObjectFormat, ObjectId, ObjectKind, PackLimits, PackObject,
+    ///     PackWriteLimits, ReadLimits, Repository, write_pack,
+    /// };
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let mut objects = repo.objects(PackLimits::default())?;
+    /// let retained = objects.clone();
+    /// let data = b"published only in a new pack";
+    /// let id = ObjectId::for_blob(ObjectFormat::Sha1, data);
+    /// let input = PackObject {
+    ///     id,
+    ///     kind: ObjectKind::Blob,
+    ///     data,
+    /// };
+    /// let (mut pack, mut index) = (Vec::new(), Vec::new());
+    /// let written = write_pack(
+    ///     ObjectFormat::Sha1,
+    ///     &[input],
+    ///     &mut pack,
+    ///     &mut index,
+    ///     PackWriteLimits::default(),
+    /// )?;
+    /// let base = repo
+    ///     .object_dir()
+    ///     .join("pack")
+    ///     .join(format!("pack-{}", written.checksum));
+    /// // Private fixture only: shared installation requires a coordinated publication path.
+    /// std::fs::write(base.with_extension("pack"), pack)?;
+    /// std::fs::write(base.with_extension("idx"), index)?;
+    /// assert!(objects.read(id, ReadLimits::default())?.is_none());
+    /// objects.refresh(PackLimits::default(), AlternateLimits::default())?;
+    /// assert_eq!(
+    ///     objects
+    ///         .read(id, ReadLimits::default())?
+    ///         .ok_or("missing")?
+    ///         .data(),
+    ///     data
+    /// );
+    /// // The clone retains the old generation.
+    /// assert!(retained.read(id, ReadLimits::default())?.is_none());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn refresh(
         &mut self,
         packs: PackLimits,
@@ -811,6 +893,44 @@ impl Objects {
     /// Returns checksum/CRC corruption, artifact I/O errors or [`ObjectReadError::Cancelled`].
     /// Also refuses packed damage remembered by prior reads, including identity-only failures;
     /// that contextual error retains the path, offset and original corruption cause.
+    ///
+    /// ```
+    /// use girt::{ObjectFormat, ObjectId, ObjectKind, PackObject, PackWriteLimits, write_pack};
+    /// let input = PackObject {
+    ///     id: ObjectId::for_blob(ObjectFormat::Sha1, b"manifest"),
+    ///     kind: ObjectKind::Blob,
+    ///     data: b"manifest",
+    /// };
+    /// let (mut bytes, mut index) = (Vec::new(), Vec::new());
+    /// let written = write_pack(
+    ///     ObjectFormat::Sha1,
+    ///     &[input],
+    ///     &mut bytes,
+    ///     &mut index,
+    ///     PackWriteLimits::default(),
+    /// )?;
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = girt::Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     girt::InitKind::Bare,
+    /// )?;
+    /// let base = repo
+    ///     .object_dir()
+    ///     .join("pack")
+    ///     .join(format!("pack-{}", written.checksum));
+    /// // Private fixture only; shared repositories need a validated installation path.
+    /// std::fs::write(base.with_extension("pack"), bytes)?;
+    /// std::fs::write(base.with_extension("idx"), index)?;
+    /// let objects = repo.objects(girt::PackLimits::default())?;
+    /// objects.verify_packs(&std::sync::atomic::AtomicBool::new(false))?;
+    /// assert!(
+    ///     objects
+    ///         .read(input.id, girt::ReadLimits::default())?
+    ///         .is_some()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn verify_packs(&self, cancelled: &AtomicBool) -> Result<(), ObjectReadError> {
         check_cancelled(cancelled)?;
         for store in &self.stores {
@@ -890,6 +1010,25 @@ impl Objects {
     /// # Errors
     ///
     /// Returns the same storage errors as [`Self::read`], or [`ObjectReadError::Cancelled`].
+    ///
+    /// ```
+    /// use girt::{InitKind, ObjectFormat, PackLimits, ReadLimits, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r.git"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"payload")?;
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let cancelled = std::sync::atomic::AtomicBool::new(true);
+    /// assert!(matches!(
+    ///     objects.read_controlled(id, ReadLimits::default(), &cancelled),
+    ///     Err(girt::ObjectReadError::Cancelled)
+    /// ));
+    /// assert!(objects.read(id, ReadLimits::default())?.is_some());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read_controlled(
         &self,
         id: ObjectId,
@@ -1353,15 +1492,19 @@ impl Store {
 #[non_exhaustive]
 pub enum ObjectReadError {
     /// A pinned artifact changed in place before a mutation boundary.
+    /// Coordinate with in-place writers and reopen a verified snapshot before any mutation
+    /// decision.
     #[error("pinned pack artifact changed: {path}")]
     PackChanged {
         /// Original path naming the pinned pack or index.
         path: PathBuf,
     },
     /// The caller requested cancellation; no partial object is returned.
+    /// Retry only with a fresh cancellation decision; the current reader remains available.
     #[error("object storage cancelled")]
     Cancelled,
     /// An alternates record cannot be interpreted as a supported native path.
+    /// Correct the indicated alternates record or supply a supported native path representation.
     #[error("invalid alternate path in {path}: {reason}")]
     Alternate {
         /// Alternates metadata file containing the record.
@@ -1370,11 +1513,13 @@ pub enum ObjectReadError {
         reason: &'static str,
     },
     /// A recognized storage feature is outside the implemented subset.
+    /// Select a supported storage representation; a larger budget does not add feature support.
     #[error("unsupported object storage: {0}")]
     Unsupported(&'static str),
     /// Filesystem access failed at this artifact or directory, or a damaged packed read exhausted
     /// its fallback copies. For packed corruption, the `InvalidData` source carries the offset
     /// and the original corruption error through its source chain.
+    /// Inspect the original I/O source and path, including nested packed-corruption details.
     #[error("object storage at {path}")]
     Path {
         /// Artifact or directory being accessed.
@@ -1384,6 +1529,7 @@ pub enum ObjectReadError {
         source: io::Error,
     },
     /// Validation of an index/pack pair failed during snapshot opening.
+    /// Inspect both artifact paths and the nested opening failure; publish complete matching pairs.
     #[error("object storage pair {index} / {pack}")]
     PackArtifacts {
         /// Index identifying the pair.
@@ -1395,27 +1541,38 @@ pub enum ObjectReadError {
         source: Box<ObjectReadError>,
     },
     /// The existing loose reader rejected the object; preserves its concrete cause.
+    /// Inspect the loose-object source, distinguishing absence, wrong kind, corruption, and size
+    /// refusal.
     #[error("loose object")]
     Loose(#[from] crate::Error),
     /// The index version is neither supported headerless v1 nor headered v2.
+    /// Provide a supported index-v1 or index-v2 representation.
     #[error("unsupported pack index version {0}")]
     IndexVersion(u32),
     /// The pack version is neither 2 nor 3.
+    /// Provide a supported pack-v2 or pack-v3 representation.
     #[error("unsupported pack version {0}")]
     PackVersion(u32),
     /// Reserved or unknown packed object type.
+    /// Report the unsupported stored entry; do not guess an object kind.
     #[error("unsupported packed object type {0}")]
     ObjectType(u8),
     /// Structural validation, zlib completion, a checksum, or object identity failed.
+    /// Recover verified artifacts from a trusted source; do not relax identity or checksum checks.
     #[error("corrupt packed storage: {0}")]
     Corrupt(&'static str),
     /// A named resource bound was exhausted; no partial object is returned.
+    /// Identify the named opening or decoding budget and choose a justified value for a new
+    /// attempt.
     #[error("object storage limit exceeded: {0}")]
     Limit(&'static str),
     /// REF_DELTA base is absent from its pack; external bases are unsupported.
+    /// Supply a self-contained pack; external delta bases are not resolved by this stored-pack
+    /// reader.
     #[error("missing or external delta base {0}")]
     MissingBase(ObjectId),
     /// A delta refers back to an object already in its reconstruction chain.
+    /// Report the damaged dependency chain; increasing depth limits cannot resolve a cycle.
     #[error("cyclic delta chain")]
     DeltaCycle,
 }
