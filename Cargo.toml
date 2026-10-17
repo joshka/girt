@@ -219,6 +219,10 @@ harness = false
 name = "content_diff"
 doc-scrape-examples = true
 
+[[example]]
+name = "patch"
+doc-scrape-examples = true
+
 [[bench]]
 name = "content_diff"
 harness = false

@@ -3,7 +3,9 @@
 //! Start with [`diff`] when both payloads are already in memory. [`BlobContent::read`] loads the
 //! blob sides of a [`crate::TreeChange`] from object storage first. [`ContentDiff`] distinguishes
 //! unchanged, binary-changed, and text results; [`DiffLimits`] bounds the comparison. Returned
-//! text edits borrow the supplied payloads and do not include patch context or rendering.
+//! text edits borrow the supplied payloads and do not include patch context; render them with
+//! [`crate::patch::write_hunks`], or write whole `git diff` patches with
+//! [`crate::Objects::write_patch`].
 //!
 //! The comparison does not apply attributes, textconv, whitespace normalization, rename
 //! detection, or patch encoding. It performs no merge, index, or worktree operation.
@@ -11,7 +13,8 @@
 //! # Choose a comparison layer
 //!
 //! A file-list viewer starts with [`crate::Objects::compare_trees`]. A patch viewer loads a
-//! change with [`BlobContent::read`], then calls [`diff`] and renders the returned byte ranges.
+//! change with [`BlobContent::read`], then calls [`diff`] and renders the returned byte ranges,
+//! or uses [`crate::patch`] for Git's unified form.
 //! Keep the original structural change alongside the content result: a mode-only change or an
 //! added empty file can have unchanged content. Gitlinks need a submodule view instead of blob
 //! loading. Use [`crate::rewrites`] separately to infer relationships between different paths.
@@ -96,7 +99,7 @@ pub use types::{BinaryMode, ContentDiff, ContentEdit, DiffError, DiffLimits, Tex
 /// Results borrow both inputs; no payload bytes are copied. Edits use zero-based half-open ranges
 /// into the original inputs, coalesce adjacent insertions/deletions, and contain no context.
 /// Unlisted gaps are byte-identical. They are not unified patch hunks: no context expansion,
-/// heuristic boundary shifting or CLI rendering is provided.
+/// heuristic boundary shifting or rendering is provided; see [`crate::patch::write_hunks`].
 ///
 /// Equal bytes return [`ContentDiff::Unchanged`] in every mode, including binary. Auto mode scans
 /// the **entire** payloads for NUL; it does not implement Git attributes or Git's sampling policy.

@@ -83,6 +83,7 @@
 //! | Compose everyday operations on a trusted repository | [`trusted::Handle`] |
 //! | Use HTTP/SSH and credentials | [`transport`], [`remote::CredentialStore`] |
 //! | Compare snapshots and file contents | [`Objects::compare_trees`], [`content_diff`], [`rewrites`] |
+//! | Write unified patches as `git diff` does | [`patch`], [`Objects::write_patch`] |
 //! | Print paths, modes, statuses and dates as Git does | [`display`] |
 //! | Manage the index and working tree | [`index`], [`status`], [`checkout`], [`ignore`] |
 //! | Plan retention, repack, or coordinate mutation | [`retention`], [`locks`] |
@@ -180,6 +181,7 @@ pub mod object;
 pub mod objects;
 pub mod pack;
 mod packet;
+pub mod patch;
 mod peel;
 pub mod push;
 pub mod refs;
