@@ -47,6 +47,11 @@ pub struct TreeValue {
 
 /// One added, removed or changed leaf path.
 ///
+/// Use structural comparison for changed-file lists. For patch content, load each change with
+/// [`crate::content_diff::BlobContent::read`] and call [`crate::content_diff::diff`]. Use
+/// [`crate::rewrites`] to infer relationships across different paths; trees store snapshots rather
+/// than rename records. Both SHA-1 and SHA-256 are supported.
+///
 /// Results from [`Objects::compare_trees`] have at least one side and never have equal sides.
 /// `old == None` means addition; `new == None` means removal; two present sides mean change.
 /// Compare IDs to distinguish content identity changes from mode/type changes. A mode change

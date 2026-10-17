@@ -39,7 +39,6 @@ impl BlobContent {
     /// caller retains path and side context in `change`. No partial pair or writes are produced.
     ///
     /// ```
-    /// 
     /// use std::sync::atomic::AtomicBool;
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
     /// use girt::content_diff::BlobContent;

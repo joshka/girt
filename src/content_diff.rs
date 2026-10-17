@@ -19,7 +19,8 @@
 //! Text is split only at LF. CRLF, invalid UTF-8 and a missing final LF remain exact bytes, so
 //! rendering and escaping are caller decisions. [`TextDiff`] demonstrates reconstruction from
 //! the original coordinates. Similarity scoring in `rewrites` has different line/CR rules and
-//! must not be used as a content equality test.
+//! must not be used as a content equality test. Rewrite scoring checks for NUL only in the first
+//! 8000 bytes; content diff's automatic binary policy checks the entire payload.
 //!
 //! # Example
 //!

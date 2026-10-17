@@ -45,7 +45,7 @@ impl Objects {
     /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::rewrites::{Limits, Options};
+    /// use girt::rewrites::{Kind, Limits, Options};
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
@@ -68,7 +68,6 @@ impl Objects {
     ///     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?)?)
     /// };
     ///
-    /// use girt::rewrites::Kind;
     /// let old = tree(&[(b"before", b"same content\n")])?;
     /// let new = tree(&[(b"after", b"same content\n")])?;
     /// let records = repo.objects(Default::default())?.detect_rewrites(
@@ -127,7 +126,7 @@ impl Objects {
     /// ```
     /// use std::sync::atomic::AtomicBool;
     ///
-    /// use girt::rewrites::{Limits, Options};
+    /// use girt::rewrites::{Error, Limits, Options};
     /// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
     /// let directory = tempfile::tempdir()?;
     /// let repo = Repository::init(
@@ -150,7 +149,6 @@ impl Objects {
     ///     Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?)?)
     /// };
     ///
-    /// use girt::rewrites::Error;
     /// let old = tree(&[
     ///     (b"exact-old", b"identical\n"),
     ///     (b"edited-old", b"line one\nline two\n"),

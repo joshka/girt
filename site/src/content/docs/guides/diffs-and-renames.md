@@ -27,10 +27,41 @@ unchanged content, and a mode-only change also needs structural presentation. Sy
 target bytes; no filesystem path is dereferenced. Trees and gitlinks are refused as blob inputs.
 
 The
-[tree comparison example](https://docs.rs/girt/latest/girt/struct.Objects.html#method.compare_trees)
+[tree comparison API](https://docs.rs/girt/latest/girt/struct.Objects.html#method.compare_trees)
 and
-[content loading example](https://docs.rs/girt/latest/girt/content_diff/struct.BlobContent.html#method.read)
-create disposable repositories and show the complete setup.
+[content loading API](https://docs.rs/girt/latest/girt/content_diff/struct.BlobContent.html#method.read)
+describe structural and loading contracts separately.
+
+Load a structural addition and pass the verified payloads to content diff. This complete program
+shows the three layers together:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::AtomicBool;
+    use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    use girt::content_diff::BlobContent;
+    let directory = tempfile::tempdir()?;
+    let repo = Repository::init(ObjectFormat::Sha1, directory.path().join("r"), InitKind::Bare)?;
+    let loose = repo.loose_objects();
+    let id = loose.write_blob(b"added\n")?;
+    let tree = loose.write_tree(&Tree::new(ObjectFormat::Sha1,
+        vec![TreeEntry { name: b"file".to_vec(), mode: EntryMode::Blob, id }])?)?;
+    let objects = repo.objects(Default::default())?;
+    let cancel = AtomicBool::new(false);
+    let changes = objects.compare_trees(None, Some(tree), Default::default(), &cancel)?;
+
+    let content = BlobContent::read(&objects, &changes[0], Default::default(), 1024, &cancel)?;
+    assert!(content.old.is_empty());
+    assert_eq!(content.new, b"added\n");
+    assert!(changes[0].old.is_none()); // Keep existence independently from the empty content buffer.
+    use girt::content_diff::{diff, BinaryMode, ContentDiff, DiffLimits};
+    let ContentDiff::Text(text) = diff(&content.old, &content.new, BinaryMode::Auto,
+        DiffLimits::default(), &cancel)? else { panic!("expected an insertion"); };
+    assert!(text.edits()[0].old_bytes.is_empty());
+    assert_eq!(text.new_bytes(), b"added\n");
+    Ok(())
+}
+```
 
 ## Compare bytes and render line edits
 
@@ -66,8 +97,8 @@ Lines split only at LF. CRLF and a missing final LF remain literal bytes. Edits 
 half-open line and byte ranges in the original inputs. An empty old range is an insertion; an empty
 new range is a deletion. Reconstruct by copying unchanged old gaps and the corresponding new ranges.
 Do not adjust subsequent offsets as if they referred to progressively edited text. The
-[TextDiff reconstruction example](https://docs.rs/girt/latest/girt/content_diff/struct.TextDiff.html)
-shows this algorithm.
+[TextDiff API](https://docs.rs/girt/latest/girt/content_diff/struct.TextDiff.html)
+exposes the original buffers and edit ranges for reconstruction.
 
 The result is a deterministic shortest line-edit sequence with no patch context or rendering.
 Attributes, textconv, whitespace normalization and external diff commands are caller policy. Escape
@@ -93,10 +124,12 @@ its old identity. Select this only when that scoring policy fits the consumer.
 
 Exact identity matches run first. Edited matching compares repeated byte spans split at LF or after
 64 significant bytes; span order is immaterial. Text scoring omits CR before LF, while binary
-scoring retains it. This differs from literal content diff. A rounded score of 100 can represent
-reordered spans; set `Options::similarity` to 100 to require identical object identities. Girt's
-independently implemented heuristic has known score/pairing differences from Git and does not
-promise every Git shortcut or tie decision.
+scoring retains it. Rewrite scoring and `approximate_binary` classify binary by NUL in the first
+8000 bytes; content diff checks the entire payload. A NUL at byte 9000 can therefore yield binary
+patch presentation and text rename scoring. This differs from literal content diff. A rounded score
+of 100 can represent reordered spans; set `Options::similarity` to 100 to require identical object
+identities. Girt's independently implemented heuristic has known score/pairing differences from Git
+and does not promise every Git shortcut or tie decision.
 
 An optional target-path list filters after inference. It does not reduce candidate work or change
 pairing/classification. Retain unmatched additions and removals alongside inferred rewrites.
@@ -107,6 +140,9 @@ After exact matching, edited detection is skipped when remaining sources times r
 destinations exceeds `candidate_limit` squared. The default is 1000. This bounds the size of the
 approximate search; independent byte, pair, span and work budgets remain in force throughout exact
 and edited matching.
+
+With `similarity == 100`, edited detection never runs: the candidate limit is bypassed and no
+inexact skip is reported. Independent resource limits can still fail.
 
 Girt's value zero skips edited detection whenever a counted pair remains. Git's configuration value
 zero means unlimited; translate it to `usize::MAX` when implementing a Git configuration adapter.
@@ -124,8 +160,81 @@ Choose the result contract that fits the application:
 
 `InexactSkipped::suggested_limit` returns the larger remaining count, a sufficient but not always
 minimal candidate limit. It does not raise independent resource budgets. The
-[exact-only fallback example](https://docs.rs/girt/latest/girt/struct.Objects.html#method.detect_rewrites_or_exact)
-asserts both contracts against the same pair of trees.
+[exact-only fallback API](https://docs.rs/girt/latest/girt/struct.Objects.html#method.detect_rewrites_or_exact)
+returns the skip alongside the exact matches.
+
+Build one exact rename and one edited rename, accept the exact-only result at a zero candidate
+limit, then explicitly retry edited matching:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::AtomicBool;
+
+    use girt::rewrites::{Error, Limits, Options};
+    use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+    let directory = tempfile::tempdir()?;
+    let repo = Repository::init(
+        ObjectFormat::Sha1,
+        directory.path().join("r"),
+        InitKind::Bare,
+    )?;
+    let loose = repo.loose_objects();
+    let tree = |files: &[(&[u8], &[u8])]| -> Result<_, Box<dyn std::error::Error>> {
+        let entries = files
+            .iter()
+            .map(|(name, bytes)| {
+                Ok(TreeEntry {
+                    name: name.to_vec(),
+                    mode: EntryMode::Blob,
+                    id: loose.write_blob(bytes)?,
+                })
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        Ok(loose.write_tree(&Tree::new(ObjectFormat::Sha1, entries)?)?)
+    };
+
+    let old = tree(&[
+        (b"exact-old", b"identical\n"),
+        (b"edited-old", b"one\ntwo\nthree\nfour\n"),
+    ])?;
+    let new = tree(&[
+        (b"exact-new", b"identical\n"),
+        (b"edited-new", b"one\ntwo\nthree\nFOUR\n"),
+    ])?;
+    let objects = repo.objects(Default::default())?;
+    let options = Options::default().with_candidate_limit(0);
+    let cancel = AtomicBool::new(false);
+    let detection = objects.detect_rewrites_or_exact(
+        Some(old),
+        Some(new),
+        options,
+        Limits::default(),
+        None,
+        &cancel,
+    )?;
+    assert_eq!(detection.rewrites.len(), 1); // The identical pair survived.
+    assert_eq!(detection.rewrites[0].source, b"exact-old");
+    let skipped = detection.inexact_skipped.expect("one edited pair remains");
+    assert_eq!((skipped.sources, skipped.targets, skipped.limit), (1, 1, 0));
+    assert_eq!(skipped.suggested_limit(), 1);
+    assert!(matches!(
+        objects.detect_rewrites(
+            Some(old),
+            Some(new),
+            options,
+            Limits::default(),
+            None,
+            &cancel
+        ),
+        Err(Error::Candidates { .. })
+    ));
+    let retried = objects.detect_rewrites_or_exact(Some(old), Some(new),
+        options.with_candidate_limit(skipped.suggested_limit()), Limits::default(), None, &cancel)?;
+    assert!(retried.inexact_skipped.is_none());
+    assert_eq!(retried.rewrites.len(), 2);
+    Ok(())
+}
+```
 
 ## Diagnose failures and schedule work
 

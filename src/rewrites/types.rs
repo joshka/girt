@@ -9,9 +9,45 @@ use crate::{
 /// `source_id` still names the old content. Neither option searches unchanged source files.
 ///
 /// ```
-/// use girt::rewrites::{Copies, Options};
-/// let options = Options::default().with_copies(Copies::Modified);
-/// assert_eq!(options.copies, Copies::Modified);
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::rewrites::{Copies, Kind, Options};
+/// use girt::{EntryMode, InitKind, ObjectFormat, Repository, Tree, TreeEntry};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let loose = repo.loose_objects();
+/// let original = loose.write_blob(b"original content\n")?;
+/// let edited = loose.write_blob(b"changed source\n")?;
+/// let entry = |name: &[u8], id| TreeEntry {
+///     name: name.to_vec(),
+///     mode: EntryMode::Blob,
+///     id,
+/// };
+/// let old = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"source", original)],
+/// )?)?;
+/// let new = loose.write_tree(&Tree::new(
+///     ObjectFormat::Sha1,
+///     vec![entry(b"source", edited), entry(b"copy", original)],
+/// )?)?;
+/// let copies = repo.objects(Default::default())?.detect_rewrites(
+///     Some(old),
+///     Some(new),
+///     Options::default().with_copies(Copies::Modified),
+///     Default::default(),
+///     None,
+///     &AtomicBool::new(false),
+/// )?;
+/// assert_eq!(copies.len(), 1);
+/// assert_eq!(copies[0].kind, Kind::Copy);
+/// assert_eq!(copies[0].source_id, original); // Scored against the source's preimage.
+/// assert_eq!(copies[0].target, b"copy");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -43,7 +79,8 @@ pub enum Copies {
 #[non_exhaustive]
 pub struct Options {
     /// Minimum retained-byte percentage, inclusive, from 1 through 100 (default 50).
-    /// 100 admits only identical object IDs, bypassing approximate scoring.
+    /// 100 admits only identical object IDs, bypassing approximate scoring and the candidate
+    /// limit; independent [`Limits`] still apply and no inexact skip is reported.
     pub similarity: u8,
     /// Whether modified files and already-used deleted files can supply copies.
     pub copies: Copies,
