@@ -110,7 +110,6 @@ its stored parents. After deepening, refresh repository shallow metadata and cre
 reader.
 
 Continue with [opening a repository](/girt/guides/open-a-repository/) and
-[configuration resolution](https://docs.rs/girt/latest/girt/config/index.html). Working-tree state
-belongs to the separate [index and working-tree guide](/girt/guides/index-and-working-tree/);
-transfer policy belongs to
+[configuration](/girt/guides/configuration/). Working-tree state belongs to the separate
+[index and working-tree guide](/girt/guides/index-and-working-tree/); transfer policy belongs to
 [fetch, push, and clone](/girt/guides/fetch-push-clone/).

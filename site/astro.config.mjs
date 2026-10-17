@@ -63,6 +63,7 @@ export default defineConfig({
             { label: 'Read objects and history', slug: 'guides/objects-and-history' },
             { label: 'Diffs and renames', slug: 'guides/diffs-and-renames' },
             { label: 'Read and update refs', slug: 'guides/refs' },
+            { label: 'Configuration and provenance', slug: 'guides/configuration' },
             { label: 'The index and working tree', slug: 'guides/index-and-working-tree' },
             { label: 'Fetch, push and clone', slug: 'guides/fetch-push-clone' },
             { label: 'Credentials and transports', slug: 'guides/credentials-and-transports' },
