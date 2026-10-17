@@ -16,6 +16,20 @@
 //! Noncanonical minute digits are arithmetic and normalize when re-encoded. See the
 //! [compatibility decision](https://github.com/joshka/girt/blob/main/docs/reference-transactions.md#reflog-timezone-interoperability).
 //!
+//! # Choose the repository or codec layer
+//!
+//! A reftable repository stores refs and reflogs together in immutable tables selected by
+//! `tables.list`. Later tables override older keys; tombstones hide deletions. Use
+//! [`crate::refs::References`] for ordinary reads and conditional transactions, regardless of
+//! backend. Use [`Table`] to inspect/encode individual byte buffers, [`Snapshot`] for repeated
+//! reads of one merged generation, and [`compact`] to reduce a stack without expiring history.
+//!
+//! Compaction is separate from object GC and reflog expiry. It retains all live history,
+//! publishes a replacement list, then tries to remove old unlisted tables. Successful
+//! [`Compaction`] can contain cleanup failures: inspect `retained`. No fsync or power-loss
+//! durability is promised by ordinary compaction; destructive history expiry uses the
+//! maintenance path and its isolation/durability contract instead.
+//!
 //! # Example
 //!
 //! Each reference update in a reftable repository appends a table to the stack. A [`Snapshot`]

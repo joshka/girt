@@ -30,7 +30,7 @@ pub trait MaintenanceIsolation {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct PruneReport {
-    /// Successfully removed identities, in path order.
+    /// Successfully removed identities, in path order. Derived commit-graph cleanup is not listed.
     pub deleted: Vec<ObjectId>,
 }
 
@@ -59,6 +59,10 @@ pub enum PruneCause {
 }
 
 /// A failed sweep retains the known successful deletion prefix and any uncertain unlink.
+///
+/// `report.deleted` is authoritative for confirmed effects; `uncertain` identifies an unlink
+/// whose outcome needs inspection. Keep `cause` and its source chain. An incomplete or changed
+/// observation never authorizes continuing with candidates from an older plan.
 #[derive(Debug, thiserror::Error)]
 #[error("loose object pruning failed")]
 #[non_exhaustive]
@@ -68,7 +72,8 @@ pub struct PruneFailure {
     pub cause: PruneCause,
     /// Successfully removed objects before the failure.
     pub report: PruneReport,
-    /// Identity at a failed unlink boundary; inspect storage before retrying.
+    /// Identity at a failed object unlink boundary; inspect storage before retrying.
+    /// A later commit-graph cleanup failure has no uncertain object identity.
     pub uncertain: Option<ObjectId>,
 }
 
@@ -91,10 +96,16 @@ impl Repository {
     /// All reflog candidates are retained regardless of the policy's expiry cutoffs; this
     /// operation does not expire reflogs, repack, or remove packs or alternate storage. It
     /// removes only regular primary loose files at or before `recent_cutoff` whose identities
-    /// are outside the complete reachable closure. This does not depend on R32's additive
-    /// publication for object availability. The inclusive loose cutoff matches Git prune
+    /// are outside the complete reachable closure. No preceding additive repack is required.
+    /// The inclusive loose cutoff matches Git prune
     /// expiry; files newer than the exact instant remain roots, including subsecond
     /// modification times.
+    ///
+    /// After any object deletion, removes `objects/info/commit-graph` and the
+    /// `objects/info/commit-graphs` directory so Git cannot consult stale derived history.
+    /// Git can rebuild these accelerators; queries lose their speedup until then. A cleanup
+    /// failure returns [`PruneCause::Io`] with the completed object-deletion report and no
+    /// uncertain object. No-op pruning leaves these caches untouched.
     ///
     /// A complete scan or matching generations cannot exclude an external Git process. The
     /// isolation implementation must exclude those processes and old readers until the returned
@@ -108,6 +119,42 @@ impl Repository {
     ///
     /// Isolation refusal, incomplete scans, changed observations, cancellation and I/O are
     /// reported with the known completed prefix. Before the first deletion it is empty.
+    ///
+    /// # Default policy refuses age-based reclamation
+    ///
+    /// Even an unreferenced loose object survives when no cutoff is selected. This zero-deletion
+    /// fast path does not validate the repository's history.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// // This fixture is private to this single-threaded example. No external writer, reader or
+    /// // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
+    /// struct PrivateFixture;
+    /// impl girt::retention::MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// use girt::retention::RetentionPolicy;
+    /// let id = repo.loose_objects().write_blob(b"not yet eligible")?;
+    /// let report =
+    ///     repo.prune_unreachable_loose(&mut PrivateFixture, &RetentionPolicy::default(), &cancel)?;
+    /// assert!(report.deleted.is_empty());
+    /// assert!(repo.loose_objects().read_blob(id, 1024).is_ok());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn prune_unreachable_loose<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,

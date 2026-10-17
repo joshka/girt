@@ -73,6 +73,19 @@ struct Pattern {
 }
 
 /// Reflog configuration cannot safely select an expiry policy.
+///
+/// An unsupported date expression is a refusal, not a request to fall back to immediate expiry.
+/// Supply a supported explicit policy or fix configuration before trying again.
+///
+/// ```
+/// use girt::retention::{ReflogExpiry, ReflogExpiryError};
+/// let config = girt::Config::parse(b"[gc]\nreflogExpire=yesterday\n")?;
+/// assert!(matches!(
+///     ReflogExpiry::from_config(&config, 1_800_000_000),
+///     Err(ReflogExpiryError::Value(_))
+/// ));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReflogExpiryError {
@@ -99,6 +112,18 @@ impl ReflogExpiry {
     /// Returns [`ReflogExpiryError`] for an invalid clock, unsupported or invalid date, or a
     /// pattern too large to match any valid reference within the work bound. No files are
     /// changed.
+    ///
+    /// ```
+    /// use girt::refs::RefName;
+    /// use girt::retention::ReflogExpiry;
+    /// let config =
+    ///     girt::Config::parse(b"[gc]\nreflogExpire=never\nreflogExpireUnreachable=7 days ago\n")?;
+    /// let expiry = ReflogExpiry::from_config(&config, 1_800_000_000)?;
+    /// let cutoffs = expiry.cutoffs(&RefName::new("refs/heads/main")?)?;
+    /// assert_eq!(cutoffs.general, None);
+    /// assert_eq!(cutoffs.unreachable, Some(1_800_000_000 - 7 * 86400));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_config(config: &Config, now: i128) -> Result<Self, ReflogExpiryError> {
         if !(0..=u64::MAX as i128).contains(&now) {
             return Err(ReflogExpiryError::Clock);

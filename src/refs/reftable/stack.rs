@@ -82,6 +82,11 @@ impl StackLimits {
 /// handles remain. Existing snapshots remain usable after publication or compaction. A missing
 /// listed file fails the single opening attempt; the caller may explicitly retry. In-place table
 /// mutation, adversarial path replacement and network filesystems are outside this contract.
+///
+/// Prefer a snapshot for repeated reads from one generation. Ordinary reference operations open
+/// fresh state; an old snapshot intentionally does not see later publications. Reading is eager
+/// and bounded across the whole stack, rather than a lazy on-disk key lookup. See [`Self::read`]
+/// for an executable repository example and [`compact`] for reducing the number of tables.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Snapshot {
@@ -105,6 +110,41 @@ impl Snapshot {
     ///
     /// Reports I/O, malformed names/order/data, format mismatch, cancellation and exhausted
     /// aggregate budgets. No filesystem mutation or automatic retry occurs.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::refs::reftable::{Snapshot, StackLimits};
+    /// use girt::refs::{Backend, Expected, RefName, Target};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init_with_backend(
+    ///     ObjectFormat::Sha256,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    ///     Backend::Reftable,
+    /// )?;
+    /// let id = repo.loose_objects().write_blob(b"tagged")?;
+    /// repo.references()?.update_without_reflog(
+    ///     &RefName::new("refs/tags/one")?,
+    ///     Target::Direct(id),
+    ///     Expected::Absent,
+    /// )?;
+    /// let snapshot = Snapshot::read(
+    ///     &repo.common_dir().join("reftable"),
+    ///     ObjectFormat::Sha256,
+    ///     StackLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?;
+    /// assert!(
+    ///     snapshot
+    ///         .table
+    ///         .references
+    ///         .iter()
+    ///         .any(|record| record.target == Some(Target::Direct(id)))
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn read(
         directory: &Path,
         format: ObjectFormat,

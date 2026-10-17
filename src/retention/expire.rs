@@ -34,6 +34,17 @@ pub struct ExpireReport {
 }
 
 /// Why expiry stopped.
+///
+/// Borrow boxed incomplete details with `as_ref()` so application diagnostics retain ownership
+/// and the original source chain:
+///
+/// ```
+/// use girt::retention::{ExpireCause, RetentionError};
+/// let cause = ExpireCause::Incomplete(Box::new(RetentionError::Cancelled));
+/// if let ExpireCause::Incomplete(detail) = &cause {
+///     assert!(matches!(detail.as_ref(), RetentionError::Cancelled));
+/// }
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExpireCause {
@@ -68,6 +79,11 @@ pub enum ExpireCause {
 }
 
 /// Expiry failure with known publications and a possible uncertain replacement.
+///
+/// Inspect both `uncertain` (a files history) and `uncertain_stack` (a reftable list replacement).
+/// A directory-sync failure can occur after a new history/list is visible. Preserve
+/// `report.retained_tables` for obsolete tables left behind after durable publication. Re-read
+/// actual history before relying on expired roots in any later deletion.
 #[derive(Debug, thiserror::Error)]
 #[error("reflog expiry failed")]
 #[non_exhaustive]

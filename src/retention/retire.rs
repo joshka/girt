@@ -24,11 +24,11 @@ use crate::{ObjectId, ObjectReadError, Repository};
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct RetireReport {
-    /// Replacement pair visibly published by R32; later synchronization or verification may fail.
+    /// Replacement pair visibly published; later synchronization or verification may fail.
     pub published: Option<RepackPublished>,
     /// Both pack and object directories synchronized after publication.
     pub durable: bool,
-    /// Old index and pack paths whose unlink calls reported success, in execution order.
+    /// Old index/pack/sidecar paths and multi-pack-index artifacts removed in execution order.
     pub removed: Vec<PathBuf>,
 }
 
@@ -69,6 +69,11 @@ pub enum RetireCause {
 }
 
 /// Failure with the known successful effects and any uncertain artifact.
+///
+/// Publication can succeed before verification, synchronization or an old-artifact unlink fails.
+/// Use `report.published`, `report.durable`, `report.removed` and `uncertain` together. A visible
+/// replacement alone does not establish that removing old storage is safe. Re-observe under
+/// isolation before retrying; never complete the deletion sequence manually from this report.
 #[derive(Debug, thiserror::Error)]
 #[error("pack retirement failed")]
 #[non_exhaustive]
@@ -104,6 +109,12 @@ impl Repository {
     /// sidecars are retired with their pair. Alternate stores are never
     /// mutated. A replacement identical to an old pair is retained. On non-Unix platforms the
     /// operation refuses before publication because directory durability is not established.
+    ///
+    /// If any pack will retire, first removes `multi-pack-index*` artifacts in the primary pack
+    /// directory, including bitmaps, reverse indexes and incremental-chain directories. These
+    /// derived indexes could otherwise name removed packs and make Git reads fail. Git can
+    /// rebuild them; their speedups are unavailable until then. Removal and synchronization
+    /// failures preserve the partial report and identify the uncertain artifact/directory.
     ///
     /// An old pair is removed only after its retained objects are present in a verified durable
     /// replacement or surviving protected pack. Unreachable objects in unprotected packs may be

@@ -3,7 +3,7 @@ default:
     @just --list
 
 # Run the common checks for Rust implementation changes.
-check: fmt-check test clippy docs-rs
+check: fmt-check test clippy docs-rs guide-examples
 
 # Run unit, integration, and documentation tests.
 test:
@@ -50,3 +50,7 @@ docs-check: fmt-md-check
 # Measure the quality scorecard (docs/quality.md); pass --full to remeasure coverage and mutants.
 scorecard *args:
     scripts/quality-scorecard.py {{args}}
+
+# Compile and run the standalone Rust programs in the developer website guides.
+guide-examples:
+    python3 scripts/check-guide-examples.py

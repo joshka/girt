@@ -53,6 +53,48 @@ pub enum MaintenanceCause {
 }
 
 /// Failure with completed earlier phases and a partial current phase in its cause.
+///
+/// The outer report holds completed earlier phases. Inspect the nested phase failure in `cause`
+/// for the current phase's partial changes and uncertain boundary. Cancellation never implies
+/// rollback. Reconcile the actual storage and retry only with fresh scans under a new guard.
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// let directory = tempfile::tempdir()?;
+/// let repo = Repository::init(
+///     ObjectFormat::Sha1,
+///     directory.path().join("r"),
+///     InitKind::Bare,
+/// )?;
+/// let cancel = AtomicBool::new(false);
+///
+/// // This fixture is private to this single-threaded example. No external writer, reader or
+/// // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
+/// struct PrivateFixture;
+/// impl girt::retention::MaintenanceIsolation for PrivateFixture {
+///     type Guard = ();
+///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+///         Ok(())
+///     }
+/// }
+///
+/// use girt::retention::{MaintenanceCause, RepackLimits, RetentionPolicy};
+/// let failure = repo
+///     .run_maintenance(
+///         &mut PrivateFixture,
+///         &RetentionPolicy::default(),
+///         RepackLimits::default(),
+///         &AtomicBool::new(true),
+///     )
+///     .unwrap_err();
+/// assert!(matches!(failure.cause, MaintenanceCause::Cancelled));
+/// assert!(failure.report.expired.is_none());
+/// assert!(failure.report.retired.is_none());
+/// assert!(failure.report.pruned.is_none());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[error("maintenance failed")]
 #[non_exhaustive]
@@ -83,6 +125,55 @@ impl Repository {
     ///
     /// Isolation refusal, unsupported platform, cancellation and any phase failure preserve the
     /// completed-phase report and the current phase's partial result when applicable.
+    ///
+    /// # Maintain an exclusively owned disposable repository
+    ///
+    /// Defaults retain every loose object and reflog record and protect existing packs. The
+    /// sequence can still publish additive replacement storage. Select expiry policy explicitly
+    /// when reclamation is intended; do not treat successful maintenance as a full integrity
+    /// check.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// # if cfg!(not(unix)) { return Ok(()); }
+    ///
+    /// // This fixture is private to this single-threaded example. No external writer, reader or
+    /// // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
+    /// struct PrivateFixture;
+    /// impl girt::retention::MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// use girt::retention::{RepackLimits, RetentionPolicy};
+    /// let id = repo.loose_objects().write_blob(b"retained by default")?;
+    /// let report = repo.run_maintenance(
+    ///     &mut PrivateFixture,
+    ///     &RetentionPolicy::default(),
+    ///     RepackLimits::default(),
+    ///     &cancel,
+    /// )?;
+    /// assert!(report.expired.is_some() && report.retired.is_some() && report.pruned.is_some());
+    /// assert!(report.pruned.unwrap().deleted.is_empty());
+    /// assert!(
+    ///     repo.objects(Default::default())?
+    ///         .read(id, Default::default())?
+    ///         .is_some()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn run_maintenance<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,
@@ -126,6 +217,54 @@ impl Repository {
     ///
     /// Returns isolation, incomplete/changed input, cancellation or phase errors, preserving any
     /// completed expiry and partial pruning. Non-Unix hosts refuse before mutation.
+    ///
+    /// # Reclaim an old, unreferenced loose blob
+    ///
+    /// The timestamp is set explicitly so this disposable example does not depend on clock
+    /// resolution or a sleep. The cutoff is demonstration policy, not a recommended production
+    /// retention window.
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    /// let directory = tempfile::tempdir()?;
+    /// let repo = Repository::init(
+    ///     ObjectFormat::Sha1,
+    ///     directory.path().join("r"),
+    ///     InitKind::Bare,
+    /// )?;
+    /// let cancel = AtomicBool::new(false);
+    ///
+    /// # if cfg!(not(unix)) { return Ok(()); }
+    ///
+    /// // This fixture is private to this single-threaded example. No external writer, reader or
+    /// // alternate-store dependent exists. A shared repository needs a real exclusion mechanism.
+    /// struct PrivateFixture;
+    /// impl girt::retention::MaintenanceIsolation for PrivateFixture {
+    ///     type Guard = ();
+    ///     fn acquire(&mut self, _: &Repository) -> std::io::Result<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// use std::time::{Duration, UNIX_EPOCH};
+    ///
+    /// use girt::retention::RetentionPolicy;
+    /// let id = repo.loose_objects().write_blob(b"old and unreachable")?;
+    /// let hex = id.to_string();
+    /// let path = repo.object_dir().join(&hex[..2]).join(&hex[2..]);
+    /// std::fs::File::open(path)?.set_modified(UNIX_EPOCH + Duration::from_secs(1))?;
+    /// let policy = RetentionPolicy::default().with_recent_cutoff(UNIX_EPOCH + Duration::from_secs(2));
+    /// let report = repo.collect_garbage(&mut PrivateFixture, &policy, &cancel)?;
+    /// assert_eq!(report.pruned.unwrap().deleted, [id]);
+    /// assert!(
+    ///     repo.objects(Default::default())?
+    ///         .read(id, Default::default())?
+    ///         .is_none()
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn collect_garbage<I: MaintenanceIsolation>(
         &self,
         isolation: &mut I,

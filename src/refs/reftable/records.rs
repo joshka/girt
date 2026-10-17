@@ -2,6 +2,22 @@ use crate::refs::{RefName, Target};
 use crate::{ObjectFormat, ObjectId};
 
 /// A stored reference, including a deletion that hides older stack entries.
+///
+/// A tombstone must hide an older value during stack merging; dropping it from one table can
+/// resurrect that value. Full-stack compaction can discard tombstones once every older table is
+/// covered. A peeled target is meaningful only with a direct target.
+///
+/// ```
+/// use girt::refs::reftable::{RecordName, RefRecord};
+/// let deletion = RefRecord {
+///     name: RecordName::new("refs/tags/old")?,
+///     update_index: 2,
+///     target: None,
+///     peeled: None,
+/// };
+/// assert!(deletion.target.is_none());
+/// # Ok::<(), girt::refs::reftable::Error>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefRecord {
     /// Full reference name.
@@ -15,6 +31,36 @@ pub struct RefRecord {
 }
 
 /// Binary reflog fields without files-reflog lexical normalization.
+///
+/// ```
+/// use girt::refs::reftable::{Limits, LogRecord, LogValue, RecordName, Table};
+/// use girt::{ObjectFormat, ObjectId};
+/// let format = ObjectFormat::Sha1;
+/// let value = LogValue {
+///     old: ObjectId::null(format),
+///     new: ObjectId::for_blob(format, b"tagged"),
+///     name: b"Writer".to_vec(),
+///     email: b"writer@example.com".to_vec(),
+///     seconds: u64::MAX,
+///     offset_minutes: 330,
+///     message: b"created\n".to_vec(),
+/// };
+/// let table = Table {
+///     format,
+///     min_update_index: 1,
+///     max_update_index: 1,
+///     references: vec![],
+///     logs: vec![LogRecord {
+///         name: RecordName::new("refs/tags/one")?,
+///         update_index: 1,
+///         value: Some(value.clone()),
+///     }],
+/// };
+/// let decoded = Table::decode(&table.encode(Limits::default())?, Limits::default())?;
+/// assert_eq!(decoded.logs[0].value, Some(value));
+/// // The binary codec preserves unsigned seconds; do not coerce through Signature's signed range.
+/// # Ok::<(), girt::refs::reftable::Error>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogValue {
     /// Previous identity, or zero for creation.
@@ -50,6 +96,31 @@ pub struct LogRecord {
 ///
 /// References sort by name bytes; logs sort by name then descending update index. Index and
 /// object-to-reference accelerator blocks are validated while decoding but are not retained.
+///
+/// Use this codec when you own table bytes. Use [`crate::refs::References`] for repository
+/// transactions; encoding a `Table` does not publish it or allocate a transaction index.
+///
+/// ```
+/// use girt::refs::reftable::{Limits, RefRecord, Table};
+/// use girt::refs::{RefName, Target};
+/// use girt::{ObjectFormat, ObjectId};
+/// let id = ObjectId::for_blob(ObjectFormat::Sha1, b"tag target");
+/// let table = Table {
+///     format: ObjectFormat::Sha1,
+///     min_update_index: 1,
+///     max_update_index: 1,
+///     references: vec![RefRecord {
+///         name: RefName::new("refs/tags/example")?.into(),
+///         update_index: 1,
+///         target: Some(Target::Direct(id)),
+///         peeled: None,
+///     }],
+///     logs: vec![],
+/// };
+/// let bytes = table.encode(Limits::default())?;
+/// assert_eq!(Table::decode(&bytes, Limits::default())?, table);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Table {
     /// Identity format of all records.
@@ -151,6 +222,18 @@ impl Limits {
 }
 
 /// Reftable framing, version, or resource failure.
+///
+/// This is the byte codec's error. Filesystem stack operations return
+/// [`crate::refs::ReferenceError`] with path and source context. Treat malformed bytes as damaged
+/// input; increasing a budget cannot repair framing or a checksum.
+///
+/// ```
+/// use girt::refs::reftable::{Error, Limits, Table};
+/// assert!(matches!(
+///     Table::decode(b"WRNG", Limits::default()),
+///     Err(Error::Malformed(_))
+/// ));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

@@ -53,7 +53,7 @@ impl Repository {
     /// assert!(report.index_published);
     /// assert!(!repo.worktree().unwrap().join("hello.txt").exists());
     /// assert!(loose.read_blob(blob, 1024).is_ok()); // Removing a file does not delete its object.
-    ///     
+    ///
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn checkout_tree(
