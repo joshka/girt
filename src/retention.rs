@@ -131,6 +131,75 @@
 //! assert!(loose.read_blob(unreachable, 1024).is_ok());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Diagnose a rescued packed object
+//!
+//! A content read can succeed while the pinned reader remembers packed damage. Verify the store
+//! before making maintenance decisions and preserve the diagnostic source chain. This fixture
+//! creates damage before opening the reader; modifying published artifacts during a reader's
+//! lifetime violates its immutability contract. It deliberately leaves the damaged pack in place.
+//!
+//! ```rust
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     use std::sync::atomic::AtomicBool;
+//!
+//!     use girt::{InitKind, ObjectFormat, ObjectKind, PackObject, Repository, write_pack};
+//!
+//!     let directory = tempfile::tempdir()?;
+//!     let repo = Repository::init(
+//!         ObjectFormat::Sha1,
+//!         directory.path().join("r"),
+//!         InitKind::Bare,
+//!     )?;
+//!     let content = b"content with a verified loose duplicate";
+//!     let id = repo.loose_objects().write_blob(content)?;
+//!     let mut pack = Vec::new();
+//!     let mut index = Vec::new();
+//!     let written = write_pack(
+//!         ObjectFormat::Sha1,
+//!         &[PackObject {
+//!             id,
+//!             kind: ObjectKind::Blob,
+//!             data: content,
+//!         }],
+//!         &mut pack,
+//!         &mut index,
+//!         Default::default(),
+//!     )?;
+//!     // Byte 15 is inside this entry's compressed stream, after its object header.
+//!     // This triggers corruption fallback rather than an unsupported header refusal.
+//!     // Damage only this private fixture before opening the reader.
+//!     pack[15] ^= 0x55;
+//!     let packs = repo.git_dir().join("objects/pack");
+//!     std::fs::create_dir_all(&packs)?;
+//!     let path = packs.join(format!("pack-{}.pack", written.checksum));
+//!     std::fs::write(&path, &pack)?;
+//!     std::fs::write(path.with_extension("idx"), &index)?;
+//!
+//!     let objects = repo.objects(Default::default())?;
+//!     let rescued = objects
+//!         .read(id, Default::default())?
+//!         .expect("loose duplicate");
+//!     assert_eq!(rescued.data(), content);
+//!     // The damaged bytes remain invalid despite the successful content rescue.
+//!     // This fixture also breaks raw checksums; a fresh reader would reject it too.
+//!     let diagnostic = objects.verify_packs(&AtomicBool::new(false)).unwrap_err();
+//!     let mut cause: &dyn std::error::Error = &diagnostic;
+//!     let mut messages = Vec::new();
+//!     loop {
+//!         messages.push(cause.to_string());
+//!         let Some(source) = cause.source() else { break };
+//!         cause = source;
+//!     }
+//!     let diagnostic = messages.join(": ");
+//!     assert!(diagnostic.contains(&path.display().to_string()));
+//!     assert!(diagnostic.contains("offset 12")); // First entry offset, after the pack header.
+//!     eprintln!("{diagnostic}");
+//!     // Preserve the original pack for recovery; do not unlink it based on one rescued object.
+//!     assert!(path.exists());
+//!     Ok(())
+//! }
+//! ```
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Read;

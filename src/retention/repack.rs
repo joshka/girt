@@ -77,6 +77,26 @@ pub struct RepackPublished {
 /// resolved; missing/corrupt input needs recovery. A publication failure may leave an unindexed
 /// pack that readers ignore; do not manually delete checksum-named files without fresh ownership
 /// and dependency checks. A successful additive repack is never deletion authorization.
+///
+/// ```
+/// use girt::{InitKind, ObjectFormat, Repository};
+/// use girt::retention::{RepackError, RepackLimits, RetentionError, RetentionPolicy};
+///
+/// let directory = tempfile::tempdir()?;
+/// let path = directory.path().join("r");
+/// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+///
+/// let missing = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"not stored");
+/// let policy = RetentionPolicy::default().with_heads(vec![missing]);
+/// let error = repo.repack_retained(&policy, RepackLimits::default(),
+///     &std::sync::atomic::AtomicBool::new(false)).unwrap_err();
+/// assert!(matches!(
+///     error,
+///     RepackError::Incomplete(RetentionError::MissingObject(id)) if id == missing
+/// ));
+/// // No complete plan existed, so no replacement pair could be published.
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RepackError {

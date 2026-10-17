@@ -218,6 +218,32 @@ impl RetentionError {
     ///
     /// Read failures retain a storage-specific cause; that cause may report corruption,
     /// unsupported features, limits, or I/O and must be inspected before retrying.
+    ///
+    /// ```
+    /// use girt::retention::{RetentionErrorKind, RetentionOutcome, RetentionPolicy};
+    /// use girt::{InitKind, ObjectFormat, Repository};
+    ///
+    /// let directory = tempfile::tempdir()?;
+    /// let path = directory.path().join("r");
+    /// let repo = Repository::init(ObjectFormat::Sha1, path, InitKind::Bare)?;
+    ///
+    /// let missing = girt::ObjectId::for_blob(ObjectFormat::Sha1, b"unavailable head");
+    /// let policy = RetentionPolicy::default().with_heads(vec![missing]);
+    /// let plan = repo.plan_retention(&policy, &std::sync::atomic::AtomicBool::new(false));
+    /// let RetentionOutcome::Incomplete(detail) = plan.outcome else {
+    ///     panic!("missing caller head");
+    /// };
+    /// assert_eq!(detail.kind(), RetentionErrorKind::Malformed);
+    /// // The category selects a route; retain the typed detail for repair diagnostics.
+    /// fn diagnose(error: &dyn std::error::Error) {
+    ///     eprintln!("{error}");
+    ///     if let Some(source) = error.source() {
+    ///         diagnose(source);
+    ///     }
+    /// }
+    /// diagnose(&detail);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn kind(&self) -> RetentionErrorKind {
         match self {
             Self::AggregateReflogByteLimit
