@@ -7,6 +7,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/joshka/girt/compare/v0.10.2...v0.10.3) - 2026-10-17
+
+### Other
+
+- Teach configuration provenance on the website ([#308](https://github.com/joshka/girt/pull/308))
+- complete diff and rewrite workflows ([#303](https://github.com/joshka/girt/pull/303))
+- explain status, checkout and ignore decisions ([#298](https://github.com/joshka/girt/pull/298))
+- complete index lifecycle examples and recovery ([#292](https://github.com/joshka/girt/pull/292))
+- Teach the fetch, push and clone lifecycles in their module docs ([#283](https://github.com/joshka/girt/pull/283))
+- Explain transports, limits and trust in the transport docs ([#279](https://github.com/joshka/girt/pull/279))
+- Teach bounded reference and reftable workflows ([#296](https://github.com/joshka/girt/pull/296))
+- Teach configuration provenance and policy ([#294](https://github.com/joshka/girt/pull/294))
+- Teach repository snapshots and initialization ([#291](https://github.com/joshka/girt/pull/291))
+- Explain object storage policies and recovery ([#289](https://github.com/joshka/girt/pull/289))
+- Teach object views and error recovery ([#287](https://github.com/joshka/girt/pull/287))
+- Publish a project website on GitHub Pages ([#271](https://github.com/joshka/girt/pull/271))
+- Keep a destination reader alive across local push phases ([#250](https://github.com/joshka/girt/pull/250))
+- Keep pack index entry tables at 8 bytes per entry ([#249](https://github.com/joshka/girt/pull/249))
+- Explain remotes, refspecs and credentials in the remote docs ([#277](https://github.com/joshka/girt/pull/277))
+- Teach configured-remote transfers in the workflow docs ([#272](https://github.com/joshka/girt/pull/272))
+- Reflow benchmark publication instructions ([#281](https://github.com/joshka/girt/pull/281))
+- Teach retention and maintenance safety ([#270](https://github.com/joshka/girt/pull/270))
+- Teach configuration resolution, interpretation, and editing ([#265](https://github.com/joshka/girt/pull/265))
+- Teach references and reflog publication ([#262](https://github.com/joshka/girt/pull/262))
+- Teach objects, storage, and history with runnable examples ([#260](https://github.com/joshka/girt/pull/260))
+- Teach crate orientation and repository discovery ([#258](https://github.com/joshka/girt/pull/258))
+- Teach tree diffs and bounded rewrite detection ([#264](https://github.com/joshka/girt/pull/264))
+- Teach staging and raw working-tree workflows ([#257](https://github.com/joshka/girt/pull/257))
+- Publish the jj operation benchmark matrix ([#278](https://github.com/joshka/girt/pull/278))
+- Share validated pack indexes of any size between overlapping readers ([#248](https://github.com/joshka/girt/pull/248))
+- Walk new commits before their trees in native local fetch ([#251](https://github.com/joshka/girt/pull/251))
+- adopt start-and-repair readiness and repair reporting ([#268](https://github.com/joshka/girt/pull/268))
+- publish after an independent Linux check ([#267](https://github.com/joshka/girt/pull/267))
+
 ## [0.10.2](https://github.com/joshka/girt/compare/v0.10.1...v0.10.2) - 2026-10-16
 
 ### Other
