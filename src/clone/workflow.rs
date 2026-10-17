@@ -163,13 +163,36 @@ impl CloneRequest {
         control: TransportControl<'_>,
         mut progress: impl FnMut(&[u8]) -> ControlFlow<()>,
     ) -> Result<CloneReady, CloneTransferError> {
+        self.receive_local_with_progress(
+            source,
+            limits,
+            control,
+            crate::fetch::LocalFetchObserver::default().with_messages(&mut progress),
+        )
+    }
+
+    /// Receives a local clone with optional construction and validation observers.
+    ///
+    /// Uses [`Self::receive_local`]'s selection, cancellation and publication contracts.
+    /// Notifications follow [`crate::fetch::LocalFetchObserver`]; completion precedes installation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same planning and transfer errors as [`Self::receive_local`].
+    pub fn receive_local_with_progress(
+        self,
+        source: impl AsRef<Path>,
+        limits: FetchLimits,
+        control: TransportControl<'_>,
+        observer: crate::fetch::LocalFetchObserver<'_>,
+    ) -> Result<CloneReady, CloneTransferError> {
         let mut saved = None;
         let received = crate::fetch::receive_local(
             source,
             |ad| plan::select(self.plan(ad), &mut saved),
             crate::fetch::LocalFetchRequest::new(limits),
             control,
-            crate::fetch::LocalFetchObserver::default().with_messages(&mut progress),
+            observer,
         );
         let (plan, received) = selected(saved, received)?;
         Ok(CloneReady {

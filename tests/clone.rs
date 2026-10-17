@@ -821,3 +821,45 @@ fn clone_packs_fetched_refs_like_git(
     );
     assert!(report.packed_refs.unwrap().retained.is_empty());
 }
+
+#[test]
+fn local_clone_forwards_construction_and_validation_before_destination_creation() {
+    let source = Source::new();
+    let parent = tempfile::tempdir().unwrap();
+    let destination = parent.path().join("clone");
+    let request = CloneRequest::prepare_tracking(
+        &destination,
+        InitKind::Bare,
+        b"unused",
+        BranchSelection::Default,
+        Reflog::Preserve,
+    )
+    .unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut construction = Vec::new();
+    let mut validation = Vec::new();
+    let ready = request
+        .receive_local_with_progress(
+            source.root.path(),
+            FetchLimits::default(),
+            TransportControl::new(&cancel),
+            girt::fetch::LocalFetchObserver::default()
+                .with_construction(&mut |event| {
+                    assert!(!destination.exists());
+                    construction.push(event);
+                })
+                .with_validation(&mut |event| {
+                    assert!(!destination.exists());
+                    validation.push(event);
+                }),
+        )
+        .unwrap();
+    assert_eq!(
+        construction.last(),
+        Some(&girt::fetch::LocalFetchProgress::Complete)
+    );
+    assert!(validation.last().unwrap().complete);
+    assert!(!destination.exists());
+    ready.finish(FetchUpdateLimits::default(), &cancel).unwrap();
+    assert!(destination.exists());
+}

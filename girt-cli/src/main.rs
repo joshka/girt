@@ -20,6 +20,7 @@ mod diff;
 mod history;
 mod maintenance;
 mod object;
+mod progress;
 mod refs;
 mod repo;
 mod transfer;
@@ -43,6 +44,10 @@ struct Cli {
     /// Print exactly what the equivalent Git command prints.
     #[arg(long, global = true)]
     git: bool,
+
+    /// Suppress terminal progress on stderr.
+    #[arg(short, long, global = true)]
+    quiet: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -133,7 +138,8 @@ fn main() -> ExitCode {
         eprintln!("error: cannot change to {}: {error}", directory.display());
         return ExitCode::FAILURE;
     }
-    let context = Context::new(cli.git);
+    let mut context = Context::new(cli.git);
+    context.progress = !cli.quiet && !cli.git;
     match run(cli.command, &context) {
         Ok(code) => code,
         Err(error) if is_broken_pipe(&error) => ExitCode::SUCCESS,

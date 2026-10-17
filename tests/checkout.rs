@@ -414,3 +414,26 @@ fn checkout_drops_git_written_entry_offset_accelerators() {
     );
     assert!(git(root, &["status", "--porcelain"]).is_empty());
 }
+
+#[test]
+fn progress_counts_applied_operations_before_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = source(temp.path());
+    let baseline = tree(repo.worktree().unwrap());
+    let mut events = Vec::new();
+    let report = repo
+        .checkout_tree_with_progress(
+            Some(baseline),
+            None,
+            Limits::default(),
+            &AtomicBool::new(false),
+            |done, total| events.push((done, total)),
+        )
+        .unwrap();
+    let total = report.applied.len() as u64;
+    assert!(total > 0);
+    assert_eq!(events.first(), Some(&(0, total)));
+    assert_eq!(events.last(), Some(&(total, total)));
+    assert!(events.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+    assert!(report.index_published);
+}

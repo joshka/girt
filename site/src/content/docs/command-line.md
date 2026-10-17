@@ -53,6 +53,28 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 The [CLI README](https://github.com/joshka/girt/blob/main/girt-cli/README.md) maps every command to
 its Git equivalent, and a parity test checks those pairs against `git` on every change.
 
+## Live progress
+
+Clone, fetch, push and checkout show live phases and available object counts on stderr when it is
+connected to a terminal. Known totals include percentages; server messages appear as `remote:`
+lines. Redraws are limited to about ten per second, with a final line for each phase. Checkout
+counts include file and directory operations. Standard output keeps its existing record format.
+
+Use `-q` or `--quiet` to suppress progress, including server progress messages. `--git` also
+suppresses progress, as does redirecting stderr (for example, `2>transfer.log`). Errors and
+explicitly requested logging remain available.
+
+Pack verification, reindexing and maintenance show elapsed activity and final report totals where
+available. The library does not yet expose their intermediate counters or network byte counters, so
+these phases do not show invented percentages or throughput. Remaining hooks are tracked in
+[the progress counter issue](https://github.com/joshka/girt/issues/371).
+
+```sh
+girt clone https://github.com/joshka/girt
+girt --quiet fetch
+girt checkout HEAD 2>checkout.log
+```
+
 ## Errors and logging
 
 Errors print as reports with the chain of causes. `-v`, `-vv` and `-vvv` log girt's operation spans

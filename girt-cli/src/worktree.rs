@@ -363,15 +363,22 @@ pub fn checkout(args: CheckoutArgs, context: &Context) -> Result<ExitCode> {
         None
     };
     let target = tree(&args.revision)?;
-    let report =
-        match repository.checkout_tree(baseline, target, Default::default(), not_cancelled()) {
-            Ok(report) => report,
-            Err(failure) => {
-                let applied = failure.report.applied.len();
-                return Err(color_eyre::eyre::Report::new(failure))
-                    .wrap_err_with(|| format!("checkout failed after {applied} operations"));
-            }
-        };
+    let mut progress = crate::progress::Progress::new(context.progress);
+    let report = match repository.checkout_tree_with_progress(
+        baseline,
+        target,
+        Default::default(),
+        not_cancelled(),
+        |done, total| progress.update("Updating files", done, Some(total)),
+    ) {
+        Ok(report) => report,
+        Err(failure) => {
+            let applied = failure.report.applied.len();
+            return Err(color_eyre::eyre::Report::new(failure))
+                .wrap_err_with(|| format!("checkout failed after {applied} operations"));
+        }
+    };
+    progress.finish();
     if context.git {
         return Ok(ExitCode::SUCCESS);
     }
