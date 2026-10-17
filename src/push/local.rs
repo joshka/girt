@@ -171,6 +171,39 @@ impl<'a> LocalPushRequest<'a> {
 /// # Panics
 ///
 /// Observer panics unwind before incoming objects or references are published.
+///
+/// # Examples
+///
+/// Watch validation progress while pushing to a local repository:
+///
+/// ```
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::PackLimits;
+/// use girt::push::{LocalPushRequest, PreparedPush, PushCommand, PushLimits, send_local};
+/// use girt::refs::RefName;
+/// use girt::transport::TransportControl;
+/// # let (_directory, upstream, repo, main, person) = include!("../doctest/remote.rs");
+/// # let commit = include!("../doctest/commit.rs");
+/// # girt::workflow::fetch(&repo, "origin", &girt::workflow::FetchOptions::new(["+refs/heads/*:refs/remotes/origin/*"]), &girt::workflow::Environment::default(), &mut girt::workflow::NoCallbacks)?;
+/// let next = commit(&repo, &[main], "Next commit")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let command = PushCommand::new(RefName::new("refs/heads/main")?, Some(main), next);
+/// let prepared = PreparedPush::new(&objects, vec![command], &[main], PushLimits::default(), &cancel)?;
+///
+/// let mut validated = None;
+/// let report = send_local(
+///     upstream.git_dir(),
+///     LocalPushRequest::new(&prepared),
+///     TransportControl::new(&cancel),
+///     |progress| validated = Some(progress),
+/// )?;
+/// assert!(report.all_succeeded());
+/// assert!(validated.is_some_and(|progress| progress.complete));
+/// # let _ = person;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn send_local(
     destination: impl AsRef<Path>,
     request: LocalPushRequest<'_>,

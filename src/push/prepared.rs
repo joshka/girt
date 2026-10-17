@@ -328,6 +328,38 @@ impl PreparedPush {
     /// # Errors
     ///
     /// Rejects options without commands, NUL or newline bytes, and packet or request limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::atomic::AtomicBool;
+    ///
+    /// use girt::PackLimits;
+    /// use girt::push::{PreparedPush, PushCommand, PushLimits};
+    /// use girt::refs::RefName;
+    /// # let (_directory, _, repo, _, _) = include!("../doctest/remote.rs");
+    /// # let commit = include!("../doctest/commit.rs");
+    /// let tip = commit(&repo, &[], "Review me")?;
+    /// let command = PushCommand::new(RefName::new("refs/for/main")?, None, tip);
+    /// let objects = repo.objects(PackLimits::default())?;
+    /// let prepared = PreparedPush::new(
+    ///     &objects,
+    ///     vec![command],
+    ///     &[],
+    ///     PushLimits::default(),
+    ///     &AtomicBool::new(false),
+    /// )?
+    /// // Gerrit-style options, sent only if the receiver advertises `push-options`.
+    /// .with_push_options(vec![
+    ///     b"topic=docs".to_vec(),
+    ///     b"r=reviewer@example.com".to_vec(),
+    /// ])?
+    /// .with_progress();
+    /// assert_eq!(prepared.commands().len(), 1);
+    /// assert_eq!(prepared.object_count(), 2);
+    /// assert!(prepared.pack_bytes() > 0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_push_options(mut self, options: Vec<Vec<u8>>) -> Result<Self, Error> {
         if !options.is_empty() && self.commands.is_empty() {
             return Err(Error::Command("push options require commands"));

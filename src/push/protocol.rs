@@ -36,6 +36,52 @@ use crate::refs::RefName;
 /// retrying unknown outcomes. A complete rejection or partial success is an `Ok` report, not an
 /// error: inspect [`PushReport::all_succeeded`] and per-ref results. Stale advertised values and
 /// racing remote updates are checked by the server using each command's old ID.
+///
+/// # Examples
+///
+/// Push over the streams of a `git receive-pack` process. It needs a Git executable, so it is not
+/// run:
+///
+/// ```no_run
+/// use std::process::{Command, Stdio};
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::push::{PreparedPush, PushCommand, PushLimits, send};
+/// use girt::refs::{RefName, Target};
+/// use girt::{PackLimits, Repository};
+///
+/// let repo = Repository::open("project")?;
+/// let objects = repo.objects(PackLimits::default())?;
+/// // Publish the commit at the tip of the local `topic` branch.
+/// let Some(Target::Direct(tip)) = repo
+///     .references()?
+///     .read(&RefName::new("refs/heads/topic")?)?
+/// else {
+///     return Err("refs/heads/topic does not point directly at a commit".into());
+/// };
+/// let command = PushCommand::new(RefName::new("refs/heads/topic")?, None, tip);
+/// let cancel = AtomicBool::new(false);
+/// let prepared = PreparedPush::new(&objects, vec![command], &[], PushLimits::default(), &cancel)?;
+///
+/// let mut server = Command::new("git")
+///     .args(["receive-pack", "/srv/git/project.git"])
+///     .stdin(Stdio::piped())
+///     .stdout(Stdio::piped())
+///     .spawn()?;
+/// let mut input = server.stdin.take().expect("piped");
+/// let mut output = server.stdout.take().expect("piped");
+/// let result = send(&mut output, &mut input, &prepared, &cancel);
+/// // Close the pipes and reap the process whatever happened.
+/// drop((input, output));
+/// let status = server.wait()?;
+/// // A failed push may still have updated references: `PushError::Uncertain` says so.
+/// let report = result?;
+/// if !status.success() {
+///     return Err(format!("git receive-pack failed: {status}").into());
+/// }
+/// assert!(report.all_succeeded(), "{report:?}");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn send(
     reader: &mut impl Read,
     writer: &mut impl Write,
@@ -163,6 +209,14 @@ pub(super) struct Capabilities {
 ///
 /// These values describe discovery, not the receiver's state when a later command is applied.
 /// The receiver must still compare each command's expected old value during publication.
+///
+/// # Examples
+///
+/// A `send_http_checked` or `send_ssh_checked_with_progress` callback
+/// receives one of these. [`PushAdvertisement::target`] answers "where is this reference now?",
+/// and [`PushAdvertisement::receiver_roots`] lists everything the receiver advertised, which
+/// [`crate::workflow::push`] passes to [`PreparedPush::new`] so the pack leaves that history out.
+/// See `send_http_checked` (with the `http` feature) for a complete example.
 #[derive(Debug)]
 pub struct PushAdvertisement {
     refs: HashMap<RefName, ObjectId>,

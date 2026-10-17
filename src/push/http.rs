@@ -70,6 +70,69 @@ pub async fn send_http(
 /// [`PushError::NotSent`]. Post-send failures retain the valid response prefix in
 /// [`PushError::Uncertain`]. Complete receiver rejections are returned in
 /// [`HttpPushOutcome::Sent`] and must be inspected per reference.
+///
+/// # Examples
+///
+/// Push only if the remote's `main` is still where the application last saw it. The check runs on
+/// the live advertisement, before any update command is sent. This needs a server, so it is not
+/// run:
+///
+/// ```no_run
+/// use std::sync::atomic::AtomicBool;
+///
+/// use girt::push::{HttpPushOutcome, PreparedPush, PushCommand, PushLimits, send_http_checked};
+/// use girt::refs::{RefName, Target};
+/// use girt::transport::TransportControl;
+/// use girt::transport::http::HttpRemote;
+/// use girt::{ObjectId, PackLimits, Repository};
+///
+/// let repo = Repository::open("project")?;
+/// let commit = |name: &str| -> Result<ObjectId, Box<dyn std::error::Error>> {
+///     match repo.references()?.read(&RefName::new(name)?)? {
+///         Some(Target::Direct(id)) => Ok(id),
+///         _ => Err(format!("{name} does not point directly at a commit").into()),
+///     }
+/// };
+/// // Where `main` was at the last fetch, and the local commit to publish.
+/// let last_seen = commit("refs/remotes/origin/main")?;
+/// let new = commit("refs/heads/main")?;
+/// let main = RefName::new("refs/heads/main")?;
+///
+/// let objects = repo.objects(PackLimits::default())?;
+/// let cancel = AtomicBool::new(false);
+/// let command = PushCommand::new(main.clone(), Some(last_seen), new);
+/// let prepared = PreparedPush::new(
+///     &objects,
+///     vec![command],
+///     // A full transfer: a pack that relies on `last_seen` would be refused before the callback
+///     // runs if `main` has moved, as `PushFailure::KnowledgeChanged`.
+///     &[],
+///     PushLimits::default(),
+///     &cancel,
+/// )?;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .enable_all()
+///     .build()?;
+/// let outcome = runtime.block_on(async {
+///     let remote = HttpRemote::new("https://example.com/project.git", &[], &[])?;
+///     let outcome = send_http_checked(
+///         &remote,
+///         prepared,
+///         TransportControl::new(&cancel),
+///         |advertisement| advertisement.target(&main) == Some(last_seen),
+///     )
+///     .await?;
+///     Ok::<_, Box<dyn std::error::Error>>(outcome)
+/// })?;
+/// match outcome {
+///     HttpPushOutcome::Sent(report) => println!("all succeeded: {}", report.all_succeeded()),
+///     // No update command was sent: fetch, reconcile, and try again.
+///     HttpPushOutcome::Declined => println!("main is not where it was at the last fetch"),
+///     _ => {}
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub async fn send_http_checked(
     remote: &HttpRemote,
     prepared: PreparedPush,

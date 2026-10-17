@@ -55,6 +55,27 @@ pub enum BranchSelection {
 }
 
 /// HEAD chosen from the advertisement used for the transfer.
+///
+/// # Examples
+///
+/// ```
+/// use girt::clone::CloneHead;
+///
+/// fn describe(head: &CloneHead) -> String {
+///     match head {
+///         CloneHead::Branch { name, .. } => {
+///             format!("on {}", String::from_utf8_lossy(name.as_bytes()))
+///         }
+///         CloneHead::Detached(id) => format!("detached at {id}"),
+///         // The remote is empty: the branch exists only as `HEAD`'s target.
+///         CloneHead::Unborn(name) => {
+///             format!("on unborn {}", String::from_utf8_lossy(name.as_bytes()))
+///         }
+///         _ => "unknown".to_owned(),
+///     }
+/// }
+/// # let _ = describe;
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum CloneHead {

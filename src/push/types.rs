@@ -344,6 +344,36 @@ impl PushLimits {
 }
 
 /// Server acknowledgement, preserving rejection text without assuming UTF-8.
+///
+/// # Examples
+///
+/// Print results the way `git push` does. Rejection reasons come from the receiver, so treat them
+/// as untrusted text:
+///
+/// ```
+/// use girt::push::{PushReport, Status};
+///
+/// fn summarize(report: &PushReport) -> Vec<String> {
+///     report
+///         .refs
+///         .iter()
+///         .map(|result| {
+///             let name = String::from_utf8_lossy(result.command.name.as_bytes());
+///             match &result.status {
+///                 Some(Status::Ok) => format!(" * {name}"),
+///                 Some(Status::Rejected(reason)) => {
+///                     // Escape control characters so a reason can't rewrite the terminal.
+///                     let reason = String::from_utf8_lossy(reason);
+///                     format!(" ! [remote rejected] {name} ({})", reason.escape_debug())
+///                 }
+///                 // No acknowledgement: the outcome is unknown, not a rejection.
+///                 _ => format!(" ? {name} (unknown)"),
+///             }
+///         })
+///         .collect()
+/// }
+/// # let _ = summarize;
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Status {
