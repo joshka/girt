@@ -395,7 +395,8 @@ enum State {
         fanouts: ReadDir,
         prefix: String,
         directory: PathBuf,
-        entries: ReadDir,
+        // Boxed: a Windows `ReadDir` holds its find data inline, so two would dwarf the others.
+        entries: Box<ReadDir>,
     },
     Done,
 }
@@ -449,7 +450,7 @@ impl LooseIds<'_> {
                             fanouts,
                             prefix: prefix.to_owned(),
                             directory,
-                            entries,
+                            entries: Box::new(entries),
                         },
                         _ => State::Fanouts(fanouts),
                     };
