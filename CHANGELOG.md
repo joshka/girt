@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.2](https://github.com/joshka/girt/compare/girt-v0.11.1...girt-v0.11.2) - 2026-10-17
+
+### Other
+
+- Move the cargo-deny, release-plz and Vale configs into .config ([#400](https://github.com/joshka/girt/pull/400))
+- Load Git's default configuration sources in one library call ([#395](https://github.com/joshka/girt/pull/395))
+- Box the loose-object scan's directory iterator to fix Windows clippy ([#394](https://github.com/joshka/girt/pull/394))
+
 ## [0.11.1](https://github.com/joshka/girt/compare/girt-v0.11.0...girt-v0.11.1) - 2026-10-17
 
 ### Other
