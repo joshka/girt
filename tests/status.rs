@@ -25,6 +25,10 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
             "-c",
             "commit.gpgsign=false",
             "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            "-c",
             "core.fsmonitor=false",
             "-c",
             "index.version=2",
@@ -668,4 +672,44 @@ fn snapshot(root: &Path) -> FileSnapshot {
     }
     values.sort();
     values
+}
+
+#[rstest]
+#[case::aggregate(5, 8, Some("worktree bytes"))]
+#[case::per_file(4, 10, Some("file bytes"))]
+#[case::exact(5, 10, None)]
+fn distinguishes_worktree_and_file_byte_limits(
+    #[values(ObjectFormat::Sha1, ObjectFormat::Sha256)] format: ObjectFormat,
+    #[values(false, true)] links: bool,
+    #[case] file_bytes: usize,
+    #[case] total_bytes: usize,
+    #[case] expected: Option<&str>,
+) {
+    let (_temp, repo) = fixture_in(format);
+    let root = repo.worktree().unwrap();
+    for path in ["a", "b"] {
+        if links {
+            symlink("12345", root.join(path)).unwrap();
+        } else {
+            fs::write(root.join(path), b"12345").unwrap();
+        }
+    }
+    git(root, &["add", "a", "b"]);
+    git(root, &["commit", "-qm", "Original five-byte entries"]);
+    assert!(git(root, &["status", "--porcelain=v1", "--untracked-files=no"]).is_empty());
+    let result = repo.raw_status(
+        Baseline::Head,
+        Untracked::Omit,
+        Limits::default()
+            .with_max_file_bytes(file_bytes)
+            .with_max_worktree_bytes(total_bytes),
+        &AtomicBool::new(false),
+    );
+    match expected {
+        Some(label) => match result {
+            Err(Error::Limit(actual)) => assert_eq!(actual, label),
+            other => panic!("expected {label} limit, got {other:?}"),
+        },
+        None => assert!(result.unwrap().unstaged.is_empty()),
+    }
 }

@@ -263,7 +263,8 @@ impl Scan<'_> {
             let count =
                 rustix::fs::readlinkat_raw(fd, OsStr::from_bytes(name), bytes.as_mut_slice())
                     .map_err(|source| io(path, source))?;
-            if count == capacity || count > max {
+            self.check_bytes(count)?;
+            if count == capacity {
                 return Err(Error::Limit("file bytes"));
             }
             bytes.truncate(count);
@@ -291,6 +292,17 @@ impl Scan<'_> {
         Ok(())
     }
 
+    /// Keep the per-file ceiling distinct from the remaining aggregate read budget.
+    fn check_bytes(&self, size: usize) -> Result<(), Error> {
+        if size > self.limits.max_file_bytes {
+            return Err(Error::Limit("file bytes"));
+        }
+        if size > self.limits.max_worktree_bytes {
+            return Err(Error::Limit("worktree bytes"));
+        }
+        Ok(())
+    }
+
     fn read_file(
         &self,
         fd: &OwnedFd,
@@ -312,9 +324,7 @@ impl Scan<'_> {
             return Err(Error::Changed(path.to_vec()));
         }
         let size = usize::try_from(before.st_size).map_err(|_| Error::Limit("file bytes"))?;
-        if size > max {
-            return Err(Error::Limit("file bytes"));
-        }
+        self.check_bytes(size)?;
         let mut file = File::from(opened);
         let mut bytes = Vec::new();
         let mut buffer = [0u8; 64 * 1024];
@@ -324,9 +334,7 @@ impl Scan<'_> {
             let count = file
                 .read(&mut buffer[..remaining.saturating_add(1).min(64 * 1024)])
                 .map_err(|source| io(path, source))?;
-            if count > remaining {
-                return Err(Error::Limit("file bytes"));
-            }
+            self.check_bytes(bytes.len() + count)?;
             if count == 0 {
                 break;
             }
