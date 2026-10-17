@@ -294,6 +294,18 @@ impl std::fmt::Debug for CredentialHelper {
 
 /// Why a credential lookup or notification failed. Errors never contain credential values.
 ///
+/// - [`UnapprovedHelper`](Self::UnapprovedHelper): configuration names a helper the application did
+///   not map to a program. Approve it, or deliberately leave it out.
+/// - [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): the user declined a prompt,
+///   the cancel flag was set, or time ran out. Treat it as an authentication failure, not a bug.
+/// - [`Io`](Self::Io) and [`Exit`](Self::Exit): a helper program could not run or failed. During
+///   [`CredentialSession::fill`] a failing helper is recorded in
+///   [`CredentialSession::helper_failures`] and later helpers still run; during
+///   [`CredentialSession::approve`] or [`CredentialSession::reject`] it stops the notifications,
+///   and helpers already notified are not rolled back.
+/// - [`Protocol`](Self::Protocol): the context contains CR, LF or NUL, a helper's answer was
+///   malformed, or `credential.*` configuration is invalid.
+///
 /// # Examples
 ///
 /// A configured helper the application has not approved stops the lookup before anything runs:

@@ -39,6 +39,24 @@ impl std::fmt::Debug for ParsedUrl<'_> {
 }
 
 /// A value-free parsing or local-path expansion error.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use girt::remote::{ParsedUrl, UrlError};
+///
+/// assert_eq!(ParsedUrl::parse(b"").err(), Some(UrlError::Syntax));
+///
+/// // Expanding a relative path needs an absolute base, such as the process's working directory.
+/// let relative = ParsedUrl::parse(b"../upstream.git")?;
+/// assert_eq!(
+///     relative.canonicalize_local(Path::new("work")),
+///     Err(UrlError::RelativeBase)
+/// );
+/// # Ok::<(), UrlError>(())
+/// ```
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UrlError {

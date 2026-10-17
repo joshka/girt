@@ -200,6 +200,16 @@ impl Protocol {
 
 /// Sanitized configuration failure. No URL, path, or environment value appears in Display/Debug.
 ///
+/// - [`Missing`](Self::Missing): the remote has no URL for this direction. Add one with
+///   [`RemoteConfig`](super::RemoteConfig).
+/// - [`Refused`](Self::Refused): `GIT_ALLOW_PROTOCOL`, `protocol.allow` or `protocol.<name>.allow`
+///   forbids the URL's protocol. This is policy, not a broken URL; tell the user which setting
+///   applies rather than retrying.
+/// - [`Syntax`](Self::Syntax): after `insteadOf` rewriting, the URL is not a recognizable local
+///   path, `file://` URL or network URL.
+/// - [`Configuration`](Self::Configuration): an `insteadOf` rule or protocol policy value is
+///   malformed, such as `protocol.allow = sometimes`.
+///
 /// # Examples
 ///
 /// ```

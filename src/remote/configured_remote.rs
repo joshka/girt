@@ -47,6 +47,35 @@ impl std::fmt::Debug for ConfiguredRemote {
 /// Occurrences are one-based positions within the original key's values, including values before
 /// resets. Errors deliberately omit URL bytes, which may contain credentials. Unsupported syntax
 /// is reported only when reached in validation order; preceding malformed values still win.
+///
+/// Report [`Url`](Self::Url), [`Refspec`](Self::Refspec) and [`TagOption`](Self::TagOption) as
+/// configuration mistakes, naming the remote, key and occurrence so the user can find the value.
+/// [`UnsupportedUrlSyntax`](Self::UnsupportedUrlSyntax) is different: the value is valid for Git
+/// but outside what girt interprets, so the caller should treat the whole remote as unsupported
+/// (for example, by falling back to another implementation) instead of calling it invalid.
+///
+/// # Examples
+///
+/// ```
+/// use girt::Config;
+/// use girt::remote::{ConfiguredRemote, ConfiguredRemoteError, ConfiguredUrlError};
+///
+/// let config =
+///     Config::parse(b"[remote \"origin\"]\nurl = https://example.com:99999/project.git\n")?;
+/// let error = ConfiguredRemote::find(&config, b"origin").unwrap_err();
+/// assert_eq!(
+///     error,
+///     ConfiguredRemoteError::Url {
+///         key: "url",
+///         occurrence: 1,
+///         rewritten: false,
+///         source: ConfiguredUrlError::Port
+///     },
+/// );
+/// // The message names the key and occurrence but never the URL, which may contain a password.
+/// assert_eq!(error.to_string(), "invalid remote url (value 1)");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfiguredRemoteError {

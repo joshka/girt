@@ -1,6 +1,29 @@
 //! Bounded URL validation for configured remote snapshots, not transport admission.
 
 /// A value-free configured URL validation diagnostic.
+///
+/// The URL in configuration is malformed, except for [`Unsupported`](Self::Unsupported), which
+/// marks valid Git syntax that girt does not interpret yet. Report malformed values to the user
+/// with the remote and key, and treat an unsupported value as a limitation of girt rather than a
+/// mistake in the configuration.
+///
+/// # Examples
+///
+/// ```
+/// use girt::remote::{ConfiguredUrlError, parse_configured_url};
+///
+/// let error = |url: &[u8]| parse_configured_url(url).err();
+/// assert_eq!(
+///     error(b"https://example.com:0/project.git"),
+///     Some(ConfiguredUrlError::Port)
+/// );
+/// // A Windows UNC path is valid Git syntax that girt does not interpret yet.
+/// assert_eq!(
+///     error(b"\\\\server\\share\\project.git"),
+///     Some(ConfiguredUrlError::Unsupported)
+/// );
+/// assert_eq!(error(b"https://example.com/project.git"), None);
+/// ```
 #[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfiguredUrlError {

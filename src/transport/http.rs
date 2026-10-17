@@ -139,6 +139,19 @@ impl std::fmt::Debug for HttpRemote {
 /// started inside [`PushError::Uncertain`](crate::push::PushError::Uncertain), because the server
 /// may have applied it.
 ///
+/// - [`Configuration`](Self::Configuration): the endpoint, headers, TLS settings, proxy or a
+///   redirect is unacceptable. Fix the configuration; retrying won't help.
+/// - [`Status`](Self::Status): the server answered with something other than `200`. A `401` after
+///   credentials were supplied means they were rejected; `404` usually means a wrong URL.
+/// - [`Network`](Self::Network): DNS, connection, TLS or framing failed, including untrusted
+///   certificates. Retrying may help for transient failures.
+/// - [`Protocol`](Self::Protocol): the response is not a smart Git HTTP response, for example a
+///   login page from a proxy or a dumb-HTTP server.
+/// - [`Limit`](Self::Limit), [`Cancelled`](Self::Cancelled) and [`Deadline`](Self::Deadline): a
+///   caller-set bound stopped the exchange.
+/// - [`Credential`](Self::Credential): a credential helper failed while the adapter reported the
+///   server's answer to it.
+///
 /// # Examples
 ///
 /// ```

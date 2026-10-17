@@ -64,6 +64,14 @@ impl std::fmt::Debug for RemoteConfig<'_> {
 
 /// A local remote configuration operation could not be prepared; no draft changes were applied.
 ///
+/// The document is unchanged, so the operation can be corrected and retried.
+/// [`NotLocal`](Self::NotLocal) means this file has no section for the remote, although a
+/// remote of that name may still come from an included or global file. [`Exists`](Self::Exists)
+/// means the new name is taken. [`MissingOccurrence`](Self::MissingOccurrence) means the
+/// zero-based index is past the end of that list. [`AmbiguousSelector`](Self::AmbiguousSelector)
+/// means a branch section repeats `remote` or `pushRemote`, so girt won't guess which to update.
+/// [`Syntax`](Self::Syntax) and [`Refspec`](Self::Refspec) reject values that cannot be written.
+///
 /// # Examples
 ///
 /// ```

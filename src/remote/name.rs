@@ -52,6 +52,10 @@ pub struct InvalidRemoteName {
 }
 
 /// Syntax preventing a remote name from being embedded in a tracking reference.
+///
+/// A remote's name becomes part of its remote-tracking references, `refs/remotes/<name>/…`, so it
+/// must follow the reference-name rules. Ask the user for another name; girt never rewrites a name
+/// to make it valid. [`validate_name`](super::validate_name) has an example.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum RemoteNameError {

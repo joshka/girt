@@ -10,6 +10,32 @@ use super::{ConfiguredUrlParts, Protocol};
 ///
 /// Diagnostics never include the supplied URL, which may contain credentials. Parsing is completed
 /// before filesystem resolution starts, allowing callers to distinguish argument and path errors.
+///
+/// A command-line client can report [`Parse`](Self::Parse) as a usage error ("that isn't a
+/// repository URL") and [`Path`](Self::Path) as an environment problem (the base directory or a
+/// symbolic link could not be resolved), which is how jj uses it.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use girt::remote::{UserUrlError, UserUrlParseError, UserUrlPathError, canonicalize_user_url};
+///
+/// let root = Path::new("/");
+/// assert!(matches!(
+///     canonicalize_user_url(b"https://", root),
+///     Err(UserUrlError::Parse(UserUrlParseError::MissingHost)),
+/// ));
+/// assert!(matches!(
+///     canonicalize_user_url(b"git@example.com:", root),
+///     Err(UserUrlError::Parse(UserUrlParseError::MissingScpPath)),
+/// ));
+/// assert!(matches!(
+///     canonicalize_user_url(b"../upstream.git", Path::new("relative")),
+///     Err(UserUrlError::Path(UserUrlPathError::RelativeBase)),
+/// ));
+/// ```
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum UserUrlError {
