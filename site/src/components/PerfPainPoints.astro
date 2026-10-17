@@ -1,0 +1,120 @@
+---
+// What a jj-on-girt user would notice, before any ratios: failures, then band changes, then cells
+// that are slow in stock jj as well.
+import {
+  GROUPS,
+  ISSUES_URL,
+  bandLabels,
+  formatMs,
+  jjLevelSlowCells,
+  operationLabel,
+  painPoints,
+  type PainPoint,
+} from '../data/jj-performance';
+
+interface Props {
+  kind: 'failures' | 'slower' | 'jj';
+}
+
+const { kind } = Astro.props;
+const points = painPoints();
+const where = (point: PainPoint) => `${point.size} (${point.cell.row.repo})`;
+const issuesOf = (list: PainPoint[]) => [
+  ...new Set(list.flatMap((point) => point.cell.row.issues ?? [])),
+];
+
+// Failures read best as one line per operation listing the affected sizes.
+const failures = new Map<string, PainPoint[]>();
+for (const point of points.filter((point) => point.extraMs == null)) {
+  const key = point.operation.key;
+  failures.set(key, [...(failures.get(key) ?? []), point]);
+}
+const slower = points.filter((point) => point.extraMs != null);
+const jjSlow = jjLevelSlowCells();
+const outcomeText = (point: PainPoint) =>
+  point.cell.outcome === 'timeout' ? 'times out' : point.cell.outcome === 'refused' ? 'refused' : 'no result';
+---
+
+{
+  kind === 'failures' &&
+    (failures.size === 0 ? (
+      <p>Every measured operation completes with girt.</p>
+    ) : (
+      <ul>
+        {[...failures.values()].map((list) => (
+          <li>
+            <code>{operationLabel(list[0].operation)}</code>:{' '}
+            {list
+              .map(
+                (point) =>
+                  `${outcomeText(point)} on ${where(point)}, where stock jj takes ${
+                    point.cell.row.stock_ms == null ? 'no time (it fails too)' : formatMs(point.cell.row.stock_ms)
+                  }`,
+              )
+              .join('; ')}
+            .
+            {issuesOf(list).map((issue) => (
+              <>
+                {' '}
+                <a href={`${ISSUES_URL}${issue}`}>girt issue {issue}</a>
+              </>
+            ))}
+          </li>
+        ))}
+      </ul>
+    ))
+}
+
+{
+  kind === 'slower' &&
+    (slower.length === 0 ? (
+      <p>No operation is noticeably slower because of girt.</p>
+    ) : (
+      GROUPS.map((group) => {
+        const list = slower.filter((point) => point.group === group);
+        const labels = bandLabels(group);
+        return (
+          list.length > 0 && (
+            <>
+              <p>
+                <strong>Run {group.id === 'constant' ? 'constantly' : group.title.toLowerCase()}:</strong>
+              </p>
+              <ul>
+                {list.map((point) => (
+                  <li>
+                    <code>{operationLabel(point.operation)}</code> on {where(point)}:{' '}
+                    <strong>{formatMs(point.cell.row.girt_ms!)}</strong> instead of{' '}
+                    {formatMs(point.cell.row.stock_ms!)} (+{formatMs(point.extraMs!)}
+                    {point.cell.girtBand! > point.cell.stockBand! &&
+                      `, from ${labels[point.cell.stockBand!]} to ${labels[point.cell.girtBand!]}`}
+                    ).
+                    {issuesOf([point]).map((issue) => (
+                      <>
+                        {' '}
+                        <a href={`${ISSUES_URL}${issue}`}>girt issue {issue}</a>
+                      </>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        );
+      })
+    ))
+}
+
+{
+  kind === 'jj' && (
+    <ul>
+      {jjSlow.map((point) => (
+        <li>
+          <code>{operationLabel(point.operation)}</code> on {where(point)}: stock jj{' '}
+          {formatMs(point.cell.row.stock_ms!)}
+          {point.cell.row.git_ms != null && <>, Git {formatMs(point.cell.row.git_ms)}</>}
+          {point.cell.outcome === 'ok' && <>, jj with girt {formatMs(point.cell.row.girt_ms!)}</>}.
+        </li>
+      ))}
+    </ul>
+  )
+}

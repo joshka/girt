@@ -1,0 +1,80 @@
+name: Site
+
+# Builds the Starlight site in site/ on pull requests that touch it, and deploys it to GitHub Pages
+# from main. The performance page renders the committed benchmark JSON in docs/, so changes to that
+# data rebuild the site too.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/site.yml"
+      - "site/**"
+      - "docs/jj-performance.json"
+      - "docs/jj-performance-provenance.json"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/site.yml"
+      - "site/**"
+      - "docs/jj-performance.json"
+      - "docs/jj-performance-provenance.json"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The site commits no binary images today; any future image must use Git LFS.
+          lfs: true
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.node-version
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Type-check
+        run: pnpm check
+      - name: Build and check internal links
+        run: pnpm build
+      - name: Check external and docs.rs links
+        run: pnpm check:links
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy site
+    needs: build
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      # GitHub Pages deployments authenticate with OIDC.
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

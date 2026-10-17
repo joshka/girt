@@ -1,0 +1,135 @@
+/* Stock Starlight with a teal accent. Grays stay at Starlight's defaults. */
+:root {
+  --sl-color-accent-low: #0b2e2a;
+  --sl-color-accent: #128275;
+  --sl-color-accent-high: #a7e8dd;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #c9eee7;
+  --sl-color-accent: #0d6b61;
+  --sl-color-accent-high: #0a3f39;
+}
+
+/* Benchmark bands: the fastest band is green, the slowest red. Text colours meet WCAG AA on each
+   background in both themes. */
+:root {
+  --perf-band-0-bg: #12391f;
+  --perf-band-0-fg: #b6f0c4;
+  --perf-band-1-bg: #3a3410;
+  --perf-band-1-fg: #f3e39a;
+  --perf-band-2-bg: #4a2a0c;
+  --perf-band-2-fg: #ffcf9e;
+  --perf-band-3-bg: #4f1717;
+  --perf-band-3-fg: #ffc2c2;
+  --perf-failed-bg: #2f2f3a;
+  --perf-failed-fg: #e6e6f0;
+}
+
+:root[data-theme='light'] {
+  --perf-band-0-bg: #d6f5de;
+  --perf-band-0-fg: #0f4a22;
+  --perf-band-1-bg: #faf0c2;
+  --perf-band-1-fg: #574800;
+  --perf-band-2-bg: #ffe2c4;
+  --perf-band-2-fg: #6b3300;
+  --perf-band-3-bg: #ffd6d6;
+  --perf-band-3-fg: #7a1010;
+  --perf-failed-bg: #e4e4ec;
+  --perf-failed-fg: #23232e;
+}
+
+.perf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.perf-scroll {
+  overflow-x: auto;
+}
+
+.sl-markdown-content :is(.perf-table, .perf-facts) {
+  display: table;
+  width: 100%;
+  font-size: var(--sl-text-sm);
+}
+
+.perf-table th[scope='row'] {
+  min-width: 12rem;
+}
+
+.perf-table td {
+  min-width: 9rem;
+  vertical-align: top;
+}
+
+.perf-workload,
+.perf-detail {
+  display: block;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-xs);
+  font-weight: normal;
+}
+
+.perf-git {
+  color: var(--sl-color-gray-3);
+}
+
+.perf-chip {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 0.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.perf-chip.band-0 {
+  background: var(--perf-band-0-bg);
+  color: var(--perf-band-0-fg);
+}
+.perf-chip.band-1 {
+  background: var(--perf-band-1-bg);
+  color: var(--perf-band-1-fg);
+}
+.perf-chip.band-2 {
+  background: var(--perf-band-2-bg);
+  color: var(--perf-band-2-fg);
+}
+.perf-chip.band-3 {
+  background: var(--perf-band-3-bg);
+  color: var(--perf-band-3-fg);
+}
+.perf-chip.perf-failed {
+  background: var(--perf-failed-bg);
+  color: var(--perf-failed-fg);
+  border: 1px dashed currentColor;
+}
+
+.perf-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+  font-size: var(--sl-text-xs);
+}
+
+.perf-tag {
+  padding: 0 0.35rem;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+}
+
+.perf-tag.tag-girt {
+  color: var(--sl-color-text-accent);
+}
+
+.perf-tag.tag-jj,
+.perf-tag.tag-boundary {
+  color: var(--sl-color-gray-2);
+}
+
+.perf-empty {
+  color: var(--sl-color-gray-3);
+}

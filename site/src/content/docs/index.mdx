@@ -1,0 +1,41 @@
+---
+title: girt
+description: An idiomatic Rust Git library. It reads and writes Git's own formats and refuses what it doesn't support.
+template: splash
+hero:
+  tagline: An idiomatic Rust Git library. It reads and writes Git's formats exactly and refuses what it doesn't support.
+  actions:
+    - text: Get started
+      link: /girt/getting-started/
+      icon: right-arrow
+    - text: API reference
+      link: https://docs.rs/girt/latest/girt/
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Git's concepts, directly" icon="seti:rust">
+    Objects, trees, commits, references, the index and repositories are Rust types. Applications
+    choose what to write, what to publish and when to touch a working tree.
+  </Card>
+  <Card title="Git formats, exactly" icon="approve-check">
+    SHA-1 and SHA-256 repositories, loose and packed objects, files and reftable references, and
+    index v2–v4. Every format girt supports is checked against the Git executable.
+  </Card>
+  <Card title="Explicit refusals" icon="warning">
+    Unsupported inputs return an error instead of a guess. Operations that delete or rewrite data
+    verify the replacement before they retire anything.
+  </Card>
+  <Card title="Built for jj" icon="rocket">
+    girt's first consumer is [jj](https://github.com/jj-vcs/jj). An experimental jj branch runs on
+    girt with no gix, libgit2 or Git subprocess.
+  </Card>
+</CardGrid>
+
+<CardGrid>
+  <LinkCard title="Overview" href="/girt/overview/" description="What girt is, who it's for and where it stands." />
+  <LinkCard title="jj on girt benchmark" href="/girt/performance/jj-benchmark/" description="jj with girt compared with stock jj and Git, grouped by how often you run each command." />
+</CardGrid>
