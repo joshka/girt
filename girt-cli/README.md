@@ -29,7 +29,7 @@ hyperfine 'girt object batch --check < ids' 'git cat-file --batch-check < ids'
 | `repo info`                                                         | `git rev-parse --git-dir --git-common-dir --show-toplevel --is-bare-repository --show-object-format` |
 | `init`                                                              | `git init`                                                                                           |
 | `object id` / `hash` / `show` / `info` / `cat` / `exists` / `batch` | `git rev-parse --verify` / `hash-object` / `cat-file -p` / `-t`, `-s` / raw / `-e` / `--batch`       |
-| `object list` / `count`                                           | `git cat-file --batch-all-objects --batch-check` / `git count-objects -v`                            |
+| `object list` / `count`                                             | `git cat-file --batch-all-objects --batch-check` / `git count-objects -v`                            |
 | `tree list`                                                         | `git ls-tree`                                                                                        |
 | `ref list` / `show` / `set` / `delete` / `log`                      | `git for-each-ref` / `rev-parse` / `update-ref` / `update-ref -d` / `reflog show`                    |
 | `log`                                                               | `git log`                                                                                            |

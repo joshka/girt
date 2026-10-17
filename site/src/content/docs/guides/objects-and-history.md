@@ -114,8 +114,7 @@ sizes in pack order without decoding payloads.
 
 Alternates are borrowed: a pruning tool must check `is_alternate` and leave them alone. Multi-pack
 indexes are not read and stray files are not reported. See
-[Objects::stores](https://docs.rs/girt/latest/girt/objects/struct.Objects.html#method.stores) for
-the contracts.
+[object reader](https://docs.rs/girt/latest/girt/objects/struct.Objects.html) for the contracts.
 
 ## Choose the history query
 
