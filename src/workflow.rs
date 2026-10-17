@@ -113,11 +113,12 @@
 //!    `protocol.version` (v2 when unset, as Git does) and accept a v0 or v1 answer.
 //! 5. **Validate and install.** The received pack is checked in full (framing, object identities,
 //!    delta chains and the connectivity of every selected tip) before it is installed.
-//! 6. **Publish.** The references the fetch changes are checked as one batch: each must still have
-//!    the value seen before the transfer, and each move must be allowed by its refspec. If any
-//!    check fails, none is changed, so a reference another process moved meanwhile is never
-//!    overwritten. Publication itself is sequential: an I/O failure partway through can leave some
-//!    references updated, and the error reports which.
+//! 6. **Publish.** First every planned change is checked against its refspec's rules, such as
+//!    fast-forwarding; if any check fails, no reference changes. Then stale references are pruned
+//!    in one transaction and the remaining references updated in a second, each conditional on the
+//!    values seen before the transfer. A reference another process moved meanwhile is never
+//!    overwritten, but that conflict can be detected after pruning has already happened, and an I/O
+//!    failure can leave some references updated. The error reports what was published.
 //!
 //! [`push`] instead reads the remote's advertisement, sends a pack without the history the remote
 //! already has, and lets the remote check each command's expected value. Commands succeed or fail
@@ -314,10 +315,12 @@ pub fn remote_head(
 /// added. A typical call passes the remote's configured refspecs, such as
 /// `+refs/heads/*:refs/remotes/origin/*`.
 ///
-/// Objects are validated and installed before any reference moves. The reference updates are
-/// then checked as one batch: every destination must still have the value it had when the fetch
-/// began, and every move must be allowed by its refspec. If any check fails, no reference is
-/// changed, so a reference moved by another process during the transfer is never overwritten.
+/// Objects are validated and installed before any reference moves. Every planned change is then
+/// checked against its refspec's rules; if one fails, no reference changes. Pruned references
+/// are deleted in one transaction and the other changes applied in a second, each requiring the
+/// destination to still have the value it had when the fetch began, so a reference moved by
+/// another process during the transfer is never overwritten. Because the transactions are
+/// separate, a conflict in the second can be reported after pruning has happened.
 ///
 /// # What is and isn't updated
 ///
