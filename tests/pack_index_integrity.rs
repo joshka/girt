@@ -1,9 +1,13 @@
 //! A damaged `.idx` must fail a read or an explicit verification, never yield wrong content.
 //!
-//! Opening a store checks the index structure but not its own trailing checksum, as Git does; the
-//! checksum belongs to [`girt::Objects::verify_packs`]. Each case damages a Git-generated index and
-//! checks every recorded object, with and without a recomputed index checksum, so that the
-//! structural checks rather than the checksum are what catch the damage.
+//! Opening a store checks what Git checks when it opens an index: the header, the table sizes the
+//! entry count implies, a monotonic fanout, the pack's object count and the pack checksum the index
+//! records. Damage Git only meets during a lookup, such as an out-of-order name, a bad offset or a
+//! large-offset slot outside its table, fails the read that meets it, as in Git, and leaves other
+//! objects readable. The index's own trailing checksum and its whole structure belong to
+//! [`girt::Objects::verify_packs`]. Each case damages a Git-generated index, often with a
+//! recomputed index checksum so that the structural checks rather than the checksum are what catch
+//! the damage, and compares every recorded object's read with `git cat-file`.
 #[path = "support/pack_git.rs"]
 mod pack_git;
 
@@ -11,7 +15,7 @@ use std::fs;
 use std::sync::atomic::AtomicBool;
 
 use girt::{ObjectFormat, ObjectReadError, Objects, PackLimits, ReadLimits};
-use pack_git::{Fixture, git, git_output};
+use pack_git::{Fixture, git_output};
 use rstest::rstest;
 
 struct Layout {
@@ -74,21 +78,83 @@ fn corrupt_artifacts(result: Result<Objects, ObjectReadError>) -> &'static str {
     }
 }
 
-/// Every recorded object either fails to read or reads exactly as Git wrote it.
-fn assert_no_wrong_content(fixture: &Fixture, objects: &Objects) -> usize {
-    let mut failed = 0;
-    for (id, kind, data) in &fixture.records {
-        match objects.read(*id, ReadLimits::default()) {
-            Ok(Some(object)) => {
-                assert_eq!(
-                    (object.id(), object.kind(), object.data()),
-                    (*id, *kind, &data[..])
-                );
-            }
-            Ok(None) | Err(_) => failed += 1,
-        }
-    }
+/// Which recorded objects girt reads, asserting that each read returns exactly what Git wrote.
+fn girt_reads(fixture: &Fixture, objects: &Objects) -> Vec<bool> {
+    fixture
+        .records
+        .iter()
+        .map(
+            |(id, kind, data)| match objects.read(*id, ReadLimits::default()) {
+                Ok(Some(object)) => {
+                    assert_eq!(
+                        (object.id(), object.kind(), object.data()),
+                        (*id, *kind, &data[..])
+                    );
+                    true
+                }
+                Ok(None) | Err(_) => false,
+            },
+        )
+        .collect()
+}
+
+/// Which recorded objects `git cat-file` reads from the same damaged repository.
+fn git_reads(fixture: &Fixture) -> Vec<bool> {
+    fixture
+        .records
+        .iter()
+        .map(|(id, kind, _)| {
+            git_output(
+                fixture.root.path(),
+                &["cat-file", kind.as_str(), &id.to_string()],
+                b"",
+            )
+            .status
+            .success()
+        })
+        .collect()
+}
+
+/// Opens the damaged store and checks that girt reads exactly the objects Git reads. Returns the
+/// store and the number of objects that fail.
+fn reads_like_git(fixture: &Fixture) -> (Objects, usize) {
+    let objects = open(fixture).unwrap();
+    let girt = girt_reads(fixture, &objects);
+    assert_eq!(girt, git_reads(fixture));
+    let failed = girt.iter().filter(|read| !**read).count();
+    (objects, failed)
+}
+
+/// Like [`reads_like_git`] for damage that some read meets and explicit verification finds.
+fn fails_reads_like_git(fixture: &Fixture) -> usize {
+    let (objects, failed) = reads_like_git(fixture);
+    assert!(failed > 0, "the damage was not met");
+    assert!(objects.verify_packs(&AtomicBool::new(false)).is_err());
     failed
+}
+
+/// The read error for `id` with all of its causes.
+fn read_error(objects: &Objects, id: girt::ObjectId) -> String {
+    let error = objects.read(id, ReadLimits::default()).unwrap_err();
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        message = format!("{message}: {cause}");
+        source = cause.source();
+    }
+    message
+}
+
+fn git_rejects(fixture: &Fixture) -> bool {
+    let index = fixture.index_path.to_str().unwrap();
+    !git_output(fixture.root.path(), &["verify-pack", index], b"")
+        .status
+        .success()
+}
+
+/// Every object Git reads fails in Git too: no lookup succeeds.
+fn git_reads_nothing(fixture: &Fixture) -> bool {
+    !git_reads(fixture).into_iter().any(|read| read)
 }
 
 #[rstest]
@@ -97,85 +163,113 @@ fn assert_no_wrong_content(fixture: &Fixture, objects: &Objects) -> usize {
 fn damaged_index_checksum_reads_like_git_and_fails_verification(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
     damage(&fixture, false, |_, index| *index.last_mut().unwrap() ^= 1);
-    // Git reads both a whole and a delta entry through the damaged index.
-    for id in [fixture.ordinary, fixture.delta] {
-        let (_, _, data) = fixture
-            .records
-            .iter()
-            .find(|record| record.0 == id)
-            .unwrap();
-        let shown = git(
-            fixture.root.path(),
-            &["cat-file", "-p", &id.to_string()],
-            b"",
-        );
-        assert_eq!(shown, *data);
-    }
-    let path = fixture.index_path.to_str().unwrap();
-    assert!(
-        !git_output(fixture.root.path(), &["verify-pack", path], b"")
-            .status
-            .success()
-    );
-
+    assert!(git_rejects(&fixture));
     let objects = open(&fixture).unwrap();
-    assert_eq!(assert_no_wrong_content(&fixture, &objects), 0);
+    assert_eq!(girt_reads(&fixture, &objects), git_reads(&fixture));
+    assert!(git_reads(&fixture).into_iter().all(|read| read));
+    // Both a whole entry and a delta read through the damaged index.
+    for id in [fixture.ordinary, fixture.delta] {
+        assert!(objects.read(id, ReadLimits::default()).unwrap().is_some());
+    }
     assert!(matches!(
         objects.verify_packs(&AtomicBool::new(false)),
         Err(ObjectReadError::Corrupt("index checksum"))
     ));
 }
 
+/// A fanout that decreases fails every lookup in Git, and fails the open in girt.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn non_monotonic_fanout_fails_open_like_git(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    damage(&fixture, true, |_, index| {
+        index[8 + 0xfe * 4..8 + 0xff * 4].fill(0xff);
+    });
+    assert!(git_reads_nothing(&fixture));
+    assert_eq!(corrupt_artifacts(open(&fixture)), "index fanout");
+}
+
+/// Moving one entry into the previous bucket keeps the fanout monotonic and its total, so neither
+/// Git nor girt notices at open; lookups in the two damaged buckets search the wrong range.
 #[rstest]
 #[case::sha1_stale(ObjectFormat::Sha1, false)]
 #[case::sha1_rehashed(ObjectFormat::Sha1, true)]
 #[case::sha256_stale(ObjectFormat::Sha256, false)]
 #[case::sha256_rehashed(ObjectFormat::Sha256, true)]
-fn damaged_fanout_fails_open(#[case] format: ObjectFormat, #[case] rehash: bool) {
+fn shifted_fanout_bucket_reads_like_git(#[case] format: ObjectFormat, #[case] rehash: bool) {
     let fixture = Fixture::new(format, true, 8);
     let first = fixture.records[0].0.as_bytes()[0] as usize;
-    // Move one entry into the previous bucket: the fanout stays monotonic and keeps the total.
     damage(&fixture, rehash, |_, index| {
         let bucket = 8 + first.max(1) * 4 - 4;
         let value = u32::from_be_bytes(index[bucket..bucket + 4].try_into().unwrap()) + 1;
         index[bucket..bucket + 4].copy_from_slice(&value.to_be_bytes());
     });
-    assert_eq!(corrupt_artifacts(open(&fixture)), "index fanout");
+    fails_reads_like_git(&fixture);
 }
 
+/// An entry count that disagrees with the pack's fails every lookup in Git, and the open in girt.
 #[rstest]
-#[case::sha1_stale(ObjectFormat::Sha1, false)]
-#[case::sha1_rehashed(ObjectFormat::Sha1, true)]
-#[case::sha256_stale(ObjectFormat::Sha256, false)]
-#[case::sha256_rehashed(ObjectFormat::Sha256, true)]
-fn offset_outside_pack_fails_open(#[case] format: ObjectFormat, #[case] rehash: bool) {
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn fanout_total_fails_open_like_git(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
-    damage(&fixture, rehash, |layout, index| {
-        let at = layout.offset(0);
-        index[at..at + 4].copy_from_slice(&0x7fff_0000u32.to_be_bytes());
+    damage(&fixture, true, |layout, index| {
+        index[8 + 255 * 4..8 + 256 * 4].copy_from_slice(&(layout.count as u32 + 1).to_be_bytes());
     });
-    assert_eq!(
-        corrupt_artifacts(open(&fixture)),
-        "offset outside pack entries"
-    );
+    assert!(git_reads_nothing(&fixture));
+    assert_eq!(corrupt_artifacts(open(&fixture)), "index table length");
 }
 
+#[rstest]
+#[case::past_pack_sha1(ObjectFormat::Sha1, 0x7fff_0000)]
+#[case::past_pack_sha256(ObjectFormat::Sha256, 0x7fff_0000)]
+#[case::in_header_sha1(ObjectFormat::Sha1, 5)]
+#[case::in_header_sha256(ObjectFormat::Sha256, 5)]
+fn offset_outside_pack_fails_its_read_like_git(#[case] format: ObjectFormat, #[case] offset: u32) {
+    let fixture = Fixture::new(format, true, 8);
+    damage(&fixture, true, |layout, index| {
+        let at = layout.offset(0);
+        index[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+    });
+    let objects = open(&fixture).unwrap();
+    let id = fixture.records[position_of(&fixture, 0)].0;
+    assert!(read_error(&objects, id).contains("offset outside pack entries"));
+    fails_reads_like_git(&fixture);
+}
+
+/// The record at index position `position` in identity order.
+fn position_of(fixture: &Fixture, position: usize) -> usize {
+    let mut ids: Vec<_> = fixture.records.iter().map(|record| record.0).collect();
+    ids.sort_unstable();
+    fixture
+        .records
+        .iter()
+        .position(|record| record.0 == ids[position])
+        .unwrap()
+}
+
+/// One entry pointing at another's bytes reads that entry, which neither its CRC nor its identity
+/// matches. Git can serve the other object's content for it, so only girt's result is checked.
 #[rstest]
 #[case::sha1_stale(ObjectFormat::Sha1, false)]
 #[case::sha1_rehashed(ObjectFormat::Sha1, true)]
 #[case::sha256_stale(ObjectFormat::Sha256, false)]
 #[case::sha256_rehashed(ObjectFormat::Sha256, true)]
-fn duplicated_offset_fails_open(#[case] format: ObjectFormat, #[case] rehash: bool) {
+fn duplicated_offset_fails_its_read(#[case] format: ObjectFormat, #[case] rehash: bool) {
     let fixture = Fixture::new(format, true, 8);
     damage(&fixture, rehash, |layout, index| {
         let (from, to) = (layout.offset(0), layout.offset(1));
         let copy: [u8; 4] = index[from..from + 4].try_into().unwrap();
         index[to..to + 4].copy_from_slice(&copy);
     });
-    assert_eq!(corrupt_artifacts(open(&fixture)), "duplicate pack offset");
+    let objects = open(&fixture).unwrap();
+    let reads = girt_reads(&fixture, &objects);
+    assert!(!reads[position_of(&fixture, 1)]);
+    assert!(objects.verify_packs(&AtomicBool::new(false)).is_err());
 }
 
-/// Swapped offsets still tile the pack, so only the entry CRCs can tell them apart.
+/// Swapped offsets still tile the pack, so only the entry CRCs and identities tell them apart.
 #[rstest]
 #[case::sha1_stale(ObjectFormat::Sha1, false)]
 #[case::sha1_rehashed(ObjectFormat::Sha1, true)]
@@ -190,7 +284,8 @@ fn swapped_offsets_fail_reads_not_content(#[case] format: ObjectFormat, #[case] 
         index[b..b + 4].copy_from_slice(&first);
     });
     let objects = open(&fixture).unwrap();
-    assert!(assert_no_wrong_content(&fixture, &objects) >= 2);
+    let reads = girt_reads(&fixture, &objects);
+    assert!(reads.iter().filter(|read| !**read).count() >= 2);
     assert!(objects.verify_packs(&AtomicBool::new(false)).is_err());
 }
 
@@ -211,8 +306,8 @@ fn damaged_name_never_reads_wrong_content(#[case] format: ObjectFormat, #[case] 
         damaged = Some(index[layout.name(0)..layout.name(0) + width].to_vec());
     });
     let damaged = girt::ObjectId::from_bytes(format, &damaged.unwrap()).unwrap();
-    let objects = open(&fixture).unwrap();
-    assert_eq!(assert_no_wrong_content(&fixture, &objects), 1);
+    let (objects, failed) = reads_like_git(&fixture);
+    assert_eq!(failed, 1);
     assert!(objects.read(damaged, ReadLimits::default()).is_err());
     if !rehash {
         assert!(matches!(
@@ -222,41 +317,74 @@ fn damaged_name_never_reads_wrong_content(#[case] format: ObjectFormat, #[case] 
     }
 }
 
+/// A name moved out of order hides itself, and can hide neighbours, from the binary search: Git
+/// reports those objects missing rather than the index corrupt, and so does girt.
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn damaged_trailer_pack_hash_fails_open(#[case] format: ObjectFormat) {
+fn unsorted_name_reads_like_git(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    let width = format.digest_len();
+    // The middle name becomes just above its successor, so it sorts after it.
+    damage(&fixture, true, |layout, index| {
+        let (at, next) = (
+            layout.name(layout.count / 2),
+            layout.name(layout.count / 2 + 1),
+        );
+        index.copy_within(next..next + width, at);
+        index[at + width - 1] = index[at + width - 1].wrapping_add(1);
+    });
+    fails_reads_like_git(&fixture);
+}
+
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn damaged_trailer_pack_hash_fails_open_like_git(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
     damage(&fixture, false, |_, index| {
         let at = index.len() - 2 * format.digest_len();
         index[at] ^= 1;
     });
+    assert!(git_reads_nothing(&fixture));
     assert_eq!(
         corrupt_artifacts(open(&fixture)),
         "index/pack checksum disagreement"
     );
 }
 
+/// Four stray bytes before the trailer make the large-offset table end in a partial slot. Git
+/// still reads every object, and so does girt; explicit verification rejects the table.
 #[rstest]
 #[case::sha1_stale(ObjectFormat::Sha1, false)]
 #[case::sha1_rehashed(ObjectFormat::Sha1, true)]
 #[case::sha256_stale(ObjectFormat::Sha256, false)]
 #[case::sha256_rehashed(ObjectFormat::Sha256, true)]
-fn damaged_table_length_fails_open(#[case] format: ObjectFormat, #[case] rehash: bool) {
+fn partial_large_offset_slot_reads_like_git(#[case] format: ObjectFormat, #[case] rehash: bool) {
     let fixture = Fixture::new(format, true, 8);
-    // Four stray bytes before the trailer make the large-offset table a partial entry.
     damage(&fixture, rehash, |_, index| {
         let at = index.len() - 2 * format.digest_len();
         index.splice(at..at, [0; 4]);
     });
-    assert_eq!(corrupt_artifacts(open(&fixture)), "index table length");
+    let (objects, failed) = reads_like_git(&fixture);
+    assert_eq!(failed, 0);
+    assert!(git_rejects(&fixture));
+    assert!(objects.verify_packs(&AtomicBool::new(false)).is_err());
 }
 
-fn git_rejects(fixture: &Fixture) -> bool {
-    let index = fixture.index_path.to_str().unwrap();
-    !git_output(fixture.root.path(), &["verify-pack", index], b"")
-        .status
-        .success()
+/// A large-offset table with a slot for every entry is longer than any index needs: Git refuses
+/// the size on every lookup, and girt at open.
+#[rstest]
+#[case::sha1(ObjectFormat::Sha1)]
+#[case::sha256(ObjectFormat::Sha256)]
+fn oversized_large_offset_table_fails_open_like_git(#[case] format: ObjectFormat) {
+    let fixture = Fixture::new(format, true, 8);
+    damage(&fixture, true, |layout, index| {
+        let at = index.len() - 2 * format.digest_len();
+        index.splice(at..at, vec![0; 8 * layout.count]);
+    });
+    assert!(git_reads_nothing(&fixture));
+    assert_eq!(corrupt_artifacts(open(&fixture)), "index table length");
 }
 
 /// Truncation inside each index table, with a recomputed checksum, is rejected by Git's
@@ -288,14 +416,16 @@ fn truncated_table_fails_like_git(#[case] format: ObjectFormat, #[case] table: &
         git_rejects(&fixture),
         "Git accepted a truncated {table} table"
     );
+    assert!(git_reads_nothing(&fixture));
     assert!(open(&fixture).is_err());
 }
 
-/// A large-offset slot beyond the one-slot table is rejected by Git and by opening.
+/// A large-offset slot beyond the one-slot table is rejected by Git's `verify-pack` and by a
+/// lookup of that entry, in Git and girt; other entries still read.
 #[rstest]
 #[case::sha1(ObjectFormat::Sha1)]
 #[case::sha256(ObjectFormat::Sha256)]
-fn large_offset_slot_outside_table_fails_like_git(#[case] format: ObjectFormat) {
+fn large_offset_slot_outside_table_fails_its_read_like_git(#[case] format: ObjectFormat) {
     let fixture = Fixture::new(format, true, 8);
     damage(&fixture, true, |layout, index| {
         let at = layout.offset(0);
@@ -308,5 +438,8 @@ fn large_offset_slot_outside_table_fails_like_git(#[case] format: ObjectFormat) 
         git_rejects(&fixture),
         "Git accepted an out-of-table large offset"
     );
-    assert_eq!(corrupt_artifacts(open(&fixture)), "large offset index");
+    let objects = open(&fixture).unwrap();
+    let id = fixture.records[position_of(&fixture, 0)].0;
+    assert!(read_error(&objects, id).contains("large offset index"));
+    assert_eq!(fails_reads_like_git(&fixture), 1);
 }

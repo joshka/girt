@@ -154,9 +154,21 @@ pub fn pack_index(data: &[u8]) {
     let Ok(index) = crate::pack::index::Index::parse(format, bytes, pack_end as usize) else {
         return;
     };
+    // Opening checks only the header, sizes and fanout: lookups must fail cleanly on the rest.
     for position in 0..index.len().min(MAX_VISITS) {
-        let entry = index.entry(bytes, position);
-        assert_eq!(index.find(bytes, entry.id), Some(position));
+        let id = index.identity(bytes, position);
+        let _ = index.find(bytes, id);
+        let _ = index.span(bytes, position);
+        if let Ok(offset) = index.offset(bytes, position) {
+            let _ = index.span_at(bytes, offset);
+        }
+    }
+    if index.validate(bytes).is_err() {
+        return;
+    }
+    for position in 0..index.len().min(MAX_VISITS) {
+        let entry = index.entry(bytes, position).expect("validated entry");
+        assert_eq!(index.find(bytes, entry.id).ok().flatten(), Some(position));
         assert_eq!(index.at_offset(bytes, entry.offset).ok(), Some(position));
     }
 }

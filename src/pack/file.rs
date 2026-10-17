@@ -16,12 +16,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+mod mapped;
 mod window;
+use mapped::IndexBytes;
 pub(crate) use window::HeaderScope;
 
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
 
-use super::index::{Entry, Index, verify_hash, word};
+use super::index::{Entry, Index, Span, verify_hash, word};
 use super::reader::{EntryHeader, Source, check_cancelled, decode};
 use crate::object::Hasher;
 use crate::{Object, ObjectFormat, ObjectId, ObjectKind, ObjectReadError as Error, ReadLimits};
@@ -278,11 +280,12 @@ fn path_error(path: &Path, source: io::Error) -> Error {
     }
 }
 
-/// Validated index bytes and bounded entry tables remain in memory; the original file stays pinned.
+/// The pinned index stays mapped, or in memory where it isn't mapped, beside its lazily built
+/// offset order; the original files stay pinned.
 #[derive(Debug)]
 pub(crate) struct FilePack {
     index: Artifact,
-    index_bytes: Arc<Vec<u8>>,
+    index_bytes: Arc<IndexBytes>,
     pack: Artifact,
     format: ObjectFormat,
     table: Arc<Index>,
@@ -309,7 +312,7 @@ struct CachedIndex {
     pack_change: Option<(i64, i64)>,
     _index_file: File,
     _pack_file: File,
-    bytes: Arc<Vec<u8>>,
+    bytes: Arc<IndexBytes>,
     table: Arc<Index>,
 }
 
@@ -403,7 +406,7 @@ fn retain_index(
     format: ObjectFormat,
     index: &Artifact,
     pack: &Artifact,
-    bytes: &Arc<Vec<u8>>,
+    bytes: &Arc<IndexBytes>,
     table: &Arc<Index>,
 ) -> Option<Arc<CachedIndex>> {
     if index.stamp.identity == (0, 0)
@@ -576,7 +579,7 @@ impl FilePack {
             .entries
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let offset = self.offset(position);
+        let offset = self.offset(position).ok()?;
         entries
             .get(&offset)
             .map(|cause| self.damage_error(offset, cause.clone()))
@@ -586,12 +589,15 @@ impl FilePack {
         if !matches!(error, Error::Corrupt(_) | Error::DeltaCycle) {
             return ReadFailure::Other(error);
         }
+        // A damaged offset names no entry to remember the damage by.
+        let Ok(offset) = self.offset(position) else {
+            return ReadFailure::Damaged(error);
+        };
         let mut entries = self
             .damage
             .entries
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let offset = self.offset(position);
         let cause = entries
             .entry(offset)
             .or_insert_with(|| Arc::new(error))
@@ -672,8 +678,8 @@ impl FilePack {
             .max_bytes
             .checked_sub(bytes)
             .ok_or(Error::Limit("pack snapshot bytes"))?;
-        // Charge the input before reading. Derived tables have at most one entry per 24 input
-        // bytes, so a conservative fourfold bound also covers parsing and conversion overlap.
+        // Charge the input before reading, mapped or not. The offset order, if built, has at most
+        // one 8-byte entry per 24 input bytes, so a conservative fourfold bound also covers it.
         budget.max_index_bytes = budget
             .max_index_bytes
             .checked_sub(index_file.len)
@@ -694,7 +700,7 @@ impl FilePack {
         let (index_bytes, index) = if let Some(cached) = &shared_index {
             (cached.bytes.clone(), cached.table.clone())
         } else {
-            let bytes = index_file.bytes(0, index_file.len)?;
+            let bytes = IndexBytes::of(&index_file)?;
             check_cancelled(cancelled)?;
             let table = Index::parse(format, &bytes, end)?;
             (Arc::new(bytes), Arc::new(table))
@@ -740,7 +746,7 @@ impl FilePack {
         len: usize,
         cancel: &AtomicBool,
     ) -> Result<bool, Error> {
-        if self.index_bytes.as_slice() != index || self.pack.len != len {
+        if **self.index_bytes != *index || self.pack.len != len {
             return Ok(false);
         }
         self.index.check_not_truncated()?;
@@ -788,7 +794,7 @@ impl FilePack {
         let mut hash = Hasher::new(format);
         hash.update(&pack.bytes(0, 12)?);
         let mut buffer = [0; 64 * 1024];
-        for position in self.table.by_offset() {
+        for position in self.table.by_offset(&self.index_bytes)? {
             let entry = self.entry(position)?;
             let mut offset = entry.offset;
             let mut crc = crc32fast::Hasher::new();
@@ -814,15 +820,17 @@ impl FilePack {
         check_cancelled(cancelled)
     }
 
-    /// Checks the pinned index's own trailing checksum, once per reader.
+    /// Checks the pinned index's own trailing checksum and its whole structure, once per reader.
     ///
-    /// Opening validates only the index structure. Anything that trusts the index's identities
-    /// without hashing the objects they name, such as copying entries into a new pack, checks this
-    /// first so a damaged name cannot label other bytes.
+    /// Opening checks only the index header, table sizes and fanout, and lookups check what they
+    /// read. Anything that trusts the index's identities without hashing the objects they name,
+    /// such as copying entries into a new pack, checks this first so a damaged name cannot label
+    /// other bytes.
     pub(crate) fn verify_index(&self) -> Result<(), Error> {
         if self.index_verified.get().is_none() {
             self.index.check_not_truncated()?;
             verify_hash(self.format, &self.index_bytes, "index checksum")?;
+            self.table.validate(&self.index_bytes)?;
             let _ = self.index_verified.set(());
         }
         self.check_damage()
@@ -833,7 +841,7 @@ impl FilePack {
             return Ok(None);
         }
         self.index.check_snapshot_not_truncated()?;
-        Ok(self.table.find(&self.index_bytes, id))
+        self.table.find(&self.index_bytes, id)
     }
 
     pub(crate) fn prefix_matches(
@@ -850,8 +858,31 @@ impl FilePack {
     }
 
     /// Pack offset of the entry at index `position`, which must be below the index's length.
-    pub(crate) fn offset(&self, position: usize) -> usize {
+    pub(crate) fn offset(&self, position: usize) -> Result<usize, Error> {
         self.table.offset(&self.index_bytes, position)
+    }
+
+    /// The entry at `position` with its exact end, which builds the index's offset order.
+    pub(crate) fn entry(&self, position: usize) -> Result<Entry, Error> {
+        self.table.entry(&self.index_bytes, position)
+    }
+
+    /// Identity-order position of the entry starting at `offset`, which builds the index's offset
+    /// order.
+    pub(crate) fn at_offset(&self, offset: usize) -> Result<usize, Error> {
+        self.table.at_offset(&self.index_bytes, offset)
+    }
+
+    /// Whether the index is mapped, and whether its offset order has been built.
+    #[cfg(test)]
+    pub(crate) fn index_state(&self) -> (bool, bool) {
+        (self.index_bytes.is_mapped(), self.table.has_order())
+    }
+
+    /// Position of a delta base, from its span or else from the offset order.
+    pub(crate) fn base_position(&self, base: &Span) -> Result<usize, Error> {
+        base.position
+            .map_or_else(|| self.at_offset(base.offset), Ok)
     }
 
     fn identity(&self, position: usize) -> Result<ObjectId, Error> {
@@ -879,11 +910,12 @@ impl FilePack {
     /// must only be used with this pack.
     pub(crate) fn locate_memoized(
         &self,
-        mut position: usize,
+        position: usize,
         limits: ReadLimits,
         cancel: &AtomicBool,
         known: &mut BaseKinds,
     ) -> Result<(ObjectKind, u64), Error> {
+        let mut span = self.span(position)?;
         let mut seen = Vec::new();
         let mut visited = std::collections::HashSet::new();
         let mut result_size = None;
@@ -891,7 +923,7 @@ impl FilePack {
             check_cancelled(cancel)?;
             // The requested entry is always read: its own header or delta prefix gives its size.
             if !seen.is_empty()
-                && let Some(&(kind, depth)) = known.get(&position)
+                && let Some(&(kind, depth)) = known.get(&span.offset)
             {
                 // A known chain is acyclic and within its own depth; check the combined depth.
                 if seen.len() + depth > limits.max_delta_depth {
@@ -899,20 +931,19 @@ impl FilePack {
                 }
                 break (kind, depth + 1);
             }
-            if !visited.insert(position) {
+            if !visited.insert(span.offset) {
                 return Err(Error::Corrupt("delta cycle"));
             }
-            seen.push(position);
-            let entry = self.entry(position)?;
-            let header = super::reader::entry_header(self, &entry)?;
-            if let Some(base) = header.base {
+            seen.push(span.offset);
+            let header = super::reader::entry_header(self, &span)?;
+            if let Some(base) = header.base.clone() {
                 if seen.len() > limits.max_delta_depth {
                     return Err(Error::Limit("delta depth"));
                 }
                 if result_size.is_none() {
-                    result_size = Some(self.delta_result_size(&entry, &header)? as u64);
+                    result_size = Some(self.delta_result_size(&span, &header)? as u64);
                 }
-                position = base;
+                span = base;
             } else {
                 let kind = match header.kind {
                     1 => ObjectKind::Commit,
@@ -928,8 +959,8 @@ impl FilePack {
             }
         };
         let (kind, base_depth) = resolved;
-        for (depth, position) in seen.iter().rev().enumerate() {
-            known.insert(*position, (kind, base_depth + depth));
+        for (depth, offset) in seen.iter().rev().enumerate() {
+            known.insert(*offset, (kind, base_depth + depth));
         }
         // The first iteration always reads the requested entry and records its size.
         let size = result_size.ok_or(Error::Corrupt("pack entry size"))?;
@@ -953,7 +984,7 @@ impl FilePack {
     /// The varints are the first output bytes, so the zlib bytes read with the header nearly
     /// always hold them; otherwise the entry is streamed from the file. No instructions or base
     /// bytes are inflated, and the entry CRC is left to full reads.
-    fn delta_result_size(&self, entry: &Entry, header: &EntryHeader) -> Result<usize, Error> {
+    fn delta_result_size(&self, entry: &Span, header: &EntryHeader) -> Result<usize, Error> {
         thread_local! {
             // Reused across entries: creating an inflater allocates and clears its window.
             static INFLATER: std::cell::RefCell<flate2::Decompress> =
@@ -1026,7 +1057,7 @@ impl FilePack {
     }
 }
 
-/// Resolved kinds and delta depths of entries in one pack, keyed by entry index.
+/// Resolved kinds and delta depths of entries in one pack, keyed by entry offset.
 pub(crate) type BaseKinds = std::collections::HashMap<usize, (ObjectKind, usize)>;
 
 /// Base kinds and depths of delta entries whose chains have been resolved, by index position.
@@ -1091,19 +1122,23 @@ impl FilePack {
     /// Reads only framing and delta size prefixes, never a reconstructed blob payload.
     ///
     /// The requested entry's header is always read. A delta's kind comes from its chain's base,
-    /// which is resolved once per pack and then remembered for every entry on the chain.
+    /// which is resolved once per pack and then remembered for every entry on the chain whose
+    /// index position is known: the requested entry, identity deltas' bases, and every entry once
+    /// the offset order exists.
     pub(crate) fn object_header(
         &self,
         position: usize,
         limits: ReadLimits,
     ) -> Result<(crate::ObjectKind, usize), Error> {
-        let mut current = position;
+        let mut span = self.span(position)?;
         let mut length = None;
         let mut chain = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let (kind, base_depth) = loop {
             if !chain.is_empty()
-                && let Some((kind, depth)) = self.chain_kinds.get(current)
+                && let Some((kind, depth)) = span
+                    .position
+                    .and_then(|position| self.chain_kinds.get(position))
             {
                 // A remembered chain is acyclic; only the combined depth needs checking.
                 if chain.len() + depth > limits.max_delta_depth {
@@ -1111,12 +1146,11 @@ impl FilePack {
                 }
                 break (kind, depth);
             }
-            if !seen.insert(current) {
+            if !seen.insert(span.offset) {
                 return Err(Error::Corrupt("delta cycle"));
             }
-            let entry = self.entry(current)?;
-            let header = super::reader::entry_header(self, &entry)?;
-            if let Some(base) = header.base {
+            let header = super::reader::entry_header(self, &span)?;
+            if let Some(base) = header.base.clone() {
                 if seen.len() > limits.max_delta_depth {
                     return Err(Error::Limit("delta depth"));
                 }
@@ -1124,10 +1158,10 @@ impl FilePack {
                     return Err(Error::Limit("delta bytes"));
                 }
                 if length.is_none() {
-                    length = Some(self.delta_result_size(&entry, &header)?);
+                    length = Some(self.delta_result_size(&span, &header)?);
                 }
-                chain.push(current);
-                current = base;
+                chain.push(span.position);
+                span = base;
             } else {
                 let kind = match header.kind {
                     1 => crate::ObjectKind::Commit,
@@ -1138,16 +1172,18 @@ impl FilePack {
                 };
                 if length.is_none() {
                     length = Some(header.length);
-                } else {
+                } else if let Some(position) = span.position {
                     self.chain_kinds
-                        .remember(self.table.len(), current, kind, 0);
+                        .remember(self.table.len(), position, kind, 0);
                 }
                 break (kind, 0);
             }
         };
-        for (above, &delta) in chain.iter().rev().enumerate() {
-            self.chain_kinds
-                .remember(self.table.len(), delta, kind, base_depth + above + 1);
+        for (above, delta) in chain.iter().rev().enumerate() {
+            if let Some(delta) = *delta {
+                self.chain_kinds
+                    .remember(self.table.len(), delta, kind, base_depth + above + 1);
+            }
         }
         let length = length.ok_or(Error::Corrupt("pack entry size"))?;
         if length > limits.max_object_bytes {
@@ -1210,8 +1246,16 @@ impl Source for FilePack {
         self.format
     }
 
-    fn entry(&self, position: usize) -> Result<Entry, Error> {
-        Ok(self.table.entry(&self.index_bytes, position))
+    fn span(&self, position: usize) -> Result<Span, Error> {
+        self.table.span(&self.index_bytes, position)
+    }
+
+    fn span_at(&self, offset: usize) -> Result<Span, Error> {
+        self.table.span_at(&self.index_bytes, offset)
+    }
+
+    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+        self.identity(position)
     }
 
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
@@ -1222,12 +1266,8 @@ impl Source for FilePack {
         Some(self.base_cache.view())
     }
 
-    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        self.table.at_offset(&self.index_bytes, offset)
-    }
-
     /// Reads the header with up to 4 KiB of the entry, so a typical entry needs one read.
-    fn prefix(&self, entry: &Entry) -> Result<Vec<u8>, Error> {
+    fn prefix(&self, entry: &Span) -> Result<Vec<u8>, Error> {
         window::bytes(
             &self.pack,
             entry.offset,
@@ -1241,10 +1281,10 @@ impl Source for FilePack {
     )]
     fn inflate(
         &self,
-        entry: &Entry,
+        entry: &Span,
         header: &EntryHeader,
         cancelled: &AtomicBool,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<(Vec<u8>, usize), Error> {
         // One decoder per thread reuses zlib's window without serializing independent readers.
         // Reset before every entry, including after a failed or cancelled stream.
         thread_local! {
@@ -1258,19 +1298,23 @@ impl Source for FilePack {
             let start = header.data_start;
             let end = entry.end;
             let expected = header.length;
+            // The CRC covers exactly the bytes the stream consumes: without an exact end, the
+            // bytes read can run past the entry.
             let mut crc = entry.crc.map(|_| {
                 let mut crc = crc32fast::Hasher::new();
                 crc.update(header.encoded());
-                crc.update(header.ahead());
                 crc
             });
-            // Input comes from the bytes read with the header, then from exact-sized positioned
-            // reads of the rest of the entry; neither is zero-filled beyond what is read.
+            // Input comes from the bytes read with the header, then from positioned reads of the
+            // rest of the entry; neither is zero-filled beyond what is read. Without an exact end,
+            // reads are sized by what the declared length compresses to at worst, so a typical
+            // entry needs one more read and reads little past its end.
             const CHUNK: usize = 256 * 1024;
+            let likely_end = start.saturating_add(deflate_bound(expected));
             let mut chunk = Vec::new();
             let mut from_ahead = true;
             let mut consumed_in_chunk = 0;
-            let mut position = start + header.ahead().len();
+            let mut position = start + header.ahead().len().min(end - start);
             decoder.reset(true);
             // The declared size is unproven until the stream produces it: reserve a bounded start
             // and grow with the output, so a tiny malformed entry cannot request a huge buffer.
@@ -1284,19 +1328,22 @@ impl Source for FilePack {
                     &chunk[..]
                 };
                 if consumed_in_chunk == source.len() && position < end {
-                    let count = CHUNK.min(end - position);
+                    let wanted = if entry.exact {
+                        CHUNK
+                    } else {
+                        CHUNK.min(likely_end.saturating_sub(position).max(4096))
+                    };
+                    let count = wanted.min(end - position);
                     chunk.clear();
                     chunk.resize(count, 0);
                     self.pack.read_at(position, &mut chunk)?;
-                    if let Some(crc) = &mut crc {
-                        crc.update(&chunk);
-                    }
                     position += count;
                     from_ahead = false;
                     consumed_in_chunk = 0;
                 }
                 let input = if from_ahead {
-                    &header.ahead()[consumed_in_chunk..]
+                    let ahead = header.ahead();
+                    &ahead[consumed_in_chunk..ahead.len().min(end - start)]
                 } else {
                     &chunk[consumed_in_chunk..]
                 };
@@ -1313,28 +1360,37 @@ impl Source for FilePack {
                 .map_err(|_| Error::Corrupt("invalid packed zlib stream"))?;
                 let consumed = (decoder.total_in() - before_in) as usize;
                 let count = (decoder.total_out() - before_out) as usize;
+                if let Some(crc) = &mut crc {
+                    crc.update(&input[..consumed]);
+                }
                 consumed_in_chunk += consumed;
                 if decoder.total_out() > expected as u64 {
                     return Err(Error::Corrupt("inflated entry exceeds declared size"));
                 }
                 if status == flate2::Status::StreamEnd {
-                    if data.len() != expected || decoder.total_in() != (end - start) as u64 {
+                    let stream_end = start + decoder.total_in() as usize;
+                    if data.len() != expected || entry.exact && stream_end != end {
                         return Err(Error::Corrupt("packed entry length or trailing data"));
                     }
-                    break;
+                    if let (Some(expected), Some(crc)) = (entry.crc, crc)
+                        && crc.finalize() != expected
+                    {
+                        return Err(Error::Corrupt("entry CRC"));
+                    }
+                    return Ok((data, stream_end));
                 }
                 if consumed == 0 && count == 0 {
                     return Err(Error::Corrupt("truncated packed zlib stream"));
                 }
             }
-            if let (Some(expected), Some(crc)) = (entry.crc, crc)
-                && crc.finalize() != expected
-            {
-                return Err(Error::Corrupt("entry CRC"));
-            }
-            Ok(data)
         })
     }
+}
+
+/// A read-size hint for a zlib stream of `length` inflated bytes: incompressible data grows by a
+/// few bytes per block plus the stream's header and trailer, which this comfortably covers.
+fn deflate_bound(length: usize) -> usize {
+    length.saturating_add(length >> 10).saturating_add(64)
 }
 
 /// The pack checksum an index records just before its own trailing checksum.
@@ -1359,7 +1415,7 @@ impl<'a> Range<'a> {
     /// Streams an entry's zlib data from `data_start`, starting with the header's read-ahead.
     fn entry(
         artifact: &'a Artifact,
-        entry: &Entry,
+        entry: &Span,
         header: &'a EntryHeader,
         crc: Option<crc32fast::Hasher>,
     ) -> Self {
@@ -2157,7 +2213,7 @@ mod publication_tests {
         let cancel = AtomicBool::new(false);
         let old = FilePack::open(format, &path, &mut PackLimits::default(), &cancel).unwrap();
         let position = old.find(objects[0].id).unwrap().unwrap();
-        let offset = old.offset(position);
+        let offset = old.offset(position).unwrap();
         let _ = old.failed_read(position, Error::Corrupt("entry CRC"));
         let crcs = 1032 + 2 * 20;
         let offsets = crcs + 2 * 4;
@@ -2305,7 +2361,7 @@ mod publication_tests {
         )
         .unwrap();
         let _scope = super::super::HeaderScope::new();
-        assert!(super::super::reader::entry_header(&pack, &pack.entry(0).unwrap()).is_err());
+        assert!(super::super::reader::entry_header(&pack, &pack.entry(0).unwrap().span()).is_err());
     }
 
     #[rstest]
@@ -2416,7 +2472,7 @@ mod publication_tests {
             .collect();
         let scope = super::super::HeaderScope::new();
         for pack in &packs {
-            pack.prefix(&pack.entry(0).unwrap()).unwrap();
+            pack.prefix(&pack.entry(0).unwrap().span()).unwrap();
             assert!(super::window::allocated() <= 256 * 1024);
         }
         drop(scope);

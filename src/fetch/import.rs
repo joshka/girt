@@ -15,8 +15,14 @@ use super::progress::ValidationObserver;
 use super::{FetchError, FetchLimits, check_cancelled};
 use crate::object::Hasher;
 use crate::pack::delta::{apply, byte, charge, size};
-use crate::pack::index::word;
-use crate::pack::reader::{BaseCache, Source, decode_budgeted};
+use crate::pack::index::{Span, word};
+use crate::pack::reader::{BaseCache, Proof, Source, decode_budgeted};
+
+/// Receive checks each entry's CRC; identities are proven as entries resolve.
+const RECEIVED: Proof = Proof {
+    identity: None,
+    crc: true,
+};
 use crate::pack::write::{Entry, encode_index};
 use crate::{IdMap, Object, ObjectId, ObjectKind, ObjectReadError as Error};
 
@@ -190,7 +196,7 @@ impl Imported {
                             kind,
                             data: payload.into(),
                         };
-                        objects.cache.insert(position, &object, true);
+                        objects.cache.insert(offset, &object, RECEIVED);
                         Some(object)
                     } else {
                         None
@@ -449,7 +455,8 @@ impl IndexedObjects {
                     };
                     self.entries[child].resolved =
                         Some((ObjectId::null(self.format), depth + 1, kind));
-                    self.cache.insert(child, &object, true);
+                    self.cache
+                        .insert(self.entries[child].offset, &object, RECEIVED);
                     if waiting.is_empty() {
                         finisher.submit(self, child, object, observer.cancel)?;
                     } else {
@@ -583,7 +590,14 @@ impl IndexedObjects {
         });
         self.identities.insert(id, position);
         self.verified.insert(id, object);
-        self.cache.insert(position, object, true);
+        self.cache.insert(
+            offset,
+            object,
+            Proof {
+                identity: Some(id),
+                crc: true,
+            },
+        );
         Ok(position)
     }
 
@@ -634,34 +648,40 @@ impl Source for IndexedObjects {
     fn format(&self) -> crate::ObjectFormat {
         self.format
     }
-    fn entry(&self, position: usize) -> Result<crate::pack::index::Entry, Error> {
+    fn span(&self, position: usize) -> Result<Span, Error> {
         let entry = &self.entries[position];
-        Ok(crate::pack::index::Entry {
-            id: entry.resolved.unwrap().0,
+        Ok(Span {
             offset: entry.offset,
             end: entry.end,
+            exact: true,
             crc: Some(entry.crc),
+            position: Some(position),
         })
+    }
+    fn span_at(&self, offset: usize) -> Result<Span, Error> {
+        self.span(self.at_offset(offset)?)
+    }
+    fn identity(&self, position: usize) -> Result<ObjectId, Error> {
+        Ok(self.entries[position].resolved.unwrap().0)
     }
     fn find(&self, id: ObjectId) -> Result<Option<usize>, Error> {
         Ok(self.identities.get(&id).copied())
     }
-    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
-        self.entries
-            .binary_search_by_key(&offset, |e| e.offset)
-            .map_err(|_| Error::Corrupt("delta base offset"))
-    }
-    fn prefix(&self, entry: &crate::pack::index::Entry) -> Result<Vec<u8>, Error> {
-        self.bytes(entry.offset, entry.end.min(entry.offset + 64))
+    fn prefix(&self, span: &Span) -> Result<Vec<u8>, Error> {
+        self.bytes(span.offset, span.end.min(span.offset + 64))
     }
     fn inflate(
         &self,
-        entry: &crate::pack::index::Entry,
+        span: &Span,
         _header: &crate::pack::reader::EntryHeader,
         cancel: &AtomicBool,
-    ) -> Result<Vec<u8>, Error> {
-        let position = self.at_offset(entry.offset)?;
-        self.inflate_entry(&self.entries[position], cancel)
+    ) -> Result<(Vec<u8>, usize), Error> {
+        let position = match span.position {
+            Some(position) => position,
+            None => self.at_offset(span.offset)?,
+        };
+        let entry = &self.entries[position];
+        Ok((self.inflate_entry(entry, cancel)?, entry.end))
     }
     fn identity_verified(&self, position: usize) -> bool {
         self.entries[position].resolved.is_some()
@@ -671,6 +691,12 @@ impl Source for IndexedObjects {
     }
 }
 impl IndexedObjects {
+    fn at_offset(&self, offset: usize) -> Result<usize, Error> {
+        self.entries
+            .binary_search_by_key(&offset, |e| e.offset)
+            .map_err(|_| Error::Corrupt("delta base offset"))
+    }
+
     fn inflate_entry(&self, entry: &ReceivedEntry, cancel: &AtomicBool) -> Result<Vec<u8>, Error> {
         // One positioned read covers the header and stream; the CRC spans both.
         let raw = self.bytes(entry.offset, entry.end)?;

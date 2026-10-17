@@ -494,7 +494,10 @@ impl Repository {
                     .find(id)
                     .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
                 {
-                    found.push((protected_pack.offset(position), position, id));
+                    let offset = protected_pack.offset(position).map_err(|error| {
+                        failed(RetireCause::Read(Box::new(error)), report.clone())
+                    })?;
+                    found.push((offset, position, id));
                 }
             }
             // Pack order lets the delta base cache serve each base once. `read` hashes the
@@ -519,7 +522,10 @@ impl Repository {
                 .find(*id)
                 .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?
                 .ok_or_else(|| failed(RetireCause::ReplacementMissing(*id), report.clone()))?;
-            replaced.push((pack.offset(position), position));
+            let offset = pack
+                .offset(position)
+                .map_err(|error| failed(RetireCause::Read(Box::new(error)), report.clone()))?;
+            replaced.push((offset, position));
         }
         // Every retained object is decoded and identity-checked before anything is unlinked.
         // `read` hashes each payload against the identity `find` matched; pack order lets the

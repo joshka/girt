@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::compression::{DeltaStats, PackCompression};
 use super::file::{CopyError, FilePack};
-use super::reader::{Source, entry_header};
+use super::reader::entry_header;
 use super::write::{
     Entry, Output, PackObject, PackWriteError, PackWriteLimits, PackWritten, entry_header_code,
     output_error, select_entry, validate, write_index, write_ordinary,
@@ -223,7 +223,7 @@ fn write_reusing_impl(
             CopyError::Write(error) => ReuseError::Write(output_error(error)),
         };
         let entry = source.entry(item.position).map_err(read_error)?;
-        let header = entry_header(source, &entry).map_err(read_error)?;
+        let header = entry_header(source, &entry.span()).map_err(read_error)?;
         let (kind, length) = source
             .object_header(item.position, read_limits)
             .map_err(read_error)?;
@@ -280,8 +280,12 @@ fn write_reusing_impl(
                 None => source
                     .copy_raw(&entry, &header, &mut pack)
                     .map_err(copy_error)?,
-                Some(base) => match written.get(&(source_index, base)) {
-                    Some(&(base_offset, base_depth)) if base_depth < max_depth => {
+                Some(ref base) => match source
+                    .base_position(base)
+                    .map(|base| (base, written.get(&(source_index, base))))
+                    .map_err(read_error)?
+                {
+                    (base, Some(&(base_offset, base_depth))) if base_depth < max_depth => {
                         depth = base_depth + 1;
                         if framing == DeltaFraming::Identity {
                             pack.put(&entry_header_code(7, header.length as u64))?;
@@ -862,12 +866,16 @@ mod tests {
         source
             .copy_raw(
                 &first,
-                &entry_header(&source, &first).unwrap(),
+                &entry_header(&source, &first.span()).unwrap(),
                 &mut original,
             )
             .unwrap();
         output
-            .copy_raw(&next, &entry_header(&output, &next).unwrap(), &mut copied)
+            .copy_raw(
+                &next,
+                &entry_header(&output, &next.span()).unwrap(),
+                &mut copied,
+            )
             .unwrap();
         assert_eq!(copied, original);
         assert_eq!(next.crc, Some(crc32fast::hash(&original)));
