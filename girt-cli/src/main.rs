@@ -61,6 +61,11 @@ enum Command {
     /// Create a new repository.
     Init(repo::InitArgs),
     /// Copy a repository from another location and check out HEAD.
+    ///
+    /// Supports local paths, file URLs, anonymous HTTP(S), and system OpenSSH on macOS/Linux.
+    /// SSH accepts `ssh://[user@]host[:port]/path` and `[user@]host:path`. Normal SSH config,
+    /// GIT_SSH_COMMAND, core.sshCommand and GIT_SSH apply. Use an agent or askpass; terminal
+    /// prompts and job control are unavailable. HTTP credential helpers are not used here.
     Clone(transfer::CloneArgs),
 
     /// Hash, read and inspect objects.
@@ -104,8 +109,17 @@ enum Command {
     #[command(subcommand)]
     Remote(config::RemoteCommand),
     /// Download objects and refs from a remote.
+    ///
+    /// Supports local, HTTP(S) credential helpers, and system OpenSSH remotes on macOS/Linux.
+    /// Interactive credential and SSH terminal prompts are unavailable. Tags are not followed
+    /// automatically. Uses the remote's configured fetch refspecs.
     Fetch(transfer::FetchArgs),
     /// Publish refs to a remote.
+    ///
+    /// Supports local, HTTP(S) credential helpers, and system OpenSSH remotes on macOS/Linux.
+    /// Interactive credential and SSH terminal prompts are unavailable. Updates require the
+    /// remote-tracking value to match; fetch first after a stale rejection. Prefix a refspec
+    /// with `+` to permit non-fast-forward updates.
     Push(transfer::PushArgs),
 
     /// Verify and rebuild packs.
